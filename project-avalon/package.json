@@ -1,0 +1,17 @@
+{
+  "name": "project-avalon",
+  "private": true,
+  "workspaces": [
+    "packages/extension",
+    "packages/shared"
+  ],
+  "scripts": {
+    "postinstall": "npm run build -w @avalon/shared",
+    "dev:extension": "npm run dev -w @avalon/extension",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

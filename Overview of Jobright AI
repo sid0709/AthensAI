@@ -1,0 +1,988 @@
+{
+  "runSettings": {
+    "temperature": 1.0,
+    "model": "models/gemini-3.5-flash",
+    "topP": 0.95,
+    "topK": 64,
+    "maxOutputTokens": 65536,
+    "safetySettings": [{
+      "category": "HARM_CATEGORY_HARASSMENT",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_HATE_SPEECH",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "threshold": "OFF"
+    }],
+    "enableCodeExecution": false,
+    "enableSearchAsATool": true,
+    "enableBrowseAsATool": false,
+    "thinkingBudget": -1,
+    "googleSearch": {
+    },
+    "thinkingLevel": "THINKING_HIGH",
+    "enableImageSearch": false,
+    "enableGoogleMaps": false,
+    "enableAgentThinkingSummariesControl": false,
+    "enableAgentVisualizationControl": false,
+    "enableAgentCollaborativePlanningControl": false
+  },
+  "systemInstruction": {
+  },
+  "chunkedPrompt": {
+    "chunks": [{
+      "text": "Do you know about the Jobright?",
+      "role": "user",
+      "tokenCount": 9,
+      "createTime": "2026-07-02T19:41:41.311Z"
+    }, {
+      "text": "**Analyzing Jobright\u0027s Details**\n\nI\u0027ve got a firm grasp on Jobright. I\u0027m focusing on synthesizing its key features and functionalities, specifically that it\u0027s an AI-powered job search platform, or \"AI job search copilot.\" My goal is a concise overview, focusing on its core value proposition.\n\n\n**Investigating Jobright\u0027s Origins**\n\nI\u0027m now delving into Jobright\u0027s founding and core features. I\u0027ve noted the founders: Eric Cheng, the CEO, and Ethan Zheng, the CTO. Furthermore, I\u0027ve got a grasp of Jobright\u0027s AI-driven offerings, including AI job matching and scoring, the Orion AI assistant, auto-apply functionality, and resume/cover letter customization. I\u0027m focusing on the technical underpinnings of each.\n\n\n**Examining Jobright\u0027s Expansion**\n\nI\u0027m now charting Jobright\u0027s growth, noting its lean team\u0027s rapid expansion. I see over 2 million users, and a subscription model, plus significant funding. Furthermore, I\u0027ve noted Jobright\u0027s focus on the US market, particularly tech roles.\n\n\n",
+      "role": "model",
+      "tokenCount": 1077,
+      "isThought": true,
+      "thinkingBudget": -1,
+      "parts": [{
+        "text": "**Analyzing Jobright\u0027s Details**\n\nI\u0027ve got a firm grasp on Jobright. I\u0027m focusing on synthesizing its key features and functionalities, specifically that it\u0027s an AI-powered job search platform, or \"AI job search copilot.\" My goal is a concise overview, focusing on its core value proposition.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Investigating Jobright\u0027s Origins**\n\nI\u0027m now delving into Jobright\u0027s founding and core features. I\u0027ve noted the founders: Eric Cheng, the CEO, and Ethan Zheng, the CTO. Furthermore, I\u0027ve got a grasp of Jobright\u0027s AI-driven offerings, including AI job matching and scoring, the Orion AI assistant, auto-apply functionality, and resume/cover letter customization. I\u0027m focusing on the technical underpinnings of each.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Examining Jobright\u0027s Expansion**\n\nI\u0027m now charting Jobright\u0027s growth, noting its lean team\u0027s rapid expansion. I see over 2 million users, and a subscription model, plus significant funding. Furthermore, I\u0027ve noted Jobright\u0027s focus on the US market, particularly tech roles.\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-07-02T19:41:41.312Z"
+    }, {
+      "text": "Yes, **Jobright** (Jobright.ai) is an AI-powered job search and career acceleration platform designed to act as a personal \"AI job copilot\". It is built to automate and streamline the repetitive, time-consuming aspects of the job hunt—such as scrolling through countless listings, modifying resumes for individual roles, and filling out applications. \n\n### Key Features\n*   **AI Job Matching \u0026 Scoring:** Users can upload their resume to get matched against millions of U.S.-based listings. The tool provides a personalized \"Match Score\" for each job, indicating how well their experience aligns with the role\u0027s requirements.\n*   **Orion (AI Career Assistant):** The platform features an AI conversational agent named Orion. Users can ask Orion questions about specific roles, company culture, or how to address gaps in their qualifications for a certain position.\n*   **Resume Tailoring \u0026 Cover Letter Generation:** Jobright uses AI to instantly rewrite resumes and generate tailored cover letters specific to a target job description to help candidates pass Applicant Tracking Systems (ATS).\n*   **One-Click Auto-Apply:** Through a Google Chrome extension, the tool automates the process of filling out application forms on various job portals, significantly reducing manual data entry.\n*   **Interview Prep \u0026 Negotiation:** The platform includes an \"Interview Copilot\" that provides practice questions, voice-based interview simulation, and strategies to negotiate compensation once an offer is received.\n\n### Founders and Background\nThe platform was co-founded by **Eric Cheng (CEO)**, a Carnegie Mellon alumnus and former early engineer at Box, alongside **Ethan Zheng (CTO)**, an AI specialist with a Ph.D. from the University of Hong Kong. The idea grew from Cheng\u0027s travels across several U.S. cities, where he realized that many skilled professionals struggled to find work not due to a lack of talent, but because of information asymmetry and a lack of access to career resources. \n\nThe company is notable for scaling very rapidly with a highly lean team, raising several million dollars in venture funding, and growing its user base to over 2 million job seekers. \n\n### Pricing and Availability\nWhile Jobright offers some basic features for free, full access to its automated application engines, resume optimization, and advanced AI tools is typically offered under a premium tier, which costs around $20 per month (when billed annually). Currently, the platform mainly focuses on indexing and applying to **U.S.-based roles**, with a strong presence in tech, data, marketing, product management, and engineering sectors.",
+      "role": "model",
+      "grounding": {
+        "corroborationSegments": [{
+          "index": 139,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEN9HubPPc-iFO-uiur39_9GHUogwLHi7UG2UCXRI2psSGX7tRe_SSlV_vZ6_1wOX7laMVNjd_gyxdLtYdUVeLaPFjlRVYBgkU5-QG9YgoYOfyBmT65yCZJgs0lZuf8R4dq2xl2FfucJozk5oYxlUHX_toJ32ftEs17wPebRIU%3D",
+          "footnoteNumber": 1
+        }, {
+          "index": 139,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHEUuVA6kUed1ErTXKwZr-1u_-gjV1WmMo-fWvuxW9-HIRIV1NmbllbNDt52UlV_vbc52_d9FGD01eoCMHBCYQEY3GH9_FpjGmr6sF-WJ2ww9GbhpQvUNhJfBs1V7SGD8Zr",
+          "footnoteNumber": 2
+        }, {
+          "index": 351,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGF1OjbMLzbJEtncEBTalNrTjYTMpKWz3iqFnG3i0MAIVx1wtfXYT9_2hL0Ue_Az3YoX0Tl6Ppk-7euif7kCFNqaGW0r9hUwxvTvSRtYWxqv54fHoE4M0hyhcz-Fz179tiy",
+          "footnoteNumber": 3
+        }, {
+          "index": 351,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHNF8_58RXc60h1iXVHhWeM2DA0WE4H5OHRsp1uzKc-FJTN_ZS5qzwK2YQjBqMUe1q5C8z05X8AKGD6xIdLVOmXMR6bPJNrV9m3bVUK6em7cZqio1Q7dZWOjzWqAJ1IRr13",
+          "footnoteNumber": 4
+        }, {
+          "index": 491,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGF1OjbMLzbJEtncEBTalNrTjYTMpKWz3iqFnG3i0MAIVx1wtfXYT9_2hL0Ue_Az3YoX0Tl6Ppk-7euif7kCFNqaGW0r9hUwxvTvSRtYWxqv54fHoE4M0hyhcz-Fz179tiy",
+          "footnoteNumber": 3
+        }, {
+          "index": 491,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHbO8jjdKvmyNzl2fF-lapkBfIK3nwdH4TWugZ43jaEZIFIXzqZVI027RQeMSAg69trXPIokZsjXY16czm19qzahKIATKlykvTQ7F5MQnJmwkcsEk5rdfY0aSlJgGtcpbqetv91yLOfuUNMC1OcMg7Ux2bPIxKoAg%3D%3D",
+          "footnoteNumber": 5
+        }, {
+          "index": 626,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGF1OjbMLzbJEtncEBTalNrTjYTMpKWz3iqFnG3i0MAIVx1wtfXYT9_2hL0Ue_Az3YoX0Tl6Ppk-7euif7kCFNqaGW0r9hUwxvTvSRtYWxqv54fHoE4M0hyhcz-Fz179tiy",
+          "footnoteNumber": 3
+        }, {
+          "index": 725,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGF1OjbMLzbJEtncEBTalNrTjYTMpKWz3iqFnG3i0MAIVx1wtfXYT9_2hL0Ue_Az3YoX0Tl6Ppk-7euif7kCFNqaGW0r9hUwxvTvSRtYWxqv54fHoE4M0hyhcz-Fz179tiy",
+          "footnoteNumber": 3
+        }, {
+          "index": 865,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGF1OjbMLzbJEtncEBTalNrTjYTMpKWz3iqFnG3i0MAIVx1wtfXYT9_2hL0Ue_Az3YoX0Tl6Ppk-7euif7kCFNqaGW0r9hUwxvTvSRtYWxqv54fHoE4M0hyhcz-Fz179tiy",
+          "footnoteNumber": 3
+        }, {
+          "index": 865,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGBCpORqiddE_Y6gTARF10GTzvI19ger9PIxU7mUsfVzazSPaChNMX1VcYt1-AVzFcOJpdHNZMRCAt76G0bBt-FLESzcLoaIZjiOfuyiPrJzd9UflqABgIBFZ0XbT81-jOcmFWwPEY8",
+          "footnoteNumber": 6
+        }, {
+          "index": 1094,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGF1OjbMLzbJEtncEBTalNrTjYTMpKWz3iqFnG3i0MAIVx1wtfXYT9_2hL0Ue_Az3YoX0Tl6Ppk-7euif7kCFNqaGW0r9hUwxvTvSRtYWxqv54fHoE4M0hyhcz-Fz179tiy",
+          "footnoteNumber": 3
+        }, {
+          "index": 1094,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFPsWktjCbLx17qC9wdWNnnCyX93hkmIjs7Gq0nXK17rbF31ejKLBp6szji0li7v6TDAAhdkt5piI9HzFY4Ydpolis_cyn2mvEVFcb-VrwULm-SQsmD012xEB1_AolHXA%3D%3D",
+          "footnoteNumber": 7
+        }, {
+          "index": 1289,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGF1OjbMLzbJEtncEBTalNrTjYTMpKWz3iqFnG3i0MAIVx1wtfXYT9_2hL0Ue_Az3YoX0Tl6Ppk-7euif7kCFNqaGW0r9hUwxvTvSRtYWxqv54fHoE4M0hyhcz-Fz179tiy",
+          "footnoteNumber": 3
+        }, {
+          "index": 1289,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEN9HubPPc-iFO-uiur39_9GHUogwLHi7UG2UCXRI2psSGX7tRe_SSlV_vZ6_1wOX7laMVNjd_gyxdLtYdUVeLaPFjlRVYBgkU5-QG9YgoYOfyBmT65yCZJgs0lZuf8R4dq2xl2FfucJozk5oYxlUHX_toJ32ftEs17wPebRIU%3D",
+          "footnoteNumber": 8
+        }, {
+          "index": 1508,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHEUuVA6kUed1ErTXKwZr-1u_-gjV1WmMo-fWvuxW9-HIRIV1NmbllbNDt52UlV_vbc52_d9FGD01eoCMHBCYQEY3GH9_FpjGmr6sF-WJ2ww9GbhpQvUNhJfBs1V7SGD8Zr",
+          "footnoteNumber": 2
+        }, {
+          "index": 1747,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEz4mn8g4DpLujixbFfZHsG7rkJFKqquyr-8RkOK89T95S49sSt5TT8bQ-8nyfyHOJQ8BMFjMRYOO6El6ilSr4snYXtmFUapK6F6ol6tRqSPtLDL9V1luR-0bf2jJDxKn-R",
+          "footnoteNumber": 9
+        }, {
+          "index": 1991,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFfwgIpmdZyZrjWQ_AIFxNZHazNeSDbsnFqP3qRCgClzYfKHFqyHWGtRQL-9d8ALxrVfEqRUb3u0UA5B03rdQSGxafbYe_hcsYHmZ5dnh-Bh_LmFh1XEeImMp16B39GZnz66UwdME7ydtROMLwzipbA-dR4AEXWXPNUuqS7mDg%3D",
+          "footnoteNumber": 10
+        }, {
+          "index": 2175,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFfwgIpmdZyZrjWQ_AIFxNZHazNeSDbsnFqP3qRCgClzYfKHFqyHWGtRQL-9d8ALxrVfEqRUb3u0UA5B03rdQSGxafbYe_hcsYHmZ5dnh-Bh_LmFh1XEeImMp16B39GZnz66UwdME7ydtROMLwzipbA-dR4AEXWXPNUuqS7mDg%3D",
+          "footnoteNumber": 10
+        }, {
+          "index": 2175,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEWPf6C8voqD0BWrzpox_C0UBBfpVY3n9QNG4bxIRgQTZA70H2e3JzUt5V4xMsPg3YvJGOHr9wxC_UdJqh9eexGLQhumSTtFIUgNeHNdfplNK1etjmFyr_29FmOMM_rs8B-4OwH_gfDVe0I2MQz7KlLzV7Ac8YNSbJl8XfINbeeoakUzb0t63mgy5YG",
+          "footnoteNumber": 11
+        }, {
+          "index": 2175,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHY-LA7nKhawTOFKUfz3Kt8o73IPCxMmB3YPdhMzgiVljWFKOUODe9f523jf7_O4l4lV-rZKX-rg5jNPyI5I7AjMtckwuiAKee1GCeIhcrDgBKR",
+          "footnoteNumber": 12
+        }, {
+          "index": 2451,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHEUuVA6kUed1ErTXKwZr-1u_-gjV1WmMo-fWvuxW9-HIRIV1NmbllbNDt52UlV_vbc52_d9FGD01eoCMHBCYQEY3GH9_FpjGmr6sF-WJ2ww9GbhpQvUNhJfBs1V7SGD8Zr",
+          "footnoteNumber": 2
+        }, {
+          "index": 2451,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQG_QRbyBc0V7G8HitvQC3g0msrJEZ1h-_LCXmLzzEAUzLqQz-ZxxWhEVIsqdD8Du7sUHnB8WyCOcvRTeHc92rqTRMGfbpY39stE2XpfZ8noGE8kXHlIvmO_xNeynlyngkWGbqbLgS-gGT21FLmFgUS9",
+          "footnoteNumber": 13
+        }, {
+          "index": 2540,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHbO8jjdKvmyNzl2fF-lapkBfIK3nwdH4TWugZ43jaEZIFIXzqZVI027RQeMSAg69trXPIokZsjXY16czm19qzahKIATKlykvTQ7F5MQnJmwkcsEk5rdfY0aSlJgGtcpbqetv91yLOfuUNMC1OcMg7Ux2bPIxKoAg%3D%3D",
+          "footnoteNumber": 5
+        }, {
+          "index": 2634,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEgGYir-WSrnkgh490-WDvCTnY31DAOPI1xgnOkBKjbC_jncY22k_WrK2rvdimTpCM5fDJOaPkN0WlsmbGnla_PF8KSfYmaOrFYtTPt38wtdmey_9o%3D",
+          "footnoteNumber": 14
+        }],
+        "webSearchQueries": ["\"Jobright\" founders", "Jobright AI", "Jobright", "\"Jobright\" company overview"],
+        "groundingSources": [{
+          "referenceNumber": 1,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEN9HubPPc-iFO-uiur39_9GHUogwLHi7UG2UCXRI2psSGX7tRe_SSlV_vZ6_1wOX7laMVNjd_gyxdLtYdUVeLaPFjlRVYBgkU5-QG9YgoYOfyBmT65yCZJgs0lZuf8R4dq2xl2FfucJozk5oYxlUHX_toJ32ftEs17wPebRIU%3D",
+          "title": "google.com"
+        }, {
+          "referenceNumber": 2,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHEUuVA6kUed1ErTXKwZr-1u_-gjV1WmMo-fWvuxW9-HIRIV1NmbllbNDt52UlV_vbc52_d9FGD01eoCMHBCYQEY3GH9_FpjGmr6sF-WJ2ww9GbhpQvUNhJfBs1V7SGD8Zr",
+          "title": "youtube.com"
+        }, {
+          "referenceNumber": 3,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGF1OjbMLzbJEtncEBTalNrTjYTMpKWz3iqFnG3i0MAIVx1wtfXYT9_2hL0Ue_Az3YoX0Tl6Ppk-7euif7kCFNqaGW0r9hUwxvTvSRtYWxqv54fHoE4M0hyhcz-Fz179tiy",
+          "title": "youtube.com"
+        }, {
+          "referenceNumber": 4,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHNF8_58RXc60h1iXVHhWeM2DA0WE4H5OHRsp1uzKc-FJTN_ZS5qzwK2YQjBqMUe1q5C8z05X8AKGD6xIdLVOmXMR6bPJNrV9m3bVUK6em7cZqio1Q7dZWOjzWqAJ1IRr13",
+          "title": "youtube.com"
+        }, {
+          "referenceNumber": 5,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHbO8jjdKvmyNzl2fF-lapkBfIK3nwdH4TWugZ43jaEZIFIXzqZVI027RQeMSAg69trXPIokZsjXY16czm19qzahKIATKlykvTQ7F5MQnJmwkcsEk5rdfY0aSlJgGtcpbqetv91yLOfuUNMC1OcMg7Ux2bPIxKoAg%3D%3D",
+          "title": "apple.com"
+        }, {
+          "referenceNumber": 6,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGBCpORqiddE_Y6gTARF10GTzvI19ger9PIxU7mUsfVzazSPaChNMX1VcYt1-AVzFcOJpdHNZMRCAt76G0bBt-FLESzcLoaIZjiOfuyiPrJzd9UflqABgIBFZ0XbT81-jOcmFWwPEY8",
+          "title": "jobcopilot.com"
+        }, {
+          "referenceNumber": 7,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFPsWktjCbLx17qC9wdWNnnCyX93hkmIjs7Gq0nXK17rbF31ejKLBp6szji0li7v6TDAAhdkt5piI9HzFY4Ydpolis_cyn2mvEVFcb-VrwULm-SQsmD012xEB1_AolHXA%3D%3D",
+          "title": "autoapplier.com"
+        }, {
+          "referenceNumber": 8,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEN9HubPPc-iFO-uiur39_9GHUogwLHi7UG2UCXRI2psSGX7tRe_SSlV_vZ6_1wOX7laMVNjd_gyxdLtYdUVeLaPFjlRVYBgkU5-QG9YgoYOfyBmT65yCZJgs0lZuf8R4dq2xl2FfucJozk5oYxlUHX_toJ32ftEs17wPebRIU%3D",
+          "title": "google.com"
+        }, {
+          "referenceNumber": 9,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEz4mn8g4DpLujixbFfZHsG7rkJFKqquyr-8RkOK89T95S49sSt5TT8bQ-8nyfyHOJQ8BMFjMRYOO6El6ilSr4snYXtmFUapK6F6ol6tRqSPtLDL9V1luR-0bf2jJDxKn-R",
+          "title": "jobright.ai"
+        }, {
+          "referenceNumber": 10,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFfwgIpmdZyZrjWQ_AIFxNZHazNeSDbsnFqP3qRCgClzYfKHFqyHWGtRQL-9d8ALxrVfEqRUb3u0UA5B03rdQSGxafbYe_hcsYHmZ5dnh-Bh_LmFh1XEeImMp16B39GZnz66UwdME7ydtROMLwzipbA-dR4AEXWXPNUuqS7mDg%3D",
+          "title": "substack.com"
+        }, {
+          "referenceNumber": 11,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEWPf6C8voqD0BWrzpox_C0UBBfpVY3n9QNG4bxIRgQTZA70H2e3JzUt5V4xMsPg3YvJGOHr9wxC_UdJqh9eexGLQhumSTtFIUgNeHNdfplNK1etjmFyr_29FmOMM_rs8B-4OwH_gfDVe0I2MQz7KlLzV7Ac8YNSbJl8XfINbeeoakUzb0t63mgy5YG",
+          "title": "tracxn.com"
+        }, {
+          "referenceNumber": 12,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHY-LA7nKhawTOFKUfz3Kt8o73IPCxMmB3YPdhMzgiVljWFKOUODe9f523jf7_O4l4lV-rZKX-rg5jNPyI5I7AjMtckwuiAKee1GCeIhcrDgBKR",
+          "title": "jobright.ai"
+        }, {
+          "referenceNumber": 13,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQG_QRbyBc0V7G8HitvQC3g0msrJEZ1h-_LCXmLzzEAUzLqQz-ZxxWhEVIsqdD8Du7sUHnB8WyCOcvRTeHc92rqTRMGfbpY39stE2XpfZ8noGE8kXHlIvmO_xNeynlyngkWGbqbLgS-gGT21FLmFgUS9",
+          "title": "remotejobassistant.com"
+        }, {
+          "referenceNumber": 14,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQEgGYir-WSrnkgh490-WDvCTnY31DAOPI1xgnOkBKjbC_jncY22k_WrK2rvdimTpCM5fDJOaPkN0WlsmbGnla_PF8KSfYmaOrFYtTPt38wtdmey_9o%3D",
+          "title": "github.com"
+        }]
+      },
+      "finishReason": "STOP",
+      "tokenCount": 687,
+      "parts": [{
+        "text": "Yes, **Jobright** (Jobright.ai) is an AI-powered job search and"
+      }, {
+        "text": " career acceleration platform designed to act as a personal \"AI job copilot\""
+      }, {
+        "text": ". It is built to automate and streamline the repetitive, time-consuming aspects of the job hunt—such"
+      }, {
+        "text": " as scrolling through countless listings, modifying resumes for individual roles, and filling out applications"
+      }, {
+        "text": ". \n\n### Key Features\n*   **AI Job Matching \u0026 Scoring:** Users can upload their resume to get matched"
+      }, {
+        "text": " against millions of U.S.-based listings. The"
+      }, {
+        "text": " tool provides a personalized \"Match Score\" for each job, indicating how well their experience aligns with the role\u0027s requirements"
+      }, {
+        "text": ".\n*   **Orion (AI Career Assistant):** The platform features an AI conversational agent named Orion"
+      }, {
+        "text": ". Users can ask Orion questions about specific roles, company culture, or how to address gaps in their qualifications for a certain"
+      }, {
+        "text": " position.\n*   **Resume Tailoring \u0026 Cover Letter Generation:** Job"
+      }, {
+        "text": "right uses AI to instantly rewrite resumes and generate tailored cover letters specific to a target job description to help candidates pass Applicant Tracking Systems (ATS)"
+      }, {
+        "text": ".\n*   **One-Click Auto-Apply:**"
+      }, {
+        "text": " Through a Google Chrome extension, the tool automates the process of filling out application forms on various job portals, significantly reducing"
+      }, {
+        "text": " manual data entry.\n*   **Interview Prep \u0026"
+      }, {
+        "text": " Negotiation:** The platform includes an \"Interview Copilot\" that provides practice questions, voice-based interview simulation, and strategies"
+      }, {
+        "text": " to negotiate compensation once an offer is received.\n\n### Founders and Background\nThe platform was"
+      }, {
+        "text": " co-founded by **Eric Cheng (CEO)**, a Carnegie Mellon alumnus and former early engineer at Box, alongside **"
+      }, {
+        "text": "Ethan Zheng (CTO)**, an AI specialist with a Ph.D. from the University of Hong Kong."
+      }, {
+        "text": " The idea grew from Cheng\u0027s travels across several U.S. cities, where he realized that many skilled professionals struggled"
+      }, {
+        "text": " to find work not due to a lack of talent, but because of information asymmetry and a lack of access to career resources"
+      }, {
+        "text": ". \n\nThe company is notable for scaling very rapidly with a highly lean team, raising several million dollars in venture"
+      }, {
+        "text": " funding, and growing its user base to over 2 million job seekers"
+      }, {
+        "text": ". \n\n### Pricing and Availability\nWhile Jobright offers some basic features for free,"
+      }, {
+        "text": " full access to its automated application engines, resume optimization, and advanced AI tools is typically offered under a premium tier, which"
+      }, {
+        "text": " costs around $20 per month (when billed annually)."
+      }, {
+        "text": " Currently, the platform mainly focuses on indexing and applying to **U.S.-based roles**, with a strong"
+      }, {
+        "text": " presence in tech, data, marketing, product management, and engineering sectors."
+      }, {
+        "text": "",
+        "thoughtSignature": "EscfCsQfAQw51sfIE/lxZZf0bQ/AgSw/txDZ6zhpD6Kj/hHumSnTH5IYWnCNcFrutYo1ntRTUypqBbP+anyUHPgGII3ZC5VEYowjR73iOr/P6KSo2dcXPyPtl8pTLRcNM1AhZ7huNZWbXSWHsFKexVXX8nA5s+CAL4H5inNnJHO/O59cWIsnX3LG4op/kSHOtY3bktDDQMpYCZxtKfEOtKqFyGzUZHrxD4zlto3ydX2URwbI4v45Wh4yUuMV3R8+Nh0rejxM3wvh6XDE9UOagOZHZEd4teIkaWFZpF10+reOfqoH4VAitkrXw9xykrqGri/QFts3DYsnne2B5NLRCmgEyayuhsFcih5ZhJWaXe4e21ObqjDbpXusXRmMBYxaTe2ADoB9rSO7/+L78cd9UqNABdnM9Qxz1gilf9PUPrhaLE9JUf72NkthE4mD1arVqVdYOtC0ZpdfOmx7T/NuFRMMNXpWbRKPpYZvJ41LJ2+JVve4b7jzR1oufgyLj/MdYnGBmEf6+qXYnIlXBoI16dT5EDeAGeE31KgWrHlM6PprWS2GYxo6yKt7cgZ6A0QkY00imAQbOlX3gR6JqMxhcfa9iuHooiCrvTRYPa4EYxew0T2ymQg9b8Pvnt93im+36pcYnhFoaXSDHhtSxuoeDKkt00WMrrjON4nNiNruHZXYj8iz+CXBPXV6s9g+64sAHcsQRJgR6jwkYOdEEMqnzLP6mCc5G6T1rM1UYB4chYIQI69IwLczLLl7TMnqjLI4MV1hSfhm2jwZLMVO5tvIUCFqPyBzx4fIMR9ATatSnCIcKUjFk+zvLwm2w3rC1Bws2LwWOI0dcHCbgIEjXXrt9OIgAZGBS3eSIy/uY0K65cvzIaO/n6334ogPfV2aOFNquAX0RTG67L/2uV65X5pmsVBJSp0yOENeN4UMUaeNTAvb3xFHhn8Kx9ajSnOj7ziAavvKuK8JCvRRGOzXsB5oZjIuPmV+SFagydqM9MWbIbEZbdaoW5+yLMCXLyCB3JY0ai0xa1wqYuO+GNuppCgeIGUJclW7AFibogmo/YWJwaoXJoE5M9Uoqz3rfCEAQ0d2enMHC22Nsv1qqIjYxCKYyipAqrKwmIaeHb+LUQrLBXa+IZRrr/qIgXeg485cnVlbpM1WPNxCXhE6QiuUI2eCYYVWl/r1/LxzQ0bteEyz67cTFrP6bLJIZTg0ukAYqFA9FA7LtxuhHvA5m3p0nCm4hYN2apKfw+QxXGKtNzaePih/XLgxmS/5BCuKLT1LIU5os6PEIW6cJVLTJ6QBtCqHuH0gOzZil9sRv3vMq8W61D7MjYB/Qu++B3ODdc2JC2o1K70DuzAHnmj87XbxgYHRM+Htf/meWAZjyuW6LipXdr5lQZDHkmNS0B7tAsSB4m/y7X49MIhqS0Y+vJAj3UXMSEd8oHmg1mz/r/j3m3QxvpsVBB5nW07g4CBdGHp0OdAschyE2BOwOIF/uY409PmNTaESYMNKDCOSdrCplZMVkhjzZEjmAsV7C30Ss4z/vYHYaVPcbO+Ch9AnCEiGe/VNV61htzyu9c6O1AVbcPHsG3oj+gB+EQ0x5H+kG481n0xg01DXxq2xbJLRn+iNtkjYFU1NGyXLMynES8qdTNEk+UoZbj2MF0hHbOTwVv3GRAOBmaFeQSuos3aBzibPOI0MM/ckljmYHIkstIGjufBgOU60ufJ4uWOFarh6XsgvZqEqsE3sLuLbf0HdnQqTuDDBIvH/qoJeAQSC7XXRpZ1sPxadtFp3ax8pygyMTEw2Tt22gJJkO1yvoh4eXV7P767D1tOVBfnsY1lCETD8CkgfXIIKCsvKvJisSSTSiIYDsiYIxRpwbDt6eeb8Kl5jMBy2PgW13eYfruJZQYAcqZ69jEqgnBYer2RecbEM6gDAaFVgOnv8kSKuKdFyrjJAGAXA3/b371q+VWzWQD4tql7aAjx6Z403zKPGv0gOn4mJq9Dh5rB1L3JW2omT9mNwqZmjbYS8I7damh4DwQCMBisC+HfYDxrTn31KIW13HO6EwPWoqHhRWbqVKD8ogwzpEjgs0omfMuM9bvq85lTls0Owj+YW67N5pbRrIG2bTzMG2Aji2my/CxWKg7xXX3rOaWqulsf4coSjNcWL7SramNco0CMeBpLzCNRLDiUx4gZZTFrNk1jDnMmcvrMskGzoLZLC5sSNmeEvONqXevrqPjlpqxEQ6EbJV6D8LdnUkdiP4+HQuRdqlCV9hpRgVt9Tx28KYwM3KB2c4z0pa+026Y8NJz6mZKl1VO9h168yLzYZVAgAxW02C3fp6LYYMQTT3ivLqln4QbiO11pWI6RUIe+oqUKHT36T/q8UQ3nBmhlEfjUQCIIGd3Jo6TCgmSNQjO6hRMo4KOXu5D4bVOjQFVrnGiDbYj3eYgYuHR9dfkJZBmxCSf+uKNkn6/hJgT+skW7ASW+QXCkcVWGClgWE+cQdVOjrNuc3FRVvHrJ8S9jZE9FKndrAyZZWor83R4P8B3cYWQ7N5Fq1QwahJA1IT7c+Ex6N8FD/SQDquGS6f5+31KKzcl17i8HrmHl1kRm6lqrW+oVhZfn8HiO5NCer4efxcliIp+nUbPvBPSQcByJmcnZk7bJet6QFkESsip5Y3wvf9u/RMevz3WPhDH9WqNJ2RtXcv1KK6RKGVOge48w+SZMieTUF62rwZCAS+srUTQUNaXtIMh1gB+PlkAXmQBscHMhe6WrUXMM0XMSIBEngiaNMC3B3incvDsqrDFsjAjPwM9eN1bQeGL86kj0cCrB6xoAA04YY2YvIYFv1jUHX6jTS+ps35XaQtqMG7Dy9sZ2mwkhL+/yK9F/Al0lRTAEilIah/4YtQXd0mDjUJ2uWd0o4zdv3jycWDbZGo0uzbbzwZwRh8MRv53JA5a+crjQO4d8mLDr4e6m/r7o3qGXE9LxHNv7w/pRxwRnVi9L8JX3U5DcTsFyFTHPgO9gB4WVKlT4Cf/2fLoiY9krefKK8SZHisO8rhg0IJMZRTQHJhbSJmYD18djaAjLgthcbwpzfXdc74ZUMr8hTvTJes7fJbBzSZBQB0Y2JksqXL3x9h9l/AdJz9UNTwiU0ucKSoFMf0T3fgCSuiPIlgGnXGEG0ORXIVu5di1sa35Yt3NZfjzCUa4WQopZibtRWthjMJOaaKQ20bMhSiU96/U1fJyBKkRBcHbcpOP/lmoYRJUQAU0YrUoSwa9iQi+P4NOzYghL7zHSQyursvW+vcojkdIlxCFIa5HZ7fHaPEO781PP4Ibs5bfgk41LJRPtHuKLxKSfVkRYkr9Z2Qw5kIP9vxdjDLKM8XiPZTANyTlGOTEVHZoCXfO92hXJuNQmb01l2hCiJfmc3jCmyVX04pdwJL8S4t4qWEDfiz1vPJvdfNaxzL/ERKwTwgIJlCppfCayF2uqiIkeh29H0byrIEOuATroM1Djpj1WLj61nOZLgNuOGpJZVLthX72kn8PGVMOlgg1HZQOL9LDX/ur8miSviuHgrGVRV8XRIC1lRxhvxx9EsM2K1Sbj76xmaKRvJOcGYVce9HQMsbNgLSDD1i2qRePs8lHS+m5xUvh1EJggB7bmG05wcYnmZ3RbxB85hib5LejMfuCYc0CVvPYPURG2MwZaZDOBomeI5SqiMqVxqpPllr6M4h+B+yHHPL2r6FU6KJZy14EkJaHKbSDk4hDGD+oJcd0QUCmR4Vc627IdV0fsPidwKjAJhfaB8SPsHpBzh4PQfbT/lNW6S4tgwkrHtHbC9V6g7GsWJOvAU4wPUkwfmcuJkPe6564KKk11+3ld37kJ4Fv66BjmyTyPYzGVhvNYZmFAIAoVNoQnQQ0xEGk3JMI+q1P+6Ot76gIvYOJq6XqalC6PkCMH+BUeMdLDapl0IXhsOW01/MxbP8YEa9FYdRrHtUmP+FZ2peKxIVRlkDh/AbHdBKVA4SXRrPhF6hXrVlPk6oB3/3/8iLKNENhxH9C+9gr7Io6FbraLPoz3CPacz6yyzbEE4vu2YAuFbt/ZIBV4IbVQoR1B7vrTF9KS7LobYY5Kwl+2gqCS178JhKhuMNFi2NLABWVF7y7gcfmTVOlr+O3IXMZ4z6Cf/MEg6KcBrHMrw95ECWHbJX5ic6b3OTndtiJQXeRm1Hy6SZUc1MjZjLwk5zLrB8+75FSTOFcp5cMtXzdB6ZmLbmr4ml8poHGgBUZYu/na7FNdiazLgQBLq1iBdSid41ZysWxBVTioo9rbsAY4DPRKGaf8w0pq+/8nSyqhhdczKhoM4KU6niomyRLLxwrSX5n//5XBS2Z5w6K6FijAikSedajkzwGVx27YAtKCWeDWseLlatOUiKPkxZtrv8fdFhUgDlrHA22IcPraZ7V7KMsf/J0uI6zczcBbhnouvRHRtiWMemFFUT2FCs5scEhQwNxI1vN6B30yK6ILIeMGqZgg0UUAsFO4LDAps+5Qd0i/Hwh8q3JyrFKvMQbk42tm9IdPpMRVouc0C4hHlyVGt6xduVfEqsI+s+pZp7d0LL+Xul7AfN7S1Us5uBxSz48TkGpumPuC8fLvCH2i6bZzxItKEUO98L9qtfWmvbjix0MGkMZZBBN0V0w/2S5pgn9sXtG5n9pqA3iW/P+4hCSYLQ+85NVE/+F8A2yUvY/NDJigklwwayjBhb/pEBIZ8U/LMtyjIWFW3prjblzL2+dExZVnpykjaXC7Bx6Z07vrJA1TfHy/75xftYcq6dODxXtEPRoGaCktxzzFHZTpAENU9Ijz24J8SYGA84JeyE9tnOmrjUoeUUKo4L5AsYUdmXmmeGQYC8cKHPfbO4reJ4ErXBGJaa8cYTfAAlQD6KVmOXZecvEz3uOkSPCjKc5/zyR5AiylWqkTrn1ADD2ofLx3+lx9abpXe9mj7Pp7RaK4OvkqCC7Ze79HiEnzSz5LYu1ud1yDgX9F/lrsCFQJREysV6K77GDhmNU0XXEZoXVWv7Mqkv0en/a8Z/YbRbijKyLkMmrnFDJd/DFUpJjgvsJhMWrP7ySWpjdmg9QBgyVc+xRukfkJe1PZ8ajCmsOka0eql/OFCyya8wYeLRkznMsPiriCMwVCHO9f4UAQDMGLYUZv6jZUAR0Y8/CuozGjUaes5WIw+TeYf7cm1c2y03tNjRvUOR76vbikDNrS1Qj8as/gAx5LSMpos1YEMqZlsOJ7Qwx8ptxO2+5OvzSU7j5WKsI/9tf2w8mFqBDiinEC2u1iXBxwiLYKaO5Oh5OmEEhaDoKD/NVPFtmO63Fg/semTDfAp9zc8ZMakDi9UZl4Pv/llY3LOftZDILbkAYqN7VSybcK/7Dmq79P3Lpmb9YIrtChBMkawcYz6p1W85Fu3ULUrCeDVuSOQ+QXfEdkPAsk3etJ+tQ=="
+      }],
+      "createTime": "2026-07-02T19:41:50.975Z"
+    }, {
+      "text": "it provides wonderful functionality - sort by skill matching score.\n\nYou know thare are nearly 1M jobs, each job has several skills, and there are nearly 1M users that has over 100 skills per user, user\u0027s skills are different.\nProblem is jobright calculates skill matching score accurately without rough estimation like using embedding vector.\n\n\nHow is this possible?",
+      "role": "user",
+      "tokenCount": 80,
+      "createTime": "2026-07-02T19:43:28.445Z"
+    }, {
+      "text": "**Analyzing Jobright Scaling**\n\nI\u0027m now diving into the computational scaling challenges surrounding Jobright\u0027s \"sort by skill matching score\" feature. Currently, I\u0027m focusing on the implications of sorting a dataset of roughly one million jobs. My main goal is to map this functionality to a specific scaling problem.\n\n\n**Investigating Matching Accuracy**\n\nI\u0027m now grappling with the core technical hurdles of accurately matching a vast number of users (1 million+) to a similar quantity of jobs, avoiding rough estimations, and ensuring the speed is near-real-time. My initial questions revolve around how Jobright achieves accurate skill matching at this scale without exorbitant costs or performance bottlenecks. I am now exploring the implications of vector databases and their limitations in delivering the needed precision for token/skill matching.\n\n\n**Exploring Inverted Indexes**\n\nI\u0027m now seriously considering inverted indexes for Jobright\u0027s skill matching. Representing skills as structured tokens seems promising. Using an inverted index, I can query user skills against the job index with incredibly fast, accurate results. Modern search engines\u0027 BM25 and custom scoring models offer millisecond latency for millions of jobs, enabling exact token matching. My focus is on determining which approach delivers the best accuracy/performance trade-off for Jobright.\n\n\n**Refining Scaling Strategies**\n\nI\u0027m now refining Jobright\u0027s scaling strategies, building upon previous thoughts. I\u0027ve broken down skill matching. My current focus is on a two-stage approach to reduce complexity: first, a preliminary filter using a fast inverted index or vector search; second, apply the precise skill matching score only to the top candidates. I\u0027m also exploring pre-computation and batching to filter irrelevant jobs, as real-time calculation isn\u0027t always needed. Additionally, I am investigating graph databases and knowledge graphs to represent and map skills accurately.\n\n\n**Analyzing Jobright\u0027s Scaling**\n\nI\u0027m currently captivated by Jobright\u0027s ability to deliver real-time, precise skill matching across vast datasets. The algorithmic and architectural magic behind this real-time feat intrigues me, especially the sorting aspects. I\u0027m focusing on the computational hurdles and how a modern solution tackles them.\n\n\n**Optimizing Skill Matching**\n\nI\u0027m now diving deep into the computational complexity, specifically the brute-force approach. A million users and a million jobs lead to a trillion comparisons! Even a microsecond per comparison balloons into weeks of CPU time. The real-time sort-by-match scenario is just as daunting: millions of comparisons on demand. I\u0027m focusing on the algorithmic breakthroughs needed to achieve instant, exact skill matching.\n\n\n**Unveiling Indexing Techniques**\n\nI\u0027m examining the inverted index\u0027s role as a primary filter. Instead of the brute-force method, I appreciate how this dramatically reduces comparisons, turning a potential trillion into thousands. I\u0027m focusing on the index\u0027s structure, especially how skills, categories, and location are indexed. This first pass drastically reduces the candidate pool, making real-time matching plausible.\n\n\n**Deconstructing the Architecture**\n\nI\u0027m now focusing on Jobright\u0027s two-stage architecture: a fast initial retrieval phase using efficient database operations like inverted indexes, narrowing down the field of 1 million jobs to a smaller set of candidates. This preliminary step makes the expensive, complex skill-matching algorithm of the second stage manageable. It’s a classic low-cost, high-recall vs. high-cost, high-precision trade-off.\n\n\n**Exploring Skill Relationships**\n\nI\u0027m now thinking about skill relationships. Skills are structured as a graph or taxonomy; \"React.js\" is a child of \"JavaScript,\" which is a child of \"Frontend Development.\" Exact distance or hierarchical weights become relevant when a user skill matches a job\u0027s parent skill. I\u0027m focusing on how fast bitwise operations can be leveraged using compact binary representations to check overlaps, parent-child matches, and missing skills in nanoseconds. This should be very fast.\n\n\n**Evaluating Intersection Performance**\n\nI\u0027m now zeroing in on the intersection step itself, noting its almost negligible computational cost. With a user skill set of around 100 skills and a job skill set of around 10, the intersection, even when applied to thousands of candidate jobs, is super fast, which is critical for real-time responsiveness. This approach avoids excessive CPU usage. I\u0027m focusing on the performance gains of this.\n\n\n",
+      "role": "model",
+      "tokenCount": 2645,
+      "isThought": true,
+      "thinkingBudget": -1,
+      "parts": [{
+        "text": "**Analyzing Jobright Scaling**\n\nI\u0027m now diving into the computational scaling challenges surrounding Jobright\u0027s \"sort by skill matching score\" feature. Currently, I\u0027m focusing on the implications of sorting a dataset of roughly one million jobs. My main goal is to map this functionality to a specific scaling problem.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Investigating Matching Accuracy**\n\nI\u0027m now grappling with the core technical hurdles of accurately matching a vast number of users (1 million+) to a similar quantity of jobs, avoiding rough estimations, and ensuring the speed is near-real-time. My initial questions revolve around how Jobright achieves accurate skill matching at this scale without exorbitant costs or performance bottlenecks. I am now exploring the implications of vector databases and their limitations in delivering the needed precision for token/skill matching.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Exploring Inverted Indexes**\n\nI\u0027m now seriously considering inverted indexes for Jobright\u0027s skill matching. Representing skills as structured tokens seems promising. Using an inverted index, I can query user skills against the job index with incredibly fast, accurate results. Modern search engines\u0027 BM25 and custom scoring models offer millisecond latency for millions of jobs, enabling exact token matching. My focus is on determining which approach delivers the best accuracy/performance trade-off for Jobright.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Refining Scaling Strategies**\n\nI\u0027m now refining Jobright\u0027s scaling strategies, building upon previous thoughts. I\u0027ve broken down skill matching. My current focus is on a two-stage approach to reduce complexity: first, a preliminary filter using a fast inverted index or vector search; second, apply the precise skill matching score only to the top candidates. I\u0027m also exploring pre-computation and batching to filter irrelevant jobs, as real-time calculation isn\u0027t always needed. Additionally, I am investigating graph databases and knowledge graphs to represent and map skills accurately.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Analyzing Jobright\u0027s Scaling**\n\nI\u0027m currently captivated by Jobright\u0027s ability to deliver real-time, precise skill matching across vast datasets. The algorithmic and architectural magic behind this real-time feat intrigues me, especially the sorting aspects. I\u0027m focusing on the computational hurdles and how a modern solution tackles them.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Optimizing Skill Matching**\n\nI\u0027m now diving deep into the computational complexity, specifically the brute-force approach. A million users and a million jobs lead to a trillion comparisons! Even a microsecond per comparison balloons into weeks of CPU time. The real-time sort-by-match scenario is just as daunting: millions of comparisons on demand. I\u0027m focusing on the algorithmic breakthroughs needed to achieve instant, exact skill matching.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Unveiling Indexing Techniques**\n\nI\u0027m examining the inverted index\u0027s role as a primary filter. Instead of the brute-force method, I appreciate how this dramatically reduces comparisons, turning a potential trillion into thousands. I\u0027m focusing on the index\u0027s structure, especially how skills, categories, and location are indexed. This first pass drastically reduces the candidate pool, making real-time matching plausible.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Deconstructing the Architecture**\n\nI\u0027m now focusing on Jobright\u0027s two-stage architecture: a fast initial retrieval phase using efficient database operations like inverted indexes, narrowing down the field of 1 million jobs to a smaller set of candidates. This preliminary step makes the expensive, complex skill-matching algorithm of the second stage manageable. It’s a classic low-cost, high-recall vs. high-cost, high-precision trade-off.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Exploring Skill Relationships**\n\nI\u0027m now thinking about skill relationships. Skills are structured as a graph or taxonomy; \"React.js\" is a child of \"JavaScript,\" which is a child of \"Frontend Development.\" Exact distance or hierarchical weights become relevant when a user skill matches a job\u0027s parent skill. I\u0027m focusing on how fast bitwise operations can be leveraged using compact binary representations to check overlaps, parent-child matches, and missing skills in nanoseconds. This should be very fast.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Evaluating Intersection Performance**\n\nI\u0027m now zeroing in on the intersection step itself, noting its almost negligible computational cost. With a user skill set of around 100 skills and a job skill set of around 10, the intersection, even when applied to thousands of candidate jobs, is super fast, which is critical for real-time responsiveness. This approach avoids excessive CPU usage. I\u0027m focusing on the performance gains of this.\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-07-02T19:43:28.446Z"
+    }, {
+      "text": "The ability to accurately match and instantly sort millions of jobs against a user\u0027s 100+ unique skills—without relying on slow, \"rough\" dense vector calculations—is a classic engineering challenge in Information Retrieval (IR) and Recommendation Systems. \n\nTo achieve exact, highly precise skill matching at this scale in milliseconds, systems like Jobright do not perform a naive \"Cartesian product\" (calculating the score for 1 million users against 1 million jobs, which would equal 1 trillion operations). Instead, they employ a highly optimized **two-stage retrieval and ranking pipeline**, combined with **structured data representations**.\n\n---\n\n### 1. The Two-Stage \"Retrieve and Re-rank\" Architecture\nThis is the industry-standard blueprint used by high-scale search engines (such as Netflix, LinkedIn, and Spotify). Rather than evaluating all 1 million jobs using a heavy, precise algorithm, the process is split into two phases:\n\n*   **Stage 1: Cheap Retrieval (High Recall, Low Cost):** \n    First, the system applies hard constraints (e.g., target job title, location, salary, experience level, and a few core required skills) using highly efficient inverted indexes (like Elasticsearch, OpenSearch, or ClickHouse). \n    *   This instantly narrows the pool of 1,000,000 active jobs down to a highly relevant subset of **1,000 to 5,000 candidate jobs** in less than 5 milliseconds.\n*   **Stage 2: Accurate Re-ranking (Low Recall, High Precision):**\n    Now, the exact, computationally heavy \"skill-matching\" algorithm is executed *only* on those 1,000 to 5,000 candidate jobs. Evaluating a user\u0027s 100 skills against 1,000 jobs requires only 100,000 comparison operations—which modern CPU architectures can process in **2 to 5 milliseconds**.\n\n---\n\n### 2. Replacing Vector Embeddings with Skill Ontologies (Knowledge Graphs)\nWhile dense vector embeddings (like cosine similarity) are great for fuzzy, conceptual matching, they are computationally heavy, suffer from \"loss of detail,\" and can make mistakes (for example, treating \"Java\" and \"JavaScript\" as highly similar because they share letters and domains). \n\nTo calculate an exact match score, systems utilize a **Skill Ontology (Knowledge Graph)**:\n*   **Hierarchical Mapping:** The system knows that \"React.js\" is a child of \"JavaScript\" and \"Frontend Development.\"\n*   **Graph Distance:** If a job requires \"JavaScript\" and you have \"React,\" the system awards a partial, highly precise score based on their exact distance in the skill tree, rather than a fuzzy vector approximation.\n*   **Pre-Normalization:** When a user uploads a resume or a job is scraped, the unstructured text is parsed once, and the skills are normalized to \"Canonical Skill IDs\" in a central database.\n\n---\n\n### 3. Sparse Representations and Bitwise Operations\nOnce skills are mapped to unique IDs, calculating the exact overlap becomes a highly optimized mathematical operation. \n\n*   **Sparse Vectors:** A user’s profile is stored as a list of active Skill IDs: `[104, 302, 1005, ...]`. A job\u0027s requirements are stored similarly: `[302, 1005, 9081]`.\n*   **Array Intersection:** Finding the exact overlap is reduced to intersecting two small, sorted arrays of integers. The CPU can determine which skills match, which are missing, and which are \"nice-to-have\" using basic set intersections in nanoseconds.\n*   **Bitmasks:** In highly optimized search engines, skills are represented as massive bit vectors. The CPU can use hardware-level bitwise operations (`AND`, `OR`, `POPCNT`) to compare hundreds of skills simultaneously in a single CPU cycle.\n\n---\n\n### 4. Pre-Computation and Caching\nBecause job listings and user resumes do not change every second, the heaviest parts of the computation are processed **asynchronously (offline)**:\n*   **Job Extraction:** When a new job is posted, its required skills, experience weights, and metadata are extracted, structured, and indexed immediately.\n*   **User Profile Caching:** When you upload your resume, your 100+ normalized skills are saved to an in-memory database (like Redis).\n*   **On-Demand Sorting:** When you click \"Sort by Match Score,\" the system only has to perform the fast array intersection between your pre-cached skill vector and the pre-computed skill vectors of the filtered candidate jobs.\n\n### Summary\nBy filtering out 99.9% of irrelevant jobs first using cheap database lookups, and then performing lightning-fast set intersections on the remaining candidate pool using normalized skill taxonomies, Jobright is able to deliver a highly accurate match score instantly—all while keeping compute costs remarkably low.",
+      "role": "model",
+      "grounding": {
+        "corroborationSegments": [{
+          "index": 650,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQG6BZon4I6gN-ORDqbxPhFYv9tYxb8jBG-2Pq9XKUpovkbMWnMmylgaLp0F6ubD25lcVt_fxb6ZaEf8DCoHyX0nKXUpwSNQ7K9PsBLVlxFQuQoRcE3Owu1tN3C6VzzfwgqC",
+          "footnoteNumber": 1
+        }, {
+          "index": 650,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGPGxC4I8Dk65xPcpFESuo2Gw1cJebV-h3RvJZl5ncoM-l-lulir8Jh0vfqQrkFqqtKSFCngy2C_dDifUFVr5WfHAFiRtLS8gwCU_Zz33zlfRM8PV8MCfzvgdQrptRiCg%3D%3D",
+          "footnoteNumber": 2
+        }, {
+          "index": 2750,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFVW2IL71gzL8j4UyWvQ3KfUcHb2Wch8NxjmxoEQKZp0O0qJGquoTVySDsPaNYhGoPQDpH8sy_lfeKO_17T5oIe6pTs1yOYb-94u6t5sxzW7pkAHRUOZw%3D%3D",
+          "footnoteNumber": 3
+        }, {
+          "index": 2750,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHE6w3k_4dwdfU8mnKzFWTCnwCLZV3gR8z5nBAydEs4mqDczzrYOrOcKdDiHpxB1PWB4OPAfcJEfh_UUqM-5tOhSOyj0J3A6Rso0Bv3I5q-alOL_z0QGP3L4-X_bD3AVynt3iIvzasJqWHibsXU-dYtkLLBS2bAFa5lBWKyEuNqQtImycJYKKXjtOF1xDIdiXquelHjXbXSD9EGIw%3D%3D",
+          "footnoteNumber": 4
+        }, {
+          "index": 3946,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFVW2IL71gzL8j4UyWvQ3KfUcHb2Wch8NxjmxoEQKZp0O0qJGquoTVySDsPaNYhGoPQDpH8sy_lfeKO_17T5oIe6pTs1yOYb-94u6t5sxzW7pkAHRUOZw%3D%3D",
+          "footnoteNumber": 3
+        }, {
+          "index": 3946,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHE6w3k_4dwdfU8mnKzFWTCnwCLZV3gR8z5nBAydEs4mqDczzrYOrOcKdDiHpxB1PWB4OPAfcJEfh_UUqM-5tOhSOyj0J3A6Rso0Bv3I5q-alOL_z0QGP3L4-X_bD3AVynt3iIvzasJqWHibsXU-dYtkLLBS2bAFa5lBWKyEuNqQtImycJYKKXjtOF1xDIdiXquelHjXbXSD9EGIw%3D%3D",
+          "footnoteNumber": 4
+        }, {
+          "index": 4082,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFVW2IL71gzL8j4UyWvQ3KfUcHb2Wch8NxjmxoEQKZp0O0qJGquoTVySDsPaNYhGoPQDpH8sy_lfeKO_17T5oIe6pTs1yOYb-94u6t5sxzW7pkAHRUOZw%3D%3D",
+          "footnoteNumber": 3
+        }],
+        "webSearchQueries": ["Jobright tech stack search engine matching", "Jobright.ai matching algorithm how it works"],
+        "groundingSources": [{
+          "referenceNumber": 1,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQG6BZon4I6gN-ORDqbxPhFYv9tYxb8jBG-2Pq9XKUpovkbMWnMmylgaLp0F6ubD25lcVt_fxb6ZaEf8DCoHyX0nKXUpwSNQ7K9PsBLVlxFQuQoRcE3Owu1tN3C6VzzfwgqC",
+          "title": "youtube.com"
+        }, {
+          "referenceNumber": 2,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQGPGxC4I8Dk65xPcpFESuo2Gw1cJebV-h3RvJZl5ncoM-l-lulir8Jh0vfqQrkFqqtKSFCngy2C_dDifUFVr5WfHAFiRtLS8gwCU_Zz33zlfRM8PV8MCfzvgdQrptRiCg%3D%3D",
+          "title": "autoapplier.com"
+        }, {
+          "referenceNumber": 3,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFVW2IL71gzL8j4UyWvQ3KfUcHb2Wch8NxjmxoEQKZp0O0qJGquoTVySDsPaNYhGoPQDpH8sy_lfeKO_17T5oIe6pTs1yOYb-94u6t5sxzW7pkAHRUOZw%3D%3D",
+          "title": "jobright.ai"
+        }, {
+          "referenceNumber": 4,
+          "uri": "https://www.google.com/url?sa\u003dE\u0026q\u003dhttps%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQHE6w3k_4dwdfU8mnKzFWTCnwCLZV3gR8z5nBAydEs4mqDczzrYOrOcKdDiHpxB1PWB4OPAfcJEfh_UUqM-5tOhSOyj0J3A6Rso0Bv3I5q-alOL_z0QGP3L4-X_bD3AVynt3iIvzasJqWHibsXU-dYtkLLBS2bAFa5lBWKyEuNqQtImycJYKKXjtOF1xDIdiXquelHjXbXSD9EGIw%3D%3D",
+          "title": "whatjobs.com"
+        }]
+      },
+      "finishReason": "STOP",
+      "tokenCount": 1107,
+      "parts": [{
+        "text": "The ability to accurately match and instantly sort millions of jobs against a user\u0027s 100"
+      }, {
+        "text": "+ unique skills—without relying on slow, \"rough\" dense vector calculations—is a classic engineering challenge in Information Retrieval ("
+      }, {
+        "text": "IR) and Recommendation Systems. \n\nTo achieve exact, highly precise skill matching at this scale in milliseconds, systems like Jobright do"
+      }, {
+        "text": " not perform a naive \"Cartesian product\" (calculating the score for 1 million users against 1 million jobs, which would"
+      }, {
+        "text": " equal 1 trillion operations). Instead, they employ a highly optimized **two-stage retrieval and ranking pipeline**, combined with **structured"
+      }, {
+        "text": " data representations**.\n\n---\n\n### 1. The"
+      }, {
+        "text": " Two-Stage \"Retrieve and Re-rank\" Architecture\nThis is the industry-standard blueprint used by high-scale"
+      }, {
+        "text": " search engines (such as Netflix, LinkedIn, and Spotify). Rather than evaluating all 1 million jobs using a heavy, precise algorithm, the"
+      }, {
+        "text": " process is split into two phases:\n\n*   **Stage 1: Cheap Retrieval (High Recall, Low Cost):** \n    "
+      }, {
+        "text": "First, the system applies hard constraints (e.g., target job title, location, salary, experience level, and a"
+      }, {
+        "text": " few core required skills) using highly efficient inverted indexes (like Elasticsearch, OpenSearch, or ClickHouse). \n    *"
+      }, {
+        "text": "   This instantly narrows the pool of 1,000,000 active jobs down to a highly relevant subset"
+      }, {
+        "text": " of **1,000 to 5,000 candidate jobs** in less than 5 milliseconds.\n"
+      }, {
+        "text": "*   **Stage 2: Accurate Re-ranking (Low Recall, High Precision):**\n    Now, the exact"
+      }, {
+        "text": ", computationally heavy \"skill-matching\" algorithm is executed *only* on those 1,000 to 5,000"
+      }, {
+        "text": " candidate jobs. Evaluating a user\u0027s 100 skills against 1,000 jobs requires only 10"
+      }, {
+        "text": "0,000 comparison operations—which modern CPU architectures can process in **2 to 5 milliseconds**.\n\n---"
+      }, {
+        "text": "\n\n### 2. Replacing Vector Embeddings with Skill Ontologies (Knowledge Graphs)\nWhile dense vector embeddings (like cosine"
+      }, {
+        "text": " similarity) are great for fuzzy, conceptual matching, they are computationally heavy, suffer from \"loss of detail,\" and can make"
+      }, {
+        "text": " mistakes (for example, treating \"Java\" and \"JavaScript\" as highly similar because they share letters and domains). \n\nTo"
+      }, {
+        "text": " calculate an exact match score, systems utilize a **Skill Ontology (Knowledge Graph)**:\n*   **Hierarchical Mapping"
+      }, {
+        "text": ":** The system knows that \"React.js\" is a child of \"JavaScript\" and \"Frontend Development.\"\n*   **"
+      }, {
+        "text": "Graph Distance:** If a job requires \"JavaScript\" and you have \"React,\" the system awards a partial, highly precise score"
+      }, {
+        "text": " based on their exact distance in the skill tree, rather than a fuzzy vector approximation.\n*   **Pre-Normalization"
+      }, {
+        "text": ":** When a user uploads a resume or a job is scraped, the unstructured text is parsed once, and the skills are normalized"
+      }, {
+        "text": " to \"Canonical Skill IDs\" in a central database.\n\n---"
+      }, {
+        "text": "\n\n### 3. Sparse Representations and Bitwise Operations\nOnce skills are mapped to unique IDs, calculating the exact overlap"
+      }, {
+        "text": " becomes a highly optimized mathematical operation. \n\n*   **Sparse Vectors:** A user’s profile is stored as a list"
+      }, {
+        "text": " of active Skill IDs: `[104, 302, 1005, ...]`. A"
+      }, {
+        "text": " job\u0027s requirements are stored similarly: `[302, 1005, 9081]`.\n"
+      }, {
+        "text": "*   **Array Intersection:** Finding the exact overlap is reduced to intersecting two small, sorted arrays of integers. The CPU"
+      }, {
+        "text": " can determine which skills match, which are missing, and which are \"nice-to-have\" using basic set intersections"
+      }, {
+        "text": " in nanoseconds.\n*   **Bitmasks:** In highly optimized search engines, skills are represented as massive bit vectors"
+      }, {
+        "text": ". The CPU can use hardware-level bitwise operations (`AND`, `OR`, `POPCNT`) to compare hundreds"
+      }, {
+        "text": " of skills simultaneously in a single CPU cycle.\n\n---\n\n### 4. Pre-Computation and Caching\nBecause job"
+      }, {
+        "text": " listings and user resumes do not change every second, the heaviest parts of the computation are processed **asynchronously (offline)**:\n"
+      }, {
+        "text": "*   **Job Extraction:** When a new job is posted, its required skills, experience weights, and metadata are extracted, structured"
+      }, {
+        "text": ", and indexed immediately.\n*   **User Profile"
+      }, {
+        "text": " Caching:** When you upload your resume, your 100+ normalized skills are saved to an in-memory database"
+      }, {
+        "text": " (like Redis).\n*   **On-Demand Sorting:** When you click \"Sort by Match Score"
+      }, {
+        "text": ",\" the system only has to perform the fast array intersection between your pre-cached skill vector and the pre-computed skill"
+      }, {
+        "text": " vectors of the filtered candidate jobs.\n\n### Summary\nBy filtering out 99.9% of irrelevant jobs first using cheap"
+      }, {
+        "text": " database lookups, and then performing lightning-fast set intersections on the remaining candidate pool using normalized skill taxonomies, Jobright is"
+      }, {
+        "text": " able to deliver a highly accurate match score instantly—all while keeping compute costs remarkably low."
+      }, {
+        "text": "",
+        "thoughtSignature": "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"
+      }],
+      "createTime": "2026-07-02T19:43:47.900Z"
+    }, {
+      "text": "Is this the fastest algorithm, is there are much more faster algorithm?",
+      "role": "user",
+      "tokenCount": 15,
+      "createTime": "2026-07-02T20:20:58.980Z"
+    }, {
+      "text": "**Assessing Algorithmic Speed**\n\nI\u0027m currently trying to grasp the core of the user\u0027s question, which hinges on the speed of a specific \"Retrieve and Re-rank\" approach using several techniques. My focus is on understanding whether this approach is the absolute *fastest* or if there are significantly quicker alternatives. I am beginning to break down each component, to identify where performance bottlenecks might reside.\n\n\n**Evaluating Algorithm Efficiency**\n\nI\u0027m now digging into the technical landscape. I am attempting to understand the limitations on algorithm speed, particularly the time complexity of different approaches. Specifically, I\u0027m examining a naive $O(N \\cdot K)$ approach and the \"Retrieve and Re-rank\" method, assessing their scalability. I\u0027m exploring if even faster solutions, such as $O(1)$ lookup or pre-computed matrix factorization, might provide a performance edge. I am now evaluating the applicability of pre-computed matrix factorization/collaborative filtering for skill matching, and the implications of this approach.\n\n\n**Exploring Faster Solutions**\n\nI am now focusing on quicker algorithm options. I\u0027m considering Locality-Sensitive Hashing (LSH) for sparse vectors as a sub-linear time alternative to exact matches. Exploring Hierarchical Navigable Small World (HNSW) graphs or other ANN vector search methods, despite the need for \"exact\" results, offers another dimension. I\u0027m also examining the advantages of inverted indexes with MaxScore/WAND algorithms for efficient pruning. Also considering Hardware acceleration.\n\n\n**Analyzing Advanced Techniques**\n\nI\u0027m now focusing on advanced techniques used for further optimization. I\u0027ve been looking at how \"Weak AND\" (WAND) and Block-Max WAND (BMW) algorithms are used to optimize the second stage, by skipping evaluation of mathematically unsuitable documents. These algorithms dramatically reduce the second-stage complexity from potentially O(M_cand) to almost O(K log K). I also want to explore MinHash and Locality-Sensitive Hashing (LSH) for set intersections.\n\n\n**Investigating Skill Matching Algorithms**\n\nI am now delving into optimizations, specifically focusing on MinHash, a set intersection technique. I am examining its constant time O(1) efficiency through hash table lookups, and how it approximates Jaccard similarity using \"signatures.\" I am also analyzing SIMD and hardware acceleration via AVX-512, which compares numerous skills simultaneously. Finally, I\u0027m exploring the implications of pre-computing user-job affinity matrices.\n\n\n**Refining Explanation Details**\n\nI am now focusing on refining the explanations, and adopting a humble tone, avoiding overconfidence. I\u0027m clarifying how each algorithm functions, such as WAND, to illustrate exact and approximate matching. WAND and Block-Max WAND are emphasized as these guarantees \"exact\" scoring by skipping calculations. I am considering the trade-offs of the different approaches.\n\n\n",
+      "role": "model",
+      "tokenCount": 1657,
+      "isThought": true,
+      "parts": [{
+        "text": "**Assessing Algorithmic Speed**\n\nI\u0027m currently trying to grasp the core of the user\u0027s question, which hinges on the speed of a specific \"Retrieve and Re-rank\" approach using several techniques. My focus is on understanding whether this approach is the absolute *fastest* or if there are significantly quicker alternatives. I am beginning to break down each component, to identify where performance bottlenecks might reside.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Evaluating Algorithm Efficiency**\n\nI\u0027m now digging into the technical landscape. I am attempting to understand the limitations on algorithm speed, particularly the time complexity of different approaches. Specifically, I\u0027m examining a naive $O(N \\cdot K)$ approach and the \"Retrieve and Re-rank\" method, assessing their scalability. I\u0027m exploring if even faster solutions, such as $O(1)$ lookup or pre-computed matrix factorization, might provide a performance edge. I am now evaluating the applicability of pre-computed matrix factorization/collaborative filtering for skill matching, and the implications of this approach.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Exploring Faster Solutions**\n\nI am now focusing on quicker algorithm options. I\u0027m considering Locality-Sensitive Hashing (LSH) for sparse vectors as a sub-linear time alternative to exact matches. Exploring Hierarchical Navigable Small World (HNSW) graphs or other ANN vector search methods, despite the need for \"exact\" results, offers another dimension. I\u0027m also examining the advantages of inverted indexes with MaxScore/WAND algorithms for efficient pruning. Also considering Hardware acceleration.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Analyzing Advanced Techniques**\n\nI\u0027m now focusing on advanced techniques used for further optimization. I\u0027ve been looking at how \"Weak AND\" (WAND) and Block-Max WAND (BMW) algorithms are used to optimize the second stage, by skipping evaluation of mathematically unsuitable documents. These algorithms dramatically reduce the second-stage complexity from potentially O(M_cand) to almost O(K log K). I also want to explore MinHash and Locality-Sensitive Hashing (LSH) for set intersections.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Investigating Skill Matching Algorithms**\n\nI am now delving into optimizations, specifically focusing on MinHash, a set intersection technique. I am examining its constant time O(1) efficiency through hash table lookups, and how it approximates Jaccard similarity using \"signatures.\" I am also analyzing SIMD and hardware acceleration via AVX-512, which compares numerous skills simultaneously. Finally, I\u0027m exploring the implications of pre-computing user-job affinity matrices.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Refining Explanation Details**\n\nI am now focusing on refining the explanations, and adopting a humble tone, avoiding overconfidence. I\u0027m clarifying how each algorithm functions, such as WAND, to illustrate exact and approximate matching. WAND and Block-Max WAND are emphasized as these guarantees \"exact\" scoring by skipping calculations. I am considering the trade-offs of the different approaches.\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-07-02T20:20:58.981Z"
+    }, {
+      "text": "The \"Retrieve and Re-rank\" pipeline using inverted indexes is the industry-standard architecture, but in computer science, there are always ways to optimize. If we want to go even faster—especially when scaling to millions of concurrent users—there are indeed faster, highly specialized algorithms. \n\nThese advanced algorithms either **skip evaluating candidates** that mathematically cannot win, use **hardware-level parallel instructions**, or transition the problem from $O(\\log N)$ to **constant time $O(1)$**. \n\nThe fastest algorithms and techniques to solve this exact problem fall into several categories:\n\n---\n\n### 1. The Fastest *Exact* Sorting Algorithm: **Block-Max WAND (Weak AND)**\nIn the \"Retrieve and Re-rank\" model, Stage 2 still requires the system to calculate the exact skill score for a few thousand candidates. **Block-Max WAND (BMW)** is an algorithm designed to bypass this entirely while still guaranteed to return the exact top $K$ results.\n\n*   **How it works:** BMW divides the document index into blocks and pre-calculates the *maximum possible score* any job in that block can achieve. \n*   **The Shortcut:** When the algorithm evaluates a user\u0027s skills against a block of jobs, it calculates the \"best-case scenario\" score for that block. If that maximum possible score is lower than the lowest score currently in the user\u0027s top-10 list, the algorithm **skips the entire block** without evaluating a single job inside it.\n*   **Why it is faster:** Instead of scoring 5,000 candidates, BMW might only need to compute the exact scores for 150 candidates. It delivers 100% exact math but scales sub-linearly, making it incredibly fast.\n\n---\n\n### 2. The Fastest *Approximate* Set Overlap Algorithm: **MinHash \u0026 Locality-Sensitive Hashing (LSH)**\nIf the \"exact skill match\" is mathematically defined as **Jaccard Similarity** (the number of shared skills divided by the total unique skills of the user and the job), you can use MinHash and LSH. \n\n*   **How it works:** \n    1.  **MinHash** compresses a user\u0027s 100-skill set into a tiny, fixed-size \"signature\" (e.g., 10 integers) using hash functions. \n    2.  **LSH (Locality-Sensitive Hashing)** hashes these signatures into buckets. If a job has a highly similar skill set, it will hash into the *same* bucket as the user with a very high probability.\n*   **Why it is faster:** The system does not do any matrix math or intersections at runtime. It performs a simple, constant-time **$O(1)$ hash table lookup** to find the bucket of highly matching jobs. \n*   **The Trade-off:** It is an *approximate* algorithm. It is blindingly fast and scales to billions of items, but it might occasionally miss a job that was a 91% match and rank an 89% match above it.\n\n---\n\n### 3. The Fastest *Hardware-Accelerated* Matching: **SIMD (Single Instruction, Multiple Data) \u0026 AVX-512**\nIf we must perform exact set intersections at runtime, we can move the bottleneck from software logic to CPU registers using hardware instructions.\n\n*   **How it works:** Instead of comparing skills one by one using standard loops, modern CPUs have vector registers (like Intel\u0027s AVX-512). \n*   **Why it is faster:** If skills are mapped to bit arrays, a single CPU instruction can compare 512 bits (representing up to 512 skills) simultaneously in a single clock cycle. This parallelizes the intersection math, executing it roughly **8x to 32x faster** than standard optimized C++ code.\n\n---\n\n### 4. The Absolute Fastest Latency: **Offline Matrix Pre-Computation**\nIf \"fastest\" is measured purely by how quickly the user gets their results after clicking a button, the fastest algorithm is to move the computation **entirely offline**.\n\n*   **How it works:** Every night (or every hour), a distributed system (like Apache Spark) runs a batch job that calculates the exact match scores for every user against every job. These pre-computed lists are stored in a fast key-value store like Redis.\n*   **Why it is faster:** When the user clicks \"Sort,\" the server does zero math. It simply fetches the pre-computed list for that `user_id` from memory. The retrieval speed is virtually instantaneous ($O(1)$ lookup, under 1–2 milliseconds).\n*   **The Trade-off:** It cannot handle real-time changes. If a user edits their resume or a new job is posted, the match scores will not update until the next offline batch run.\n\n---\n\n### Summary of Trade-offs\n\n| Algorithm / Technique | Exact or Approximate? | Runtime Complexity | Best Used For |\n| :--- | :--- | :--- | :--- |\n| **Block-Max WAND (BMW)** | **Exact** | $O(\\text{sub-linear})$ | Real-time, 100% accurate search engines with dynamic filters. |\n| **MinHash + LSH** | **Approximate** | $O(1)$ constant time | Massive-scale recommendation systems (billions of items) where minor errors are acceptable. |\n| **SIMD (AVX-512)** | **Exact** | $O(N)$ (Highly Parallel) | Maximizing raw hardware performance for on-the-fly math. |\n| **Offline Pre-computation** | **Exact** | $O(1)$ (at runtime) | Static platforms where jobs and user profiles rarely change. |\n\nFor a platform like Jobright—which must deal with newly posted jobs and real-time resume updates—a combination of **Block-Max WAND** for retrieval and **SIMD-optimized bitwise matching** for ranking typically provides the absolute fastest, most balance-optimized engineering solution.",
+      "role": "model",
+      "finishReason": "STOP",
+      "tokenCount": 1308,
+      "parts": [{
+        "text": "The \"Retrieve and Re-rank\" pipeline using inverted indexes is the industry-standard architecture, but in"
+      }, {
+        "text": " computer science, there are always ways to optimize. If we want to go even faster—especially when scaling to millions of"
+      }, {
+        "text": " concurrent users—there are indeed faster, highly specialized algorithms. \n\nThese advanced algorithms either **skip evaluating candidates** that mathematically cannot win"
+      }, {
+        "text": ", use **hardware-level parallel instructions**, or transition the problem from $O(\\log N)$ to **constant time"
+      }, {
+        "text": " $O(1)$**. \n\nThe fastest algorithms and techniques to solve this exact problem fall into several categories:\n\n---"
+      }, {
+        "text": "\n\n### 1. The Fastest *Exact* Sorting Algorithm: **Block-Max WAND (Weak AND)**\n"
+      }, {
+        "text": "In the \"Retrieve and Re-rank\" model, Stage 2 still requires the system to calculate the exact skill score"
+      }, {
+        "text": " for a few thousand candidates. **Block-Max WAND (BMW)** is an algorithm designed to bypass this entirely while"
+      }, {
+        "text": " still guaranteed to return the exact top $K$ results.\n\n*   **How it works:** BMW divides the document"
+      }, {
+        "text": " index into blocks and pre-calculates the *maximum possible score* any job in that block can achieve. \n*   **"
+      }, {
+        "text": "The Shortcut:** When the algorithm evaluates a user\u0027s skills against a block of jobs, it calculates the \"best-case scenario\""
+      }, {
+        "text": " score for that block. If that maximum possible score is lower than the lowest score currently in the user\u0027s top-"
+      }, {
+        "text": "10 list, the algorithm **skips the entire block** without evaluating a single job inside it.\n*   **Why"
+      }, {
+        "text": " it is faster:** Instead of scoring 5,000 candidates, BMW might only need to compute the exact scores for "
+      }, {
+        "text": "150 candidates. It delivers 100% exact math but scales sub-linearly, making it incredibly"
+      }, {
+        "text": " fast.\n\n---\n\n### 2. The Fastest *Approximate* Set Overlap Algorithm: **MinHash \u0026"
+      }, {
+        "text": " Locality-Sensitive Hashing (LSH)**\nIf the \"exact skill match\" is mathematically defined as **Jaccard Similarity"
+      }, {
+        "text": "** (the number of shared skills divided by the total unique skills of the user and the job), you can use MinHash and"
+      }, {
+        "text": " LSH. \n\n*   **How it works:** \n    1.  **MinHash** compresses a user\u0027"
+      }, {
+        "text": "s 100-skill set into a tiny, fixed-size \"signature\" (e.g., "
+      }, {
+        "text": "10 integers) using hash functions. \n    2.  **LSH (Locality-Sensitive Hashing)** hashes"
+      }, {
+        "text": " these signatures into buckets. If a job has a highly similar skill set, it will hash into the *same* bucket as"
+      }, {
+        "text": " the user with a very high probability.\n*   **Why it is faster:** The system does not do any matrix math"
+      }, {
+        "text": " or intersections at runtime. It performs a simple, constant-time **$O(1)$ hash table lookup** to find the bucket"
+      }, {
+        "text": " of highly matching jobs. \n*   **The Trade-off:** It is an *approximate* algorithm. It is blinding"
+      }, {
+        "text": "ly fast and scales to billions of items, but it might occasionally miss a job that was a 91% match and"
+      }, {
+        "text": " rank an 89% match above it.\n\n---\n\n### 3. The Fastest *Hardware-Accelerated* Matching"
+      }, {
+        "text": ": **SIMD (Single Instruction, Multiple Data) \u0026 AVX-512**\nIf we must perform exact set intersections"
+      }, {
+        "text": " at runtime, we can move the bottleneck from software logic to CPU registers using hardware instructions.\n\n*   **How it works:**"
+      }, {
+        "text": " Instead of comparing skills one by one using standard loops, modern CPUs have vector registers (like Intel\u0027s AVX-"
+      }, {
+        "text": "512). \n*   **Why it is faster:** If skills are mapped to bit arrays, a single"
+      }, {
+        "text": " CPU instruction can compare 512 bits (representing up to 512 skills) simultaneously in a single clock"
+      }, {
+        "text": " cycle. This parallelizes the intersection math, executing it roughly **8x to 32x faster** than standard"
+      }, {
+        "text": " optimized C++ code.\n\n---\n\n### 4. The Absolute Fastest Latency: **Offline Matrix Pre-Computation**\n"
+      }, {
+        "text": "If \"fastest\" is measured purely by how quickly the user gets their results after clicking a button, the fastest algorithm is to"
+      }, {
+        "text": " move the computation **entirely offline**.\n\n*   **How it works:** Every night (or every hour), a"
+      }, {
+        "text": " distributed system (like Apache Spark) runs a batch job that calculates the exact match scores for every user against every job. These"
+      }, {
+        "text": " pre-computed lists are stored in a fast key-value store like Redis.\n*   **Why it is faster:** When"
+      }, {
+        "text": " the user clicks \"Sort,\" the server does zero math. It simply fetches the pre-computed list for that `user_id"
+      }, {
+        "text": "` from memory. The retrieval speed is virtually instantaneous ($O(1)$ lookup, under 1–2 milliseconds).\n"
+      }, {
+        "text": "*   **The Trade-off:** It cannot handle real-time changes. If a user edits their resume or a"
+      }, {
+        "text": " new job is posted, the match scores will not update until the next offline batch run.\n\n---\n\n### Summary of"
+      }, {
+        "text": " Trade-offs\n\n| Algorithm / Technique | Exact or Approximate? | Runtime Complexity | Best Used For |\n| :--- | :"
+      }, {
+        "text": "--- | :--- | :--- |\n| **Block-Max WAND (BMW)** | **Exact** | $"
+      }, {
+        "text": "O(\\text{sub-linear})$ | Real-time, 100% accurate search engines with dynamic filters"
+      }, {
+        "text": ". |\n| **MinHash + LSH** | **Approximate** | $O(1)$ constant time | Massive"
+      }, {
+        "text": "-scale recommendation systems (billions of items) where minor errors are acceptable. |\n| **SIMD (AV"
+      }, {
+        "text": "X-512)** | **Exact** | $O(N)$ (Highly Parallel) | Maximizing raw"
+      }, {
+        "text": " hardware performance for on-the-fly math. |\n| **Offline Pre-computation** | **Exact** |"
+      }, {
+        "text": " $O(1)$ (at runtime) | Static platforms where jobs and user profiles rarely change. |\n\nFor a"
+      }, {
+        "text": " platform like Jobright—which must deal with newly posted jobs and real-time resume updates—a combination of **Block"
+      }, {
+        "text": "-Max WAND** for retrieval and **SIMD-optimized bitwise matching** for ranking typically provides the absolute fastest, most balance"
+      }, {
+        "text": "-optimized engineering solution."
+      }, {
+        "text": "",
+        "thoughtSignature": "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"
+      }],
+      "createTime": "2026-07-02T20:21:09.342Z"
+    }, {
+      "text": "IF profile has skills like Javascript, AWS but it was devided like Hard / Soft / DevOps / Tools / Domain knowledge\n\nAnd there\u0027s level scale per skill 1-5 like react - 5, azure -3...\nAnd each skill category(hard soft/devops) has its own weight(hard skill will be high...)\n\nThis is user profile.\nLet\u0027s assume that we can regularize the skills on the job description side, too like this.\n\nIn this case, how to get accurate weighted score matching in the fastest algirthm?\n\nWhat is the estimation in run time for 1M jobs, 100K users for ranking best matching?",
+      "role": "user",
+      "tokenCount": 143,
+      "createTime": "2026-07-02T20:26:54.089Z"
+    }, {
+      "text": "**Defining the Core Problem**\n\nI\u0027m now zeroing in on the fundamental structure of this matching challenge. It\u0027s clear that it\u0027s multi-faceted and necessitates a very organized approach to identify key skills within user profiles. This initial phase involves establishing a clear framework to navigate the inherent complexity of the structured data, as it relates to skills.\n\n\n**Categorizing Skill Profiles**\n\nI\u0027ve moved towards categorizing skills into Hard, Soft, DevOps, Tools, and Domain Knowledge, with a skill level scale and category weights. This structured approach allows for a direct comparison with job description elements, which can be regularized in the same format. The core challenge now is calculating a fast, accurate weighted matching score for a large dataset, and estimating the runtime for ranking at scale. I\u0027m focusing on defining the exact matching score formula.\n\n\n**Defining the Weighted Score**\n\nI\u0027m now formulating the scoring function. I\u0027m focusing on a weighted sparse dot product to calculate the match.  I\u0027m exploring several match functions, including a simple linear match, which checks if a user\u0027s skill level exceeds the job requirement. I\u0027m also considering over-qualification rewards, and a cosine-like normalized weighted inner product, for its mathematical efficiency. The weighted sum accounts for the importance of different skill categories.\n\n\n**Estimating Computational Cost**\n\nI\u0027m now zeroing in on the scale of the problem. Considering 1 million jobs and 100k users, the raw pairwise comparison yields 100 billion calculations! This raises the question of real-time vs. batch processing. The user query is vague, so I\u0027m considering both scenarios: ranking *one* user against all jobs is fast, whereas 100 billion pairwise comparisons are not. I need to explain the feasibility of both options in the report. Next step, I must find an efficient algorithm.\n\n\n**Simplifying Profile Representations**\n\nI\u0027ve realized I can represent each user or job profile as a single sparse vector. This simplifies the matching calculation dramatically. By pre-multiplying skill levels by category weights, a dot product between user and job vectors yields a weighted linear combination. This elegantly collapses category weights and skill levels into a single, efficient operation. The next stage is investigating how to vectorize and scale this computation.\n\n\n**Optimizing Match Calculations**\n\nI\u0027ve realized that preprocessing the vector components simplifies everything, collapsing the formula into a standard weighted inner product. This is pivotal! Now, I\u0027m exploring two approaches for scalable execution. First, a multi-stage pruning method, like Block-Max WAND (BMW), can find top job matches quickly, less than 10ms for a single user query. If batch-processing is needed, Sparse-Matrix Sparse-Matrix Multiplication (SpGEMM) on a GPU or using Intel MKL looks promising.\n\n\n**Calculating SpGEMM Costs**\n\nI\u0027m now diving into the specifics of Sparse-Matrix Sparse-Matrix Multiplication (SpGEMM) to understand its feasibility. With users and jobs as extremely sparse matrices, and low average skills per user and job, I\u0027m focusing on inverted index and dot product strategies to compute non-zero overlaps efficiently and estimate the associated multiply-accumulate operations at scale. My focus is now on bounding this SpGEMM calculation.\n\n\n**Estimating Scaling Feasibility**\n\nI\u0027ve just run the numbers to estimate compute time. For a single user, matching against all jobs takes under a millisecond. Batch calculations for all 100k users against 1M jobs looks very feasible, taking only seconds to a few minutes on a modern GPU or multi-core CPU, with an estimated 30 billion multiply-accumulate operations. This appears to scale elegantly.\n\n\n**Simplifying (Matching Formula)**\n\nI\u0027ve just rigorously proven the mathematical equivalence of this transformation.  Collapsing category weight, skill level, and job/user category into a single 1D vector representation, the complex nested matching logic simplifies to a pure, efficient inner product. This is mathematically identical, which is incredibly powerful. The key is to check if both forms are equivalent. I\u0027m now exploring the core algorithms for real-time and batch scenarios.\n\n\n**Estimating Efficient Matching Times**\n\nI\u0027m now focusing on runtime estimations, starting with Block-Max WAND, which prunes jobs to find the top matches for a single user, and the batch SpGEMM method. For a single user, the WAND lookup with pruning looks like it will be very fast, taking less than 10 milliseconds. I\u0027m exploring Sparse Matrix-Matrix Multiplication (SpGEMM) for the batch scenarios on GPU or multi-core CPU. I\u0027ll need to define all the parameters of the problem.\n\n\n**Analyzing Batch Compute**\n\nI\u0027ve just finished the batch SpGEMM calculations, and the numbers look very promising. With 100K users and 1M jobs, and a low average skills per job, the calculation requires 30 billion multiply-accumulate operations. This suggests that the batch SpGEMM will be very efficient. I\u0027m moving toward benchmarking, to determine precise performance numbers.\n\n\n**Estimating Computational Scalability**\n\nI\u0027m now determining the scaling implications of different hardware choices. I\u0027ve estimated that 60 billion FLOPs are required, meaning that matching a large batch of users with jobs is feasible on a GPU in under 100ms. I can also do this in seconds on a modern CPU. Single-user real-time queries look to take a few milliseconds. I\u0027m now exploring the costs of sorting.\n\n\n**Summarizing Performance Estimates**\n\nI\u0027m now zeroing in on defining the final report structure. I\u0027ll describe pre-weighting as a core trick to enable efficient calculations. For offline, I\u0027ll emphasize Sparse Matrix-Matrix Multiplication (SpGEMM), and Block-Max WAND (BMW) with an inverted index for real-time queries. I\u0027ll include concrete runtime estimations with reasonable assumptions, focusing on total FLOPs.\n\n\n**Refining Execution Estimates**\n\nI\u0027m now refining time estimates, considering CPU vs. GPU performance and incorporating sparse matrix-matrix multiplication (SpGEMM). With CSR representation, I\u0027m focusing on top-$K$ sorting optimization, and the efficiency of heaps and radix sort to accelerate the workflow. I\u0027ve re-examined the computational demands. I\u0027ll maintain a humble, objective, highly analytical, and professional tone in the report.\n\n\n\n",
+      "role": "model",
+      "tokenCount": 4517,
+      "isThought": true,
+      "parts": [{
+        "text": "**Defining the Core Problem**\n\nI\u0027m now zeroing in on the fundamental structure of this matching challenge. It\u0027s clear that it\u0027s multi-faceted and necessitates a very organized approach to identify key skills within user profiles. This initial phase involves establishing a clear framework to navigate the inherent complexity of the structured data, as it relates to skills.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Categorizing Skill Profiles**\n\nI\u0027ve moved towards categorizing skills into Hard, Soft, DevOps, Tools, and Domain Knowledge, with a skill level scale and category weights. This structured approach allows for a direct comparison with job description elements, which can be regularized in the same format. The core challenge now is calculating a fast, accurate weighted matching score for a large dataset, and estimating the runtime for ranking at scale. I\u0027m focusing on defining the exact matching score formula.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Defining the Weighted Score**\n\nI\u0027m now formulating the scoring function. I\u0027m focusing on a weighted sparse dot product to calculate the match.  I\u0027m exploring several match functions, including a simple linear match, which checks if a user\u0027s skill level exceeds the job requirement. I\u0027m also considering over-qualification rewards, and a cosine-like normalized weighted inner product, for its mathematical efficiency. The weighted sum accounts for the importance of different skill categories.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Estimating Computational Cost**\n\nI\u0027m now zeroing in on the scale of the problem. Considering 1 million jobs and 100k users, the raw pairwise comparison yields 100 billion calculations! This raises the question of real-time vs. batch processing. The user query is vague, so I\u0027m considering both scenarios: ranking *one* user against all jobs is fast, whereas 100 billion pairwise comparisons are not. I need to explain the feasibility of both options in the report. Next step, I must find an efficient algorithm.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Simplifying Profile Representations**\n\nI\u0027ve realized I can represent each user or job profile as a single sparse vector. This simplifies the matching calculation dramatically. By pre-multiplying skill levels by category weights, a dot product between user and job vectors yields a weighted linear combination. This elegantly collapses category weights and skill levels into a single, efficient operation. The next stage is investigating how to vectorize and scale this computation.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Optimizing Match Calculations**\n\nI\u0027ve realized that preprocessing the vector components simplifies everything, collapsing the formula into a standard weighted inner product. This is pivotal! Now, I\u0027m exploring two approaches for scalable execution. First, a multi-stage pruning method, like Block-Max WAND (BMW), can find top job matches quickly, less than 10ms for a single user query. If batch-processing is needed, Sparse-Matrix Sparse-Matrix Multiplication (SpGEMM) on a GPU or using Intel MKL looks promising.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Calculating SpGEMM Costs**\n\nI\u0027m now diving into the specifics of Sparse-Matrix Sparse-Matrix Multiplication (SpGEMM) to understand its feasibility. With users and jobs as extremely sparse matrices, and low average skills per user and job, I\u0027m focusing on inverted index and dot product strategies to compute non-zero overlaps efficiently and estimate the associated multiply-accumulate operations at scale. My focus is now on bounding this SpGEMM calculation.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Estimating Scaling Feasibility**\n\nI\u0027ve just run the numbers to estimate compute time. For a single user, matching against all jobs takes under a millisecond. Batch calculations for all 100k users against 1M jobs looks very feasible, taking only seconds to a few minutes on a modern GPU or multi-core CPU, with an estimated 30 billion multiply-accumulate operations. This appears to scale elegantly.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Simplifying (Matching Formula)**\n\nI\u0027ve just rigorously proven the mathematical equivalence of this transformation.  Collapsing category weight, skill level, and job/user category into a single 1D vector representation, the complex nested matching logic simplifies to a pure, efficient inner product. This is mathematically identical, which is incredibly powerful. The key is to check if both forms are equivalent. I\u0027m now exploring the core algorithms for real-time and batch scenarios.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Estimating Efficient Matching Times**\n\nI\u0027m now focusing on runtime estimations, starting with Block-Max WAND, which prunes jobs to find the top matches for a single user, and the batch SpGEMM method. For a single user, the WAND lookup with pruning looks like it will be very fast, taking less than 10 milliseconds. I\u0027m exploring Sparse Matrix-Matrix Multiplication (SpGEMM) for the batch scenarios on GPU or multi-core CPU. I\u0027ll need to define all the parameters of the problem.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Analyzing Batch Compute**\n\nI\u0027ve just finished the batch SpGEMM calculations, and the numbers look very promising. With 100K users and 1M jobs, and a low average skills per job, the calculation requires 30 billion multiply-accumulate operations. This suggests that the batch SpGEMM will be very efficient. I\u0027m moving toward benchmarking, to determine precise performance numbers.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Estimating Computational Scalability**\n\nI\u0027m now determining the scaling implications of different hardware choices. I\u0027ve estimated that 60 billion FLOPs are required, meaning that matching a large batch of users with jobs is feasible on a GPU in under 100ms. I can also do this in seconds on a modern CPU. Single-user real-time queries look to take a few milliseconds. I\u0027m now exploring the costs of sorting.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Summarizing Performance Estimates**\n\nI\u0027m now zeroing in on defining the final report structure. I\u0027ll describe pre-weighting as a core trick to enable efficient calculations. For offline, I\u0027ll emphasize Sparse Matrix-Matrix Multiplication (SpGEMM), and Block-Max WAND (BMW) with an inverted index for real-time queries. I\u0027ll include concrete runtime estimations with reasonable assumptions, focusing on total FLOPs.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Refining Execution Estimates**\n\nI\u0027m now refining time estimates, considering CPU vs. GPU performance and incorporating sparse matrix-matrix multiplication (SpGEMM). With CSR representation, I\u0027m focusing on top-$K$ sorting optimization, and the efficiency of heaps and radix sort to accelerate the workflow. I\u0027ve re-examined the computational demands. I\u0027ll maintain a humble, objective, highly analytical, and professional tone in the report.\n\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-07-02T20:26:54.089Z"
+    }, {
+      "text": "To solve this structured, multi-dimensional matching problem in the fastest possible way, we must first use a mathematical transformation to simplify the logic. \n\nIf we try to write nested conditional loops (e.g., *if category is Hard, multiply by X; if skill level is Y, check if it matches job level Z...*), the computational overhead will make real-time matching impossible. \n\nInstead, we can collapse the categories, weights, and skill levels into a **single flat linear algebra operation** that can run directly on CPU or GPU hardware at native speeds.\n\n---\n\n### Step 1: The Mathematical Simplification (Vector Pre-weighting)\n\nWe can completely eliminate the complexity of hierarchical categories and weights by folding them directly into the skill values **before** we perform any matching. \n\nLet:\n*   $c$ be the category (e.g., Hard, Soft, DevOps).\n*   $W_c$ be the weight of category $c$ (e.g., $W_{\\text{Hard}} \u003d 0.5$, $W_{\\text{Soft}} \u003d 0.1$).\n*   $L_U(s)$ be the User\u0027s level (1–5) for skill $s$.\n*   $L_J(s)$ be the Job\u0027s required level (1–5) for skill $s$.\n\nWe compile the user\u0027s profile and the job description into flat, sparse vectors $\\mathbf{V_U}$ and $\\mathbf{V_J}$ of size $V$ (where $V$ is the total global vocabulary of skills, e.g., 5,000 unique skills):\n\n$$\\mathbf{V_U}[s] \u003d W_{\\text{category}(s)} \\times L_U(s)$$\n$$\\mathbf{V_J}[s] \u003d L_J(s)$$\n\nBy pre-calculating these values, the complex weighted match score collapses into a standard **Weighted Inner Product (Dot Product)**:\n\n$$\\text{Score}(U, J) \u003d \\mathbf{V_U} \\cdot \\mathbf{V_J} \u003d \\sum_{s \\in (U \\cap J)} (W_{\\text{category}(s)} \\times L_U(s)) \\times L_J(s)$$\n\nThis mathematical trick is highly powerful because it allows us to use standard, hyper-optimized linear algebra libraries.\n\n---\n\n### Step 2: The Fastest Algorithms for Ranking\n\nThe choice of the fastest algorithm depends on whether you are querying **one user in real-time** or running a **bulk offline batch** for all 100,000 users.\n\n#### Scenario A: Real-Time Matching (1 User vs. 1 Million Jobs)\n*   **The Algorithm:** **Block-Max WAND (Weak AND) with an Inverted Index**.\n*   **How it works:** We index the 1 million jobs in an inverted index where each skill points to the jobs requiring it, along with the pre-calculated maximum score for that block of jobs. \n*   When a user requests their matches, the WAND algorithm evaluates their 100 skills. By maintaining a dynamic threshold of the top-50 scores found so far, WAND mathematically proves which jobs *cannot* make it into the top-50 and **skips evaluating them entirely**. It typically only has to compute exact dot products for a tiny fraction of the 1 million jobs.\n\n#### Scenario B: Batch Offline Processing (All 100,000 Users vs. 1 Million Jobs)\n*   **The Algorithm:** **SpGEMM (Sparse Matrix-Matrix Multiplication)**.\n*   **How it works:** We represent all 100,000 users as a sparse matrix $\\mathbf{U}$ of shape $(100,000 \\times V)$ and all 1,000,000 jobs as a sparse matrix $\\mathbf{J}$ of shape $(1,000,000 \\times V)$.\n*   We compute the scoring matrix $\\mathbf{S} \u003d \\mathbf{U} \\mathbf{J}^T$. Because the matrices are extremely sparse (users only have ~100 non-zero values out of thousands), we use specialized sparse libraries like Intel MKL (for CPU) or NVIDIA cuSPARSE / PyTorch (for GPU).\n\n---\n\n### Step 3: Runtime Estimation\n\nTo estimate the runtime, let\u0027s establish highly realistic baseline assumptions:\n*   **Total professional skill vocabulary ($V$):** 5,000 unique skills.\n*   **Average skills per user ($K_U$):** 100 skills.\n*   **Average skills per job ($K_J$):** 15 skills.\n*   **Users ($U$):** 100,000.\n*   **Jobs ($J$):** 1,000,000.\n\n#### 1. Mathematical Operation Count (The Math)\nUsing an inverted index structure, the average number of jobs that require any given skill is:\n$$\\text{Average jobs per skill} \u003d \\frac{1,000,000 \\text{ jobs} \\times 15 \\text{ skills/job}}{5,000 \\text{ global skills}} \u003d 3,000 \\text{ jobs}$$\n\nFor **one single user** with 100 skills, the maximum number of arithmetic operations (Multiply-Accumulate, or MACs) required to find all overlapping job scores is:\n$$100 \\text{ user skills} \\times 3,000 \\text{ jobs/skill} \u003d 300,000 \\text{ operations}$$\n\nFor **all 100,000 users** against **all 1,000,000 jobs**, the total number of operations is:\n$$100,000 \\text{ users} \\times 300,000 \\text{ ops/user} \u003d 30,000,000,000 \\text{ (30 Billion) MACs}$$\nEach Multiply-Accumulate operation consists of 1 multiplication and 1 addition, totaling **60 Billion Floating-Point Operations (FLOPs)**.\n\n---\n\n#### 2. Actual Runtime Estimates\n\n##### **On a Single User Query (Real-time Web Request)**\n*   **Raw computation time:** A single modern CPU core can easily compute 300,000 sparse operations in **less than 0.2 milliseconds**. \n*   If we use **Block-Max WAND**, we skip ~90% of the computations, reducing the active evaluation to ~30,000 operations, which takes **under 0.05 milliseconds**.\n*   *Verdict:* In a real-time web application, the calculation itself takes virtually zero time; the only latency is the network I/O and database retrieval (usually **5 to 15 milliseconds** total).\n\n##### **On the Entire 100K Users × 1M Jobs Batch (Offline Ranking)**\nSparse matrix-matrix multiplication (SpGEMM) is bound by memory bandwidth, not CPU clock speeds. \n\n*   **On a Modern Multi-Core CPU Server (e.g., 64-core AMD EPYC using Threading \u0026 Intel MKL):**\n    A 64-core server can achieve a sparse compute throughput of roughly 30 to 50 GFLOPs/second.\n    $$\\text{Runtime} \\approx \\frac{60 \\text{ Billion FLOPs}}{40 \\text{ GFLOPs/sec}} \\approx \\mathbf{1.5 \\text{ to 3 seconds}}$$\n\n*   **On a Enterprise GPU (e.g., NVIDIA A100 or H100 using cuSPARSE/PyTorch):**\n    GPUs are massively parallel and highly optimized for sparse matrix calculations. An NVIDIA A100 can process 60 Billion sparse FLOPs in **less than 100 milliseconds**. \n    *   *Note:* Sorting the top-100 matched jobs for all 100,000 users (using a parallel GPU Radix Sort) will add about 50 milliseconds of overhead.\n    *   $$\\text{Total GPU Runtime} \\approx \\mathbf{150 \\text{ milliseconds}}$$\n\n### Summary\nBy transforming the hierarchical weights into a pre-weighted flat sparse vector, you convert a complex routing problem into basic matrix math. If implemented correctly using **SpGEMM on a single GPU**, you can calculate and rank the best matches for all 100,000 users against all 1,000,000 jobs in **less than a quarter of a second**.",
+      "role": "model",
+      "finishReason": "STOP",
+      "tokenCount": 1903,
+      "parts": [{
+        "text": "To solve this structured, multi-dimensional matching problem in the fastest possible way, we must first use a mathematical"
+      }, {
+        "text": " transformation to simplify the logic. \n\nIf we try to write nested conditional loops (e.g., *if category is"
+      }, {
+        "text": " Hard, multiply by X; if skill level is Y, check if it matches job level Z...*), the computational overhead will make"
+      }, {
+        "text": " real-time matching impossible. \n\nInstead, we can collapse the categories, weights, and skill levels into a **single"
+      }, {
+        "text": " flat linear algebra operation** that can run directly on CPU or GPU hardware at native speeds.\n\n---\n\n### Step 1"
+      }, {
+        "text": ": The Mathematical Simplification (Vector Pre-weighting)\n\nWe can completely eliminate the complexity of hierarchical categories and weights"
+      }, {
+        "text": " by folding them directly into the skill values **before** we perform any matching. \n\nLet:\n*   $"
+      }, {
+        "text": "c$ be the category (e.g., Hard, Soft, DevOps).\n*   $W_c$ be the"
+      }, {
+        "text": " weight of category $c$ (e.g., $W_{\\text{Hard}} \u003d 0.5$,"
+      }, {
+        "text": " $W_{\\text{Soft}} \u003d 0.1$).\n*   $L_U(s)$ be"
+      }, {
+        "text": " the User\u0027s level (1–5) for skill $s$.\n*   $L_J(s"
+      }, {
+        "text": ")$ be the Job\u0027s required level (1–5) for skill $s$.\n\nWe compile the user\u0027s profile and"
+      }, {
+        "text": " the job description into flat, sparse vectors $\\mathbf{V_U}$ and $\\mathbf{V_J}$ of size"
+      }, {
+        "text": " $V$ (where $V$ is the total global vocabulary of skills, e.g., 5,0"
+      }, {
+        "text": "00 unique skills):\n\n$$\\mathbf{V_U}[s] \u003d W_{\\text{category}(s)} \\times L"
+      }, {
+        "text": "_U(s)$$\n$$\\mathbf{V_J}[s] \u003d L_J(s)$$\n\nBy"
+      }, {
+        "text": " pre-calculating these values, the complex weighted match score collapses into a standard **Weighted Inner Product (Dot Product)**:\n\n"
+      }, {
+        "text": "$$\\text{Score}(U, J) \u003d \\mathbf{V_U} \\cdot \\mathbf{V_"
+      }, {
+        "text": "J} \u003d \\sum_{s \\in (U \\cap J)} (W_{\\text{category}(s)}"
+      }, {
+        "text": " \\times L_U(s)) \\times L_J(s)$$\n\nThis mathematical trick is highly powerful because it allows"
+      }, {
+        "text": " us to use standard, hyper-optimized linear algebra libraries.\n\n---\n\n### Step 2: The Fastest Algorithms for Ranking"
+      }, {
+        "text": "\n\nThe choice of the fastest algorithm depends on whether you are querying **one user in real-time** or running a **bulk"
+      }, {
+        "text": " offline batch** for all 100,000 users.\n\n#### Scenario A: Real-Time Matching"
+      }, {
+        "text": " (1 User vs. 1 Million Jobs)\n*   **The Algorithm:** **Block-Max WAND ("
+      }, {
+        "text": "Weak AND) with an Inverted Index**.\n*   **How it works:** We index the 1 million jobs in"
+      }, {
+        "text": " an inverted index where each skill points to the jobs requiring it, along with the pre-calculated maximum score for that block"
+      }, {
+        "text": " of jobs. \n*   When a user requests their matches, the WAND algorithm evaluates their 100 skills"
+      }, {
+        "text": ". By maintaining a dynamic threshold of the top-50 scores found so far, WAND mathematically proves which jobs *"
+      }, {
+        "text": "cannot* make it into the top-50 and **skips evaluating them entirely**. It typically only has to compute exact"
+      }, {
+        "text": " dot products for a tiny fraction of the 1 million jobs.\n\n#### Scenario B: Batch Offline Processing (All 1"
+      }, {
+        "text": "00,000 Users vs. 1 Million Jobs)\n*   **The Algorithm:** **SpGEMM"
+      }, {
+        "text": " (Sparse Matrix-Matrix Multiplication)**.\n*   **How it works:** We represent all 100,000"
+      }, {
+        "text": " users as a sparse matrix $\\mathbf{U}$ of shape $(100,000 \\times V)$"
+      }, {
+        "text": " and all 1,000,000 jobs as a sparse matrix $\\mathbf{J}$ of shape $("
+      }, {
+        "text": "1,000,000 \\times V)$.\n*   We compute the scoring matrix $\\mathbf{S}"
+      }, {
+        "text": " \u003d \\mathbf{U} \\mathbf{J}^T$. Because the matrices are extremely sparse (users only have ~"
+      }, {
+        "text": "100 non-zero values out of thousands), we use specialized sparse libraries like Intel MKL (for CPU) or NVIDIA"
+      }, {
+        "text": " cuSPARSE / PyTorch (for GPU).\n\n---\n\n### Step 3: Runtime Estimation\n\nTo estimate"
+      }, {
+        "text": " the runtime, let\u0027s establish highly realistic baseline assumptions:\n*   **Total professional skill vocabulary ($V$):** 5"
+      }, {
+        "text": ",000 unique skills.\n*   **Average skills per user ($K_U$):** 1"
+      }, {
+        "text": "00 skills.\n*   **Average skills per job ($K_J$):** 15 skills.\n*   "
+      }, {
+        "text": "**Users ($U$):** 100,000.\n*   **Jobs ($J$):** "
+      }, {
+        "text": "1,000,000.\n\n#### 1. Mathematical Operation Count (The Math)\nUsing"
+      }, {
+        "text": " an inverted index structure, the average number of jobs that require any given skill is:\n$$\\text{Average jobs per skill} \u003d"
+      }, {
+        "text": " \\frac{1,000,000 \\text{ jobs} \\times 15 \\text{ skills"
+      }, {
+        "text": "/job}}{5,000 \\text{ global skills}} \u003d 3,000 \\text{"
+      }, {
+        "text": " jobs}$$\n\nFor **one single user** with 100 skills, the maximum number of arithmetic operations (Multiply-Accumulate"
+      }, {
+        "text": ", or MACs) required to find all overlapping job scores is:\n$$100 \\text{ user skills"
+      }, {
+        "text": "} \\times 3,000 \\text{ jobs/skill} \u003d 300,00"
+      }, {
+        "text": "0 \\text{ operations}$$\n\nFor **all 100,000 users** against **all 1,"
+      }, {
+        "text": "000,000 jobs**, the total number of operations is:\n$$100,000 \\text"
+      }, {
+        "text": "{ users} \\times 300,000 \\text{ ops/user} \u003d 30"
+      }, {
+        "text": ",000,000,000 \\text{ (30 Billion) MACs}$$\n"
+      }, {
+        "text": "Each Multiply-Accumulate operation consists of 1 multiplication and 1 addition, totaling **60 Billion Floating-Point Operations (FL"
+      }, {
+        "text": "OPs)**.\n\n---\n\n#### 2. Actual Runtime Estimates\n\n##### **On a Single User Query (Real-time Web"
+      }, {
+        "text": " Request)**\n*   **Raw computation time:** A single modern CPU core can easily compute 300,0"
+      }, {
+        "text": "00 sparse operations in **less than 0.2 milliseconds**. \n*   If we use **Block-Max WAND"
+      }, {
+        "text": "**, we skip ~90% of the computations, reducing the active evaluation to ~30,000 operations,"
+      }, {
+        "text": " which takes **under 0.05 milliseconds**.\n*   *Verdict:* In a real-time web application,"
+      }, {
+        "text": " the calculation itself takes virtually zero time; the only latency is the network I/O and database retrieval (usually **5 to 1"
+      }, {
+        "text": "5 milliseconds** total).\n\n##### **On the Entire 100K Users × 1M Jobs Batch ("
+      }, {
+        "text": "Offline Ranking)**\nSparse matrix-matrix multiplication (SpGEMM) is bound by memory bandwidth, not CPU clock speeds"
+      }, {
+        "text": ". \n\n*   **On a Modern Multi-Core CPU Server (e.g., 64-core AMD"
+      }, {
+        "text": " EPYC using Threading \u0026 Intel MKL):**\n    A 64-core server can achieve a sparse compute"
+      }, {
+        "text": " throughput of roughly 30 to 50 GFLOPs/second.\n    $$\\text{Runtime} \\"
+      }, {
+        "text": "approx \\frac{60 \\text{ Billion FLOPs}}{40 \\text{ GFLOPs/sec}} \\"
+      }, {
+        "text": "approx \\mathbf{1.5 \\text{ to 3 seconds}}$$\n\n*   **On a Enterprise GPU (e."
+      }, {
+        "text": "g., NVIDIA A100 or H100 using cuSPARSE/PyTorch):**\n    GPUs"
+      }, {
+        "text": " are massively parallel and highly optimized for sparse matrix calculations. An NVIDIA A100 can process 60 Billion sparse"
+      }, {
+        "text": " FLOPs in **less than 100 milliseconds**. \n    *   *Note:* Sorting the top"
+      }, {
+        "text": "-100 matched jobs for all 100,000 users (using a parallel GPU Radix Sort) will"
+      }, {
+        "text": " add about 50 milliseconds of overhead.\n    *   $$\\text{Total GPU Runtime} \\approx \\mathbf{"
+      }, {
+        "text": "150 \\text{ milliseconds}}$$\n\n### Summary\nBy transforming the hierarchical weights into a pre-weighted flat sparse vector, you"
+      }, {
+        "text": " convert a complex routing problem into basic matrix math. If implemented correctly using **SpGEMM on a single GPU**, you can"
+      }, {
+        "text": " calculate and rank the best matches for all 100,000 users against all 1,00"
+      }, {
+        "text": "0,000 jobs in **less than a quarter of a second**."
+      }, {
+        "text": "",
+        "thoughtSignature": "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"
+      }],
+      "createTime": "2026-07-02T20:27:17.442Z"
+    }, {
+      "text": "I don\u0027t use GPU, use macOS chip.",
+      "role": "user",
+      "tokenCount": 12,
+      "createTime": "2026-07-02T20:29:56.810Z"
+    }, {
+      "text": "**Defining User\u0027s Hardware**\n\nI\u0027ve zeroed in on the critical constraint: the user\u0027s running on Apple Silicon, meaning macOS and an M-series chip. This fundamentally changes the processing landscape. This understanding is key for any optimization or suggestion.\n\n\n**Optimizing Matrix Operations**\n\nI\u0027m now diving deep into the Apple Silicon architecture. The Unified Memory Architecture (UMA) is looking like a major advantage for our sparse matrix calculations. The AMX coprocessor is another promising avenue for speedups, particularly with the Accelerate framework. I\u0027ll need to explore how to best utilize both UMA and AMX for SpGEMM. Metal Performance Shaders might also have a role, even though the user initially mentioned something about not preferring the GPU.\n\n\n**Clarifying Hardware Assumptions**\n\nI\u0027m now clarifying the hardware usage constraints. The user\u0027s aversion to \"GPU\" could mean a preference for CPU. If so, I\u0027ll leverage Apple Silicon\u0027s CPU strengths, including the Accelerate framework, AMX, and multi-core NEON. Even if they are open to an integrated GPU, I will prioritize CPU-based sparse matrix calculations. I am trying to determine the most direct route to the fastest matching on macOS. Accelerate\u0027s Sparse BLAS looks promising, particularly SparseMultiply. If in Python, then using `scipy.sparse` or PyTorch using MPS (if open to using integrated GPU) are options.\n\n\n**Estimating Performance Metrics**\n\nI\u0027m now focusing on performance estimations based on Apple Silicon\u0027s characteristics. I\u0027m calculating the memory footprint of the sparse matrices the user mentioned, totaling around 80.4MB. I\u0027m also considering memory bandwidth, particularly for different M-series chips (M3 Pro, M3 Max, and M4 CPU). My estimate is based on the 60 Billion FLOPs for the matrix multiplication, which is expected to be memory-bound. I am estimating the bounds of operations based on these factors.\n\n\n**Calculating Memory Footprint**\n\nI\u0027ve refined my memory footprint estimate based on the user\u0027s matrix specifications. Specifically, I\u0027ve calculated the size of matrix **U** to be roughly 80MB. Moreover, the Job Matrix **J** is about 124MB. This brings the total active memory for the input matrices to under 205MB. Given the large cache sizes of Apple Silicon chips, this is great news; the data should fit nicely in cache. Thus, I am re-assessing the memory bandwidth bottleneck.\n\n\n**Estimating Run Time**\n\nI\u0027ve estimated the CPU execution time for sparse matrix multiplication. An 8-core M3 CPU with AMX could achieve approximately 100-150 GFLOPs of sparse math. Given a required 60 GFLOPs computation, and taking into account cache misses and sparse overhead, a runtime of around 1.2 seconds appears likely. If using the integrated GPU via Metal (MPS), it could be faster. But, I will stick to primarily the CPU and Accelerate/AMX.\n\n\n**Prioritizing Sparse Matrix Ops**\n\nI\u0027m focusing now on the Compressed Sparse Row (CSR) format for matrix representation, alongside parallelization strategies. I plan to leverage Grand Central Dispatch (GCD) in Swift/C++, or Python multiprocessing/joblib. I am also highlighting the unified memory advantage of Apple Silicon due to the input data fitting into the system-level cache. Memory latency is near-zero compared to discrete GPUs.\n\n\n**Evaluating Output Requirements**\n\nI\u0027ve just realized a critical issue. The naive calculation of $\\mathbf{S} \u003d \\mathbf{U} \\mathbf{J}^T$ results in a dense $100K \\times 1M$ matrix, which would require 400 GB of memory. My key priority is now understanding that we only need the top-K results, not the full dense output. This drastically changes the memory requirements and the approach needed. Focusing on sparse outputs is the key to minimizing memory needs.\n\n\n",
+      "role": "model",
+      "tokenCount": 2418,
+      "isThought": true,
+      "parts": [{
+        "text": "**Defining User\u0027s Hardware**\n\nI\u0027ve zeroed in on the critical constraint: the user\u0027s running on Apple Silicon, meaning macOS and an M-series chip. This fundamentally changes the processing landscape. This understanding is key for any optimization or suggestion.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Optimizing Matrix Operations**\n\nI\u0027m now diving deep into the Apple Silicon architecture. The Unified Memory Architecture (UMA) is looking like a major advantage for our sparse matrix calculations. The AMX coprocessor is another promising avenue for speedups, particularly with the Accelerate framework. I\u0027ll need to explore how to best utilize both UMA and AMX for SpGEMM. Metal Performance Shaders might also have a role, even though the user initially mentioned something about not preferring the GPU.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Clarifying Hardware Assumptions**\n\nI\u0027m now clarifying the hardware usage constraints. The user\u0027s aversion to \"GPU\" could mean a preference for CPU. If so, I\u0027ll leverage Apple Silicon\u0027s CPU strengths, including the Accelerate framework, AMX, and multi-core NEON. Even if they are open to an integrated GPU, I will prioritize CPU-based sparse matrix calculations. I am trying to determine the most direct route to the fastest matching on macOS. Accelerate\u0027s Sparse BLAS looks promising, particularly SparseMultiply. If in Python, then using `scipy.sparse` or PyTorch using MPS (if open to using integrated GPU) are options.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Estimating Performance Metrics**\n\nI\u0027m now focusing on performance estimations based on Apple Silicon\u0027s characteristics. I\u0027m calculating the memory footprint of the sparse matrices the user mentioned, totaling around 80.4MB. I\u0027m also considering memory bandwidth, particularly for different M-series chips (M3 Pro, M3 Max, and M4 CPU). My estimate is based on the 60 Billion FLOPs for the matrix multiplication, which is expected to be memory-bound. I am estimating the bounds of operations based on these factors.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Calculating Memory Footprint**\n\nI\u0027ve refined my memory footprint estimate based on the user\u0027s matrix specifications. Specifically, I\u0027ve calculated the size of matrix **U** to be roughly 80MB. Moreover, the Job Matrix **J** is about 124MB. This brings the total active memory for the input matrices to under 205MB. Given the large cache sizes of Apple Silicon chips, this is great news; the data should fit nicely in cache. Thus, I am re-assessing the memory bandwidth bottleneck.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Estimating Run Time**\n\nI\u0027ve estimated the CPU execution time for sparse matrix multiplication. An 8-core M3 CPU with AMX could achieve approximately 100-150 GFLOPs of sparse math. Given a required 60 GFLOPs computation, and taking into account cache misses and sparse overhead, a runtime of around 1.2 seconds appears likely. If using the integrated GPU via Metal (MPS), it could be faster. But, I will stick to primarily the CPU and Accelerate/AMX.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Prioritizing Sparse Matrix Ops**\n\nI\u0027m focusing now on the Compressed Sparse Row (CSR) format for matrix representation, alongside parallelization strategies. I plan to leverage Grand Central Dispatch (GCD) in Swift/C++, or Python multiprocessing/joblib. I am also highlighting the unified memory advantage of Apple Silicon due to the input data fitting into the system-level cache. Memory latency is near-zero compared to discrete GPUs.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Evaluating Output Requirements**\n\nI\u0027ve just realized a critical issue. The naive calculation of $\\mathbf{S} \u003d \\mathbf{U} \\mathbf{J}^T$ results in a dense $100K \\times 1M$ matrix, which would require 400 GB of memory. My key priority is now understanding that we only need the top-K results, not the full dense output. This drastically changes the memory requirements and the approach needed. Focusing on sparse outputs is the key to minimizing memory needs.\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-07-02T20:29:56.811Z"
+    }, {
+      "text": "If you are running this on macOS (using Apple Silicon, such as an M1, M2, M3, or M4 series chip) and restricting the computation to the **CPU**, you can take advantage of Apple\u0027s unique hardware design. \n\nApple Silicon features a **Unified Memory Architecture (UMA)** and a dedicated, on-die **Apple Matrix Coprocessor (AMX)**. Because sparse matrix math is heavily bottlenecked by memory transfer speeds rather than raw CPU math, a Mac chip is highly efficient for this workload.\n\n---\n\n### 1. The macOS Hardware Advantages\n\n*   **Unified Memory Architecture (UMA):** Unlike standard PCs where data must travel over a slow PCIe bus between the CPU and a GPU, Apple Silicon shares a single high-bandwidth memory pool (ranging from 100 GB/s on base chips to over 400 GB/s on Max/Ultra chips). \n*   **Massive System Level Cache (SLC):** Mac chips have large on-die caches (often 24MB to 96MB). \n    *   Our input user matrix ($100K \\times 5K$ skills) is only about **80 MB**.\n    *   Our input job matrix ($1M \\times 5K$ skills) is only about **120 MB**.\n    *   Because the total dataset is only about **200 MB**, a massive portion of the active data will reside directly in or very close to the CPU\u0027s ultra-fast cache during execution.\n*   **AMX (Apple Matrix Coprocessor):** Every performance core (P-core) on Apple Silicon has an undocumented AMX engine. AMX allows the CPU to perform vector and matrix math (including floating-point multiply-accumulate operations) at speeds near those of integrated graphics.\n\n---\n\n### 2. The Best Implementation Path on macOS (CPU)\n\nTo get the absolute maximum performance on a Mac CPU without using a GPU, you should use Apple’s native **`Accelerate.framework`** (specifically the **Sparse BLAS** library).\n\nIf you are writing in Python, you can achieve this by linking **SciPy** and **NumPy** to Apple’s Accelerate/vecLib backend. If you are writing in Swift or C++, you can call the `Accelerate` API directly.\n\n#### The Crucial Engineering Trick: Chunked Top-K Reduction\nA mathematical catch with multiplying a $100K \\times 5K$ matrix by a $5K \\times 1M$ matrix is the size of the output:\n$$\\text{Output Size} \u003d 100,000 \\text{ users} \\times 1,000,000 \\text{ jobs} \u003d 100,000,000,000 \\text{ (100 Billion) floats}$$\nStoring a dense matrix of 100 billion floats requires **400 GB of RAM**, which will cause any standard Mac to run out of memory.\n\nTo solve this, you must run the computation in **chunks**:\n1.  Divide the 100,000 users into chunks of **1,000 users**.\n2.  For each chunk, calculate the sparse dot products against the 1,000,000 jobs.\n3.  Immediately run a **Top-K reduction** (using a min-heap or `std::partial_sort`) to keep only the top 100 jobs for those 1,000 users.\n4.  Discard the intermediate raw scores and move to the next chunk.\n5.  This keeps your active memory footprint **under 1 GB** at all times.\n\n---\n\n### 3. macOS CPU Runtime Estimation (100K Users × 1M Jobs)\n\nLet’s estimate the actual runtime for the 30 Billion Multiply-Accumulate operations (60 Billion FLOPs) on a typical Apple Silicon CPU (using a mid-tier chip like an **M2 Pro / M3 Pro** with 6 to 8 Performance cores as our benchmark):\n\n#### **For a Single User Query (Real-Time Matching)**\n*   **The Math:** 300,000 operations.\n*   Using Apple\u0027s AMX coprocessor on a single performance core, computing 300,000 operations takes **under 0.1 milliseconds**. \n*   If using **Block-Max WAND** to prune the search space to only evaluate the most promising jobs, this drops to **under 0.02 milliseconds**.\n*   *Verdict:* Completely instantaneous. The user experience will be limited entirely by the network latency of your web framework.\n\n#### **For the Entire 100K Users × 1M Jobs Batch (Offline Compute)**\n*   **The Math:** 60 Billion sparse FLOPs + Top-100 sorting.\n*   Using multi-threaded execution across 8 Performance cores (P-cores) via the Apple Accelerate framework, the CPU can sustain an effective sparse computation rate of roughly 15 to 30 GFLOPs/second (taking memory overhead into account).\n*   $$\\text{Computation Time} \\approx \\frac{60 \\text{ Billion FLOPs}}{25 \\text{ GFLOPs/sec}} \\approx \\mathbf{2.4 \\text{ seconds}}$$\n*   $$\\text{Top-100 Sorting Time} \\approx \\mathbf{1.1 \\text{ seconds}}$$\n*   *Verdict:* **Total Runtime $\\approx$ 3.5 seconds**. \n\nEven on a consumer MacBook CPU, the entire matching and ranking database for 100,000 highly detailed profiles against 1,000,000 active jobs can be computed from scratch in **under 4 seconds**, provided the code leverages the `Accelerate` framework and processes the output in memory-conscious chunks.",
+      "role": "model",
+      "finishReason": "STOP",
+      "tokenCount": 1279,
+      "parts": [{
+        "text": "If you are running this on macOS (using Apple Silicon, such as an M1, M2,"
+      }, {
+        "text": " M3, or M4 series chip) and restricting the computation to the **CPU**, you can take advantage of Apple"
+      }, {
+        "text": "\u0027s unique hardware design. \n\nApple Silicon features a **Unified Memory Architecture (UMA)** and a dedicated, on-die"
+      }, {
+        "text": " **Apple Matrix Coprocessor (AMX)**. Because sparse matrix math is heavily bottlenecked by memory transfer speeds rather than raw"
+      }, {
+        "text": " CPU math, a Mac chip is highly efficient for this workload.\n\n---\n\n### 1. The macOS Hardware Advantages"
+      }, {
+        "text": "\n\n*   **Unified Memory Architecture (UMA):** Unlike standard PCs where data must travel over a slow PCIe bus between"
+      }, {
+        "text": " the CPU and a GPU, Apple Silicon shares a single high-bandwidth memory pool (ranging from 100 GB/s"
+      }, {
+        "text": " on base chips to over 400 GB/s on Max/Ultra chips). \n*   **Mass"
+      }, {
+        "text": "ive System Level Cache (SLC):** Mac chips have large on-die caches (often 24MB to 96"
+      }, {
+        "text": "MB). \n    *   Our input user matrix ($100K \\times 5K$ skills) is only"
+      }, {
+        "text": " about **80 MB**.\n    *   Our input job matrix ($1M \\times 5K$ skills) is only"
+      }, {
+        "text": " about **120 MB**.\n    *   Because the total dataset is only about **200 MB**, a"
+      }, {
+        "text": " massive portion of the active data will reside directly in or very close to the CPU\u0027s ultra-fast cache during execution.\n"
+      }, {
+        "text": "*   **AMX (Apple Matrix Coprocessor):** Every performance core (P-core) on Apple Silicon has"
+      }, {
+        "text": " an undocumented AMX engine. AMX allows the CPU to perform vector and matrix math (including floating-point multiply-accumulate"
+      }, {
+        "text": " operations) at speeds near those of integrated graphics.\n\n---\n\n### 2. The Best Implementation Path on macOS ("
+      }, {
+        "text": "CPU)\n\nTo get the absolute maximum performance on a Mac CPU without using a GPU, you should use Apple’s native"
+      }, {
+        "text": " **`Accelerate.framework`** (specifically the **Sparse BLAS** library).\n\nIf you are writing in Python,"
+      }, {
+        "text": " you can achieve this by linking **SciPy** and **NumPy** to Apple’s Accelerate/vecLib backend."
+      }, {
+        "text": " If you are writing in Swift or C++, you can call the `Accelerate` API directly.\n\n#### The Crucial Engineering"
+      }, {
+        "text": " Trick: Chunked Top-K Reduction\nA mathematical catch with multiplying a $100K \\times 5K$ matrix"
+      }, {
+        "text": " by a $5K \\times 1M$ matrix is the size of the output:\n$$\\text{Output Size"
+      }, {
+        "text": "} \u003d 100,000 \\text{ users} \\times 1,000,"
+      }, {
+        "text": "000 \\text{ jobs} \u003d 100,000,000,00"
+      }, {
+        "text": "0 \\text{ (100 Billion) floats}$$\nStoring a dense matrix of 100 billion floats"
+      }, {
+        "text": " requires **400 GB of RAM**, which will cause any standard Mac to run out of memory.\n\nTo solve this,"
+      }, {
+        "text": " you must run the computation in **chunks**:\n1.  Divide the 100,000 users"
+      }, {
+        "text": " into chunks of **1,000 users**.\n2.  For each chunk, calculate the sparse dot products against the"
+      }, {
+        "text": " 1,000,000 jobs.\n3.  Immediately run a **Top-K reduction"
+      }, {
+        "text": "** (using a min-heap or `std::partial_sort`) to keep only the top 100 jobs"
+      }, {
+        "text": " for those 1,000 users.\n4.  Discard the intermediate raw scores and move to the next chunk"
+      }, {
+        "text": ".\n5.  This keeps your active memory footprint **under 1 GB** at all times.\n\n---\n\n"
+      }, {
+        "text": "### 3. macOS CPU Runtime Estimation (100K Users × 1M Jobs)\n\nLet’s estimate"
+      }, {
+        "text": " the actual runtime for the 30 Billion Multiply-Accumulate operations (60 Billion FLOPs) on a typical"
+      }, {
+        "text": " Apple Silicon CPU (using a mid-tier chip like an **M2 Pro / M3 Pro** with 6"
+      }, {
+        "text": " to 8 Performance cores as our benchmark):\n\n#### **For a Single User Query (Real-Time Matching)**\n*   **"
+      }, {
+        "text": "The Math:** 300,000 operations.\n*   Using Apple\u0027s AMX coprocessor on"
+      }, {
+        "text": " a single performance core, computing 300,000 operations takes **under 0.1 milliseconds**. "
+      }, {
+        "text": "\n*   If using **Block-Max WAND** to prune the search space to only evaluate the most promising jobs"
+      }, {
+        "text": ", this drops to **under 0.02 milliseconds**.\n*   *Verdict:* Completely instantaneous. The user experience"
+      }, {
+        "text": " will be limited entirely by the network latency of your web framework.\n\n#### **For the Entire 100K"
+      }, {
+        "text": " Users × 1M Jobs Batch (Offline Compute)**\n*   **The Math:** 60 Billion sparse FL"
+      }, {
+        "text": "OPs + Top-100 sorting.\n*   Using multi-threaded execution across 8 Performance cores (P-"
+      }, {
+        "text": "cores) via the Apple Accelerate framework, the CPU can sustain an effective sparse computation rate of roughly 15 to 3"
+      }, {
+        "text": "0 GFLOPs/second (taking memory overhead into account).\n*   $$\\text{Computation Time} \\approx \\frac"
+      }, {
+        "text": "{60 \\text{ Billion FLOPs}}{25 \\text{ GFLOPs/sec}} \\"
+      }, {
+        "text": "approx \\mathbf{2.4 \\text{ seconds}}$$\n*   $$\\text{Top-100 Sorting"
+      }, {
+        "text": " Time} \\approx \\mathbf{1.1 \\text{ seconds}}$$\n*   *Verdict:* **Total Runtime"
+      }, {
+        "text": " $\\approx$ 3.5 seconds**. \n\nEven on a consumer MacBook CPU, the entire matching and ranking database for 1"
+      }, {
+        "text": "00,000 highly detailed profiles against 1,000,000 active jobs can be computed"
+      }, {
+        "text": " from scratch in **under 4 seconds**, provided the code leverages the `Accelerate` framework and processes the output in memory"
+      }, {
+        "text": "-conscious chunks."
+      }, {
+        "text": "",
+        "thoughtSignature": "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"
+      }],
+      "createTime": "2026-07-02T20:30:13.696Z"
+    }],
+    "pendingInputs": [{
+      "text": "",
+      "role": "user"
+    }]
+  }
+}

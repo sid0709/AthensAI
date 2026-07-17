@@ -1,0 +1,192 @@
+# Build NextOffer and push to Docker Hub when a PR targets master
+# (and again when that PR is merged / pushed to master).
+# On master push / workflow_dispatch, also SSH-deploy to the VPS.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   DOCKERHUB_USERNAME  — e.g. omnimuh730
+#   DOCKERHUB_TOKEN     — Docker Hub access token (not your password)
+#   VPS_HOST            — e.g. 83.229.67.146
+#   VPS_USER            — e.g. root
+#   VPS_SSH_KEY         — private ed25519 key for deploy (PEM)
+#
+# Optional secrets / variables:
+#   VPS_SSH_PORT        — default 22
+#   DOCKER_IMAGE        — default: omnimuh730/nextoffer
+
+name: Docker publish
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ${{ vars.DOCKER_IMAGE || 'omnimuh730/nextoffer' }}
+
+jobs:
+  build-and-push:
+    name: Build & push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha_short: ${{ steps.meta.outputs.sha_short }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${IMAGE_NAME}"
+          SHA_SHORT="$(git rev-parse --short HEAD)"
+          TAGS=()
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            PR="${{ github.event.pull_request.number }}"
+            # PR builds: do not overwrite :latest — use PR + sha tags for testing.
+            TAGS+=("${IMAGE}:pr-${PR}")
+            TAGS+=("${IMAGE}:pr-${PR}-${SHA_SHORT}")
+            IMAGE_TAG="pr-${PR}-${SHA_SHORT}"
+          else
+            # master push / workflow_dispatch: update the live tags.
+            TAGS+=("${IMAGE}:latest")
+            TAGS+=("${IMAGE}:sha-${SHA_SHORT}")
+            TAGS+=("${IMAGE}:amd64")
+            # Date-based version for rollbacks (UTC).
+            TAGS+=("${IMAGE}:$(date -u +%Y.%m.%d)-${SHA_SHORT}")
+            IMAGE_TAG="sha-${SHA_SHORT}"
+          fi
+
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${TAGS[@]}"
+            echo "EOF"
+            echo "sha_short=${SHA_SHORT}"
+            echo "image_tag=${IMAGE_TAG}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Will push:"
+          printf '  %s\n' "${TAGS[@]}"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          # Match docker/publish.sh default — servers are linux/amd64.
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_API_URL=/api
+            VITE_AVALON_SERVER=/avalon
+            VITE_AI_BFF_URL=/ai-bff
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=nextoffer
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## Docker image published"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Event | \`${{ github.event_name }}\` |"
+            echo "| Ref | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ steps.meta.outputs.sha_short }}\` |"
+            echo "| Deploy tag | \`${{ steps.meta.outputs.image_tag }}\` |"
+            echo ""
+            echo "### Tags"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo ""
+            echo "Pull: \`docker pull ${IMAGE_NAME}:latest\` (master) or \`docker pull ${IMAGE_NAME}:pr-N\` (PR)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to VPS
+    needs: build-and-push
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: nextoffer-vps-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync deploy script to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          source: docker/deploy-remote.sh
+          target: /opt/nextoffer/
+          strip_components: 1
+
+      - name: Pull image and recreate container
+        id: deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            if [[ -f /opt/nextoffer/deploy-remote.sh ]]; then
+              mv -f /opt/nextoffer/deploy-remote.sh /opt/nextoffer/deploy.sh
+            elif [[ -f /opt/nextoffer/docker/deploy-remote.sh ]]; then
+              mv -f /opt/nextoffer/docker/deploy-remote.sh /opt/nextoffer/deploy.sh
+            fi
+            chmod 755 /opt/nextoffer/deploy.sh
+            /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## VPS deploy"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Host | \`${{ secrets.VPS_HOST }}\` |"
+            echo "| Image | \`${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}\` |"
+            echo "| Commit | \`${{ needs.build-and-push.outputs.sha_short }}\` |"
+            echo ""
+            echo "Health: \`curl -sS http://127.0.0.1:9030/avalon/health\` on the VPS."
+            echo "Rollback: \`ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '/opt/nextoffer/deploy.sh sha-<old>'\`"
+          } >> "$GITHUB_STEP_SUMMARY"

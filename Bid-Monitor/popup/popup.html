@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bid Monitor</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <p class="bm-eyebrow">Athens Bid Ready</p>
+      <h1>Bid Monitor</h1>
+      <p class="subtitle">Prefer the side panel for Apply · Analyze · Submit</p>
+    </header>
+
+    <section id="loginView" class="view">
+      <form id="loginForm" class="form-section">
+        <label>
+          Profile name
+          <input id="username" type="text" placeholder="e.g. Eli Taylor" autocomplete="username" required />
+        </label>
+        <label>
+          Vendor access password
+          <input id="password" type="password" placeholder="Set in Athens → Profile" autocomplete="current-password" required />
+        </label>
+        <button id="signInBtn" class="btn btn-start" type="submit">Sign in</button>
+      </form>
+      <p id="loginError" class="error hidden"></p>
+      <p class="hint">
+        Requires vendor access + password in Athens Profile settings. Prefer the <strong>side panel</strong> for Apply / Submit.
+      </p>
+    </section>
+
+    <section id="poolsView" class="view hidden">
+      <div class="profile-bar">
+        <div>
+          <div class="profile-label">Signed in as</div>
+          <div id="profileName" class="profile-name">—</div>
+          <div id="roleBadge" class="role-badge">Bidder</div>
+        </div>
+        <button id="signOutBtn" class="btn-link" type="button">Sign out</button>
+      </div>
+
+      <div class="format-toggle compact-format">
+        <span class="format-toggle-label">Video format</span>
+        <div class="format-switch" role="group" aria-label="Video format">
+          <button type="button" class="format-option active" data-format="webm">WebM</button>
+          <button type="button" class="format-option" data-format="mp4">MP4</button>
+        </div>
+      </div>
+
+      <div class="section-header">
+        <h2>Job pools</h2>
+      </div>
+      <ul id="poolList" class="item-list"></ul>
+    </section>
+
+    <section id="jobsView" class="view hidden">
+      <button id="backToPoolsBtn" class="btn-link back-btn" type="button">← Back to pools</button>
+      <div class="section-header">
+        <h2 id="jobsPoolTitle">Pool jobs</h2>
+        <span id="jobsPoolStatus" class="status-badge">active</span>
+      </div>
+      <ul id="jobList" class="item-list"></ul>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

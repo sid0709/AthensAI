@@ -1,0 +1,53 @@
+---
+description: Bid Monitor UI must follow Athens Bid Ready design tokens, typography, and patterns
+globs: Bid-Monitor/**/*.{css,html,js}
+alwaysApply: false
+---
+
+# Bid Monitor UI — Athens Bid Ready
+
+Bid Monitor is the Chrome companion to Athens **Bid Management**. Keep its UI visually aligned with that feature — not the purple Athens Settings chrome, and not generic system-UI / blue extension skins.
+
+## Source of truth
+
+| What | Where |
+|------|--------|
+| Tokens & patterns | `Athens/src/app/features/bid-management/bid-management.css` (`--bm-*`) |
+| Fonts | Figtree (body), Bricolage Grotesque (display), JetBrains Mono (IDs/meta) |
+| Extension tokens | `Bid-Monitor/sidepanel/tokens.css` — import this; do not invent new palettes |
+
+## Tokens (required)
+
+Use CSS variables from `tokens.css`. Never hard-code slate/blue hex for chrome.
+
+- Surfaces: `--bm-ink`, `--bm-panel`, `--bm-panel-solid`, `--bm-line`
+- Brand: `--bm-ember` / `--bm-ember-soft` (primary CTAs), `--bm-teal` / `--bm-teal-glow` (links, Apply, active chips)
+- Type: `--bm-body`, `--bm-display`, `--bm-mono`
+- Radius: `--bm-radius-sm|md|lg|pill`
+- Page atmosphere: `--bm-page-bg` (ember + teal wash — not flat gray)
+
+## Patterns
+
+- **Titles / company names**: `font-family: var(--bm-display)`, tight tracking
+- **Eyebrow labels**: uppercase, `~0.65rem`, bold, `letter-spacing: 0.08–0.12em`, muted
+- **Cards**: panel surface + `--bm-line` border, radius 12–16px; frosted panels OK
+- **Primary CTA** (Submit / Sign in): ember gradient (see `.btn-primary`)
+- **Apply / success-adjacent**: teal (`.btn-apply`)
+- **Secondary**: panel-solid + line border
+- **Chips**: pill radius; Pending = ember soft; In process = success soft; Submitted = teal glow; Skipped = muted
+- **Segmented controls**: track + teal active fill (not blue)
+- **Copy**: short operational labels (“Bid Ready”, “In process”, “Submit”, “Skip”) — match Athens Bid Management language
+
+## Do not
+
+- Purple / indigo product chrome (`#6c5ce7`) in Bid Monitor
+- Default stacks (Inter, Roboto, Arial, system-only) as the primary UI font
+- Flat single-color `#f1f5f9` / blue `#2563eb` extension look
+- New one-off color systems in `panel.css` / `popup.css` without updating `tokens.css`
+
+## When changing UI
+
+1. Extend `tokens.css` if a new semantic color is needed
+2. Restyle via existing classes / variables
+3. Keep side panel and popup on the same token file
+4. Prefer Athens Bid Management CSS as the visual reference when unsure

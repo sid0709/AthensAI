@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "athens-vite",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd Athens && npm run dev -- --port $PORT"],
+      "port": 5173,
+      "autoPort": true
+    }
+  ]
+}

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bid Monitor</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <section id="loginView" class="view">
+      <header class="app-header">
+        <p class="bm-eyebrow">Athens Bid Ready</p>
+        <h1>Bid Monitor</h1>
+        <p class="subtitle">Silent video bidding for your Bid Ready queue</p>
+      </header>
+      <form id="loginForm" class="form-section card">
+        <label>
+          Profile name
+          <input id="applierName" type="text" placeholder="e.g. Eli Taylor" autocomplete="username" required />
+        </label>
+        <label>
+          Vendor access password
+          <input id="password" type="password" placeholder="Set in Athens → Profile" autocomplete="current-password" required />
+        </label>
+        <input id="username" type="hidden" value="" />
+        <button id="signInBtn" class="btn btn-primary" type="submit">Sign in</button>
+      </form>
+      <p id="loginError" class="error hidden"></p>
+      <p class="hint">
+        Requires <strong>Allow vendor access</strong> and a <strong>vendor access password</strong> in Athens → Settings → Profile.
+      </p>
+    </section>
+
+    <section id="workspaceView" class="view hidden">
+      <header class="sticky-header">
+        <div class="profile-bar compact">
+          <div>
+            <div class="profile-label">Bidder</div>
+            <div id="profileName" class="profile-name">—</div>
+            <div class="meta-row">
+              <span id="roleBadge" class="role-badge">Bidder</span>
+              <span id="bridgeBadge" class="bridge-badge unknown">Athens…</span>
+              <span id="completedToday" class="completed-pill">0 today</span>
+            </div>
+          </div>
+          <button id="signOutBtn" class="btn-link" type="button">Sign out</button>
+        </div>
+
+        <div class="format-toggle compact-format">
+          <span class="format-toggle-label">Video format</span>
+          <div class="format-switch" role="group" aria-label="Video format">
+            <button type="button" class="format-option active" data-format="webm">WebM</button>
+            <button type="button" class="format-option" data-format="mp4">MP4</button>
+          </div>
+        </div>
+      </header>
+
+      <div id="statusStrip" class="status-strip idle">
+        <span class="status-dot"></span>
+        <span id="statusStripText">Select a Bid Ready job to apply</span>
+      </div>
+
+      <section id="applySessionView" class="apply-session card hidden">
+        <div class="apply-session-head">
+          <h2>Active job</h2>
+          <span id="applyModeBadge" class="mode-badge ready">Ready</span>
+        </div>
+        <div id="applyJobCompany" class="apply-job-title">—</div>
+        <div id="applyJobTitle" class="apply-job-meta">—</div>
+        <div id="applyResumeFolder" class="apply-job-meta">—</div>
+        <div id="applyResumeFileNameRow" class="resume-filename-row apply-resume-filename hidden">
+          <span class="resume-filename-label">Upload as</span>
+          <code id="applyResumeFileName" class="resume-filename mono" title=""></code>
+          <button id="applyCopyResumeNameBtn" class="btn-copy-filename" type="button" title="Copy filename">Copy</button>
+        </div>
+        <p id="applySessionStatus" class="apply-status">Ready to record</p>
+        <p id="applySessionError" class="error hidden"></p>
+
+        <div id="applyResumeActions" class="resume-actions hidden">
+          <span class="resume-actions-label">Athens résumé</span>
+          <div class="resume-actions-btns">
+            <button id="applyViewResumeBtn" class="btn btn-secondary" type="button">View résumé</button>
+            <button id="applyDownloadResumeBtn" class="btn btn-secondary" type="button">Download</button>
+          </div>
+        </div>
+
+        <div id="startRecordBlock" class="start-record-block">
+          <p class="start-record-copy">
+            Click the <strong>Bid Monitor toolbar icon</strong> on this tab
+            (or right‑click → Start / Stop recording) to begin silent video capture.
+          </p>
+          <button id="startRecordingBtn" class="btn btn-secondary" type="button">How to start recording</button>
+        </div>
+
+        <div class="action-grid">
+          <button id="analyzeBtn" class="btn btn-secondary" type="button">Analyze</button>
+          <button id="openJobBtn" class="btn btn-secondary" type="button">Open job</button>
+          <button id="reopenJobBtn" class="btn btn-secondary hidden" type="button">Reopen job</button>
+        </div>
+
+        <div id="screeningPanel" class="screening-panel hidden">
+          <div class="lights-row">
+            <div class="traffic-light" data-light="jd">
+              <span class="light-dot unknown" id="lightJd"></span>
+              <span>JD</span>
+            </div>
+            <div class="traffic-light" data-light="remote">
+              <span class="light-dot unknown" id="lightRemote"></span>
+              <span>Remote</span>
+            </div>
+            <div class="traffic-light" data-light="clearance">
+              <span class="light-dot unknown" id="lightClearance"></span>
+              <span>No clearance</span>
+            </div>
+          </div>
+          <p id="analyzeStatus" class="analyze-status hidden"></p>
+          <details id="summaryDetails" class="summary-details hidden">
+            <summary>Page summary</summary>
+            <p id="analyzeSummary"></p>
+          </details>
+          <ul id="flagExplanations" class="flag-explanations"></ul>
+          <div id="recommendResumeBlock" class="recommend-resume-block">
+            <button id="recommendResumeBtn" class="btn btn-secondary" type="button" disabled>
+              Recommend resume
+            </button>
+            <p id="recommendResumeResult" class="recommend-resume-result hidden"></p>
+            <p id="recommendResumeWarning" class="recommend-resume-warning hidden"></p>
+          </div>
+          <details id="formAnswersDetails" class="form-answers hidden" open>
+            <summary>Suggested answers <span id="formAnswersCount" class="form-answers-count"></span></summary>
+            <ul id="formAnswersList" class="form-answers-list"></ul>
+          </details>
+        </div>
+      </section>
+
+      <section id="recordingsView" class="recordings card hidden">
+        <h2>Recording now</h2>
+        <ul id="recordingsList" class="item-list"></ul>
+      </section>
+
+      <nav id="workspaceTabs" class="workspace-tabs" role="tablist" aria-label="Bid Monitor pages">
+        <button type="button" class="workspace-tab active" data-tab="ready" role="tab" aria-selected="true">
+          Bid Ready
+        </button>
+        <button type="button" class="workspace-tab" data-tab="rejected" role="tab" aria-selected="false">
+          Rejected
+          <span id="rejectedCountBadge" class="tab-count hidden">0</span>
+        </button>
+      </nav>
+
+      <section id="queueSection" class="queue-section" data-page="ready">
+        <div class="section-header">
+          <h2>Bid Ready</h2>
+          <div class="section-header-actions">
+            <button id="downloadResumesZipBtn" class="btn-link" type="button">Zip résumés</button>
+            <button id="refreshQueueBtn" class="btn-link" type="button">Refresh</button>
+          </div>
+        </div>
+        <p id="queueHint" class="hint queue-hint">Pending until Apply → then In process</p>
+        <ul id="jobList" class="item-list"></ul>
+      </section>
+
+      <section id="rejectedSection" class="queue-section hidden" data-page="rejected">
+        <div class="section-header">
+          <h2>Rejected</h2>
+          <button id="refreshRejectedBtn" class="btn-link" type="button">Refresh</button>
+        </div>
+        <p id="rejectedHint" class="hint queue-hint">
+          Mark fixed returns the bid to Submitted (no re-record).
+        </p>
+        <ul id="rejectedList" class="item-list"></ul>
+      </section>
+
+      <footer id="finishFooter" class="sticky-footer hidden">
+        <p class="finish-hint" id="finishHint">
+          Submit → Submitted · Skip → Skipped. Stops recording when active.
+        </p>
+        <div class="finish-actions" id="finishActions">
+          <button id="submitRecordingBtn" class="btn btn-primary" type="button">Submit</button>
+          <button id="skipRecordingBtn" class="btn btn-muted" type="button">Skip this Job</button>
+        </div>
+      </footer>
+    </section>
+
+    <!-- Legacy ids kept as aliases via JS if needed -->
+    <ul id="poolList" class="hidden"></ul>
+    <div id="poolsView" class="hidden"></div>
+    <div id="jobsView" class="hidden"></div>
+    <span id="jobsPoolTitle" class="hidden"></span>
+    <span id="jobsPoolStatus" class="hidden"></span>
+    <button id="backToPoolsBtn" class="hidden" type="button"></button>
+
+    <script src="../background/canonical-resume-name.js"></script>
+    <script src="panel.js"></script>
+  </body>
+</html>

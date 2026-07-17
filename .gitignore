@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Local CI bootstrap artifacts (deploy keys — never commit)
+.ci/
+
+# Logs & runtime
+logs/
+*.log
+npm-debug.log*
+.DS_Store
+
+# Playwright / agent runtime artifacts
+.playwright-cli/
+agent-runtime/logs/
+
+# Python venvs
+.venv/
+venv/
+__pycache__/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker volumes (local only)
+.local/
+
+# Puppeteer Chrome for Testing (installed by Athens-server postinstall)
+Athens-server/.cache/
+
+# Subtree setup artifacts (local only)
+.bare/
+.staging/
+
+# OS
+Thumbs.db
+
+# Nested package manager locks in sub-apps (root lockfile is canonical for workspaces)
+Athens/node_modules/
+connector/node_modules/
+unified-ai-server/node_modules/
+Athens-server/node_modules/
+
+# Codex rust target (large; build locally)
+codex/codex-rs/target/
+
+# Test / coverage
+coverage/
+.nyc_output/

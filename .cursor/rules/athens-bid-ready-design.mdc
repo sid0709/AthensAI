@@ -1,0 +1,33 @@
+---
+description: Shared Athens Bid Ready visual language (ember/teal, Figtree/Bricolage) for Bid Management + Bid Monitor
+globs: "{Athens/src/app/features/bid-management/**/*,Bid-Monitor/**/*}"
+alwaysApply: false
+---
+
+# Athens Bid Ready design language
+
+Applies to **Athens Bid Management** and **Bid Monitor**. They are one product surface.
+
+## Visual identity
+
+- **Ink / panels / lines**: warm green-gray (`--bm-ink`, `--bm-panel*`, `--bm-line`)
+- **Accent**: ember `#e85d04` for primary actions and brand sparks
+- **Support**: teal `#0f766e` for links, active states, Apply
+- **Atmosphere**: soft ember + teal radial wash over `#eef3f0` → `#ebe8e2` (not flat slate, not purple)
+- **Type**: Figtree body · Bricolage Grotesque display · JetBrains Mono for technical meta
+
+## Frontend updates
+
+When editing Bid Ready UI (Athens feature or Bid-Monitor extension):
+
+1. Reuse `--bm-*` tokens (Athens `bid-management.css` or Bid-Monitor `tokens.css`)
+2. Keep status language consistent: Pending → In process → Submitted / Skipped
+3. Prefer frosted/soft panels and 12–16px radii over heavy card shadows
+4. Do not restyle Bid Ready toward the violet Settings/Dashboard theme unless explicitly requested
+
+## References
+
+- `Athens/src/app/features/bid-management/bid-management.css`
+- `Athens/src/styles/fonts.css`
+- `Bid-Monitor/sidepanel/tokens.css`
+- `.cursor/rules/bid-monitor-ui.mdc`

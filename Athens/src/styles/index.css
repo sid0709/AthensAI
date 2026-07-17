@@ -1,0 +1,64 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+@layer utilities {
+  .page-container {
+    @apply max-w-[1440px] mx-auto px-6 py-6;
+  }
+
+  .scroll-row {
+    @apply flex gap-3 overflow-x-auto snap-x snap-mandatory pb-1;
+    scrollbar-width: thin;
+    scrollbar-color: var(--muted) transparent;
+  }
+
+  .scroll-row > * {
+    @apply snap-start flex-shrink-0;
+  }
+
+  .icon-btn {
+    @apply min-w-10 min-h-10 w-10 h-10 flex items-center justify-center rounded-lg transition-colors;
+  }
+
+  .subtle-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+  }
+
+  .subtle-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .subtle-scroll::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 999px;
+  }
+
+  .scroll-x-only {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+  }
+
+  .scroll-x-only::-webkit-scrollbar {
+    height: 6px;
+    width: 0;
+  }
+
+  .scroll-x-only::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 999px;
+  }
+
+  .dot-grid {
+    background-image: radial-gradient(circle, rgba(0, 0, 0, 0.08) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .resume-scale {
+    zoom: var(--resume-zoom, 1);
+  }
+}

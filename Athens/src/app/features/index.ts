@@ -1,0 +1,11 @@
+export { DashboardPage } from "./DashboardPage";
+export { ApplicationsPage } from "../applications/ApplicationsPage";
+export { CopilotPage } from "../copilot/CopilotPage";
+export { AgentsPage } from "../agents/AgentsPage";
+export { JobSearchPage } from "../job-search/JobSearchPage";
+export { ResumesPage } from "../resumes/ResumesPage";
+export { MailPage } from "../mail/MailPage";
+export { CalendarPage } from "../calendar/CalendarPage";
+export { InterviewPrepPage } from "../interview-prep/InterviewPrepPage";
+export { AnalyticsPage } from "../analytics/AnalyticsPage";
+export { SettingsPage } from "../settings/SettingsPage";

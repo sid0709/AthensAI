@@ -1,0 +1,55 @@
+# Git & IDE
+.git
+.gitignore
+.idea
+.vscode
+.cursor
+
+# Dependencies (rebuilt in image)
+**/node_modules
+
+# Build output (rebuilt in image)
+**/dist
+**/build
+**/*.tsbuildinfo
+
+# Local Puppeteer Chrome cache (downloaded on VPS at container start)
+**/.cache/puppeteer
+**/chrome/linux*
+**/chrome-headless-shell
+
+# Env & secrets (all directories)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Logs & runtime
+logs
+*.log
+.local
+.playwright-cli
+agent-runtime
+
+# Extensions (not dockerized — excluded from runtime image in Dockerfile)
+Extension
+Bid-Monitor
+
+# Archives & large artifacts
+*.zip
+vender-server/new-server.zip
+
+# Test & coverage
+coverage
+.nyc_output
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python venvs
+.venv
+venv
+__pycache__
+
+# Codex rust target
+codex/codex-rs/target

@@ -1,0 +1,28 @@
+{
+  "name": "nextoffer",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "Athens-server",
+    "ai-bff"
+  ],
+  "dependencies": {
+    "@nextoffer/shared": "file:packages/shared",
+    "ink": "^5.2.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  },
+  "scripts": {
+    "prestart": "node scripts/prestart.mjs",
+    "start": "node scripts/dev-start.mjs",
+    "install:all": "npm install && npm install --prefix Athens && npm run build -w ai-bff",
+    "backfill-job-skills": "npm run backfill-job-skills -w Athens-server",
+    "build:ai": "npm run build -w ai-bff",
+    "test:shared": "node --test packages/shared/src/pricing.test.mjs",
+    "start:athens-server": "npm run start -w Athens-server",
+    "start:ai": "npm run start -w ai-bff",
+    "start:ui": "npm run dev --prefix Athens"
+  }
+}

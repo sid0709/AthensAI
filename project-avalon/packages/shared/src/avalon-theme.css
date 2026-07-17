@@ -1,0 +1,63 @@
+/* Athens-aligned design tokens for Project Avalon surfaces */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:ital,wght@0,400..600;1,400..600&display=swap');
+
+:root {
+  color-scheme: dark;
+  --font-sans: 'Figtree', system-ui, -apple-system, sans-serif;
+  --font-display: 'Bricolage Grotesque', var(--font-sans);
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --background: #07070d;
+  --foreground: #eeeef6;
+  --card: #0d0d18;
+  --card-foreground: #eeeef6;
+  --primary: #7c6ef5;
+  --primary-foreground: #ffffff;
+  --secondary: #131322;
+  --secondary-foreground: #eeeef6;
+  --muted: #0f0f1c;
+  --muted-foreground: #6b6b88;
+  --accent: #9b87f7;
+  --destructive: #f87171;
+  --destructive-foreground: #07070d;
+  --success: #34d399;
+  --success-foreground: #052e1f;
+  --warning: #fbbf24;
+  --warning-foreground: #422006;
+  --border: rgba(255, 255, 255, 0.06);
+  --input-background: #131322;
+  --ring: #7c6ef5;
+  --radius: 0.75rem;
+  --radius-xl: calc(var(--radius) + 4px);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.4);
+  --shadow-primary: 0 4px 20px rgba(124, 110, 245, 0.22);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--foreground);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
