@@ -1,6 +1,8 @@
 importScripts(
   chrome.runtime.getURL('config.js'),
   'video-format.js',
+  'session-matching.js',
+  'segment-stitch.js',
   'video-store.js',
   'session-recorder.js',
   'canonical-resume-name.js',
@@ -8,6 +10,8 @@ importScripts(
   'auth-session.js',
   'queue-sync.js',
   'apply-lifecycle.js',
+  'application-session.js',
+  'segment-lifecycle.js',
   'mock-api.js',
   'zip-utils.js',
   'page-context.js',
@@ -32,6 +36,10 @@ async function clearPendingApply(tabId) {
 
 async function clearApplySessionByJobId(jobId) {
   if (!jobId) return;
+  const appSession = await ApplicationSessionStore.getSessionByJobId(jobId);
+  if (appSession) {
+    await ApplicationSessionStore.removeSessionAndSegments(appSession.sessionId).catch(() => {});
+  }
   await ApplyLifecycle.remove(jobId);
 }
 
@@ -227,37 +235,12 @@ function videoExtension(mimeType, videoFormat) {
   return videoFormat === 'mp4' ? 'mp4' : 'webm';
 }
 
-async function downloadVideoFromStore(sessionId, filename) {
-  await ensureOffscreenDocument();
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(onDone);
-      reject(new Error('Video download timed out.'));
-    }, 15000);
-
-    function onDone(message) {
-      if (message.type !== 'VIDEO_DOWNLOAD_DONE' || message.sessionId !== sessionId) return;
-      chrome.runtime.onMessage.removeListener(onDone);
-      clearTimeout(timeout);
-      if (message.ok) resolve();
-      else reject(new Error(message.error ?? 'Video download failed.'));
-    }
-
-    chrome.runtime.onMessage.addListener(onDone);
-
-    const url = chrome.runtime.getURL(
-      `download/download.html?sessionId=${encodeURIComponent(sessionId)}&filename=${encodeURIComponent(filename)}`,
-    );
-
-    chrome.windows.create({ url, type: 'popup', width: 1, height: 1, focused: false }, () => {
-      if (chrome.runtime.lastError) {
-        chrome.runtime.onMessage.removeListener(onDone);
-        clearTimeout(timeout);
-        reject(new Error(chrome.runtime.lastError.message));
-      }
-    });
-  });
+/**
+ * Local video download is disabled — recordings are uploaded to Firebase only.
+ * Kept as a no-op so any stale caller cannot open Chrome's Save dialog.
+ */
+async function downloadVideoFromStore(_sessionId, _filename) {
+  console.info('Bid Monitor: local video download skipped (Firebase upload only).');
 }
 
 async function ensureOffscreenDocument() {
@@ -281,52 +264,9 @@ async function ensureOffscreenDocument() {
   }
 }
 
-async function downloadSessionFiles(session, options = {}) {
-  const folder = `bid-monitor/${sanitizeFileName(session.bidderName)}-${session.id}`;
-  const ext = videoExtension(
-    session.videoMimeType ?? options.mimeType,
-    session.videoFormat ?? options.videoFormat,
-  );
-  const videoSizeBytes = options.videoSizeBytes ?? session.videoSizeBytes ?? 0;
-  const hasVideo = videoSizeBytes > 0;
-  const shouldDownloadVideo = hasVideo && !options.skipVideoDownload;
-
-  if (shouldDownloadVideo) {
-    try {
-      await downloadVideoFromStore(session.id, `${folder}/session.${ext}`);
-    } catch (err) {
-      console.error('Bid Monitor: video download failed', err);
-    }
-  }
-
-  const manifest = {
-    id: session.id,
-    bidderName: session.bidderName,
-    resumeSetFolder: session.resumeSetFolder,
-    jobId: session.jobId ?? null,
-    poolId: session.poolId ?? null,
-    companyName: session.companyName ?? null,
-    jobTitle: session.jobTitle ?? null,
-    jdUrl: session.jdUrl ?? null,
-    tabId: session.tabId ?? null,
-    recorderStatus: session.recorderStatus ?? null,
-    startedAt: session.startedAt,
-    stoppedAt: session.stoppedAt,
-    recordingWindowId: session.recordingWindowId ?? null,
-    videoFile: hasVideo ? `session.${ext}` : null,
-    videoFormat: session.videoFormat ?? VideoFormat.extensionForMimeType(session.videoMimeType ?? options.mimeType),
-    videoMimeType: session.videoMimeType ?? options.mimeType ?? null,
-    videoSizeBytes: hasVideo ? videoSizeBytes : null,
-    resumeEvents: session.resumeEvents ?? [],
-  };
-
-  const manifestJson = JSON.stringify(manifest, null, 2);
-  const manifestDataUrl = `data:application/json;charset=utf-8,${encodeURIComponent(manifestJson)}`;
-
-  await chrome.downloads.download({
-    url: manifestDataUrl,
-    filename: `${folder}/session.json`,
-  });
+/** Local session export disabled — use Bid Management / Firebase for recordings. */
+async function downloadSessionFiles(_session, _options = {}) {
+  console.info('Bid Monitor: local session export skipped (Firebase upload only).');
 }
 
 function updateBadge(isRecording) {
@@ -377,18 +317,48 @@ async function cleanupOrphanRecordingSessions() {
 }
 
 async function cleanupStoredSessionForClosedTab(tabId) {
+  // SegmentLifecycle owns multi-tab segment stop + merge prompts.
+  // Keep legacy bidMonitorSessions cleanup for non-segment recordings.
+  const segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
+  if (segment) {
+    // SegmentLifecycle.handleTabRemoved owns stopping and persisting the
+    // segment recorder. Remove the compatibility bidMonitorSessions row here
+    // without stopping the recorder a second time, otherwise the mirrored
+    // session remains permanently "recording" and accumulates in storage.
+    const legacySession = await getSessionForTab(tabId);
+    if (legacySession) {
+      const sessions = await getSessions();
+      await saveSessions(sessions.filter((session) => session.id !== legacySession.id));
+    }
+    await updateRecordingBadge();
+    broadcastApplySessionUpdate(tabId);
+    return;
+  }
+
   const session = await getSessionForTab(tabId);
   if (session) {
-    await abandonStoredSession(session.id);
-    // Keep job-scoped apply session so analysis / In-process UI survive tab close.
-    if (session.jobId) {
-      await ApplyLifecycle.upsert(session.jobId, {
-        applyTabId: null,
-        recorderStatus: 'ready',
-      });
+    // If this recording is tied to an application session with other tabs, don't abandon video.
+    const appSession = session.jobId
+      ? await ApplicationSessionStore.getSessionByJobId(session.jobId)
+      : null;
+    if (appSession && (appSession.activeTabIds || []).some((id) => Number(id) !== Number(tabId))) {
+      try {
+        await SessionRecorder.stop(session.id);
+      } catch {
+        // ignore
+      }
+      await abandonStoredSession(session.id);
+      await ApplyLifecycle.clearApplyTabOnly(tabId);
+    } else {
+      await abandonStoredSession(session.id);
+      if (session.jobId) {
+        await ApplyLifecycle.upsert(session.jobId, {
+          applyTabId: null,
+          recorderStatus: 'ready',
+        });
+      }
     }
   } else {
-    // Closing job tab (or résumé): only detach tab id — do not wipe apply state.
     await ApplyLifecycle.clearApplyTabOnly(tabId);
   }
   await updateRecordingBadge();
@@ -648,6 +618,23 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
     error: null,
   });
 
+  // Create ApplicationSession + first segment (multi-tab recording parent).
+  let appSessionResult = null;
+  try {
+    appSessionResult = await SegmentLifecycle.onApplyOpened({
+      jobId: job.id,
+      jobTitle: job.title,
+      companyName: job.companyName,
+      originalJobUrl: job.jdUrl,
+      tabId,
+      poolId: pool.id,
+      athensJobId: jobPayload.athensJobId,
+      streamId: null, // capture starts after wait / via applyToJob streamId path
+    });
+  } catch (err) {
+    console.warn('Bid Monitor: application session create failed', err);
+  }
+
   await notifyApplyPanel(tabId, {
     profileName: auth.displayName,
     recorderStatus: 'ready',
@@ -655,6 +642,7 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
       resumeSetFolder: job.resumeFolderName,
       applyFlow: true,
       pending: true,
+      applicationSessionId: appSessionResult?.session?.sessionId || null,
     },
     job: jobPayload,
   });
@@ -955,6 +943,66 @@ async function startApplyRecording(tabId, options = {}) {
 
   const { videoFormat = 'webm' } = await chrome.storage.local.get('videoFormat');
 
+  // Prefer multi-tab ApplicationSession segment capture when available.
+  let appSession = await ApplicationSessionStore.getSessionByJobId(pending.job.id);
+  if (!appSession) {
+    const opened = await SegmentLifecycle.onApplyOpened({
+      jobId: pending.job.id,
+      jobTitle: pending.job.title,
+      companyName: pending.job.companyName,
+      originalJobUrl: pending.job.jdUrl,
+      tabId,
+      poolId: pending.poolId,
+      athensJobId: pending.job.athensJobId || pending.job.id,
+      streamId: null,
+    });
+    appSession = opened.session;
+  }
+
+  let segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
+  if (!segment) {
+    segment = await ApplicationSessionStore.createSegment({
+      sessionId: appSession.sessionId,
+      tabId,
+      url: tabState.url || pending.job.jdUrl,
+      status: 'recording',
+    });
+  }
+
+  const capture = await SegmentLifecycle.startSegmentCapture(segment, tabState, {
+    streamId,
+    videoFormat,
+  });
+
+  if (!capture.ok) {
+    // Fall back to legacy single-session recorder
+    const started = await beginRecordingSession({
+      tab: tabState,
+      bidderName: auth.displayName,
+      resumeSetFolder: pending.job.resumeFolderName,
+      videoFormat,
+      jobId: pending.job.id,
+      poolId: pending.poolId,
+      companyName: pending.job.companyName,
+      jobTitle: pending.job.title,
+      jdUrl: pending.job.jdUrl,
+      applyFlow: true,
+      streamId,
+      recordInTab,
+      applicationSessionId: appSession.sessionId,
+      segmentId: segment.segmentId,
+    });
+    await notifyApplyPanel(tabId, {
+      profileName: auth.displayName,
+      recorderStatus: started.session?.recorderStatus ?? 'recording',
+      session: started.session,
+      job: pending.job,
+    });
+    broadcastApplySessionUpdate(tabId);
+    return started;
+  }
+
+  // Mirror a bidMonitorSessions row for existing UI / badge (keyed by segment id).
   const started = await beginRecordingSession({
     tab: tabState,
     bidderName: auth.displayName,
@@ -968,6 +1016,15 @@ async function startApplyRecording(tabId, options = {}) {
     applyFlow: true,
     streamId,
     recordInTab,
+    applicationSessionId: appSession.sessionId,
+    segmentId: segment.segmentId,
+    skipRecorderStart: true,
+    recordingMeta: capture.recording,
+  });
+
+  await ApplyLifecycle.upsert(pending.job.id, {
+    applicationSessionId: appSession.sessionId,
+    recorderStatus: capture.recording?.startedPaused ? 'paused' : 'recording',
   });
 
   await notifyApplyPanel(tabId, {
@@ -978,6 +1035,7 @@ async function startApplyRecording(tabId, options = {}) {
   });
 
   broadcastApplySessionUpdate(tabId);
+  chrome.runtime.sendMessage({ type: 'APPLICATION_SESSIONS_UPDATED' }).catch(() => {});
 
   return started;
 }
@@ -1097,6 +1155,10 @@ async function beginRecordingSession({
   applyFlow = false,
   streamId = null,
   recordInTab = false,
+  applicationSessionId = null,
+  segmentId = null,
+  skipRecorderStart = false,
+  recordingMeta = null,
 }) {
   if (!tab?.id) {
     throw new Error('No active tab to record.');
@@ -1123,7 +1185,7 @@ async function beginRecordingSession({
     expectedResumeName = '';
   }
   const session = {
-    id: createSessionId(),
+    id: segmentId || createSessionId(),
     status: 'recording',
     bidderName: bidderName?.trim() || 'Unknown',
     resumeSetFolder: resumeSetFolder?.trim() || '',
@@ -1145,43 +1207,54 @@ async function beginRecordingSession({
     jobTitle,
     jdUrl,
     applyFlow,
+    applicationSessionId,
+    segmentId,
   };
 
   const sessions = await getSessions();
   sessions.unshift(session);
   await saveSessions(sessions);
 
-  if (!streamId) {
-    throw new Error('Tab capture stream id missing — cannot start recorder.');
-  }
+  let recording = recordingMeta;
+  if (!skipRecorderStart) {
+    if (!streamId) {
+      throw new Error('Tab capture stream id missing — cannot start recorder.');
+    }
 
-  let recording = null;
-  try {
-    recording = await SessionRecorder.start(session.id, tab, {
-      videoFormat: normalizedFormat,
-      streamId,
-      recordInTab,
-    });
+    try {
+      recording = await SessionRecorder.start(session.id, tab, {
+        videoFormat: normalizedFormat,
+        streamId,
+        recordInTab,
+      });
+      await updateSession(session.id, {
+        videoMimeType: recording.mimeType,
+        videoFormat: recording.videoFormat ?? normalizedFormat,
+        recordingWindowId: recording.windowId,
+        recorderStatus: recording.startedPaused ? 'paused' : 'recording',
+      });
+    } catch (err) {
+      await saveSessions(sessions.filter((s) => s.id !== session.id));
+      throw err;
+    }
+  } else if (recordingMeta) {
     await updateSession(session.id, {
-      videoMimeType: recording.mimeType,
-      videoFormat: recording.videoFormat ?? normalizedFormat,
-      recordingWindowId: recording.windowId,
-      recorderStatus: recording.startedPaused ? 'paused' : 'recording',
+      videoMimeType: recordingMeta.mimeType,
+      videoFormat: recordingMeta.videoFormat ?? normalizedFormat,
+      recordingWindowId: recordingMeta.windowId ?? tab.windowId,
+      recorderStatus: recordingMeta.startedPaused ? 'paused' : 'recording',
     });
-  } catch (err) {
-    await saveSessions(sessions.filter((s) => s.id !== session.id));
-    throw err;
   }
 
   await updateRecordingBadge();
   await markApplyRecording(
     tab.id,
-    recording.startedPaused ? 'paused' : 'recording',
+    recording?.startedPaused ? 'paused' : 'recording',
   );
   await syncStoredRecorderStatuses(tab.windowId, tab.id);
   await notifyTab(tab.id, {
     isRecording: true,
-    recorderStatus: recording.startedPaused ? 'paused' : 'recording',
+    recorderStatus: recording?.startedPaused ? 'paused' : 'recording',
     applyFlow,
   }, { retry: applyFlow });
 
@@ -1271,19 +1344,65 @@ async function completeRecordingSession({
   recordingResult = null,
   /** 'submit' → Bid Management Submitted; 'skip' → Skipped */
   finishAction = 'submit',
+  jobId: finishJobId = null,
 } = {}) {
-  if (!tabId) {
+  if (!tabId && !finishJobId) {
     return { ok: false, error: 'No tab specified for stop.' };
   }
 
   const action = finishAction === 'skip' ? 'skip' : 'submit';
-  const session = await getSessionForTab(tabId);
-  if (!session) {
+
+  // Resolve application session first (multi-segment path).
+  let appSession = null;
+  if (finishJobId) {
+    appSession = await ApplicationSessionStore.getSessionByJobId(finishJobId);
+  }
+  if (!appSession && tabId) {
+    appSession = await ApplicationSessionStore.getSessionByTabId(tabId);
+  }
+
+  const session = tabId ? await getSessionForTab(tabId) : null;
+  if (!session && !appSession) {
     return finishPendingApplyWithoutRecording({ tabId, closeApplyTab, finishAction: action });
   }
 
+  const jobId = session?.jobId || appSession?.jobId || finishJobId;
+  let stitchWarning = null;
   let stoppedRecording = recordingResult;
-  if (!stoppedRecording) {
+  let finalBlob = null;
+  let finalMime = 'video/webm';
+
+  if (appSession) {
+    try {
+      const finalized = await SegmentLifecycle.finalizeSessionVideo(appSession.sessionId);
+      finalBlob = finalized.blob;
+      finalMime = finalized.mimeType || 'video/webm';
+      if (finalized.usedFallback) {
+        stitchWarning = 'Used the first clip only — some clips could not be combined.';
+      }
+      stoppedRecording = {
+        mimeType: finalMime,
+        videoFormat: finalMime.includes('mp4') ? 'mp4' : 'webm',
+        size: finalBlob?.size ?? 0,
+      };
+      // Persist stitched blob under legacy session id for upload path
+      if (finalBlob && session?.id) {
+        await SessionVideoStore.save(session.id, finalBlob, {
+          mimeType: finalMime,
+          videoFormat: stoppedRecording.videoFormat,
+        });
+      } else if (finalBlob && appSession.sessionId) {
+        await SessionVideoStore.save(appSession.sessionId, finalBlob, {
+          mimeType: finalMime,
+          videoFormat: stoppedRecording.videoFormat,
+        });
+      }
+    } catch (err) {
+      console.error('Bid Monitor: finalize session video failed', err);
+    }
+  }
+
+  if (!stoppedRecording && session) {
     try {
       if (session.recorderSource === 'sidePanel') {
         const entry = await SessionVideoStore.get(session.id);
@@ -1300,50 +1419,88 @@ async function completeRecordingSession({
     }
   }
 
-  const stopped = await updateSession(session.id, (s) => ({
-    ...s,
-    status: 'completed',
-    stoppedAt: new Date().toISOString(),
-    recorderStatus: 'stopped',
-    finishAction: action,
-    videoMimeType: stoppedRecording?.mimeType ?? s.videoMimeType,
-    videoFormat: stoppedRecording?.videoFormat ?? s.videoFormat,
-    videoSizeBytes: stoppedRecording?.size ?? s.videoSizeBytes,
-  }));
+  // Stop any remaining live recorders for this job's tabs
+  if (appSession) {
+    for (const tid of appSession.activeTabIds || []) {
+      try {
+        const sid = SessionRecorder.getSessionIdForTab(tid);
+        if (sid) await SessionRecorder.stop(sid);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const legacySessionId = session?.id || appSession?.sessionId;
+  let stopped = session
+    ? await updateSession(session.id, (s) => ({
+        ...s,
+        status: 'completed',
+        stoppedAt: new Date().toISOString(),
+        recorderStatus: 'stopped',
+        finishAction: action,
+        videoMimeType: stoppedRecording?.mimeType ?? s.videoMimeType,
+        videoFormat: stoppedRecording?.videoFormat ?? s.videoFormat,
+        videoSizeBytes: stoppedRecording?.size ?? s.videoSizeBytes,
+        stitchWarning,
+      }))
+    : {
+        id: legacySessionId,
+        jobId,
+        applyFlow: true,
+        jdUrl: appSession?.originalJobUrl,
+        bidderName: null,
+        companyName: appSession?.companyName,
+        jobTitle: appSession?.jobTitle,
+        startedAt: appSession?.createdAt,
+        stoppedAt: new Date().toISOString(),
+        videoMimeType: stoppedRecording?.mimeType,
+        videoFormat: stoppedRecording?.videoFormat,
+        videoSizeBytes: stoppedRecording?.size,
+      };
 
   let jobOutcome = null;
   let uploadResult = null;
   let uploadError = null;
   let statusError = null;
 
-  if (closeApplyTab) {
+  if (closeApplyTab && tabId) {
     chrome.tabs.remove(tabId).catch(() => {});
   }
+  // Close other session tabs on finish
+  if (closeApplyTab && appSession && tabId != null) {
+    for (const tid of appSession.activeTabIds || []) {
+      if (Number(tid) !== Number(tabId)) {
+        chrome.tabs.remove(tid).catch(() => {});
+      }
+    }
+  }
 
-  // Keep queue row until Athens finish succeeds — then mark Submitted/Skipped.
-  if (!session.jobId) {
-    await clearPendingApply(tabId);
+  if (!jobId) {
+    if (tabId) await clearPendingApply(tabId);
   }
   await updateRecordingBadge();
-  broadcastApplySessionUpdate(tabId);
-  await notifyTab(tabId, { isRecording: false });
+  if (tabId) broadcastApplySessionUpdate(tabId);
+  if (tabId) await notifyTab(tabId, { isRecording: false });
 
   const hasVideo = (stoppedRecording?.size ?? 0) > 0;
-  // No local Chrome download on submit/skip — recording goes to Firebase only.
+  const applyFlow = session?.applyFlow || Boolean(appSession);
 
-  // Athens status + Firebase upload for Bid Ready apply flow.
-  if (session.applyFlow && session.jobId) {
+  if (applyFlow && jobId) {
     try {
       const auth = await MockApi.getAuth();
       const settings = await AthensApi.getSettings();
       const applierName = settings.applierName || auth?.applierName || auth?.displayName;
       if (applierName) {
         if (hasVideo) {
-          const entry = await SessionVideoStore.get(session.id);
-          const blob = entry?.blob;
+          let blob = finalBlob;
+          if (!blob) {
+            const entry = await SessionVideoStore.get(legacySessionId);
+            blob = entry?.blob;
+          }
           if (blob && blob.size > 0) {
             const videoBase64 = await AthensApi.blobToBase64(blob);
-            const startedAt = session.startedAt ? new Date(session.startedAt).getTime() : null;
+            const startedAt = stopped.startedAt ? new Date(stopped.startedAt).getTime() : null;
             const stoppedAt = stopped?.stoppedAt ? new Date(stopped.stoppedAt).getTime() : Date.now();
             const durationSec =
               startedAt && Number.isFinite(startedAt)
@@ -1354,34 +1511,35 @@ async function completeRecordingSession({
               stoppedRecording?.videoFormat ?? stopped.videoFormat,
             );
             uploadResult = await AthensApi.uploadRecording(applierName, {
-              jobId: session.jobId,
-              sessionId: session.id,
-              applyUrl: session.jdUrl || undefined,
-              bidderName: session.bidderName || auth?.displayName,
+              jobId,
+              sessionId: appSession?.sessionId || legacySessionId,
+              applyUrl: stopped.jdUrl || appSession?.originalJobUrl || undefined,
+              bidderName: stopped.bidderName || auth?.displayName,
               contentType: stoppedRecording?.mimeType || blob.type || 'video/webm',
               fileName: `session.${ext}`,
               videoBase64,
               durationSec,
-              // Submit marks Submitted in upload; Skip uploads then flips to skipped.
               markCompleted: action === 'submit',
             });
-            await updateSession(session.id, {
-              recordingPath: uploadResult?.recording?.storagePath || null,
-              uploadedAt: new Date().toISOString(),
-            });
+            if (session?.id) {
+              await updateSession(session.id, {
+                recordingPath: uploadResult?.recording?.storagePath || null,
+                uploadedAt: new Date().toISOString(),
+              });
+            }
           }
         }
 
         if (action === 'skip') {
           await AthensApi.skipBid(applierName, {
-            jobId: session.jobId,
-            bidderName: session.bidderName || auth?.displayName,
+            jobId,
+            bidderName: stopped.bidderName || auth?.displayName,
           });
           jobOutcome = 'skipped';
         } else if (!uploadResult?.recording || !hasVideo) {
           await AthensApi.completeBid(applierName, {
-            jobId: session.jobId,
-            bidderName: session.bidderName || auth?.displayName,
+            jobId,
+            bidderName: stopped.bidderName || auth?.displayName,
           });
           jobOutcome = 'submitted';
         } else {
@@ -1396,24 +1554,29 @@ async function completeRecordingSession({
     }
   }
 
-  if (session.jobId && (jobOutcome === 'submitted' || jobOutcome === 'skipped')) {
-    const apply = await ApplyLifecycle.getByJobId(session.jobId);
+  if (jobId && (jobOutcome === 'submitted' || jobOutcome === 'skipped')) {
+    const apply = await ApplyLifecycle.getByJobId(jobId);
     const finishedJob = apply?.job || {
-      id: session.jobId,
-      athensJobId: apply?.athensJobId || session.jobId,
-      companyName: session.companyName || 'Job',
-      title: session.jobTitle || '',
-      jdUrl: session.jdUrl || '',
+      id: jobId,
+      athensJobId: apply?.athensJobId || jobId,
+      companyName: stopped.companyName || appSession?.companyName || 'Job',
+      title: stopped.jobTitle || appSession?.jobTitle || '',
+      jdUrl: stopped.jdUrl || appSession?.originalJobUrl || '',
     };
     await QueueSync.markJobFinished(
-      session.jobId,
+      jobId,
       jobOutcome === 'skipped' ? 'skipped' : 'applied',
       finishedJob,
     );
   }
-  if (session.jobId) {
-    await clearApplySessionByJobId(session.jobId);
+  if (jobId) {
+    await clearApplySessionByJobId(jobId);
   }
+  if (appSession) {
+    await ApplicationSessionStore.completeSession(appSession.sessionId);
+  }
+
+  chrome.runtime.sendMessage({ type: 'APPLICATION_SESSIONS_UPDATED' }).catch(() => {});
 
   return {
     ok: true,
@@ -1426,6 +1589,7 @@ async function completeRecordingSession({
     uploadError,
     statusError,
     recordingPath: uploadResult?.recording?.storagePath || null,
+    stitchWarning,
   };
 }
 
@@ -1474,11 +1638,12 @@ async function downloadPoolZip(poolId) {
 async function restoreActiveRecordingIfNeeded() {
   await cleanupOrphanRecordingSessions();
   const sessions = await getRecordingSessions();
-  if (!sessions.length) return;
-
-  await updateRecordingBadge();
-  await SessionRecorder.restore(sessions);
-  await notifyAllRecordingTabs();
+  if (sessions.length) {
+    await updateRecordingBadge();
+    await SessionRecorder.restore(sessions);
+    await notifyAllRecordingTabs();
+  }
+  await SegmentLifecycle.restoreFromStorage();
 }
 
 restoreActiveRecordingIfNeeded().catch(console.error);
@@ -1504,6 +1669,25 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 async function handleRecordingGesture(tab, streamId) {
+  // Resume a failed segment on this tab if present.
+  if (streamId) {
+    const resumed = await SegmentLifecycle.resumeFailedSegmentOnTab(tab, streamId);
+    if (resumed?.ok) {
+      broadcastApplySessionUpdate(tab.id);
+      return;
+    }
+    if (resumed?.reason === 'already_recording') return;
+    if (resumed?.reason !== 'no_segment') {
+      chrome.tabs
+        .sendMessage(tab.id, {
+          type: 'SEGMENT_CAPTURE_REQUIRED',
+          message: resumed?.error || 'Could not record this tab. Tap the Bid Monitor icon to retry.',
+        })
+        .catch(() => {});
+      return;
+    }
+  }
+
   const existing = await getSessionForTab(tab.id);
   if (existing) {
     // Apply-flow: open the panel so the bidder picks Submit vs Skip.
@@ -1524,6 +1708,14 @@ async function handleRecordingGesture(tab, streamId) {
     });
     return;
   }
+
+  // Start recording on an apply tab that has an application session but no live recorder yet.
+  const appSession = await ApplicationSessionStore.getSessionByTabId(tab.id);
+  if (appSession && streamId) {
+    await startRecordingFromGesture(tab, streamId);
+    return;
+  }
+
   if (!streamId) return; // Not capturable (e.g. chrome:// page).
   await startRecordingFromGesture(tab, streamId);
 }
@@ -1533,27 +1725,48 @@ async function startRecordingFromGesture(tab, streamId) {
   const pending = pendingAll[tab.id];
   if (!pending?.job) return; // Not a job-apply tab: icon just opens the panel.
 
-  if (await getSessionForTab(tab.id)) return;
-
   const auth = await MockApi.getAuth();
   if (!auth || auth.role !== 'bidder') return;
 
   const { videoFormat = 'webm' } = await chrome.storage.local.get('videoFormat');
 
   try {
-    await beginRecordingSession({
-      tab,
-      bidderName: auth.displayName,
-      resumeSetFolder: pending.job.resumeFolderName,
-      videoFormat,
-      jobId: pending.job.id,
-      poolId: pending.poolId,
-      companyName: pending.job.companyName,
-      jobTitle: pending.job.title,
-      jdUrl: pending.job.jdUrl,
-      applyFlow: true,
+    let appSession =
+      (await ApplicationSessionStore.getSessionByTabId(tab.id)) ||
+      (await ApplicationSessionStore.getSessionByJobId(pending.job.id));
+    if (!appSession) {
+      const opened = await SegmentLifecycle.onApplyOpened({
+        jobId: pending.job.id,
+        jobTitle: pending.job.title,
+        companyName: pending.job.companyName,
+        originalJobUrl: pending.job.jdUrl,
+        tabId: tab.id,
+        poolId: pending.poolId,
+        athensJobId: pending.job.athensJobId || pending.job.id,
+      });
+      appSession = opened.session;
+    }
+
+    let segment = await ApplicationSessionStore.getSegmentByTabId(tab.id);
+    if (!segment) {
+      segment = await ApplicationSessionStore.createSegment({
+        sessionId: appSession.sessionId,
+        tabId: tab.id,
+        openerTabId: tab.openerTabId ?? null,
+        url: tab.url || pending.job.jdUrl,
+        status: 'recording',
+      });
+    }
+
+    const result = await SegmentLifecycle.startSegmentCapture(segment, tab, {
       streamId,
-      recordInTab: false,
+      videoFormat,
+    });
+    if (!result.ok) throw new Error(result.error || 'Could not start recording.');
+    await ApplyLifecycle.upsert(pending.job.id, {
+      applicationSessionId: appSession.sessionId,
+      recorderStatus: result.recording?.startedPaused ? 'paused' : 'recording',
+      error: null,
     });
     broadcastApplySessionUpdate(tab.id);
   } catch (err) {
@@ -1669,6 +1882,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         for (const jobId of Object.keys(applies)) {
           await ApplyLifecycle.remove(jobId);
         }
+        const appSessions = await ApplicationSessionStore.listSessions();
+        for (const s of appSessions) {
+          await ApplicationSessionStore.removeSessionAndSegments(s.sessionId).catch(() => {});
+        }
         sendResponse(await MockApi.signOut());
         break;
       }
@@ -1706,6 +1923,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const health = await AthensApi.checkAthensHealth().catch(() => ({
           healthy: false,
         }));
+        let focusedTabId = null;
+        try {
+          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          focusedTabId = activeTab?.id ?? null;
+        } catch {
+          focusedTabId = null;
+        }
+        const applicationUi = await ApplicationSessionStore.getUiSnapshot(focusedTabId);
         sendResponse({
           ok: true,
           auth: dashboard.auth || auth,
@@ -1718,7 +1943,90 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           isRecording: Boolean(session),
           athensHealthy: Boolean(health.healthy),
           recordingSessions: await getRecordingSessions(),
+          applicationSessions: applicationUi.sessions,
+          unassignedSegments: applicationUi.unassignedSegments,
+          pendingMergeSegment: applicationUi.pendingMergeSegment,
+          pendingFinishSession: applicationUi.pendingFinishSession,
+          needsMergeBadge: applicationUi.needsMergeBadge,
         });
+        break;
+      }
+
+      case 'GET_APPLICATION_SESSIONS': {
+        let focusedTabId = null;
+        try {
+          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          focusedTabId = activeTab?.id ?? null;
+        } catch {
+          focusedTabId = null;
+        }
+        const snapshot = await ApplicationSessionStore.getUiSnapshot(focusedTabId);
+        sendResponse({ ok: true, ...snapshot });
+        break;
+      }
+
+      case 'MERGE_SEGMENT': {
+        try {
+          const result = await SegmentLifecycle.mergePendingSegment(
+            message.segmentId,
+            message.sessionId,
+          );
+          sendResponse({ ok: true, ...result });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Merge failed.' });
+        }
+        break;
+      }
+
+      case 'DISCARD_SEGMENT': {
+        try {
+          await SegmentLifecycle.discardPendingSegment(message.segmentId);
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Discard failed.' });
+        }
+        break;
+      }
+
+      case 'KEEP_SEGMENT_UNASSIGNED': {
+        try {
+          await SegmentLifecycle.keepUnassignedForLater(message.segmentId);
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Keep failed.' });
+        }
+        break;
+      }
+
+      case 'DISMISS_FINISH_PROMPT': {
+        await ApplicationSessionStore.clearPendingFinishPrompt();
+        sendResponse({ ok: true });
+        break;
+      }
+
+      case 'FINISH_APPLICATION_SESSION': {
+        try {
+          const sessionId = message.sessionId;
+          const appSession = await ApplicationSessionStore.getSession(sessionId);
+          if (!appSession) {
+            sendResponse({ ok: false, error: 'Application not found.' });
+            break;
+          }
+          const tabId =
+            (appSession.activeTabIds || [])[0] ||
+            (await ApplyLifecycle.getByJobId(appSession.jobId))?.applyTabId ||
+            null;
+          await ApplicationSessionStore.clearPendingFinishPrompt();
+          const result = await completeRecordingSession({
+            tabId,
+            jobId: appSession.jobId,
+            closeApplyTab: Boolean(message.closeTabs),
+            finishAction: message.finishAction === 'skip' ? 'skip' : 'submit',
+          });
+          sendResponse(result);
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Finish failed.' });
+        }
         break;
       }
 
@@ -1947,6 +2255,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case 'APPLY_TO_JOB': {
+        // Full Apply path: create tab + capture stream in one gesture, auto-start recording.
+        if (message.jobUrl) {
+          handleApplyToJob(message, sendResponse);
+          return true;
+        }
         try {
           if (!message.tabId) {
             sendResponse({ ok: false, error: 'Use Apply from the Bid Monitor side panel.' });
@@ -2116,6 +2429,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const tabId = sender.tab?.id ?? message.tabId;
         const result = await completeRecordingSession({
           tabId,
+          jobId: message.jobId || null,
           closeApplyTab: message.closeApplyTab !== false,
           finishAction: message.finishAction === 'skip' ? 'skip' : 'submit',
         });
@@ -2647,15 +2961,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case 'EXPORT_SESSION': {
-        const sessions = await getSessions();
-        const session = sessions.find((s) => s.id === message.sessionId);
-        if (!session) {
-          sendResponse({ ok: false, error: 'Session not found.' });
-          break;
-        }
-
-        await downloadSessionFiles(session);
-        sendResponse({ ok: true });
+        // Local export removed — recordings live in Firebase / Bid Management.
+        sendResponse({
+          ok: false,
+          error: 'Local session export is disabled. Recordings upload to Firebase on Submit.',
+        });
         break;
       }
 

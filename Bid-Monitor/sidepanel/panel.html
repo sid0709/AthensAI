@@ -60,6 +60,14 @@
         <span id="statusStripText">Select a Bid Ready job to apply</span>
       </div>
 
+      <section id="activeSessionsView" class="active-sessions card hidden">
+        <div class="apply-session-head">
+          <h2>Your applications</h2>
+          <span id="needsMergeBadge" class="needs-merge-badge hidden">Needs a choice</span>
+        </div>
+        <ul id="activeSessionsList" class="active-sessions-list"></ul>
+      </section>
+
       <section id="applySessionView" class="apply-session card hidden">
         <div class="apply-session-head">
           <h2>Active job</h2>
@@ -75,6 +83,7 @@
         </div>
         <p id="applySessionStatus" class="apply-status">Ready to record</p>
         <p id="applySessionError" class="error hidden"></p>
+        <p id="applySessionWarning" class="apply-warning hidden"></p>
 
         <div id="applyResumeActions" class="resume-actions hidden">
           <span class="resume-actions-label">Athens résumé</span>
@@ -86,10 +95,10 @@
 
         <div id="startRecordBlock" class="start-record-block">
           <p class="start-record-copy">
-            Click the <strong>Bid Monitor toolbar icon</strong> on this tab
-            (or right‑click → Start / Stop recording) to begin silent video capture.
+            Recording usually starts when you click <strong>Apply</strong>.
+            If a clip is missing, tap the <strong>Bid Monitor</strong> icon on that tab.
           </p>
-          <button id="startRecordingBtn" class="btn btn-secondary" type="button">How to start recording</button>
+          <button id="startRecordingBtn" class="btn btn-secondary" type="button">How to record</button>
         </div>
 
         <div class="action-grid">
@@ -137,6 +146,31 @@
         <h2>Recording now</h2>
         <ul id="recordingsList" class="item-list"></ul>
       </section>
+
+      <div id="mergeModal" class="bm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mergeModalTitle">
+        <div class="bm-modal-backdrop" data-merge-dismiss></div>
+        <div class="bm-modal-card">
+          <h2 id="mergeModalTitle">Attach this recording to a job</h2>
+          <p class="bm-modal-sub">This tab looks like part of an application. Choose where it belongs.</p>
+          <ul id="mergeSessionList" class="merge-session-list"></ul>
+          <div class="bm-modal-actions">
+            <button type="button" id="mergeDiscardBtn" class="btn btn-muted">Discard recording</button>
+            <button type="button" id="mergeKeepBtn" class="btn btn-secondary">Keep for later</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="finishPromptModal" class="bm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="finishPromptTitle">
+        <div class="bm-modal-backdrop" data-finish-dismiss></div>
+        <div class="bm-modal-card">
+          <h2 id="finishPromptTitle">Finish this application?</h2>
+          <p id="finishPromptBody" class="bm-modal-sub">All related tabs are closed.</p>
+          <div class="bm-modal-actions finish-prompt-actions">
+            <button type="button" id="finishPromptSubmitBtn" class="btn btn-primary">Finish &amp; submit</button>
+            <button type="button" id="finishPromptKeepBtn" class="btn btn-secondary">Keep it open</button>
+          </div>
+        </div>
+      </div>
 
       <nav id="workspaceTabs" class="workspace-tabs" role="tablist" aria-label="Bid Monitor pages">
         <button type="button" class="workspace-tab active" data-tab="ready" role="tab" aria-selected="true">

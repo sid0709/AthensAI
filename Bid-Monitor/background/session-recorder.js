@@ -441,6 +441,23 @@ const SessionRecorder = (() => {
     };
   }
 
+  async function stitchSegments(segmentIds, outputKey) {
+    if (!Array.isArray(segmentIds) || !segmentIds.length) {
+      return {
+        storageKey: null,
+        mimeType: 'video/webm',
+        videoFormat: 'webm',
+        size: 0,
+        segmentIds: [],
+      };
+    }
+    return sendToOffscreen({
+      type: 'OFFSCREEN_STITCH_SEGMENTS',
+      segmentIds,
+      outputKey,
+    });
+  }
+
   function hasActiveRecordings() {
     return tabSessions.size > 0;
   }
@@ -462,5 +479,8 @@ const SessionRecorder = (() => {
     getSessionIdForTab,
     getPausedState,
     syncWindowRecorders,
+    getTabStreamId,
+    isCapturableUrl,
+    stitchSegments,
   };
 })();

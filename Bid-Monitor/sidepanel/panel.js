@@ -67,6 +67,18 @@ const recordingsList = document.getElementById('recordingsList');
 const statusStrip = document.getElementById('statusStrip');
 const statusStripText = document.getElementById('statusStripText');
 const formatOptions = [...document.querySelectorAll('.format-option')];
+const activeSessionsView = document.getElementById('activeSessionsView');
+const activeSessionsList = document.getElementById('activeSessionsList');
+const needsMergeBadge = document.getElementById('needsMergeBadge');
+const applySessionWarning = document.getElementById('applySessionWarning');
+const mergeModal = document.getElementById('mergeModal');
+const mergeSessionList = document.getElementById('mergeSessionList');
+const mergeDiscardBtn = document.getElementById('mergeDiscardBtn');
+const mergeKeepBtn = document.getElementById('mergeKeepBtn');
+const finishPromptModal = document.getElementById('finishPromptModal');
+const finishPromptBody = document.getElementById('finishPromptBody');
+const finishPromptSubmitBtn = document.getElementById('finishPromptSubmitBtn');
+const finishPromptKeepBtn = document.getElementById('finishPromptKeepBtn');
 
 let dashboardState = { auth: null, pools: [] };
 let currentTabId = null;
@@ -74,6 +86,10 @@ let applyTabId = null;
 let activeJobId = null;
 let currentTabState = null;
 let recordingSessions = [];
+let applicationSessions = [];
+let pendingMergeSegment = null;
+let pendingFinishSession = null;
+let selectedMergeSessionId = null;
 let persistedAnalysis = null;
 let completedTodayCount = 0;
 let applyResumeJobId = null;
@@ -392,6 +408,200 @@ function resolveFinishTabId() {
   );
 }
 
+function formatStartedAgo(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return 'Just started';
+  if (mins === 1) return '1 min ago';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs === 1 ? '1 hr ago' : `${hrs} hrs ago`;
+}
+
+function renderActiveSessions() {
+  const sessions = applicationSessions || [];
+  activeSessionsView?.classList.toggle('hidden', sessions.length === 0);
+  needsMergeBadge?.classList.toggle(
+    'hidden',
+    !sessions.some((s) => s.needsMerge || s.status === 'needs_merge'),
+  );
+  if (!activeSessionsList) return;
+  activeSessionsList.innerHTML = '';
+
+  for (const session of sessions) {
+    const li = document.createElement('li');
+    li.className = `active-session-item${session.isLiveTab ? ' is-live' : ''}`;
+    const clips = session.segmentCount || 0;
+    const clipLabel = clips === 1 ? '1 clip' : `${clips} clips`;
+    const statusClass =
+      session.status === 'needs_merge'
+        ? 'chip-needs'
+        : session.status === 'recording'
+          ? 'chip-recording'
+          : '';
+    li.innerHTML = `
+      <div class="active-session-top">
+        <div>
+          <div class="active-session-title">${escapeHtml(session.jobTitle || 'Job')}</div>
+          <div class="active-session-meta">${escapeHtml(session.companyName || '')}</div>
+        </div>
+      </div>
+      <div class="active-session-chips">
+        <span class="chip ${statusClass}">${escapeHtml(session.humanStatus || session.status || '')}</span>
+        <span class="chip">${escapeHtml(clipLabel)}</span>
+        ${session.isLiveTab ? '<span class="chip chip-live">This tab</span>' : ''}
+        ${session.needsMerge ? '<span class="chip chip-needs">Needs a choice</span>' : ''}
+      </div>
+      ${session.warning ? `<p class="apply-warning">${escapeHtml(session.warning)}</p>` : ''}
+      <div class="active-session-actions">
+        <button type="button" class="btn btn-primary" data-finish-session="${escapeHtml(session.sessionId)}" data-job="${escapeHtml(session.jobId)}">Finish</button>
+        <button type="button" class="btn btn-muted" data-skip-session="${escapeHtml(session.sessionId)}" data-job="${escapeHtml(session.jobId)}">Skip</button>
+      </div>
+    `;
+    activeSessionsList.appendChild(li);
+  }
+
+  activeSessionsList.querySelectorAll('[data-finish-session]').forEach((btn) => {
+    btn.addEventListener('click', () =>
+      finishApplicationSession(btn.dataset.finishSession, btn.dataset.job, 'submit', btn),
+    );
+  });
+  activeSessionsList.querySelectorAll('[data-skip-session]').forEach((btn) => {
+    btn.addEventListener('click', () =>
+      finishApplicationSession(btn.dataset.skipSession, btn.dataset.job, 'skip', btn),
+    );
+  });
+}
+
+async function finishApplicationSession(sessionId, jobId, finishAction, button) {
+  if (button) {
+    button.disabled = true;
+    button.textContent = finishAction === 'skip' ? 'Skipping…' : 'Finishing…';
+  }
+  try {
+    const result = await sendMessage({
+      type: 'FINISH_APPLICATION_SESSION',
+      sessionId,
+      finishAction,
+      closeTabs: true,
+    });
+    if (!result?.ok) {
+      alert(result?.error || 'Could not finish application.');
+    } else if (result.stitchWarning) {
+      alert(`Application finished with a video warning:\n${result.stitchWarning}`);
+    }
+    await loadDashboard({ force: true });
+    await refreshApplySession();
+  } catch (err) {
+    alert(err.message || 'Could not finish application.');
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = finishAction === 'skip' ? 'Skip' : 'Finish';
+    }
+  }
+}
+
+function showMergeModal(segment, sessions) {
+  pendingMergeSegment = segment;
+  if (!mergeModal || !segment) return;
+
+  const list = sessions || applicationSessions || [];
+  const domain = segment.domain || '';
+  let recommendedId = null;
+  const domainMatches = list.filter(
+    (s) => s.originalDomain && domain && s.originalDomain === domain,
+  );
+  if (domainMatches.length === 1) recommendedId = domainMatches[0].sessionId;
+  else if (list.length === 1) recommendedId = list[0].sessionId;
+
+  selectedMergeSessionId = recommendedId;
+
+  // Recommended first
+  const ordered = [...list].sort((a, b) => {
+    if (a.sessionId === recommendedId) return -1;
+    if (b.sessionId === recommendedId) return 1;
+    return 0;
+  });
+
+  mergeSessionList.innerHTML = '';
+  for (const session of ordered) {
+    const li = document.createElement('li');
+    const isRec = session.sessionId === recommendedId;
+    li.className = `merge-session-item${isRec ? ' is-recommended' : ''}`;
+    li.innerHTML = `
+      ${isRec ? '<div class="merge-recommend-label">Recommended</div>' : ''}
+      <div class="active-session-title">${escapeHtml(session.jobTitle || 'Job')}</div>
+      <div class="active-session-meta">${escapeHtml(session.companyName || '')}</div>
+      <div class="active-session-meta">${escapeHtml(session.originalDomain || '')} · ${escapeHtml(formatStartedAgo(session.createdAt))} · ${escapeHtml(session.humanStatus || '')}</div>
+      <button type="button" class="btn btn-primary" data-merge-into="${escapeHtml(session.sessionId)}">Merge into this job</button>
+    `;
+    mergeSessionList.appendChild(li);
+  }
+
+  mergeSessionList.querySelectorAll('[data-merge-into]').forEach((btn) => {
+    btn.addEventListener('click', () => mergeSegmentInto(btn.dataset.mergeInto));
+  });
+
+  mergeModal.classList.remove('hidden');
+}
+
+function hideMergeModal() {
+  mergeModal?.classList.add('hidden');
+  pendingMergeSegment = null;
+}
+
+async function mergeSegmentInto(sessionId) {
+  if (!pendingMergeSegment?.segmentId || !sessionId) return;
+  const result = await sendMessage({
+    type: 'MERGE_SEGMENT',
+    segmentId: pendingMergeSegment.segmentId,
+    sessionId,
+  });
+  if (!result?.ok) {
+    alert(result?.error || 'Could not attach recording.');
+    return;
+  }
+  hideMergeModal();
+  await refreshApplySession();
+}
+
+async function discardMergeSegment() {
+  if (!pendingMergeSegment?.segmentId) {
+    hideMergeModal();
+    return;
+  }
+  await sendMessage({ type: 'DISCARD_SEGMENT', segmentId: pendingMergeSegment.segmentId });
+  hideMergeModal();
+  await refreshApplySession();
+}
+
+async function keepMergeSegment() {
+  if (!pendingMergeSegment?.segmentId) {
+    hideMergeModal();
+    return;
+  }
+  await sendMessage({ type: 'KEEP_SEGMENT_UNASSIGNED', segmentId: pendingMergeSegment.segmentId });
+  hideMergeModal();
+  await refreshApplySession();
+}
+
+function showFinishPrompt(session) {
+  pendingFinishSession = session;
+  if (!finishPromptModal || !session) return;
+  if (finishPromptBody) {
+    finishPromptBody.textContent = `${session.companyName || 'Job'} — ${session.jobTitle || 'application'} tabs are closed. Submit the recording, or keep the application open.`;
+  }
+  finishPromptModal.classList.remove('hidden');
+}
+
+function hideFinishPrompt() {
+  finishPromptModal?.classList.add('hidden');
+  pendingFinishSession = null;
+}
+
 function renderApplySession(state) {
   const job = state?.applyJob;
   const isRec = Boolean(state?.isRecording);
@@ -399,6 +609,7 @@ function renderApplySession(state) {
   const finishable = isRec || hasPending;
   const hasCard = Boolean(job) || isRec;
   const tabMissing = Boolean(state?.tabMissing);
+  const warning = state?.warning || applicationSessions.find((s) => String(s.jobId) === String(job?.id))?.warning;
 
   applyTabId = state?.tabId ?? (isRec ? state?.session?.tabId : null) ?? null;
   activeJobId = state?.jobId || job?.id || job?.athensJobId || null;
@@ -407,8 +618,10 @@ function renderApplySession(state) {
   applySessionView.classList.toggle('hidden', !hasCard);
   if (!hasCard) {
     finishFooter?.classList.add('hidden');
-    statusStrip.className = 'status-strip idle';
-    statusStripText.textContent = 'Select a Bid Ready job to apply';
+    if (!(applicationSessions || []).length) {
+      statusStrip.className = 'status-strip idle';
+      statusStripText.textContent = 'Select a Bid Ready job to apply';
+    }
     reopenJobBtn?.classList.add('hidden');
     renderAnalysis(null);
     return;
@@ -429,11 +642,20 @@ function renderApplySession(state) {
 
   reopenJobBtn?.classList.toggle('hidden', !tabMissing && Boolean(applyTabId));
 
+  if (applySessionWarning) {
+    if (warning) {
+      applySessionWarning.textContent = warning;
+      applySessionWarning.classList.remove('hidden');
+    } else {
+      applySessionWarning.classList.add('hidden');
+    }
+  }
+
   if (isRec) {
     statusStrip.className = 'status-strip recording';
-    statusStripText.textContent = 'Recording — Submit or Skip when done';
+    statusStripText.textContent = 'Recording your application…';
     applySessionStatus.textContent =
-      'Video capture is active. Finish with Submit (uploaded) or Skip.';
+      'Keep applying as usual. Submit when you are done.';
     startRecordBlock?.classList.add('hidden');
     if (finishHint) {
       finishHint.textContent =
@@ -443,13 +665,13 @@ function renderApplySession(state) {
     statusStrip.className = 'status-strip ready';
     statusStripText.textContent = 'In process — reopen the job tab to continue';
     applySessionStatus.textContent =
-      'Job tab was closed. Reopen the application page to record or Analyze.';
+      'Job tab was closed. Reopen to continue, or Finish from Your applications.';
     startRecordBlock?.classList.add('hidden');
   } else {
     statusStrip.className = 'status-strip ready';
-    statusStripText.textContent = 'Ready to record — or Submit / Skip without video';
+    statusStripText.textContent = 'Application open — recording when capture is active';
     applySessionStatus.textContent =
-      'Job is In process. Start recording from the toolbar, or finish without video.';
+      'If recording did not start, tap the Bid Monitor icon on the job tab.';
     startRecordBlock?.classList.remove('hidden');
     if (finishHint) {
       finishHint.textContent =
@@ -508,23 +730,34 @@ async function refreshApplySession() {
   const ui = await sendMessage({ type: 'GET_UI_STATE' }).catch(() => null);
   if (ui?.ok) {
     recordingSessions = ui.recordingSessions ?? [];
+    applicationSessions = ui.applicationSessions ?? [];
+    pendingMergeSegment = ui.pendingMergeSegment || pendingMergeSegment;
+    pendingFinishSession = ui.pendingFinishSession || null;
     if (ui.activeApply?.analysis) persistedAnalysis = ui.activeApply.analysis;
   } else {
     const fullState = await sendMessage({ type: 'GET_STATE' }).catch(() => null);
     recordingSessions = fullState?.ok ? (fullState.recordingSessions ?? []) : [];
   }
 
+  renderActiveSessions();
   renderApplySession(currentTabState);
   renderRecordingsList();
+
+  if (ui?.pendingMergeSegment && mergeModal?.classList.contains('hidden')) {
+    showMergeModal(ui.pendingMergeSegment, applicationSessions);
+  }
+  if (ui?.pendingFinishSession && finishPromptModal?.classList.contains('hidden')) {
+    showFinishPrompt(ui.pendingFinishSession);
+  }
 }
 
 function showRecordingInstructions() {
   alert(
-    'Recording is silent (no screen-share dialog).\n\n'
-      + '1. Focus the job application tab.\n'
-      + '2. Click the Bid Monitor icon in the Chrome toolbar\n'
-      + '   — or right-click → "Bid Monitor: Start / Stop recording this tab".\n\n'
-      + 'Recording starts immediately. Use Submit or Skip in this panel to finish.',
+    'Recording usually starts when you click Apply.\n\n'
+      + 'If a clip is missing:\n'
+      + '1. Focus that tab\n'
+      + '2. Click the Bid Monitor icon in the Chrome toolbar\n\n'
+      + 'Use Finish / Submit when the application is done.',
   );
 }
 
@@ -534,7 +767,7 @@ async function finishApply(tabId, finishAction = 'submit', button) {
     const reopen = await sendMessage({ type: 'REOPEN_APPLY_TAB', jobId: activeJobId });
     resolveTabId = reopen?.tabId || null;
   }
-  if (!resolveTabId) {
+  if (!resolveTabId && !activeJobId) {
     alert('No active job tab. Open a Bid Ready job with Apply first.');
     return;
   }
@@ -552,6 +785,7 @@ async function finishApply(tabId, finishAction = 'submit', button) {
   const response = await sendMessage({
     type: 'STOP_CAPTURE',
     tabId: resolveTabId,
+    jobId: activeJobId,
     closeApplyTab: true,
     finishAction: action,
   });
@@ -563,6 +797,10 @@ async function finishApply(tabId, finishAction = 'submit', button) {
   if (skipRecordingBtn) {
     skipRecordingBtn.disabled = false;
     skipRecordingBtn.textContent = 'Skip this Job';
+  }
+  if (button) {
+    button.disabled = false;
+    button.textContent = action === 'skip' ? 'Skip this Job' : 'Submit';
   }
 
   if (!response?.ok) {
@@ -580,9 +818,11 @@ async function finishApply(tabId, finishAction = 'submit', button) {
     });
   }
 
-  if (response.uploadError || response.statusError) {
+  if (response.uploadError || response.statusError || response.stitchWarning) {
     alert(
-      `Finished with a warning:\n${response.uploadError || response.statusError}`,
+      `Finished with a warning:\n${
+        response.uploadError || response.statusError || response.stitchWarning
+      }`,
     );
   } else if (response.jobOutcome === 'skipped') {
     alert('Skipped. Ticket moved to Skipped in Bid Management.');
@@ -599,7 +839,6 @@ async function finishApply(tabId, finishAction = 'submit', button) {
   persistedAnalysis = null;
   activeJobId = null;
   await refreshApplySession();
-  // Pull Athens queue so Submitted/Skipped disappear and statuses match Bid Management.
   await loadDashboard({ force: true });
 }
 
@@ -784,48 +1023,39 @@ function renderQueue() {
       job.status = 'in_process';
       renderQueue();
 
-      chrome.tabs.create({ url: job.jdUrl, active: true }, (tab) => {
-        if (chrome.runtime.lastError || !tab?.id) {
-          alert(chrome.runtime.lastError?.message || 'Failed to open job tab.');
-          job.status = 'pending';
-          button.disabled = false;
-          button.textContent = 'Apply';
-          renderQueue();
-          return;
-        }
-
-        sendMessage({
-          type: 'APPLY_OPEN_JOB',
-          tabId: tab.id,
-          poolId: pool.id,
-          jobId: job.id,
-        })
-          .then(async (response) => {
-            if (!response?.ok) {
-              alert(response?.error || 'Failed to open job application.');
-              job.status = 'pending';
-              button.disabled = false;
-              button.textContent = 'Apply';
-              renderQueue();
-              return;
-            }
-            button.disabled = false;
-            button.textContent = 'Apply';
-            // Prefer fresh Athens status after startBid (bidderInProcess).
-            await loadDashboard({ force: true });
-            await refreshApplySession();
-            applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            startRecordingBtn?.classList.add('pulse');
-            setTimeout(() => startRecordingBtn?.classList.remove('pulse'), 2000);
-          })
-          .catch((err) => {
-            alert(err.message || 'Failed to open job application.');
+      // Create tab + capture stream in one gesture inside the service worker.
+      sendMessage({
+        type: 'APPLY_TO_JOB',
+        poolId: pool.id,
+        jobId: job.id,
+        jobUrl: job.jdUrl,
+      })
+        .then(async (response) => {
+          if (!response?.ok) {
+            alert(response?.error || 'Failed to open job application.');
             job.status = 'pending';
             button.disabled = false;
             button.textContent = 'Apply';
             renderQueue();
-          });
-      });
+            return;
+          }
+          button.disabled = false;
+          button.textContent = 'Apply';
+          await loadDashboard({ force: true });
+          await refreshApplySession();
+          applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          if (!response.autoStarted) {
+            startRecordingBtn?.classList.add('pulse');
+            setTimeout(() => startRecordingBtn?.classList.remove('pulse'), 2000);
+          }
+        })
+        .catch((err) => {
+          alert(err.message || 'Failed to open job application.');
+          job.status = 'pending';
+          button.disabled = false;
+          button.textContent = 'Apply';
+          renderQueue();
+        });
     });
   });
 }
@@ -1321,7 +1551,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
     changes.activeAppliesByJobId ||
     changes.bidReadyFinishedJobs ||
     changes.bidMonitorSessions ||
-    changes.pendingApplyTabs
+    changes.pendingApplyTabs ||
+    changes.applicationSessionsById ||
+    changes.recordingSegmentsById ||
+    changes.pendingMergeSegmentId ||
+    changes.pendingFinishPromptSessionId
   ) {
     if (
       changes.bidReadyCache ||
@@ -1334,12 +1568,75 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+mergeDiscardBtn?.addEventListener('click', () => {
+  discardMergeSegment().catch((err) => alert(err.message || 'Discard failed.'));
+});
+mergeKeepBtn?.addEventListener('click', () => {
+  keepMergeSegment().catch((err) => alert(err.message || 'Keep failed.'));
+});
+mergeModal?.querySelector('[data-merge-dismiss]')?.addEventListener('click', () => {
+  keepMergeSegment().catch(() => hideMergeModal());
+});
+
+finishPromptSubmitBtn?.addEventListener('click', async () => {
+  if (!pendingFinishSession?.sessionId) {
+    hideFinishPrompt();
+    return;
+  }
+  const sessionId = pendingFinishSession.sessionId;
+  const jobId = pendingFinishSession.jobId;
+  hideFinishPrompt();
+  await finishApplicationSession(sessionId, jobId, 'submit');
+});
+finishPromptKeepBtn?.addEventListener('click', async () => {
+  await sendMessage({ type: 'DISMISS_FINISH_PROMPT' });
+  hideFinishPrompt();
+  await refreshApplySession();
+});
+finishPromptModal?.querySelector('[data-finish-dismiss]')?.addEventListener('click', async () => {
+  await sendMessage({ type: 'DISMISS_FINISH_PROMPT' });
+  hideFinishPrompt();
+});
+
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'APPLY_SESSION_UPDATED' || message.type === 'QUEUE_ENRICHED') {
+  if (
+    message.type === 'APPLY_SESSION_UPDATED' ||
+    message.type === 'QUEUE_ENRICHED' ||
+    message.type === 'APPLICATION_SESSIONS_UPDATED'
+  ) {
     if (message.type === 'QUEUE_ENRICHED') {
       scheduleDashboardReload();
     }
     refreshApplySession().catch(() => {});
+    return;
+  }
+
+  if (message.type === 'SHOW_MERGE_MODAL') {
+    refreshApplySession()
+      .then(async () => {
+        const snap = await sendMessage({ type: 'GET_APPLICATION_SESSIONS' });
+        const segment =
+          snap?.pendingMergeSegment ||
+          (message.segmentId
+            ? (snap?.unassignedSegments || []).find((s) => s.segmentId === message.segmentId)
+            : null);
+        if (segment) {
+          showMergeModal(segment, snap?.sessions || applicationSessions);
+        }
+      })
+      .catch(() => {});
+    return;
+  }
+
+  if (message.type === 'SHOW_FINISH_PROMPT') {
+    refreshApplySession()
+      .then(async () => {
+        const snap = await sendMessage({ type: 'GET_APPLICATION_SESSIONS' });
+        if (snap?.pendingFinishSession) {
+          showFinishPrompt(snap.pendingFinishSession);
+        }
+      })
+      .catch(() => {});
     return;
   }
 
@@ -1404,8 +1701,13 @@ chrome.windows.onFocusChanged.addListener(() => {
     };
     if (ui.activeApply?.analysis) persistedAnalysis = ui.activeApply.analysis;
     recordingSessions = ui.recordingSessions || [];
+    applicationSessions = ui.applicationSessions || [];
     queueLoading = Boolean(ui.refreshing && !(ui.pools?.[0]?.jobs?.length));
     renderDashboard();
+    renderActiveSessions();
+    if (ui.pendingMergeSegment) {
+      showMergeModal(ui.pendingMergeSegment, applicationSessions);
+    }
   } else {
     await loadDashboard({ preferCache: true });
   }

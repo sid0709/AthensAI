@@ -51,16 +51,22 @@ const ApplyLifecycle = (() => {
     return null;
   }
 
-  async function linkTab(jobId, tabId) {
+  async function linkTab(jobId, tabId, { exclusive = false } = {}) {
     const key = jobKey(jobId);
     if (!key || tabId == null) return;
     const index = await getTabIndex();
-    // Drop stale index entries pointing at this job.
-    for (const [tid, jid] of Object.entries(index)) {
-      if (String(jid) === key) delete index[tid];
+    if (exclusive) {
+      // Legacy single-tab mode: drop other index entries for this job.
+      for (const [tid, jid] of Object.entries(index)) {
+        if (String(jid) === key) delete index[tid];
+      }
     }
     index[String(tabId)] = key;
     await saveTabIndex(index);
+  }
+
+  async function linkAdditionalTab(jobId, tabId) {
+    return linkTab(jobId, tabId, { exclusive: false });
   }
 
   async function unlinkTab(tabId) {
@@ -86,10 +92,24 @@ const ApplyLifecycle = (() => {
     };
     if (partial.job) next.job = { ...(prev.job || {}), ...partial.job };
     if (partial.analysis !== undefined) next.analysis = partial.analysis;
+    // Keep activeTabIds in sync with applyTabId for multi-tab sessions.
+    if (partial.applyTabId != null) {
+      const tabs = [...(next.activeTabIds || [])];
+      if (!tabs.map(Number).includes(Number(partial.applyTabId))) {
+        tabs.push(partial.applyTabId);
+      }
+      next.activeTabIds = tabs;
+    }
+    if (partial.activeTabIds !== undefined) {
+      next.activeTabIds = partial.activeTabIds;
+    }
+    if (partial.applicationSessionId !== undefined) {
+      next.applicationSessionId = partial.applicationSessionId;
+    }
     applies[key] = next;
     await saveAll(applies);
     if (next.applyTabId != null) {
-      await linkTab(key, next.applyTabId);
+      await linkTab(key, next.applyTabId, { exclusive: false });
     }
     return next;
   }
@@ -107,9 +127,11 @@ const ApplyLifecycle = (() => {
     const apply = await getByTabId(tabId);
     await unlinkTab(tabId);
     if (!apply) return null;
-    if (Number(apply.applyTabId) !== Number(tabId)) return apply;
+    const remaining = (apply.activeTabIds || []).filter((id) => Number(id) !== Number(tabId));
+    const wasPrimary = Number(apply.applyTabId) === Number(tabId);
     return upsert(apply.jobId, {
-      applyTabId: null,
+      activeTabIds: remaining,
+      applyTabId: wasPrimary ? (remaining[0] ?? null) : apply.applyTabId,
       recorderStatus:
         apply.recorderStatus === 'recording' || apply.recorderStatus === 'paused'
           ? apply.recorderStatus
@@ -128,6 +150,9 @@ const ApplyLifecycle = (() => {
     delete applies[key];
     await saveAll(applies);
     if (apply.applyTabId != null) await unlinkTab(apply.applyTabId);
+    for (const tid of apply.activeTabIds || []) {
+      await unlinkTab(tid);
+    }
     const index = await getTabIndex();
     let dirty = false;
     for (const [tid, jid] of Object.entries(index)) {
@@ -225,6 +250,8 @@ const ApplyLifecycle = (() => {
     setPendingForTab,
     clearPendingForTab,
     linkTab,
+    linkAdditionalTab,
     unlinkTab,
+    getTabIndex,
   };
 })();

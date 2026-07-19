@@ -228,6 +228,169 @@ async function getVideoBuffer(sessionId) {
   };
 }
 
+function waitForVideoEvent(video, eventName, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for video ${eventName}.`));
+    }, timeoutMs);
+    const onEvent = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error('A recording clip could not be decoded.'));
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      video.removeEventListener(eventName, onEvent);
+      video.removeEventListener('error', onError);
+    };
+    video.addEventListener(eventName, onEvent, { once: true });
+    video.addEventListener('error', onError, { once: true });
+  });
+}
+
+async function drawClipToCanvas(video, context, canvas) {
+  const width = Number(video.videoWidth) || RECORDING_CONFIG.maxWidth;
+  const height = Number(video.videoHeight) || RECORDING_CONFIG.maxHeight;
+  const scale = Math.min(canvas.width / width, canvas.height / height);
+  const drawWidth = Math.round(width * scale);
+  const drawHeight = Math.round(height * scale);
+  const x = Math.round((canvas.width - drawWidth) / 2);
+  const y = Math.round((canvas.height - drawHeight) / 2);
+
+  const draw = () => {
+    context.fillStyle = '#000';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(video, x, y, drawWidth, drawHeight);
+  };
+
+  draw();
+  await video.play();
+  const timeoutMs = Number.isFinite(video.duration)
+    ? Math.max(15000, Math.ceil(video.duration * 1000) + 10000)
+    : 10 * 60 * 1000;
+
+  await new Promise((resolve, reject) => {
+    const interval = setInterval(draw, Math.round(1000 / RECORDING_CONFIG.maxFrameRate));
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('A recording clip took too long to process.'));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+      video.removeEventListener('ended', onEnded);
+      video.removeEventListener('error', onError);
+    };
+    const onEnded = () => {
+      draw();
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error('A recording clip stopped during processing.'));
+    };
+    video.addEventListener('ended', onEnded, { once: true });
+    video.addEventListener('error', onError, { once: true });
+  });
+}
+
+/**
+ * Re-encode independent MediaRecorder files through one canvas MediaRecorder.
+ * Raw byte concatenation is invalid because each clip has its own container
+ * header. This produces one playable WebM with a single timeline.
+ */
+async function stitchRecordingSegments(segmentIds, outputKey) {
+  const sourceEntries = [];
+  for (const segmentId of segmentIds || []) {
+    const entry = await SessionVideoStore.getSegment(segmentId);
+    if (entry?.blob?.size) sourceEntries.push({ segmentId, ...entry });
+  }
+  if (!sourceEntries.length) {
+    return {
+      storageKey: null,
+      mimeType: 'video/webm',
+      videoFormat: 'webm',
+      size: 0,
+      segmentIds: [],
+    };
+  }
+  if (sourceEntries.length === 1) {
+    return {
+      storageKey: sourceEntries[0].segmentId,
+      mimeType: sourceEntries[0].mimeType || sourceEntries[0].blob.type || 'video/webm',
+      videoFormat: sourceEntries[0].videoFormat || 'webm',
+      size: sourceEntries[0].blob.size,
+      segmentIds: [sourceEntries[0].segmentId],
+    };
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = RECORDING_CONFIG.maxWidth;
+  canvas.height = RECORDING_CONFIG.maxHeight;
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context) throw new Error('Could not create the final video canvas.');
+  context.fillStyle = '#000';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const outputStream = canvas.captureStream(RECORDING_CONFIG.maxFrameRate);
+  const picked = VideoFormat.pickMimeType('webm');
+  const chunks = [];
+  const mediaRecorder = new MediaRecorder(outputStream, {
+    mimeType: picked.mimeType,
+    videoBitsPerSecond: RECORDING_CONFIG.videoBitsPerSecond,
+  });
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data?.size) chunks.push(event.data);
+  };
+  mediaRecorder.start(RECORDING_CONFIG.timesliceMs);
+
+  try {
+    for (const entry of sourceEntries) {
+      const video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'auto';
+      const url = URL.createObjectURL(entry.blob);
+      try {
+        video.src = url;
+        video.load();
+        await waitForVideoEvent(video, 'loadedmetadata');
+        await drawClipToCanvas(video, context, canvas);
+      } finally {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        URL.revokeObjectURL(url);
+      }
+    }
+    await waitForRecorderStop(mediaRecorder);
+  } catch (err) {
+    if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    throw err;
+  } finally {
+    stopStream(outputStream);
+  }
+
+  const blob = new Blob(chunks, { type: picked.mimeType });
+  if (!blob.size) throw new Error('The final recording was empty.');
+  await SessionVideoStore.save(outputKey, blob, {
+    mimeType: picked.mimeType,
+    videoFormat: picked.format,
+  });
+  return {
+    storageKey: outputKey,
+    mimeType: picked.mimeType,
+    videoFormat: picked.format,
+    size: blob.size,
+    segmentIds: sourceEntries.map((entry) => entry.segmentId),
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'OFFSCREEN_PING') {
     sendResponse({ ok: true });
@@ -269,6 +432,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         break;
       case 'OFFSCREEN_GET_VIDEO':
         sendResponse({ ok: true, ...(await getVideoBuffer(message.sessionId)) });
+        break;
+      case 'OFFSCREEN_STITCH_SEGMENTS':
+        sendResponse({
+          ok: true,
+          ...(await stitchRecordingSegments(message.segmentIds, message.outputKey)),
+        });
         break;
       default:
         sendResponse({ ok: false, error: `Unknown offscreen message: ${message.type}` });
