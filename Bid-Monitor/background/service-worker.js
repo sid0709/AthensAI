@@ -1,4 +1,5 @@
 importScripts(
+  chrome.runtime.getURL('config.js'),
   'video-format.js',
   'video-store.js',
   'session-recorder.js',
@@ -2146,11 +2147,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({
             ok: true,
             healthy: Boolean(health.healthy),
-            apiUrl: health.apiUrl,
-            error: health.error || null,
+            // Never expose host/IP/URL to the extension UI.
+            error: health.healthy ? null : 'Cannot reach Athens right now.',
           });
-        } catch (err) {
-          sendResponse({ ok: false, healthy: false, error: err.message });
+        } catch {
+          sendResponse({ ok: false, healthy: false, error: 'Cannot reach Athens right now.' });
         }
         break;
       }

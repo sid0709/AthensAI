@@ -4,8 +4,10 @@
  */
 const AthensApi = (() => {
   const SETTINGS_KEY = 'athensSettings';
-  /** Fixed Athens API base — not user-configurable. */
-  const DEFAULT_API_URL = 'http://83.229.67.146/api';
+  /** From config.js (local .env / CI VPS_HOST via pack). Not user-configurable in the UI. */
+  const DEFAULT_API_URL =
+    (typeof BidMonitorConfig !== 'undefined' && BidMonitorConfig.ATHENS_API_URL) ||
+    'http://127.0.0.1:8979/api';
   const QUEUE_TIMEOUT_MS = 15000;
   const UPLOAD_TIMEOUT_MS = 120000;
   const ANALYZE_TIMEOUT_MS = 300000;
@@ -412,7 +414,7 @@ const AthensApi = (() => {
         healthy: response.ok,
         apiUrl: settings.apiUrl,
         status: response.status,
-        error: response.ok ? null : `HTTP ${response.status} from ${base}/agents/health`,
+        error: response.ok ? null : `Athens health check failed (HTTP ${response.status}).`,
       };
     } catch (err) {
       return {

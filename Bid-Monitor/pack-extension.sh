@@ -14,16 +14,23 @@ echo "==> Packing Bid Monitor v${VERSION}"
 rm -rf "${DIST_DIR}"
 mkdir -p "${OUT_DIR}"
 
-# Extension runtime files only (exclude docs, pack script, dist, git)
+# Extension runtime files only (exclude docs, pack script, dist, git, env)
 rsync -a \
   --exclude 'dist/' \
   --exclude 'pack-extension.sh' \
+  --exclude 'apply-env.sh' \
   --exclude 'README.md' \
   --exclude '.git/' \
   --exclude '.DS_Store' \
   --exclude '*.md' \
   --exclude '.cursor/' \
+  --exclude '.env' \
+  --exclude '.env.*' \
   "${ROOT}/" "${OUT_DIR}/"
+
+# Bake ATHENS_API_URL into packed config.js (env / .env / PUBLIC_ORIGIN).
+echo "==> Applying ATHENS_API_URL into config.js"
+bash "${ROOT}/apply-env.sh" "${OUT_DIR}/config.js"
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "error: npm (Node.js) is required to minify JS before packing." >&2

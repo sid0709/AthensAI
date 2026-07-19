@@ -5,8 +5,10 @@ const usernameInput = document.getElementById('username');
 const passwordInput = document.getElementById('password');
 const applierNameInput = document.getElementById('applierName');
 const loginError = document.getElementById('loginError');
-/** Fixed Athens API base — matches background/athens-api.js */
-const ATHENS_API_URL = 'http://83.229.67.146/api';
+/** From config.js (local .env / CI VPS_HOST via pack). */
+const ATHENS_API_URL =
+  (typeof BidMonitorConfig !== 'undefined' && BidMonitorConfig.ATHENS_API_URL) ||
+  'http://127.0.0.1:8979/api';
 const signInBtn = document.getElementById('signInBtn');
 const profileNameEl = document.getElementById('profileName');
 const roleBadgeEl = document.getElementById('roleBadge');
@@ -614,16 +616,17 @@ async function refreshBridgeBadge() {
     if (res?.healthy) {
       bridgeBadgeEl.textContent = 'Athens OK';
       bridgeBadgeEl.className = 'bridge-badge ok';
-      bridgeBadgeEl.title = res.apiUrl || ATHENS_API_URL;
+      bridgeBadgeEl.removeAttribute('title');
     } else {
       bridgeBadgeEl.textContent = 'Athens down';
       bridgeBadgeEl.className = 'bridge-badge down';
-      bridgeBadgeEl.title =
-        res?.error || res?.apiUrl || `Cannot reach Athens at ${ATHENS_API_URL}`;
+      // Do not surface host/IP/URL in the UI (tooltip or label).
+      bridgeBadgeEl.title = 'Cannot reach Athens right now.';
     }
   } catch {
     bridgeBadgeEl.textContent = 'Athens ?';
     bridgeBadgeEl.className = 'bridge-badge unknown';
+    bridgeBadgeEl.removeAttribute('title');
   }
 }
 

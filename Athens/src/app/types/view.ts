@@ -13,4 +13,6 @@ export type View =
   | "api-usage-monitor"
   | "firebase"
   | "bid-management"
+  | "apps-plugins"
+  | "changelog"
   | "settings";

@@ -9,3 +9,5 @@ export { CalendarPage } from "../calendar/CalendarPage";
 export { InterviewPrepPage } from "../interview-prep/InterviewPrepPage";
 export { AnalyticsPage } from "../analytics/AnalyticsPage";
 export { SettingsPage } from "../settings/SettingsPage";
+export { AppsPluginsPage } from "./apps-plugins/AppsPluginsPage";
+export { ChangelogPage } from "./changelog/ChangelogPage";

@@ -14,6 +14,8 @@ import {
   Gauge,
   Flame,
   Clapperboard,
+  Puzzle,
+  ScrollText,
   Settings,
 } from "lucide-react";
 import type { View } from "../types";
@@ -39,19 +41,24 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "calendar", label: "Calendar", icon: Calendar, comingSoon: true },
   { id: "interviews", label: "Interview Prep", icon: Video, comingSoon: true },
   { id: "bid-management", label: "Bid Management", icon: Clapperboard },
+  { id: "apps-plugins", label: "Apps & Plugins", icon: Puzzle },
   { id: "firebase", label: "Firebase Atlas", icon: Flame },
   { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
   { id: "ai-usage", label: "AI API Usage", icon: Cpu, admin: true },
   { id: "api-usage-monitor", label: "API Usage Monitor", icon: Gauge, admin: true },
   { id: "settings", label: "Settings", icon: Settings },
+  { id: "changelog", label: "Changelog", icon: ScrollText },
 ];
 
 export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
   { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] },
   { label: "PIPELINE", ids: ["ats", "copilot"] },
-  { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews", "bid-management", "firebase"] },
+  {
+    label: "TOOLS",
+    ids: ["agents", "mail", "calendar", "interviews", "bid-management", "apps-plugins", "firebase"],
+  },
   { label: "INSIGHTS", ids: ["reports", "ai-usage", "api-usage-monitor"] },
-  { label: null, ids: ["settings"] },
+  { label: null, ids: ["settings", "changelog"] },
 ];
 
 export const VIEW_TITLES: Record<View, string> = {
@@ -68,6 +75,8 @@ export const VIEW_TITLES: Record<View, string> = {
   "ai-usage": "AI API Usage",
   "api-usage-monitor": "API Usage Monitor",
   "bid-management": "Bid Management",
+  "apps-plugins": "Apps & Plugins",
+  changelog: "Changelog",
   firebase: "Firebase Atlas",
   settings: "Settings",
 };

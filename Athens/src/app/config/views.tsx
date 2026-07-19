@@ -14,6 +14,8 @@ import { AiUsagePage } from "../features/ai-usage/AiUsagePage";
 import { ApiUsageMonitorPage } from "../features/api-usage-monitor/ApiUsageMonitorPage";
 import { FirebaseExplorerPage } from "../features/firebase-explorer/FirebaseExplorerPage";
 import { BidManagementPage } from "../features/bid-management/BidManagementPage";
+import { AppsPluginsPage } from "../features/apps-plugins/AppsPluginsPage";
+import { ChangelogPage } from "../features/changelog/ChangelogPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 
 export const VIEW_COMPONENTS: Record<View, ComponentType> = {
@@ -31,5 +33,7 @@ export const VIEW_COMPONENTS: Record<View, ComponentType> = {
   "api-usage-monitor": ApiUsageMonitorPage,
   firebase: FirebaseExplorerPage,
   "bid-management": BidManagementPage,
+  "apps-plugins": AppsPluginsPage,
+  changelog: ChangelogPage,
   settings: SettingsPage,
 };

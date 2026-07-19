@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_SESSION_ID, type RegisteredPayload, type RelaySessionInfo } from '@avalon/shared';
 import {
-  AVALON_SERVER_KEY,
   AVALON_SESSION_KEY,
   AVALON_PROFILE_KEY,
   DEFAULT_SERVER_URL,
@@ -30,6 +29,13 @@ function sessionDisplayLabel(s: DiscoverableSession): string {
   const name = s.label?.trim();
   const controller = s.peers?.controller ? 'controller online' : 'waiting for Athens';
   return name ? `${name} · ${short}` : `${short} · ${controller}`;
+}
+
+/** Strip hosts / IPs / URLs from messages shown in the side panel. */
+function redactHostInfo(message: string): string {
+  return message
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '[server]')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, '[host]');
 }
 
 export default function SidePanel() {
@@ -72,15 +78,16 @@ export default function SidePanel() {
       const isConnected = Boolean(status?.connected);
       setConnected(isConnected);
       const err = isConnected ? null : (status?.lastError ?? null);
-      setLastError(err);
+      const safeErr = err ? redactHostInfo(err) : null;
+      setLastError(safeErr);
       if (isConnected) {
         seenErrorRef.current = null;
         setNotifications((prev) => prev.filter((n) => n.kind !== 'error'));
         return;
       }
-      if (err && err !== seenErrorRef.current) {
-        seenErrorRef.current = err;
-        pushNotification({ kind: 'error', title: 'Relay offline', message: err });
+      if (safeErr && safeErr !== seenErrorRef.current) {
+        seenErrorRef.current = safeErr;
+        pushNotification({ kind: 'error', title: 'Relay offline', message: safeErr });
       }
       if (!err) seenErrorRef.current = null;
     } catch {
@@ -119,7 +126,7 @@ export default function SidePanel() {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not load sessions';
-      setSessionsError(message);
+      setSessionsError(redactHostInfo(message));
       setAvailableSessions([]);
     } finally {
       setSessionsLoading(false);
@@ -127,13 +134,13 @@ export default function SidePanel() {
   }, [profileId, serverUrl]);
 
   useEffect(() => {
+    // Always use the build-time default relay URL — never expose or edit it in the UI.
+    setServerUrl(DEFAULT_SERVER_URL);
     void browser.storage.local
-      .get([AVALON_SERVER_KEY, AVALON_SESSION_KEY, AVALON_PROFILE_KEY])
+      .get([AVALON_SESSION_KEY, AVALON_PROFILE_KEY])
       .then((stored) => {
-        const savedUrl = stored[AVALON_SERVER_KEY] as string | undefined;
         const savedSession = stored[AVALON_SESSION_KEY] as string | undefined;
         const savedProfile = stored[AVALON_PROFILE_KEY] as string | undefined;
-        if (savedUrl) setServerUrl(savedUrl);
         if (savedSession) setSessionId(savedSession);
         if (savedProfile) setProfileId(savedProfile);
       });
@@ -185,7 +192,11 @@ export default function SidePanel() {
       })) as { ok?: boolean; registered?: RegisteredPayload; error?: string };
 
       if (response?.error) {
-        pushNotification({ kind: 'error', title: 'Connect failed', message: response.error });
+        pushNotification({
+          kind: 'error',
+          title: 'Connect failed',
+          message: redactHostInfo(response.error),
+        });
         setConnected(false);
         return;
       }
@@ -205,7 +216,11 @@ export default function SidePanel() {
       await refreshSessions();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Connect failed';
-      pushNotification({ kind: 'error', title: 'Connect failed', message });
+      pushNotification({
+        kind: 'error',
+        title: 'Connect failed',
+        message: redactHostInfo(message),
+      });
       setConnected(false);
     }
   };
@@ -243,7 +258,9 @@ export default function SidePanel() {
       pushNotification({ kind: 'info', title: 'Signed in', message: 'Profile connected to Avalon relay.' });
       await refreshStatus();
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Sign in failed';
+      const message = redactHostInfo(
+        error instanceof Error ? error.message : 'Sign in failed',
+      );
       setSigninError(message);
       pushNotification({ kind: 'error', title: 'Sign in failed', message });
     } finally {
@@ -370,15 +387,6 @@ export default function SidePanel() {
             </div>
           </div>
         )}
-
-        <div className="field">
-          <label htmlFor="relay-server">Relay server</label>
-          <input
-            id="relay-server"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-          />
-        </div>
 
         <div className="field">
           <label htmlFor="session-select">Athens session</label>
