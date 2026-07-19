@@ -152,40 +152,31 @@ function renderJobs(poolId) {
       button.disabled = true;
       button.textContent = 'Opening…';
 
-      chrome.tabs.create({ url: job.jdUrl, active: true }, (tab) => {
-        if (chrome.runtime.lastError || !tab?.id) {
-          alert(chrome.runtime.lastError?.message || 'Failed to open job tab.');
-          button.disabled = false;
-          button.textContent = 'Apply';
-          return;
-        }
+      chrome.runtime.sendMessage(
+        {
+          type: 'APPLY_TO_JOB',
+          poolId: pool.id,
+          jobId: job.id,
+          jobUrl: job.jdUrl,
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            alert(chrome.runtime.lastError.message);
+            button.disabled = false;
+            button.textContent = 'Apply';
+            return;
+          }
 
-        chrome.runtime.sendMessage(
-          {
-            type: 'APPLY_OPEN_JOB',
-            tabId: tab.id,
-            poolId: pool.id,
-            jobId: job.id,
-          },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              alert(chrome.runtime.lastError.message);
-              button.disabled = false;
-              button.textContent = 'Apply';
-              return;
-            }
+          if (!response?.ok) {
+            alert(response?.error || 'Failed to open job application.');
+            button.disabled = false;
+            button.textContent = 'Apply';
+            return;
+          }
 
-            if (!response?.ok) {
-              alert(response?.error || 'Failed to open job application.');
-              button.disabled = false;
-              button.textContent = 'Apply';
-              return;
-            }
-
-            window.close();
-          },
-        );
-      });
+          window.close();
+        },
+      );
     });
   });
 }

@@ -767,6 +767,14 @@
         return;
       }
 
+      if (message.type === 'SEGMENT_CAPTURE_REQUIRED') {
+        if (isTopFrame) {
+          showToast(message.message || 'Tap the Bid Monitor icon to record this tab.');
+        }
+        sendResponse({ ok: true });
+        return;
+      }
+
       if (message.type === 'CONTENT_START_RECORDING') {
         if (!isTopFrame) {
           sendResponse({ ok: false, error: 'Tab recording only runs in the top frame.' });
