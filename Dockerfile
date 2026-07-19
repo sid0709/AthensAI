@@ -37,7 +37,8 @@ ENV VITE_AI_BFF_URL=${VITE_AI_BFF_URL}
 RUN npm run build
 
 # Chrome extension zips → /downloads/ (served by nginx; linked from Apps & Plugins).
-ARG PUBLIC_ORIGIN=http://83.229.67.146
+# Set by CI from secrets.VPS_HOST (no hardcoded host in the image recipe).
+ARG PUBLIC_ORIGIN=
 ARG WXT_AVALON_RELAY_URL=
 ARG WXT_API_URL=
 ARG ATHENS_API_URL=
