@@ -89,6 +89,13 @@ Container nginx (port **9030**) already routes:
 | `/api/`, `/personal/`, `/socket.io/` | Athens-server |
 | `/avalon/` | Avalon relay process (`@avalon/backend` on :3847) |
 | `/ai-bff/` | ai-bff |
+| `/downloads/` | Chrome extension zips (Apps & Plugins) |
+
+Chrome extensions baked in CI must use this public origin (default
+`http://$VPS_HOST:9030`). Optional secret `PUBLIC_ORIGIN` overrides it when you
+terminate TLS on a hostname (e.g. `https://sid.example.com`). Do **not** point
+extensions at `:3847` — that port is not published; always use `/avalon/` on the
+web port.
 
 ## Host nginx (HTTPS → container)
 

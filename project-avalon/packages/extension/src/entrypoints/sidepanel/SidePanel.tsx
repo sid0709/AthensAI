@@ -98,6 +98,7 @@ export default function SidePanel() {
   const refreshSessions = useCallback(async () => {
     if (!profileId) {
       setAvailableSessions([]);
+      setSessionsError(null);
       return;
     }
     setSessionsLoading(true);
@@ -280,6 +281,7 @@ export default function SidePanel() {
     setRegistered(null);
     setLastError(null);
     setAvailableSessions([]);
+    setSessionsError(null);
     setSigninName('');
     setSigninPassword('');
     setSigninError(null);

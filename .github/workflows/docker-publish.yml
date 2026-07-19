@@ -12,6 +12,9 @@
 # Optional secrets / variables:
 #   VPS_SSH_PORT        — default 22
 #   DOCKER_IMAGE        — default: omnimuh730/nextoffer
+#   PUBLIC_ORIGIN       — public web origin baked into extension zips
+#                         (e.g. https://sid.example.com or http://IP:9030).
+#                         Default: http://$VPS_HOST:9030 (container nginx port map).
 
 name: Docker publish
 
@@ -89,6 +92,33 @@ jobs:
           echo "Will push:"
           printf '  %s\n' "${TAGS[@]}"
 
+      # Extensions must hit container nginx (9030) or your host TLS vhost — not bare :80.
+      # Avalon relay is NOT published on 3847; only via /avalon/ on the web port.
+      - name: Resolve public origin
+        id: origin
+        shell: bash
+        env:
+          PUBLIC_ORIGIN_SECRET: ${{ secrets.PUBLIC_ORIGIN }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${PUBLIC_ORIGIN_SECRET:-}" ]]; then
+            ORIGIN="${PUBLIC_ORIGIN_SECRET}"
+          else
+            ORIGIN="http://${VPS_HOST}:9030"
+          fi
+          ORIGIN="${ORIGIN%/}"
+          if [[ ! "${ORIGIN}" =~ ^https?:// ]]; then
+            echo "error: PUBLIC_ORIGIN must be an http(s) URL, got: ${ORIGIN}" >&2
+            exit 1
+          fi
+          {
+            echo "origin=${ORIGIN}"
+            echo "relay_url=${ORIGIN}/avalon"
+            echo "api_url=${ORIGIN}/api"
+          } >> "$GITHUB_OUTPUT"
+          echo "Extension public origin: ${ORIGIN}"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -104,10 +134,10 @@ jobs:
             VITE_API_URL=/api
             VITE_AVALON_SERVER=/avalon
             VITE_AI_BFF_URL=/ai-bff
-            PUBLIC_ORIGIN=http://${{ secrets.VPS_HOST }}
-            WXT_AVALON_RELAY_URL=http://${{ secrets.VPS_HOST }}/avalon
-            WXT_API_URL=http://${{ secrets.VPS_HOST }}/api
-            ATHENS_API_URL=http://${{ secrets.VPS_HOST }}/api
+            PUBLIC_ORIGIN=${{ steps.origin.outputs.origin }}
+            WXT_AVALON_RELAY_URL=${{ steps.origin.outputs.relay_url }}
+            WXT_API_URL=${{ steps.origin.outputs.api_url }}
+            ATHENS_API_URL=${{ steps.origin.outputs.api_url }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
