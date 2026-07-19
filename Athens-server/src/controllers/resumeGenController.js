@@ -193,6 +193,18 @@ export async function prepareGeneration(body) {
  * cacheKey), each step appends a turn, and final steps return JSON for a section.
  * `onStep` is invoked after every step for live progress streaming.
  */
+/** True when every step is an independent final with a distinct purpose (default pipeline). */
+function canParallelizeFinals(steps) {
+  if (!Array.isArray(steps) || steps.length < 2) return false;
+  const purposes = new Set();
+  for (const step of steps) {
+    if (step?.kind !== "final" || !PURPOSES.has(step.purpose)) return false;
+    if (purposes.has(step.purpose)) return false;
+    purposes.add(step.purpose);
+  }
+  return true;
+}
+
 export async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, jobSkills, reasoningEffort, isBeta = false }, onStep) {
   // Substitute reference tokens in any prompt with real values:
   //   {job_description}                          → the JD text the user typed
@@ -208,7 +220,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
   const beta = Boolean(isBeta);
   const careers = sourceCareers(identity);
 
-  const messages = [
+  const prefixMessages = [
     { role: "system", content: applyTokens(systemInstruction || "You are an expert resume writer.") },
     { role: "user", content: buildContextBlock(identity) },
   ];
@@ -216,57 +228,118 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
   const perStep = [];
   let usage = EMPTY_USAGE();
 
-  for (let i = 0; i < steps.length; i += 1) {
-    const step = steps[i] || {};
-    const isFinal = step.kind === "final";
-    if (onStep) onStep({ phase: "step-start", index: i + 1, total: steps.length, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind });
+  const runOneFinal = async (step, index, total) => {
+    const name = step.name || `Step ${index}`;
+    if (onStep) onStep({ phase: "step-start", index, total, name, purpose: step.purpose, kind: step.kind });
 
     let userContent = applyTokens(step.prompt || "");
-    // Central title policy — appended even when the user customized the Experience prompt.
-    if (isFinal && step.purpose === "experience") {
+    if (step.purpose === "experience") {
       userContent = appendExperienceTitlePolicy(userContent, {
         isBeta: beta,
         jobDescription,
         careers,
       });
     }
-    if (isFinal && step.schema) {
+    if (step.schema) {
       userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
     }
-    messages.push({ role: "user", content: userContent });
 
+    const messages = [...prefixMessages, { role: "user", content: userContent }];
     const { content, usage: stepUsage } = await chatCompletion({
       provider: providerId,
       apiKey,
       model,
       messages,
-      jsonMode: isFinal,
-      cacheKey: `resume-${applierName || "anon"}`, // stable → prompt-cache the prefix
+      jsonMode: true,
+      cacheKey: `resume-${applierName || "anon"}`,
       reasoningEffort,
       feature: `resume-generate:${step.purpose || step.kind || "step"}`,
       applierName,
     });
-    messages.push({ role: "assistant", content });
-    usage = addUsage(usage, stepUsage);
 
-    let output = content;
-    if (isFinal) {
-      try {
-        output = parseJsonLoose(content);
-        if (step.purpose === "experience") {
-          output = applyTitlePolicyToSections({ experience: output }, identity, beta).experience;
-        }
-        if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
-      } catch (err) {
-        if (Number.isInteger(err?.status)) throw err;
-        const e = new Error(`${step.purpose} final step returned invalid JSON.`);
-        e.status = 502;
-        throw e;
+    let output;
+    try {
+      output = parseJsonLoose(content);
+      if (step.purpose === "experience") {
+        output = applyTitlePolicyToSections({ experience: output }, identity, beta).experience;
       }
+    } catch (err) {
+      if (Number.isInteger(err?.status)) throw err;
+      const e = new Error(`${step.purpose} final step returned invalid JSON.`);
+      e.status = 502;
+      throw e;
     }
-    const entry = { index: i + 1, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind, usage: stepUsage, output };
-    perStep.push(entry);
-    if (onStep) onStep({ phase: "step-done", ...entry, cumulative: usage });
+
+    const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output };
+    if (onStep) onStep({ phase: "step-done", ...entry });
+    return entry;
+  };
+
+  if (canParallelizeFinals(steps)) {
+    // Default pipeline: independent finals share only the system+identity prefix.
+    // Run them concurrently so per-résumé wall time ≈ one LLM round-trip.
+    const entries = await Promise.all(
+      steps.map((step, i) => runOneFinal(step || {}, i + 1, steps.length)),
+    );
+    for (const entry of entries) {
+      if (PURPOSES.has(entry.purpose)) sections[entry.purpose] = entry.output;
+      usage = addUsage(usage, entry.usage);
+      perStep.push({ ...entry, cumulative: usage });
+    }
+  } else {
+    // Fine-tune / dependent pipelines keep a growing multi-turn conversation.
+    const messages = [...prefixMessages];
+    for (let i = 0; i < steps.length; i += 1) {
+      const step = steps[i] || {};
+      const isFinal = step.kind === "final";
+      if (onStep) onStep({ phase: "step-start", index: i + 1, total: steps.length, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind });
+
+      let userContent = applyTokens(step.prompt || "");
+      if (isFinal && step.purpose === "experience") {
+        userContent = appendExperienceTitlePolicy(userContent, {
+          isBeta: beta,
+          jobDescription,
+          careers,
+        });
+      }
+      if (isFinal && step.schema) {
+        userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
+      }
+      messages.push({ role: "user", content: userContent });
+
+      const { content, usage: stepUsage } = await chatCompletion({
+        provider: providerId,
+        apiKey,
+        model,
+        messages,
+        jsonMode: isFinal,
+        cacheKey: `resume-${applierName || "anon"}`,
+        reasoningEffort,
+        feature: `resume-generate:${step.purpose || step.kind || "step"}`,
+        applierName,
+      });
+      messages.push({ role: "assistant", content });
+      usage = addUsage(usage, stepUsage);
+
+      let output = content;
+      if (isFinal) {
+        try {
+          output = parseJsonLoose(content);
+          if (step.purpose === "experience") {
+            output = applyTitlePolicyToSections({ experience: output }, identity, beta).experience;
+          }
+          if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
+        } catch (err) {
+          if (Number.isInteger(err?.status)) throw err;
+          const e = new Error(`${step.purpose} final step returned invalid JSON.`);
+          e.status = 502;
+          throw e;
+        }
+      }
+      const entry = { index: i + 1, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind, usage: stepUsage, output };
+      perStep.push(entry);
+      if (onStep) onStep({ phase: "step-done", ...entry, cumulative: usage });
+    }
   }
 
   // Safety net if Experience was produced outside the final-step branch shape.
@@ -905,6 +978,7 @@ export async function generateResumeForAgentJobStream(req, res) {
       jobId,
       jobDescription,
       forceRegenerate: Boolean(body.forceRegenerate),
+      deferPdf: Boolean(body.deferPdf),
       onStep: (evt) => send("step", evt),
     });
     send("done", result);
@@ -933,6 +1007,7 @@ export async function generateResumeForAgentJob(req, res) {
       jobId,
       jobDescription,
       forceRegenerate: Boolean(body.forceRegenerate),
+      deferPdf: Boolean(body.deferPdf),
     });
     return res.json({ success: true, ...result });
   } catch (err) {

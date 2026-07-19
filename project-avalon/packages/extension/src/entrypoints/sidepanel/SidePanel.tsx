@@ -97,7 +97,8 @@ export default function SidePanel() {
     setSessionsError(null);
     try {
       const base = serverUrl.replace(/\/$/, '');
-      const url = `${base}/sessions?profileId=${encodeURIComponent(profileId)}`;
+      const sessionsPath = base.endsWith('/avalon') ? `${base}/sessions` : `${base}/avalon/sessions`;
+      const url = `${sessionsPath}?profileId=${encodeURIComponent(profileId)}`;
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Relay returned ${res.status}`);
       const data = (await res.json()) as { ok?: boolean; active?: DiscoverableSession[] };

@@ -106,6 +106,7 @@ export interface GeneratedResumeUsage {
 }
 
 export interface GeneratedJobResume {
+  /** Empty when generation used deferPdf (Job Search bulk). */
   pdfBase64: string;
   fileName: string;
   mimeType: string;
@@ -186,13 +187,20 @@ export type ResumeSectionPurpose = "summary" | "skills" | "experience";
 export interface ResumeGenerationProgress {
   stepLabel: string | null;
   completedSections: Partial<Record<ResumeSectionPurpose, boolean>>;
+  /** SSE step index/total when available — used for bulk fractional progress. */
+  stepIndex?: number;
+  stepTotal?: number;
+  phase?: string;
 }
 
 function parseGeneratedJobResume(
   data: Record<string, unknown>,
   applierName: string,
+  options?: { allowMissingPdf?: boolean },
 ): GeneratedJobResume {
-  if (!data.pdfBase64) throw new Error("Résumé generated but no PDF was returned");
+  if (!data.pdfBase64 && !options?.allowMissingPdf) {
+    throw new Error("Résumé generated but no PDF was returned");
+  }
   const fileName = (String(data.fileName || "") || `${applierName}.pdf`)
     .replace(/\.txt\.pdf$/i, ".pdf")
     .replace(/[^\w.\-()+ ]+/g, "_");
@@ -208,7 +216,7 @@ function parseGeneratedJobResume(
       }
     | undefined;
   return {
-    pdfBase64: String(data.pdfBase64),
+    pdfBase64: data.pdfBase64 ? String(data.pdfBase64) : "",
     fileName: finalName,
     mimeType: "application/pdf",
     reused: Boolean(data.reused),
@@ -237,6 +245,8 @@ export async function generateJobResumeStream(
     jobId: string;
     jobDescription: string;
     forceRegenerate?: boolean;
+    /** Skip Chromium PDF — Job Search bulk only needs sections cached. */
+    deferPdf?: boolean;
   },
   onProgress?: (progress: ResumeGenerationProgress) => void,
   signal?: AbortSignal,
@@ -249,22 +259,35 @@ export async function generateJobResumeStream(
       jobId: params.jobId,
       jobDescription: params.jobDescription,
       ...(params.forceRegenerate ? { forceRegenerate: true } : {}),
+      ...(params.deferPdf ? { deferPdf: true } : {}),
     },
     (event, data) => {
       if (event === "step") {
         const phase = String(data.phase ?? "");
         const name = String(data.name ?? "Step");
         const purpose = data.purpose as ResumeSectionPurpose | undefined;
+        const stepIndex = Number.isFinite(Number(data.index)) ? Number(data.index) : undefined;
+        const stepTotal = Number.isFinite(Number(data.total)) ? Number(data.total) : undefined;
         if (phase === "reused") {
-          onProgress?.({ stepLabel: "Reusing saved draft…", completedSections: {} });
+          onProgress?.({ stepLabel: "Reusing saved draft…", completedSections: {}, phase, stepIndex, stepTotal });
+          return;
+        }
+        if (phase === "queued") {
+          onProgress?.({ stepLabel: "Waiting for generation slot…", completedSections: {}, phase, stepIndex, stepTotal });
           return;
         }
         if (phase === "rendering-pdf") {
-          onProgress?.({ stepLabel: "Rendering PDF…", completedSections: {} });
+          onProgress?.({ stepLabel: "Rendering PDF…", completedSections: {}, phase, stepIndex, stepTotal });
           return;
         }
         if (phase === "step-start") {
-          onProgress?.({ stepLabel: `Running: ${name}…`, completedSections: {} });
+          onProgress?.({
+            stepLabel: `Running: ${name}…`,
+            completedSections: {},
+            phase,
+            stepIndex,
+            stepTotal,
+          });
           return;
         }
         if (phase === "step-done") {
@@ -272,7 +295,13 @@ export async function generateJobResumeStream(
           if (purpose === "summary" || purpose === "skills" || purpose === "experience") {
             completedSections[purpose] = true;
           }
-          onProgress?.({ stepLabel: `${name} generated`, completedSections });
+          onProgress?.({
+            stepLabel: `${name} generated`,
+            completedSections,
+            phase,
+            stepIndex,
+            stepTotal,
+          });
         }
       }
       if (event === "done") donePayload = data;
@@ -281,7 +310,9 @@ export async function generateJobResumeStream(
     signal,
   );
   if (!donePayload) throw new Error("Résumé generation ended without a result");
-  return parseGeneratedJobResume(donePayload, params.applierName);
+  return parseGeneratedJobResume(donePayload, params.applierName, {
+    allowMissingPdf: Boolean(params.deferPdf),
+  });
 }
 
 /**

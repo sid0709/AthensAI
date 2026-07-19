@@ -8,8 +8,11 @@ import {
 } from "../../../api/jobs";
 import type { Job } from "../../../types";
 
-/** Max résumés generated concurrently during a bulk run (rate-limit guard). */
-const MAX_CONCURRENT_GENERATIONS = 3;
+/** Max résumés generated concurrently during a bulk run (matches server per-user default). */
+const MAX_CONCURRENT_GENERATIONS = 12;
+
+/** Same heuristic as job detail — skip a round-trip when the list already has the JD. */
+const CACHED_JD_MIN_CHARS = 120;
 
 function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError";
@@ -22,6 +25,8 @@ export type JobResumeBulkProgress = {
   total: number;
   /** Résumés currently in flight (fetch JD + SSE generation). */
   active: number;
+  /** Fractional jobs from in-flight SSE steps (0..active) — drives the progress bar. */
+  partial?: number;
 };
 
 export type JobResumeGenerationState = {
@@ -51,6 +56,8 @@ export function useJobResumeGeneration(jobs: Job[]) {
   const bulkCancelledRef = useRef(false);
   const resumeStatesRef = useRef(resumeStates);
   resumeStatesRef.current = resumeStates;
+  /** Per-job fractional progress (0..1) while a bulk run is active. */
+  const bulkJobFractionRef = useRef<Map<string, number>>(new Map());
 
   const patchState = useCallback((jobId: string, state: JobResumeGenerationState) => {
     setResumeStates((prev) => ({ ...prev, [jobId]: state }));
@@ -91,7 +98,13 @@ export function useJobResumeGeneration(jobs: Job[]) {
 
   /** Generate (or reuse) a résumé for one job. Resolves true on success, null when aborted. */
   const generateForJob = useCallback(
-    (job: Job, options?: { silent?: boolean }): Promise<boolean | null> => {
+    (
+      job: Job,
+      options?: {
+        silent?: boolean;
+        onStepProgress?: (fraction: number) => void;
+      },
+    ): Promise<boolean | null> => {
       // Already generated (this session or found on the server) — nothing to do.
       if (resumeStatesRef.current[job.id]?.status === "done") return Promise.resolve(true);
       const inflight = inflightRef.current.get(job.id);
@@ -109,17 +122,44 @@ export function useJobResumeGeneration(jobs: Job[]) {
         const backendId = job.backendId || job.id;
         patchState(job.id, { status: "generating", step: "Fetching job description…" });
         try {
-          const jd = await fetchJobDescription(backendId, signal);
+          const cachedJd = String(job.jobDescription || "").trim();
+          const jd =
+            cachedJd.length > CACHED_JD_MIN_CHARS
+              ? cachedJd
+              : await fetchJobDescription(backendId, signal);
           if (!jd) throw new Error("No job description saved for this job");
+          if (cachedJd.length > CACHED_JD_MIN_CHARS) {
+            options?.onStepProgress?.(0.05);
+          }
+
           const gen = await generateJobResumeStream(
-            { applierName: applier.name, jobId: backendId, jobDescription: jd },
+            {
+              applierName: applier.name,
+              jobId: backendId,
+              jobDescription: jd,
+              deferPdf: true,
+            },
             (progress) => {
               if (progress.stepLabel) {
                 patchState(job.id, { status: "generating", step: progress.stepLabel });
               }
+              if (progress.phase === "reused") {
+                options?.onStepProgress?.(0.9);
+                return;
+              }
+              const total = progress.stepTotal && progress.stepTotal > 0 ? progress.stepTotal : 0;
+              const index = progress.stepIndex && progress.stepIndex > 0 ? progress.stepIndex : 0;
+              if (total > 0 && index > 0) {
+                // step-done at i/total → i/total; step-start at i → (i-1)/total + small bump
+                const base =
+                  progress.phase === "step-done" ? index / total : Math.max(0, index - 1) / total;
+                const bump = progress.phase === "step-start" ? 0.05 / total : 0;
+                options?.onStepProgress?.(Math.min(0.95, base + bump));
+              }
             },
             signal,
           );
+          options?.onStepProgress?.(1);
           patchState(job.id, { status: "done", reused: gen.reused });
           if (!options?.silent) {
             toast.success(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"`);
@@ -168,8 +208,9 @@ export function useJobResumeGeneration(jobs: Job[]) {
       }
 
       bulkCancelledRef.current = false;
+      bulkJobFractionRef.current = new Map();
       setBulkRunning(true);
-      setBulkProgress({ done: 0, total: jobs.length, active: 0 });
+      setBulkProgress({ done: 0, total: jobs.length, active: 0, partial: 0 });
 
       let succeeded = 0;
       let failed = 0;
@@ -177,16 +218,36 @@ export function useJobResumeGeneration(jobs: Job[]) {
       let nextIndex = 0;
 
       const syncProgress = () => {
-        setBulkProgress({ done: succeeded + failed, total: jobs.length, active });
+        let partial = 0;
+        for (const frac of bulkJobFractionRef.current.values()) {
+          partial += Math.min(1, Math.max(0, frac));
+        }
+        setBulkProgress({
+          done: succeeded + failed,
+          total: jobs.length,
+          active,
+          partial,
+        });
       };
 
       const worker = async () => {
         while (!bulkCancelledRef.current) {
           const index = nextIndex++;
           if (index >= jobs.length) return;
+          const job = jobs[index];
           active++;
+          bulkJobFractionRef.current.set(job.id, 0);
           syncProgress();
-          const result = await generateForJob(jobs[index], { silent: true });
+          const result = await generateForJob(job, {
+            silent: true,
+            onStepProgress: (fraction) => {
+              if (bulkCancelledRef.current) return;
+              const prev = bulkJobFractionRef.current.get(job.id) ?? 0;
+              bulkJobFractionRef.current.set(job.id, Math.max(prev, fraction));
+              syncProgress();
+            },
+          });
+          bulkJobFractionRef.current.delete(job.id);
           active--;
           if (bulkCancelledRef.current) {
             syncProgress();
@@ -203,6 +264,7 @@ export function useJobResumeGeneration(jobs: Job[]) {
           Array.from({ length: Math.min(MAX_CONCURRENT_GENERATIONS, jobs.length) }, worker),
         );
       } finally {
+        bulkJobFractionRef.current.clear();
         setBulkRunning(false);
         setBulkProgress(null);
       }
@@ -227,6 +289,7 @@ export function useJobResumeGeneration(jobs: Job[]) {
       controller.abort();
     }
     abortControllersRef.current.clear();
+    bulkJobFractionRef.current.clear();
     setResumeStates((prev) => {
       let changed = false;
       const next = { ...prev };

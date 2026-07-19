@@ -353,9 +353,22 @@ export async function verifyKey({ provider, apiKey }) {
 export async function listModels({ provider, apiKey, force = false }) {
   const p = getProvider(provider);
   if (Array.isArray(p.models)) return p.models;
-  const cached = modelCache.get(p.id);
-  if (!force && cached && Date.now() - cached.at < MODEL_TTL_MS) return cached.models;
   if (!apiKey) throw new Error(`No API key configured for ${p.label}.`);
+
+  // Cache per provider + key fingerprint so profile keys (DB) never share a
+  // stale empty list from a missing ai-bff .env key.
+  const cacheKey = `${p.id}:${String(apiKey).slice(-12)}`;
+  const cached = modelCache.get(cacheKey);
+  if (!force && cached && Date.now() - cached.at < MODEL_TTL_MS) return cached.models;
+
+  // OpenAI: list with the profile/DB key directly — do not use ai-bff /v1/models,
+  // which only exposes providers configured in ai-bff .env.
+  if (p.id === 'openai') {
+    const catalog = await listOpenAiModels(apiKey);
+    const models = catalog.map((m) => String(m.id)).filter(Boolean).sort();
+    modelCache.set(cacheKey, { at: Date.now(), models });
+    return models;
+  }
 
   const response = await fetchRetry(
     `${AI_BASE}/v1/models`,
@@ -373,15 +386,12 @@ export async function listModels({ provider, apiKey, force = false }) {
     : Array.isArray(data?.data)
       ? data.data
       : [];
-  const ids = catalog.map((m) => String(m?.id || '')).filter(Boolean);
-  const models = ids
-    .filter((id) => {
-      if (p.id === 'openai') return /(gpt|o1|o3|o4)/i.test(id);
-      return true;
-    })
+  const models = catalog
+    .map((m) => String(m?.id || ''))
+    .filter(Boolean)
     .filter((id) => !/(embedding|whisper|tts|audio|image|moderation|realtime|search|transcribe)/i.test(id))
     .sort();
-  modelCache.set(p.id, { at: Date.now(), models });
+  modelCache.set(cacheKey, { at: Date.now(), models });
   return models;
 }
 

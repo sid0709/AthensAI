@@ -170,11 +170,11 @@ Copy from [`.env.example`](.env.example). Key groups:
 | `RECOMMENDATION_VECTOR_TOP_K`, `RECOMMENDATION_CANDIDATE_POOL` | Retrieval tuning |
 | `NEO4J_GDS_GRAPH_NAME`, `KG_LINK_PREDICTION_MIN_SCORE`, `KG_PATH_HOP_DECAY` | GDS path scoring + link prediction |
 | `SKILL_GRAPH_MAINTENANCE_*`, `SKILL_GRAPH_BRIDGE_LLM_ENABLED` | Background graph completion |
-| `RESUME_GEN_GLOBAL_CONCURRENCY` | Max in-flight résumé gens process-wide (default **16**) |
-| `RESUME_GEN_PER_USER_CONCURRENCY` | Max in-flight résumé gens per applier (default **6**) |
+| `RESUME_GEN_GLOBAL_CONCURRENCY` | Max in-flight résumé gens process-wide (default **32**) |
+| `RESUME_GEN_PER_USER_CONCURRENCY` | Max in-flight résumé gens per applier (default **12**) |
 | `PDF_RENDER_CONCURRENCY` | Max concurrent PDF renders (default **16**) |
 | `PUPPETEER_BROWSER_POOL` | Chromium processes for PDF (default **6**) |
-| `LLM_GLOBAL_CONCURRENCY` | Priority admission cap for all LLM calls (default **24**) |
+| `LLM_GLOBAL_CONCURRENCY` | Priority admission cap for all LLM calls (default **48**) |
 | `MAIL_AI_LABEL_CONCURRENCY` | Parallel AI label classify+apply (default **8**) |
 | `IMAP_MAX_CONNS_PER_ACCOUNT` | IMAP pool size per Gmail account (default **8**) |
 | `JOB_SKILL_EXTRACT_CONCURRENCY` | Skill-extract fan-out (default **16**) |
