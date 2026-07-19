@@ -124,6 +124,39 @@ export function formatUsageSummary(usage) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Default chat timeout — generous so long completions are never cut off mid-stream. */
+const DEFAULT_CHAT_TIMEOUT_MS = Number.parseInt(String(process.env.LLM_TIMEOUT_MS || ''), 10) || 600_000;
+
+/**
+ * Fail-fast only when ai-bff is genuinely DOWN (connection errors).
+ * Does NOT limit normal AI usage — open circuit recovers automatically.
+ */
+const breaker = {
+  failures: 0,
+  openUntil: 0,
+  threshold: Number.parseInt(String(process.env.AI_BFF_BREAKER_THRESHOLD || ''), 10) || 8,
+  cooldownMs: Number.parseInt(String(process.env.AI_BFF_BREAKER_COOLDOWN_MS || ''), 10) || 15_000,
+};
+
+function breakerAllow() {
+  return Date.now() >= breaker.openUntil;
+}
+
+function breakerSuccess() {
+  breaker.failures = 0;
+  breaker.openUntil = 0;
+}
+
+function breakerFailure() {
+  breaker.failures += 1;
+  if (breaker.failures >= breaker.threshold) {
+    breaker.openUntil = Date.now() + breaker.cooldownMs;
+    console.warn(
+      `[llm] ai-bff circuit open for ${breaker.cooldownMs}ms after ${breaker.failures} consecutive connection failures`,
+    );
+  }
+}
+
 function combinedSignal(externalSignal, timeoutMs) {
   const timeout = AbortSignal.timeout(timeoutMs);
   if (!externalSignal) return timeout;
@@ -132,14 +165,22 @@ function combinedSignal(externalSignal, timeoutMs) {
   return externalSignal.aborted ? externalSignal : timeout;
 }
 
-async function fetchRetry(url, init, { timeoutMs = 120000, retries = 4, baseDelayMs = 1000, signal } = {}) {
+async function fetchRetry(url, init, { timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, retries = 4, baseDelayMs = 1000, signal } = {}) {
+  if (!breakerAllow()) {
+    const err = new Error('ai-bff circuit open — gateway unreachable, retry shortly');
+    err.status = 503;
+    throw err;
+  }
+
   for (let attempt = 0; ; attempt += 1) {
     let response;
     try {
       response = await fetch(url, { ...init, signal: combinedSignal(signal, timeoutMs) });
+      breakerSuccess();
     } catch (err) {
       // A caller-requested abort is terminal — never retry through a Stop.
       if (signal?.aborted) throw err;
+      breakerFailure();
       if (attempt >= retries) throw err;
       console.warn(`[llm] fetch error (attempt ${attempt + 1}/${retries + 1}) ${url} — ${err.message}, retrying...`);
       await sleep(baseDelayMs * 2 ** attempt);
@@ -165,7 +206,7 @@ export async function chatCompletion({
   jsonMode = false,
   cacheKey,
   reasoningEffort,
-  timeoutMs = 120000,
+  timeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
   runId,
   feature = 'resume-analysis',
   applierName,

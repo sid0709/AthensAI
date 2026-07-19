@@ -14,6 +14,7 @@ export const ROOT_DIR = ROOT;
 
 export const backendServices = [
 	{ name: 'athens-server', label: 'Athens-server', cmd: 'npm', args: ['run', 'start', '-w', 'Athens-server'], cwd: ROOT },
+	{ name: 'avalon-relay', label: 'Avalon relay', cmd: 'npm', args: ['run', 'start', '-w', '@avalon/backend'], cwd: ROOT },
 	{ name: 'ai-bff', label: 'AI BFF', cmd: 'npm', args: ['run', 'dev', '-w', 'ai-bff'], cwd: ROOT },
 ];
 
@@ -27,6 +28,7 @@ export const uiService = {
 
 export const backendPorts = [
 	{ host: '127.0.0.1', port: Number(process.env.ATHENS_SERVER_PORT || 8979), label: 'Athens-server', service: 'athens-server' },
+	{ host: '127.0.0.1', port: Number(process.env.AVALON_PORT || 3847), label: 'Avalon relay', service: 'avalon-relay' },
 	{ host: '127.0.0.1', port: Number(process.env.AI_BFF_PORT || 3920), label: 'AI BFF', service: 'ai-bff' },
 ];
 
@@ -49,6 +51,7 @@ export function getDevSummary() {
 		endpoints: [
 			{ label: 'Frontend', url: `http://localhost:${devPort}` },
 			{ label: 'Athens-server', url: 'http://localhost:8979' },
+			{ label: 'Avalon relay', url: 'http://localhost:3847' },
 			{ label: 'AI BFF', url: 'http://localhost:3920' },
 		],
 	};

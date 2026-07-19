@@ -38,7 +38,7 @@ export function avalonRelayUrl() {
   return resolveDevServiceUrl(
     import.meta.env.VITE_AVALON_SERVER,
     "/avalon",
-    "http://localhost:8979",
+    "http://localhost:3847",
   );
 }
 
@@ -65,7 +65,7 @@ export function persistAvalonSessionId(sessionId: string) {
   }
 }
 
-/** Socket.IO client options — Avalon relay is co-hosted on Athens-server. */
+/** Socket.IO client options — Avalon relay is a dedicated process (@avalon/backend). */
 export function avalonRelaySocketOptions(): { url?: string; path?: string } {
   const configured = import.meta.env.VITE_AVALON_SERVER?.trim();
   if (import.meta.env.DEV && (!configured || avalonRelayUrl() === "/avalon")) {
@@ -120,7 +120,7 @@ export async function waitForAvalonRelay(
 /** Probe Avalon relay via HTTP — does not steal the controller socket slot. */
 export async function fetchAvalonHealth(sessionId = DEFAULT_SESSION_ID): Promise<AvalonHealthData> {
   try {
-    const res = await fetch(`${avalonRelayUrl()}/health`);
+    const res = await fetch(avalonRelayHealthUrl());
     if (!res.ok) return { ok: false, extension: false };
     const data = (await res.json()) as {
       ok?: boolean;

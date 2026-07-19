@@ -3,11 +3,14 @@
   "private": true,
   "workspaces": [
     "packages/extension",
-    "packages/shared"
+    "packages/shared",
+    "packages/backend"
   ],
   "scripts": {
     "postinstall": "npm run build -w @avalon/shared",
     "dev:extension": "npm run dev -w @avalon/extension",
+    "dev:relay": "npm run dev -w @avalon/backend",
+    "start:relay": "npm run start -w @avalon/backend",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },

@@ -45,10 +45,11 @@ export default defineConfig(({ mode }) => {
     (env.SERVER_API_URL ? originFromApiUrl(env.SERVER_API_URL) : '') ||
     (env.VITE_API_URL ? originFromApiUrl(env.VITE_API_URL) : '') ||
     `http://127.0.0.1:${backendPort}`
+  const avalonPort = env.VITE_AVALON_PORT || '3847'
   const avalonTarget =
     env.VITE_DEV_AVALON_PROXY_TARGET ||
     (env.VITE_AVALON_SERVER ? originFromServiceUrl(env.VITE_AVALON_SERVER) : '') ||
-    proxyTarget
+    `http://127.0.0.1:${avalonPort}`
   const aiBffTarget =
     env.VITE_DEV_AI_BFF_PROXY_TARGET ||
     (env.VITE_AI_BFF_URL ? originFromServiceUrl(env.VITE_AI_BFF_URL) : '') ||

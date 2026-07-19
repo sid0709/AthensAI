@@ -72,10 +72,13 @@ fi
 
 export HOST="${HOST:-0.0.0.0}"
 export PORT="${PORT:-8979}"
+export AVALON_PORT="${AVALON_PORT:-3847}"
 export AI_BFF_URL="${AI_BFF_URL:-http://127.0.0.1:3920}"
 export MONGO_DB="${MONGO_DB:-AthensDB}"
 export CORS_ORIGIN="${CORS_ORIGIN:-*}"
 export PUPPETEER_ARGS="${PUPPETEER_ARGS:---no-sandbox,--disable-setuid-sandbox}"
+# Empty = use all CPU cores inside Athens-server cluster bootstrap.
+export WEB_CONCURRENCY="${WEB_CONCURRENCY:-}"
 # Persist Chrome on the VPS volume so recreating the container does not re-download.
 export PUPPETEER_CACHE_DIR="${PUPPETEER_CACHE_DIR:-/data/puppeteer}"
 # Allow install even if the image was built with skip flags.

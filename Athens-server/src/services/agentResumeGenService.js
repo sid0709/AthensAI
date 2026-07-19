@@ -46,12 +46,13 @@ async function pdfPayloadForAgent(
     identityFingerprint,
   );
   if (onDisk) {
-    // Buffer.from() guards against a non-Buffer (e.g. Uint8Array), whose
-    // .toString("base64") ignores the encoding and yields comma-joined bytes.
-    return { pdfBase64: Buffer.from(onDisk.buffer).toString("base64"), resumePdfPath: onDisk.draftPath };
+    // Base64 encode off the main thread via the PDF worker pool.
+    const { encodeBufferBase64 } = await import("./pdf/pdfRenderPool.js");
+    const pdfBase64 = await encodeBufferBase64(onDisk.buffer);
+    return { pdfBase64, resumePdfPath: onDisk.draftPath };
   }
   if (!sections) throw new Error("No résumé sections to render as PDF");
-  const { buffer, savedPath } = await renderAgentResumePdf({
+  const { buffer, savedPath, pdfBase64 } = await renderAgentResumePdf({
     sections,
     identity,
     applierName,
@@ -59,12 +60,13 @@ async function pdfPayloadForAgent(
     config: savedConfig,
     titlePolicyFingerprint,
     identityFingerprint,
+    asBase64: true,
   });
-  if (!buffer?.length) throw new Error("PDF render returned empty buffer");
-  // page.pdf() returns a Uint8Array in modern puppeteer — wrap so toString("base64")
-  // actually base64-encodes (a bare Uint8Array.toString("base64") returns garbage,
-  // which the extension's atob() then rejects → 0 files attached).
-  return { pdfBase64: Buffer.from(buffer).toString("base64"), resumePdfPath: savedPath };
+  if (!pdfBase64 && !buffer?.length) throw new Error("PDF render returned empty buffer");
+  return {
+    pdfBase64: pdfBase64 || Buffer.from(buffer).toString("base64"),
+    resumePdfPath: savedPath,
+  };
 }
 
 const cleanString = (v) => String(v ?? "").trim();

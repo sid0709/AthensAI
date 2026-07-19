@@ -1,7 +1,6 @@
 /**
- * Avalon Socket.IO relay — merged from project-avalon/packages/backend.
- * Serves HTTP under /avalon/* and Socket.IO on path /avalon/socket.io
- * alongside the legacy Athens socketHub on /socket.io.
+ * Avalon Socket.IO relay — dedicated process (isolated from Athens-server batch load).
+ * Serves HTTP under /avalon/* and Socket.IO on path /avalon/socket.io.
  */
 
 import { Server } from "socket.io";
@@ -97,6 +96,11 @@ function parseCorsOrigin() {
 	return raw.trim() || "*";
 }
 
+function envInt(name, fallback) {
+	const n = Number.parseInt(String(process.env[name] ?? ""), 10);
+	return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /**
  * Mount Avalon HTTP routes (call before the catch-all 404).
  * @param {import('express').Express} app
@@ -120,10 +124,19 @@ export function mountAvalonRelayRoutes(app) {
  */
 export function initAvalonRelay(httpServer) {
 	const corsOrigin = parseCorsOrigin();
+	const pingInterval = envInt("AVALON_PING_INTERVAL_MS", 25_000);
+	const pingTimeout = envInt("AVALON_PING_TIMEOUT_MS", 60_000);
 
 	const io = new Server(httpServer, {
 		path: "/avalon/socket.io",
 		cors: { origin: corsOrigin === "*" ? true : corsOrigin },
+		pingInterval,
+		pingTimeout,
+		connectionStateRecovery: {
+			maxDisconnectionDuration: 2 * 60 * 1000,
+			skipMiddlewares: true,
+		},
+		maxHttpBufferSize: 1e8,
 	});
 
 	io.on("connection", (socket) => {
@@ -240,6 +253,8 @@ export function initAvalonRelay(httpServer) {
 		});
 	});
 
-	console.log("[avalon-relay] ready on /avalon/health and /avalon/socket.io");
+	console.log(
+		`[avalon-relay] ready on /avalon/health and /avalon/socket.io (pingInterval=${pingInterval}ms pingTimeout=${pingTimeout}ms)`,
+	);
 	return io;
 }
