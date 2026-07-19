@@ -1638,6 +1638,7 @@ async function completeRecordingSession({
     jobOutcome,
     jobMarkedApplied: jobOutcome === 'submitted',
     uploaded: Boolean(uploadResult?.success || uploadResult?.recording),
+    withoutRecording: Boolean(applyFlow && !hasVideo),
     uploadError,
     statusError,
     recordingPath: uploadResult?.recording?.storagePath || null,
@@ -1830,9 +1831,40 @@ async function startRecordingFromGesture(tab, streamId) {
         recorderStatus: result.recording?.startedPaused ? 'paused' : 'recording',
         error: null,
       });
+
+      // Mirror legacy bidMonitorSessions so GET_ACTIVE_APPLY / finish UI stay in sync.
+      if (!(await getSessionForTab(tab.id))) {
+        await beginRecordingSession({
+          tab,
+          bidderName: auth.displayName,
+          resumeSetFolder: pending.job.resumeFolderName,
+          videoFormat,
+          jobId: pending.job.id,
+          poolId: pending.poolId,
+          companyName: pending.job.companyName,
+          jobTitle: pending.job.title,
+          jdUrl: pending.job.jdUrl,
+          applyFlow: true,
+          streamId,
+          applicationSessionId: appSession.sessionId,
+          segmentId: segment.segmentId,
+          skipRecorderStart: true,
+          recordingMeta: result.recording,
+        });
+      }
     } else {
       // Manual start on any http(s) tab — unassigned until Stop/close merge prompt.
-      await SegmentLifecycle.startManualSegment(tab.id, streamId);
+      const manual = await SegmentLifecycle.startManualSegment(tab.id, streamId);
+      if (manual?.segment?.sessionId) {
+        const linked = await ApplicationSessionStore.getSession(manual.segment.sessionId);
+        if (linked?.jobId) {
+          await ApplyLifecycle.upsert(linked.jobId, {
+            applicationSessionId: linked.sessionId,
+            recorderStatus: 'recording',
+            error: null,
+          });
+        }
+      }
     }
 
     broadcastApplySessionUpdate(tab.id);
@@ -2017,7 +2049,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           refreshing: Boolean(dashboard.refreshing),
           activeApply,
           session,
-          isRecording: Boolean(session),
+          isRecording: Boolean(session) ||
+            (activeApply?.applyTabId != null &&
+              Boolean(SessionRecorder.getSessionIdForTab(activeApply.applyTabId))) ||
+            Boolean(
+              activeApply?.jobId &&
+                (await ApplicationSessionStore.getSessionByJobId(activeApply.jobId))?.activeTabIds?.some(
+                  (tid) => Boolean(SessionRecorder.getSessionIdForTab(Number(tid))),
+                ),
+            ),
           athensHealthy: Boolean(health.healthy),
           recordingSessions: await getRecordingSessions(),
           applicationSessions: applicationUi.sessions,
@@ -2898,18 +2938,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           : null;
 
+        // Live capture may exist without a legacy bidMonitorSessions row
+        // (toolbar / side-panel Start paths). Prefer SessionRecorder truth.
+        let isLiveRecording = Boolean(session);
+        if (!isLiveRecording && tabId != null) {
+          isLiveRecording = Boolean(SessionRecorder.getSessionIdForTab(tabId));
+        }
+        if (!isLiveRecording && apply?.jobId) {
+          const appSession = await ApplicationSessionStore.getSessionByJobId(apply.jobId);
+          if (appSession) {
+            isLiveRecording = (appSession.activeTabIds || []).some((tid) =>
+              Boolean(SessionRecorder.getSessionIdForTab(Number(tid))),
+            );
+          }
+        }
+        if (
+          !isLiveRecording &&
+          (apply?.recorderStatus === 'recording' || apply?.recorderStatus === 'paused')
+        ) {
+          isLiveRecording = true;
+        }
+
+        if (isLiveRecording && !recorderStatus) {
+          recorderStatus = 'recording';
+        }
+
         sendResponse({
           ok: true,
           tabId,
           jobId: apply?.jobId || applyJob?.id || null,
           pending,
           session,
-          isRecording: !!session,
+          isRecording: isLiveRecording,
           applyJob,
           recorderStatus,
           error,
           analysis: apply?.analysis || null,
-          tabMissing: Boolean(apply?.job && apply.applyTabId == null && !session),
+          tabMissing: Boolean(apply?.job && apply.applyTabId == null && !session && !isLiveRecording),
         });
         break;
       }

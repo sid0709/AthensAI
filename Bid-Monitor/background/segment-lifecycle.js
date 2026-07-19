@@ -252,6 +252,17 @@ const SegmentLifecycle = (() => {
     const { videoFormat = 'webm' } = await chrome.storage.local.get('videoFormat');
     const result = await startSegmentCapture(segment, tab, { streamId, videoFormat });
     if (!result.ok) throw new Error(result.error || 'Could not start recording.');
+    if (segment.sessionId) {
+      const session = await ApplicationSessionStore.getSession(segment.sessionId);
+      if (session?.jobId) {
+        await ApplyLifecycle.upsert(session.jobId, {
+          applicationSessionId: session.sessionId,
+          applyTabId: tabId,
+          recorderStatus: result.recording?.startedPaused ? 'paused' : 'recording',
+          error: null,
+        });
+      }
+    }
     broadcast('APPLICATION_SESSIONS_UPDATED');
     return { ...result, segment: await ApplicationSessionStore.getSegment(segment.segmentId) };
   }

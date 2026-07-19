@@ -726,7 +726,17 @@ function hideFinishPrompt() {
 
 function renderApplySession(state) {
   const job = state?.applyJob;
-  const isRec = Boolean(state?.isRecording);
+  const jobId = state?.jobId || job?.id || job?.athensJobId || null;
+  const appLive = (applicationSessions || []).some(
+    (s) => String(s.jobId) === String(jobId) && s.isLiveRecording,
+  );
+  const tabLive = Boolean(currentTabRecordingState?.isRecording && currentTabRecordingState?.assigned);
+  const isRec =
+    Boolean(state?.isRecording) ||
+    state?.recorderStatus === 'recording' ||
+    state?.recorderStatus === 'paused' ||
+    tabLive ||
+    appLive;
   const hasPending = Boolean(job) && !isRec;
   const finishable = isRec || hasPending;
   const hasCard = Boolean(job) || isRec;
@@ -1002,13 +1012,18 @@ async function finishApply(tabId, finishAction = 'submit', button) {
   if (submitRecordingBtn) submitRecordingBtn.disabled = true;
   if (skipRecordingBtn) skipRecordingBtn.disabled = true;
 
-  const response = await sendMessage({
-    type: 'STOP_CAPTURE',
-    tabId: resolveTabId,
-    jobId: activeJobId,
-    closeApplyTab: true,
-    finishAction: action,
-  });
+  let response = null;
+  try {
+    response = await sendMessage({
+      type: 'STOP_CAPTURE',
+      tabId: resolveTabId,
+      jobId: activeJobId,
+      closeApplyTab: true,
+      finishAction: action,
+    });
+  } catch (err) {
+    response = { ok: false, error: err?.message || 'Failed to finish job.' };
+  }
 
   if (submitRecordingBtn) {
     submitRecordingBtn.disabled = false;
@@ -1024,7 +1039,9 @@ async function finishApply(tabId, finishAction = 'submit', button) {
   }
 
   if (!response?.ok) {
-    alert(response?.error || 'Failed to finish job.');
+    statusStrip.className = 'status-strip idle';
+    statusStripText.textContent = action === 'skip' ? 'Skip failed' : 'Submit failed';
+    alert(response?.error || 'Failed to finish job. Check Athens is running, then try again.');
     await refreshApplySession();
     return;
   }
@@ -1038,22 +1055,39 @@ async function finishApply(tabId, finishAction = 'submit', button) {
     });
   }
 
-  if (response.uploadError || response.statusError || response.stitchWarning) {
-    alert(
-      `Finished with a warning:\n${
-        response.uploadError || response.statusError || response.stitchWarning
-      }`,
-    );
-  } else if (response.jobOutcome === 'skipped') {
-    alert('Skipped. Ticket moved to Skipped in Bid Management.');
+  const warnings = [response.uploadError, response.statusError, response.stitchWarning]
+    .filter(Boolean)
+    .join('\n');
+
+  let outcomeTitle = '';
+  let outcomeDetail = '';
+  if (response.jobOutcome === 'skipped') {
+    outcomeTitle = 'Skipped';
+    outcomeDetail = 'Ticket moved to Skipped in Bid Management.';
   } else if (response.jobOutcome === 'submitted') {
-    alert(
-      response.uploaded
-        ? 'Submitted. Recording uploaded — ticket is Submitted.'
-        : response.withoutRecording
-          ? 'Submitted without video — ticket is Submitted.'
-          : 'Submitted. Ticket is Submitted in Bid Management.',
-    );
+    outcomeTitle = 'Submitted';
+    if (response.uploaded) {
+      outcomeDetail = 'Recording uploaded. Ticket is Submitted in Bid Management.';
+    } else if (response.withoutRecording) {
+      outcomeDetail = 'Submitted without video. Ticket is Submitted in Bid Management.';
+    } else {
+      outcomeDetail = 'Ticket is Submitted in Bid Management.';
+    }
+  } else {
+    outcomeTitle = action === 'skip' ? 'Finished' : 'Finished';
+    outcomeDetail =
+      'Recording stopped, but Athens ticket status was not updated. Check Athens and Bid Management.';
+  }
+
+  statusStrip.className = warnings ? 'status-strip finishing' : 'status-strip ready';
+  statusStripText.textContent = warnings
+    ? `${outcomeTitle} with warning`
+    : outcomeTitle;
+
+  if (warnings) {
+    alert(`${outcomeTitle} with a warning:\n${warnings}\n\n${outcomeDetail}`);
+  } else {
+    alert(`${outcomeTitle}.\n\n${outcomeDetail}`);
   }
 
   persistedAnalysis = null;
