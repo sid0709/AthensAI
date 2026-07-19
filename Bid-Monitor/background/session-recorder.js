@@ -270,27 +270,10 @@ const SessionRecorder = (() => {
     }
   }
 
-  async function onTabRemoved(tabId) {
-    if (!tabSessions.has(tabId)) return;
-    const meta = tabSessions.get(tabId);
-    tabSessions.delete(tabId);
-    try {
-      if (meta.recordInTab) {
-        await sendToTab(tabId, { type: 'CONTENT_STOP_RECORDING', sessionId: meta.sessionId }).catch(() => {});
-      } else {
-        await sendToOffscreen({ type: 'OFFSCREEN_STOP_RECORDING', sessionId: meta.sessionId });
-      }
-    } catch (err) {
-      console.warn('Bid Monitor: cleanup on tab close failed', err);
-    }
-    if (!tabSessions.size) detachListeners();
-  }
-
   function attachListeners() {
     if (listenersAttached) return;
     chrome.tabs.onActivated.addListener(onTabActivated);
     chrome.tabs.onUpdated.addListener(onTabUpdated);
-    chrome.tabs.onRemoved.addListener(onTabRemoved);
     listenersAttached = true;
   }
 
@@ -298,7 +281,6 @@ const SessionRecorder = (() => {
     if (!listenersAttached) return;
     chrome.tabs.onActivated.removeListener(onTabActivated);
     chrome.tabs.onUpdated.removeListener(onTabUpdated);
-    chrome.tabs.onRemoved.removeListener(onTabRemoved);
     listenersAttached = false;
   }
 

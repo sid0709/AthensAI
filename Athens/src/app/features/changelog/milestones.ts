@@ -28,6 +28,7 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
       "Application sessions group multiple tab recordings under the same Bid Ready job",
       "Side-panel Start/Stop plus toolbar-icon capture (Chrome requires toolbar invoke for tab recording)",
       "Child application tabs are matched automatically, while uncertain verification clips ask the bidder where they belong",
+      "Closing a manually recorded unrelated tab reliably asks which active application should receive the clip",
       "New active-applications view shows recording status, clip count, open tabs, warnings, and finish actions",
       "Merged clips are re-encoded chronologically into one playable video before upload",
       "Session and segment metadata survive panel closure and extension reloads with guided recording recovery",
