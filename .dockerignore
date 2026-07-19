@@ -12,6 +12,7 @@
 **/dist
 **/build
 **/*.tsbuildinfo
+**/.output
 
 # Local Puppeteer Chrome cache (downloaded on VPS at container start)
 **/.cache/puppeteer
@@ -30,13 +31,13 @@ logs
 .playwright-cli
 agent-runtime
 
-# Extensions (not dockerized — excluded from runtime image in Dockerfile)
+# Legacy AutoLancer extension (not shipped)
 Extension
-Bid-Monitor
 
-# Archives & large artifacts
+# Archives & large artifacts (extension zips are built inside the image)
 *.zip
 vender-server/new-server.zip
+Bid-Monitor/dist
 
 # Test & coverage
 coverage

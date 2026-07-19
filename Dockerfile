@@ -13,6 +13,11 @@ ENV npm_config_fetch_retries=5 \
     PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_SKIP_CHROME_DOWNLOAD=1
 
+# zip/rsync: pack Bid Monitor + Avalon extension downloads for the Apps page.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends zip rsync \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
 RUN npm install \
@@ -30,6 +35,16 @@ ENV VITE_API_URL=${VITE_API_URL}
 ENV VITE_AVALON_SERVER=${VITE_AVALON_SERVER}
 ENV VITE_AI_BFF_URL=${VITE_AI_BFF_URL}
 RUN npm run build
+
+# Chrome extension zips → /downloads/ (served by nginx; linked from Apps & Plugins).
+ARG PUBLIC_ORIGIN=http://83.229.67.146
+ARG WXT_AVALON_RELAY_URL=
+ARG WXT_API_URL=
+ENV PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
+ENV WXT_AVALON_RELAY_URL=${WXT_AVALON_RELAY_URL}
+ENV WXT_API_URL=${WXT_API_URL}
+RUN chmod +x /app/docker/pack-extensions.sh \
+ && /app/docker/pack-extensions.sh
 
 
 FROM mongo:7.0 AS mongodb

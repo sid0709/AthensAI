@@ -22,6 +22,7 @@ const {
   "api-usage-monitor": ApiUsageMonitorPage,
   firebase: FirebaseExplorerPage,
   "bid-management": BidManagementPage,
+  "apps-plugins": AppsPluginsPage,
   settings: SettingsPage,
 } = VIEW_COMPONENTS;
 
@@ -65,6 +66,7 @@ export function AppRoutes() {
         />
         <Route path={PATHS.firebase.slice(1)} element={<FirebaseExplorerPage />} />
         <Route path={PATHS.bidManagement.slice(1)} element={<BidManagementPage />} />
+        <Route path={PATHS.appsPlugins.slice(1)} element={<AppsPluginsPage />} />
         <Route path={`${PATHS.settings.slice(1)}/:tab?`} element={<SettingsPage />} />
         <Route path="*" element={<Navigate to={PATHS.dashboard} replace />} />
       </Route>

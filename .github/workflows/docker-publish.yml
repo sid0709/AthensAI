@@ -104,6 +104,9 @@ jobs:
             VITE_API_URL=/api
             VITE_AVALON_SERVER=/avalon
             VITE_AI_BFF_URL=/ai-bff
+            PUBLIC_ORIGIN=http://${{ secrets.VPS_HOST }}
+            WXT_AVALON_RELAY_URL=http://${{ secrets.VPS_HOST }}/avalon
+            WXT_API_URL=http://${{ secrets.VPS_HOST }}/api
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
