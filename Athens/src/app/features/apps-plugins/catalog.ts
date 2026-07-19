@@ -19,7 +19,7 @@ export const APPS_CATALOG: AppPlugin[] = [
     tagline: "Silent video bidding for Bid Ready",
     description:
       "Chrome side panel for Athens Bid Ready — apply, analyze, submit or skip, and clear the rejected queue without leaving the tab.",
-    version: "2.18.2",
+    version: "2.18.3",
     downloadUrl: "/downloads/bid-monitor-extension.zip",
     iconSrc: "/apps/bid-monitor.png",
     accent: "indigo",

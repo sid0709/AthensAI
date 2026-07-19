@@ -338,6 +338,22 @@ const ApplicationSessionStore = (() => {
     return Object.values(map).filter((s) => s.status === 'unassigned' && !s.sessionId);
   }
 
+  async function getEmptyRecordingClips() {
+    const map = await getSegmentsMap();
+    return Object.values(map).filter(
+      (s) => s.emptyRecording && s.status === 'failed' && !s.sessionId,
+    );
+  }
+
+  async function getWaitingClipCount() {
+    const [unassigned, empty] = await Promise.all([
+      getUnassignedSegments(),
+      getEmptyRecordingClips(),
+    ]);
+    const recorded = unassigned.filter((s) => Number(s.videoSizeBytes) > 0);
+    return recorded.length + empty.length;
+  }
+
   async function setPendingMerge(segmentId) {
     await chrome.storage.local.set({ [PENDING_MERGE_KEY]: segmentId || null });
   }
@@ -392,9 +408,20 @@ const ApplicationSessionStore = (() => {
   async function getUiSnapshot(focusedTabId = null) {
     const sessions = await listActiveSessions();
     const allSegments = await getSegmentsMap();
-    const unassigned = Object.values(allSegments).filter((s) => s.status === 'unassigned');
+    const unassignedRaw = Object.values(allSegments).filter(
+      (s) => s.status === 'unassigned' && !s.sessionId,
+    );
+    const emptyClips = Object.values(allSegments)
+      .filter((s) => s.emptyRecording && s.status === 'failed' && !s.sessionId)
+      .map((s) => ({ ...s, hasRecording: false }));
+    const unassignedSegments = unassignedRaw.map((s) => ({
+      ...s,
+      hasRecording: Number(s.videoSizeBytes) > 0,
+    }));
     const pendingMerge = await getPendingMerge();
     const pendingFinish = await getPendingFinishPrompt();
+    const waitingCount =
+      unassignedSegments.filter((s) => s.hasRecording).length + emptyClips.length;
 
     const cards = sessions.map((session) => {
       const segs = (session.recordingSegmentIds || [])
@@ -415,7 +442,7 @@ const ApplicationSessionStore = (() => {
             typeof SessionRecorder !== 'undefined' &&
             Boolean(SessionRecorder.getSessionIdForTab(Number(s.tabId)))),
       ).length;
-      const hasFailed = segs.some((s) => s.status === 'failed');
+      const hasFailed = segs.some((s) => s.status === 'failed' && !s.emptyRecording);
       const displayStatus = isLiveRecording
         ? 'recording'
         : session.status === 'recording'
@@ -427,7 +454,7 @@ const ApplicationSessionStore = (() => {
         humanStatus: SessionMatching.humanStatus(displayStatus),
         isLiveTab: live,
         isLiveRecording,
-        needsMerge: session.status === 'needs_merge' || unassigned.length > 0,
+        needsMerge: session.status === 'needs_merge' || waitingCount > 0,
         hasFailedSegment: hasFailed,
         warning:
           session.warning ||
@@ -439,10 +466,17 @@ const ApplicationSessionStore = (() => {
 
     return {
       sessions: cards,
-      unassignedSegments: unassigned,
-      pendingMergeSegment: pendingMerge,
+      unassignedSegments,
+      emptyClips,
+      pendingMergeSegment: pendingMerge
+        ? {
+            ...pendingMerge,
+            hasRecording: Number(pendingMerge.videoSizeBytes) > 0,
+          }
+        : null,
       pendingFinishSession: pendingFinish,
-      needsMergeBadge: unassigned.length > 0 || sessions.some((s) => s.status === 'needs_merge'),
+      needsMergeBadge: waitingCount > 0 || sessions.some((s) => s.status === 'needs_merge'),
+      waitingClipCount: waitingCount,
     };
   }
 
@@ -468,6 +502,8 @@ const ApplicationSessionStore = (() => {
     discardSession,
     getSegmentsForSession,
     getUnassignedSegments,
+    getEmptyRecordingClips,
+    getWaitingClipCount,
     setPendingMerge,
     getPendingMerge,
     clearPendingMerge,

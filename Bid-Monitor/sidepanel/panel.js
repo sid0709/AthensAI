@@ -72,8 +72,13 @@ const formatOptions = [...document.querySelectorAll('.format-option')];
 const activeSessionsView = document.getElementById('activeSessionsView');
 const activeSessionsList = document.getElementById('activeSessionsList');
 const needsMergeBadge = document.getElementById('needsMergeBadge');
+const unassignedClipsView = document.getElementById('unassignedClipsView');
+const unassignedClipsList = document.getElementById('unassignedClipsList');
+const unassignedClipsBadge = document.getElementById('unassignedClipsBadge');
 const applySessionWarning = document.getElementById('applySessionWarning');
 const mergeModal = document.getElementById('mergeModal');
+const mergeModalTitle = document.getElementById('mergeModalTitle');
+const mergeModalSub = mergeModal?.querySelector('.bm-modal-sub');
 const mergeSessionList = document.getElementById('mergeSessionList');
 const mergeDiscardBtn = document.getElementById('mergeDiscardBtn');
 const mergeKeepBtn = document.getElementById('mergeKeepBtn');
@@ -89,6 +94,8 @@ let activeJobId = null;
 let currentTabState = null;
 let recordingSessions = [];
 let applicationSessions = [];
+let unassignedClips = [];
+let emptyClips = [];
 let pendingMergeSegment = null;
 let pendingFinishSession = null;
 let selectedMergeSessionId = null;
@@ -537,6 +544,69 @@ async function finishApplicationSession(sessionId, jobId, finishAction, button) 
   }
 }
 
+function renderUnassignedClips() {
+  const recorded = (unassignedClips || []).filter((s) => s.hasRecording !== false && Number(s.videoSizeBytes) > 0);
+  const empty = emptyClips || [];
+  const rows = [
+    ...recorded.map((s) => ({ ...s, kind: 'recorded' })),
+    ...empty.map((s) => ({ ...s, kind: 'empty' })),
+  ];
+
+  unassignedClipsView?.classList.toggle('hidden', rows.length === 0);
+  unassignedClipsBadge?.classList.toggle('hidden', rows.length === 0);
+  if (unassignedClipsBadge) {
+    unassignedClipsBadge.textContent =
+      rows.length === 1 ? 'Needs a choice' : `${rows.length} waiting`;
+  }
+  if (!unassignedClipsList) return;
+  unassignedClipsList.innerHTML = '';
+
+  for (const clip of rows) {
+    const li = document.createElement('li');
+    li.className = `unassigned-clip-item${clip.kind === 'empty' ? ' is-empty' : ''}`;
+    const domain = clip.domain || 'Unknown site';
+    const when = formatStartedAgo(clip.endedAt || clip.startedAt);
+    if (clip.kind === 'empty') {
+      li.innerHTML = `
+        <div class="active-session-title">Recording didn't start</div>
+        <div class="active-session-meta">${escapeHtml(domain)} · ${escapeHtml(when)}</div>
+        <p class="unassigned-clip-note">
+          The tab may have closed too fast, or Chrome didn't grant capture.
+        </p>
+        <div class="active-session-actions">
+          <button type="button" class="btn btn-muted" data-dismiss-clip="${escapeHtml(clip.segmentId)}">Dismiss</button>
+        </div>
+      `;
+    } else {
+      li.innerHTML = `
+        <div class="active-session-title">Recording waiting</div>
+        <div class="active-session-meta">${escapeHtml(domain)} · ${escapeHtml(when)}</div>
+        <div class="active-session-actions">
+          <button type="button" class="btn btn-primary" data-choose-clip="${escapeHtml(clip.segmentId)}">Choose job</button>
+          <button type="button" class="btn btn-muted" data-dismiss-clip="${escapeHtml(clip.segmentId)}">Discard</button>
+        </div>
+      `;
+    }
+    unassignedClipsList.appendChild(li);
+  }
+
+  unassignedClipsList.querySelectorAll('[data-choose-clip]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const segment =
+        recorded.find((s) => s.segmentId === btn.dataset.chooseClip) ||
+        unassignedClips.find((s) => s.segmentId === btn.dataset.chooseClip);
+      if (segment) showMergeModal(segment, applicationSessions);
+    });
+  });
+  unassignedClipsList.querySelectorAll('[data-dismiss-clip]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      sendMessage({ type: 'DISCARD_SEGMENT', segmentId: btn.dataset.dismissClip })
+        .then(() => refreshApplySession())
+        .catch((err) => alert(err.message || 'Could not discard clip.'));
+    });
+  });
+}
+
 function showMergeModal(segment, sessions) {
   pendingMergeSegment = segment;
   if (!mergeModal || !segment) return;
@@ -552,6 +622,15 @@ function showMergeModal(segment, sessions) {
 
   selectedMergeSessionId = recommendedId;
 
+  if (mergeModalTitle) {
+    mergeModalTitle.textContent = 'Attach this recording to a job';
+  }
+  if (mergeModalSub) {
+    mergeModalSub.textContent = list.length
+      ? 'This tab looks like part of an application. Choose where it belongs.'
+      : 'No in-progress application to attach to. Discard it, or keep it for later.';
+  }
+
   // Recommended first
   const ordered = [...list].sort((a, b) => {
     if (a.sessionId === recommendedId) return -1;
@@ -560,6 +639,16 @@ function showMergeModal(segment, sessions) {
   });
 
   mergeSessionList.innerHTML = '';
+  if (!ordered.length) {
+    const li = document.createElement('li');
+    li.className = 'merge-session-item merge-empty';
+    li.innerHTML = `
+      <div class="active-session-title">No active applications</div>
+      <div class="active-session-meta">Start a job with Apply, then attach this clip — or discard it now.</div>
+    `;
+    mergeSessionList.appendChild(li);
+  }
+
   for (const session of ordered) {
     const li = document.createElement('li');
     const isRec = session.sessionId === recommendedId;
@@ -773,6 +862,8 @@ async function refreshApplySession() {
   if (ui?.ok) {
     recordingSessions = ui.recordingSessions ?? [];
     applicationSessions = ui.applicationSessions ?? [];
+    unassignedClips = ui.unassignedSegments ?? [];
+    emptyClips = ui.emptyClips ?? [];
     pendingMergeSegment = ui.pendingMergeSegment || pendingMergeSegment;
     pendingFinishSession = ui.pendingFinishSession || null;
     if (ui.activeApply?.analysis) persistedAnalysis = ui.activeApply.analysis;
@@ -782,6 +873,7 @@ async function refreshApplySession() {
   }
 
   renderActiveSessions();
+  renderUnassignedClips();
   renderTabRecordingControl();
   renderApplySession(currentTabState);
   renderRecordingsList();
@@ -1835,6 +1927,16 @@ chrome.windows.onFocusChanged.addListener(() => {
   refreshApplySession().catch(() => {});
 });
 
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    refreshApplySession().catch(() => {});
+  }
+});
+
+window.addEventListener('focus', () => {
+  refreshApplySession().catch(() => {});
+});
+
 (async function init() {
   const {
     videoFormat = 'webm',
@@ -1877,9 +1979,12 @@ chrome.windows.onFocusChanged.addListener(() => {
     if (ui.activeApply?.analysis) persistedAnalysis = ui.activeApply.analysis;
     recordingSessions = ui.recordingSessions || [];
     applicationSessions = ui.applicationSessions || [];
+    unassignedClips = ui.unassignedSegments || [];
+    emptyClips = ui.emptyClips || [];
     queueLoading = Boolean(ui.refreshing && !(ui.pools?.[0]?.jobs?.length));
     renderDashboard();
     renderActiveSessions();
+    renderUnassignedClips();
     if (ui.pendingMergeSegment) {
       showMergeModal(ui.pendingMergeSegment, applicationSessions);
     }

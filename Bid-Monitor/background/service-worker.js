@@ -75,6 +75,35 @@ async function getSessionForTab(tabId) {
 
 let badgedTabIds = new Set();
 
+async function updateNeedsMergeBadge() {
+  const waitingCount = await ApplicationSessionStore.getWaitingClipCount();
+  const active = await getRecordingSessions();
+  const hasLiveRec = active.some((s) => s.tabId != null);
+
+  // Prefer per-tab REC badges while recording; otherwise show waiting count.
+  if (hasLiveRec) {
+    chrome.action.setBadgeText({ text: '' }).catch(() => {});
+    return waitingCount;
+  }
+
+  if (waitingCount > 0) {
+    chrome.action.setBadgeText({ text: String(Math.min(waitingCount, 9)) }).catch(() => {});
+    chrome.action.setBadgeBackgroundColor({ color: '#d97706' }).catch(() => {});
+    chrome.action
+      .setTitle({
+        title:
+          waitingCount === 1
+            ? 'Bid Monitor: 1 recording waiting — open to attach or dismiss'
+            : `Bid Monitor: ${waitingCount} recordings waiting — open to attach or dismiss`,
+      })
+      .catch(() => {});
+  } else {
+    chrome.action.setBadgeText({ text: '' }).catch(() => {});
+    chrome.action.setTitle({ title: 'Bid Monitor' }).catch(() => {});
+  }
+  return waitingCount;
+}
+
 async function updateRecordingBadge() {
   const active = await getRecordingSessions();
   const activeTabIds = new Set(active.map((s) => s.tabId).filter((id) => id != null));
@@ -94,8 +123,8 @@ async function updateRecordingBadge() {
 
   badgedTabIds = activeTabIds;
 
-  // No global badge — recording is per tab.
-  chrome.action.setBadgeText({ text: '' }).catch(() => {});
+  // Global badge shows waiting clips when nothing is actively recording.
+  await updateNeedsMergeBadge();
 }
 
 async function ensureTabScriptsReady(tabId) {
@@ -1993,9 +2022,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           recordingSessions: await getRecordingSessions(),
           applicationSessions: applicationUi.sessions,
           unassignedSegments: applicationUi.unassignedSegments,
+          emptyClips: applicationUi.emptyClips,
           pendingMergeSegment: applicationUi.pendingMergeSegment,
           pendingFinishSession: applicationUi.pendingFinishSession,
           needsMergeBadge: applicationUi.needsMergeBadge,
+          waitingClipCount: applicationUi.waitingClipCount,
         });
         break;
       }
@@ -2063,6 +2094,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             message.segmentId,
             message.sessionId,
           );
+          await updateNeedsMergeBadge();
           sendResponse({ ok: true, ...result });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Merge failed.' });
@@ -2073,6 +2105,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'DISCARD_SEGMENT': {
         try {
           await SegmentLifecycle.discardPendingSegment(message.segmentId);
+          await updateNeedsMergeBadge();
           sendResponse({ ok: true });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Discard failed.' });
@@ -2083,6 +2116,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'KEEP_SEGMENT_UNASSIGNED': {
         try {
           await SegmentLifecycle.keepUnassignedForLater(message.segmentId);
+          await updateNeedsMergeBadge();
           sendResponse({ ok: true });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Keep failed.' });

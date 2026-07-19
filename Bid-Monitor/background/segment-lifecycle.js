@@ -12,6 +12,72 @@ const SegmentLifecycle = (() => {
     chrome.runtime.sendMessage({ type, ...payload }).catch(() => {});
   }
 
+  async function refreshNeedsMergeBadge() {
+    if (typeof updateNeedsMergeBadge === 'function') {
+      try {
+        await updateNeedsMergeBadge();
+      } catch {
+        // Badge helper may not be ready during early SW boot.
+      }
+    }
+  }
+
+  async function notifyClipWaiting(segment, { empty = false } = {}) {
+    if (!chrome.notifications?.create) return;
+    const domain = segment?.domain || 'this tab';
+    const notificationId = `bid-monitor-clip-${segment?.segmentId || Date.now()}`;
+    try {
+      await chrome.notifications.create(notificationId, {
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: empty ? "Recording didn't start" : 'Recording saved',
+        message: empty
+          ? `Nothing was captured on ${domain}. Open Bid Monitor to dismiss.`
+          : `Clip from ${domain} is waiting. Open Bid Monitor to attach it to a job.`,
+        priority: 1,
+      });
+    } catch (err) {
+      console.warn('Bid Monitor: notification failed', err);
+    }
+  }
+
+  async function openSidePanelBestEffort() {
+    try {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (activeTab?.windowId != null) {
+        await chrome.sidePanel.open({ windowId: activeTab.windowId });
+      }
+    } catch {
+      // Chrome rejects sidePanel.open without a user gesture.
+    }
+  }
+
+  async function promptUnassignedClip(segment, { hasRecording }) {
+    if (hasRecording) {
+      const active = await ApplicationSessionStore.listActiveSessions();
+      for (const session of active) {
+        await ApplicationSessionStore.upsertSession(session.sessionId, {
+          status: 'needs_merge',
+        });
+      }
+      await ApplicationSessionStore.setPendingMerge(segment.segmentId);
+      broadcast('SHOW_MERGE_MODAL', { segmentId: segment.segmentId });
+      await notifyClipWaiting(segment, { empty: false });
+    } else {
+      const marked = await ApplicationSessionStore.upsertSegment(segment.segmentId, {
+        status: 'failed',
+        emptyRecording: true,
+        sessionId: null,
+        error:
+          "Recording didn't start — the tab may have closed too fast, or capture wasn't granted.",
+      });
+      await notifyClipWaiting(marked || segment, { empty: true });
+    }
+    await openSidePanelBestEffort();
+    await refreshNeedsMergeBadge();
+    broadcast('APPLICATION_SESSIONS_UPDATED');
+  }
+
   async function openSidePanelForTab(tabId) {
     try {
       const tab = await chrome.tabs.get(tabId);
@@ -203,25 +269,24 @@ const SegmentLifecycle = (() => {
     });
     const hasRecording = Number(updated?.videoSizeBytes) > 0;
 
-    if (wasUnassigned && updated && hasRecording) {
-      const active = await ApplicationSessionStore.listActiveSessions();
-      for (const session of active) {
-        await ApplicationSessionStore.upsertSession(session.sessionId, {
-          status: 'needs_merge',
-        });
-      }
-      await ApplicationSessionStore.setPendingMerge(updated.segmentId);
-      broadcast('SHOW_MERGE_MODAL', { segmentId: updated.segmentId });
-    } else if (wasUnassigned && updated) {
-      await ApplicationSessionStore.discardSegment(updated.segmentId);
+    if (wasUnassigned && updated) {
+      await promptUnassignedClip(updated, { hasRecording });
     }
 
     chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
     chrome.action
       .setTitle({ tabId, title: 'Bid Monitor' })
       .catch(() => {});
-    broadcast('APPLICATION_SESSIONS_UPDATED');
-    return { ok: true, segment: updated, needsMerge: wasUnassigned && hasRecording };
+    if (!wasUnassigned) {
+      broadcast('APPLICATION_SESSIONS_UPDATED');
+      await refreshNeedsMergeBadge();
+    }
+    return {
+      ok: true,
+      segment: updated,
+      needsMerge: wasUnassigned && hasRecording,
+      emptyRecording: wasUnassigned && !hasRecording,
+    };
   }
 
   async function getTabRecordingState(tabId) {
@@ -416,43 +481,21 @@ const SegmentLifecycle = (() => {
       });
     }
 
-    if (wasUnassigned && updated && hasRecording) {
-      // Mark active sessions that might want this merge
-      const active = await ApplicationSessionStore.listActiveSessions();
-      for (const s of active) {
-        await ApplicationSessionStore.upsertSession(s.sessionId, { status: 'needs_merge' });
-      }
-      await ApplicationSessionStore.setPendingMerge(updated.segmentId);
-      broadcast('SHOW_MERGE_MODAL', { segmentId: updated.segmentId });
-      try {
-        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (activeTab?.windowId != null) {
-          await chrome.sidePanel.open({ windowId: activeTab.windowId });
-        }
-      } catch {
-        // ignore
-      }
-    } else if (wasUnassigned && updated) {
-      // No recording exists when the tab was closed before the required
-      // toolbar gesture; do not ask the bidder to merge an empty clip.
-      await ApplicationSessionStore.discardSegment(updated.segmentId);
+    if (wasUnassigned && updated) {
+      await promptUnassignedClip(updated, { hasRecording });
     } else if (segment.sessionId) {
       const session = await ApplicationSessionStore.getSession(segment.sessionId);
       if (session && !(session.activeTabIds || []).length) {
         await ApplicationSessionStore.setPendingFinishPrompt(session.sessionId);
         broadcast('SHOW_FINISH_PROMPT', { sessionId: session.sessionId });
-        try {
-          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (activeTab?.windowId != null) {
-            await chrome.sidePanel.open({ windowId: activeTab.windowId });
-          }
-        } catch {
-          // ignore
-        }
+        await openSidePanelBestEffort();
       }
+      broadcast('APPLICATION_SESSIONS_UPDATED');
+      await refreshNeedsMergeBadge();
+    } else {
+      broadcast('APPLICATION_SESSIONS_UPDATED');
+      await refreshNeedsMergeBadge();
     }
-
-    broadcast('APPLICATION_SESSIONS_UPDATED');
   }
 
   /**
@@ -530,6 +573,7 @@ const SegmentLifecycle = (() => {
       }
     }
     broadcast('APPLICATION_SESSIONS_UPDATED');
+    await refreshNeedsMergeBadge();
     return result;
   }
 
@@ -542,7 +586,8 @@ const SegmentLifecycle = (() => {
     }
     await ApplicationSessionStore.clearPendingMerge();
     const unassigned = await ApplicationSessionStore.getUnassignedSegments();
-    if (!unassigned.length) {
+    const empty = await ApplicationSessionStore.getEmptyRecordingClips();
+    if (!unassigned.length && !empty.length) {
       const active = await ApplicationSessionStore.listActiveSessions();
       for (const s of active) {
         if (s.status === 'needs_merge') {
@@ -551,11 +596,13 @@ const SegmentLifecycle = (() => {
       }
     }
     broadcast('APPLICATION_SESSIONS_UPDATED');
+    await refreshNeedsMergeBadge();
   }
 
   async function keepUnassignedForLater(segmentId) {
     await ApplicationSessionStore.clearPendingMerge();
     broadcast('APPLICATION_SESSIONS_UPDATED');
+    await refreshNeedsMergeBadge();
   }
 
   /**
@@ -685,6 +732,7 @@ const SegmentLifecycle = (() => {
       }
     }
     broadcast('APPLICATION_SESSIONS_UPDATED');
+    await refreshNeedsMergeBadge();
   }
 
   return {
