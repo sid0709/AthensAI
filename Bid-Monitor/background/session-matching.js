@@ -206,6 +206,8 @@ const SessionMatching = (() => {
     switch (status) {
       case 'recording':
         return 'Recording';
+      case 'ready':
+        return 'Ready';
       case 'waiting_verification':
         return 'Waiting on email';
       case 'needs_merge':

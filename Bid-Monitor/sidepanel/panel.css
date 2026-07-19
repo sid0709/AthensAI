@@ -280,6 +280,43 @@ body {
   animation: pulse-dot 1.1s infinite;
 }
 
+.tab-recording-control {
+  margin: 0 12px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tab-recording-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tab-recording-copy strong {
+  font-family: var(--bm-display);
+}
+
+.tab-recording-copy span {
+  color: var(--bm-muted);
+  font-size: 11px;
+}
+
+.tab-recording-control .btn {
+  width: auto;
+  flex-shrink: 0;
+}
+
+.tab-recording-control.is-recording {
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.tab-recording-control.is-recording .tab-recording-copy span {
+  color: #b91c1c;
+}
+
 @keyframes pulse-dot {
   0%,
   100% {

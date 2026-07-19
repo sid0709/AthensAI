@@ -24,7 +24,7 @@ const SegmentLifecycle = (() => {
   }
 
   async function requestCaptureGesture(segment, tab) {
-    const message = 'Tap the Bid Monitor icon to record this tab.';
+    const message = 'Click the Bid Monitor toolbar icon on this tab to start recording.';
     await ApplicationSessionStore.upsertSegment(segment.segmentId, {
       status: segment.sessionId ? 'failed' : 'unassigned',
       error: message,
@@ -87,7 +87,7 @@ const SegmentLifecycle = (() => {
       });
       if (segment.sessionId) {
         await ApplicationSessionStore.upsertSession(segment.sessionId, {
-          warning: 'Tap the Bid Monitor icon on this tab to keep recording.',
+          warning: 'Click the Bid Monitor toolbar icon on this tab to start recording.',
         });
       }
       broadcast('APPLICATION_SESSIONS_UPDATED');
@@ -98,7 +98,10 @@ const SegmentLifecycle = (() => {
   /**
    * Stop capture for a tab's segment and persist the blob under segmentId.
    */
-  async function stopSegmentForTab(tabId, { closeReason = 'tab_closed' } = {}) {
+  async function stopSegmentForTab(
+    tabId,
+    { closeReason = 'tab_closed', preserveTab = false } = {},
+  ) {
     const segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
     if (!segment) return null;
 
@@ -143,14 +146,92 @@ const SegmentLifecycle = (() => {
       videoSizeBytes: entry?.blob?.size ?? stopped?.size ?? segment.videoSizeBytes,
     });
 
-    await ApplicationSessionStore.unlinkTab(tabId);
     await ApplicationSessionStore.unlinkSegmentTab(tabId);
 
-    if (segment.sessionId) {
+    if (!preserveTab) {
+      await ApplicationSessionStore.unlinkTab(tabId);
+    }
+    if (segment.sessionId && !preserveTab) {
       await ApplicationSessionStore.removeTabFromSession(segment.sessionId, tabId);
     }
 
     return updated;
+  }
+
+  async function startManualSegment(tabId, streamId) {
+    if (tabId == null || !streamId) {
+      throw new Error('This tab is not ready to record.');
+    }
+    const tab = await chrome.tabs.get(tabId);
+    if (!SessionRecorder.isCapturableUrl(tab.url)) {
+      throw new Error('This page cannot be recorded.');
+    }
+
+    let segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
+    if (segment && SessionRecorder.getSessionIdForTab(tabId)) {
+      return { ok: true, alreadyRecording: true, segment };
+    }
+
+    if (!segment) {
+      const session = await ApplicationSessionStore.getSessionByTabId(tabId);
+      segment = await ApplicationSessionStore.createSegment({
+        sessionId: session?.sessionId || null,
+        tabId,
+        openerTabId: tab.openerTabId ?? null,
+        url: tab.url || '',
+        status: session ? 'recording' : 'unassigned',
+      });
+    }
+
+    const { videoFormat = 'webm' } = await chrome.storage.local.get('videoFormat');
+    const result = await startSegmentCapture(segment, tab, { streamId, videoFormat });
+    if (!result.ok) throw new Error(result.error || 'Could not start recording.');
+    broadcast('APPLICATION_SESSIONS_UPDATED');
+    return { ...result, segment: await ApplicationSessionStore.getSegment(segment.segmentId) };
+  }
+
+  async function stopManualSegment(tabId) {
+    const segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
+    if (!segment || !SessionRecorder.getSessionIdForTab(tabId)) {
+      return { ok: false, error: 'This tab is not being recorded.' };
+    }
+
+    const wasUnassigned = segment.status === 'unassigned' || !segment.sessionId;
+    const updated = await stopSegmentForTab(tabId, {
+      closeReason: 'manual_stop',
+      preserveTab: true,
+    });
+    const hasRecording = Number(updated?.videoSizeBytes) > 0;
+
+    if (wasUnassigned && updated && hasRecording) {
+      const active = await ApplicationSessionStore.listActiveSessions();
+      for (const session of active) {
+        await ApplicationSessionStore.upsertSession(session.sessionId, {
+          status: 'needs_merge',
+        });
+      }
+      await ApplicationSessionStore.setPendingMerge(updated.segmentId);
+      broadcast('SHOW_MERGE_MODAL', { segmentId: updated.segmentId });
+    } else if (wasUnassigned && updated) {
+      await ApplicationSessionStore.discardSegment(updated.segmentId);
+    }
+
+    chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+    chrome.action
+      .setTitle({ tabId, title: 'Bid Monitor' })
+      .catch(() => {});
+    broadcast('APPLICATION_SESSIONS_UPDATED');
+    return { ok: true, segment: updated, needsMerge: wasUnassigned && hasRecording };
+  }
+
+  async function getTabRecordingState(tabId) {
+    if (tabId == null) return { isRecording: false, segment: null };
+    const segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
+    return {
+      isRecording: Boolean(SessionRecorder.getSessionIdForTab(tabId)),
+      segment,
+      assigned: Boolean(segment?.sessionId),
+    };
   }
 
   async function handleTabCreated(tab) {
@@ -548,7 +629,7 @@ const SegmentLifecycle = (() => {
   }
 
   /**
-   * Resume capture for a failed segment when user clicks toolbar on that tab.
+   * Resume capture for a failed segment after a user-approved capture request.
    */
   async function resumeFailedSegmentOnTab(tab, streamId) {
     const segment = await ApplicationSessionStore.getSegmentByTabId(tab.id);
@@ -595,10 +676,10 @@ const SegmentLifecycle = (() => {
         if (seg?.status === 'recording') {
           await ApplicationSessionStore.upsertSegment(segId, {
             status: 'failed',
-            error: 'Recording interrupted — tap the Bid Monitor icon on this tab.',
+            error: 'Recording interrupted — click the Bid Monitor toolbar icon on this tab.',
           });
           await ApplicationSessionStore.upsertSession(session.sessionId, {
-            warning: 'Tap the Bid Monitor icon on the job tab to resume recording.',
+            warning: 'Click the Bid Monitor toolbar icon on the job tab to resume.',
           });
         }
       }
@@ -612,6 +693,9 @@ const SegmentLifecycle = (() => {
     onApplyOpened,
     startSegmentCapture,
     stopSegmentForTab,
+    startManualSegment,
+    stopManualSegment,
+    getTabRecordingState,
     mergePendingSegment,
     discardPendingSegment,
     keepUnassignedForLater,

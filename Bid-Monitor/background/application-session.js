@@ -400,16 +400,40 @@ const ApplicationSessionStore = (() => {
       const segs = (session.recordingSegmentIds || [])
         .map((id) => allSegments[id])
         .filter(Boolean);
-      const live = focusedTabId != null && (session.activeTabIds || []).map(Number).includes(Number(focusedTabId));
+      const live =
+        focusedTabId != null &&
+        (session.activeTabIds || []).map(Number).includes(Number(focusedTabId));
+      const isLiveRecording = (session.activeTabIds || []).some(
+        (tid) =>
+          typeof SessionRecorder !== 'undefined' &&
+          Boolean(SessionRecorder.getSessionIdForTab(Number(tid))),
+      );
+      const clipCount = segs.filter(
+        (s) =>
+          Number(s.videoSizeBytes) > 0 ||
+          (s.tabId != null &&
+            typeof SessionRecorder !== 'undefined' &&
+            Boolean(SessionRecorder.getSessionIdForTab(Number(s.tabId)))),
+      ).length;
       const hasFailed = segs.some((s) => s.status === 'failed');
+      const displayStatus = isLiveRecording
+        ? 'recording'
+        : session.status === 'recording'
+          ? 'ready'
+          : session.status;
       return {
         ...session,
-        segmentCount: segs.length,
-        humanStatus: SessionMatching.humanStatus(session.status),
+        segmentCount: clipCount,
+        humanStatus: SessionMatching.humanStatus(displayStatus),
         isLiveTab: live,
+        isLiveRecording,
         needsMerge: session.status === 'needs_merge' || unassigned.length > 0,
         hasFailedSegment: hasFailed,
-        warning: session.warning || (hasFailed ? 'A clip failed — tap the Bid Monitor icon on that tab.' : null),
+        warning:
+          session.warning ||
+          (hasFailed
+            ? 'A clip failed — click the Bid Monitor toolbar icon on that tab.'
+            : null),
       };
     });
 

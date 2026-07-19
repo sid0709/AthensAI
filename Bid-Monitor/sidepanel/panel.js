@@ -38,6 +38,8 @@ const applySessionError = document.getElementById('applySessionError');
 const applyModeBadge = document.getElementById('applyModeBadge');
 const startRecordBlock = document.getElementById('startRecordBlock');
 const startRecordingBtn = document.getElementById('startRecordingBtn');
+const tabRecordingControl = document.getElementById('tabRecordingControl');
+const tabRecordingStatus = document.getElementById('tabRecordingStatus');
 const analyzeBtn = document.getElementById('analyzeBtn');
 const openJobBtn = document.getElementById('openJobBtn');
 const reopenJobBtn = document.getElementById('reopenJobBtn');
@@ -90,6 +92,7 @@ let applicationSessions = [];
 let pendingMergeSegment = null;
 let pendingFinishSession = null;
 let selectedMergeSessionId = null;
+let currentTabRecordingState = { isRecording: false, segment: null, assigned: false };
 let persistedAnalysis = null;
 let completedTodayCount = 0;
 let applyResumeJobId = null;
@@ -204,10 +207,40 @@ function setApplyResumeFileName(job) {
   applyResumeFileNameRow.classList.remove('hidden');
 }
 
+let trackedWebTabId = null;
+
+function isRecordableTabUrl(url) {
+  return /^https?:\/\//i.test(url || '');
+}
+
 async function getCurrentTabId() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    return tab?.id ?? null;
+    // Side panel focus makes lastFocusedWindow unreliable. Prefer the active
+    // tab in the window hosting this panel, then the last tracked http(s) tab.
+    const [current] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (current?.id != null && isRecordableTabUrl(current.url)) {
+      trackedWebTabId = current.id;
+      return current.id;
+    }
+
+    if (trackedWebTabId != null) {
+      try {
+        const tracked = await chrome.tabs.get(trackedWebTabId);
+        if (tracked?.id != null && isRecordableTabUrl(tracked.url)) {
+          return tracked.id;
+        }
+      } catch {
+        trackedWebTabId = null;
+      }
+    }
+
+    const [focused] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (focused?.id != null && isRecordableTabUrl(focused.url)) {
+      trackedWebTabId = focused.id;
+      return focused.id;
+    }
+
+    return current?.id ?? focused?.id ?? null;
   } catch {
     return null;
   }
@@ -438,7 +471,7 @@ function renderActiveSessions() {
     const statusClass =
       session.status === 'needs_merge'
         ? 'chip-needs'
-        : session.status === 'recording'
+        : session.isLiveRecording
           ? 'chip-recording'
           : '';
     li.innerHTML = `
@@ -671,7 +704,7 @@ function renderApplySession(state) {
     statusStrip.className = 'status-strip ready';
     statusStripText.textContent = 'Application open — recording when capture is active';
     applySessionStatus.textContent =
-      'If recording did not start, tap the Bid Monitor icon on the job tab.';
+      'If recording did not start, click the Bid Monitor toolbar icon on the job tab.';
     startRecordBlock?.classList.remove('hidden');
     if (finishHint) {
       finishHint.textContent =
@@ -723,6 +756,15 @@ function renderRecordingsList() {
 
 async function refreshApplySession() {
   currentTabId = await getCurrentTabId();
+  const tabRecording = currentTabId
+    ? await sendMessage({
+        type: 'GET_TAB_RECORDING_STATE',
+        tabId: currentTabId,
+      }).catch(() => null)
+    : null;
+  currentTabRecordingState = tabRecording?.ok
+    ? tabRecording
+    : { isRecording: false, segment: null, assigned: false };
   const state = await sendMessage({ type: 'GET_ACTIVE_APPLY' });
   currentTabState = state?.ok ? state : null;
   if (state?.ok && state.analysis) persistedAnalysis = state.analysis;
@@ -740,6 +782,7 @@ async function refreshApplySession() {
   }
 
   renderActiveSessions();
+  renderTabRecordingControl();
   renderApplySession(currentTabState);
   renderRecordingsList();
 
@@ -751,14 +794,99 @@ async function refreshApplySession() {
   }
 }
 
-function showRecordingInstructions() {
-  alert(
-    'Recording usually starts when you click Apply.\n\n'
-      + 'If a clip is missing:\n'
-      + '1. Focus that tab\n'
-      + '2. Click the Bid Monitor icon in the Chrome toolbar\n\n'
-      + 'Use Finish / Submit when the application is done.',
+function renderTabRecordingControl() {
+  const isRecording = Boolean(currentTabRecordingState?.isRecording);
+  tabRecordingControl?.classList.toggle('is-recording', isRecording);
+  if (tabRecordingStatus) {
+    tabRecordingStatus.textContent = isRecording
+      ? currentTabRecordingState.assigned
+        ? 'Recording for this application'
+        : 'Recording — choose a job when stopped'
+      : 'Not recording — click Start, or the toolbar icon';
+  }
+  if (startRecordingBtn) {
+    startRecordingBtn.textContent = isRecording ? 'Stop recording' : 'Start recording';
+    startRecordingBtn.classList.toggle('btn-primary', !isRecording);
+    startRecordingBtn.classList.toggle('btn-muted', isRecording);
+  }
+}
+
+function needsToolbarInvokeError(message) {
+  const text = String(message || '').toLowerCase();
+  return (
+    text.includes('has not been invoked') ||
+    text.includes('activetab') ||
+    text.includes('chrome pages cannot be captured')
   );
+}
+
+function startCurrentTabRecording() {
+  // Resolve the target tab synchronously from the latest refresh / tracker.
+  // Do not await chrome.tabs.query here — that can drop the user gesture.
+  const tabId = currentTabId ?? trackedWebTabId;
+  if (tabId == null) {
+    alert('Open the tab you want to record, then try again.');
+    return;
+  }
+  if (!chrome.tabCapture?.getMediaStreamId) {
+    alert('Tab recording is not available in this Chrome version.');
+    return;
+  }
+
+  startRecordingBtn.disabled = true;
+  startRecordingBtn.textContent = 'Starting…';
+
+  // Side-panel clicks usually cannot grant tabCapture. Try anyway; if Chrome
+  // rejects with activeTab/invoke, ask for one toolbar click (that starts REC).
+  chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+    const captureError = chrome.runtime.lastError?.message;
+    if (captureError || !streamId) {
+      startRecordingBtn.disabled = false;
+      renderTabRecordingControl();
+      if (needsToolbarInvokeError(captureError)) {
+        alert(
+          'Click the Bid Monitor icon in the Chrome toolbar on this tab.\n\nRecording starts immediately from that click.',
+        );
+      } else {
+        alert(captureError || 'Could not capture this tab.');
+      }
+      return;
+    }
+
+    sendMessage({
+      type: 'START_TAB_RECORDING_WITH_STREAM',
+      tabId,
+      streamId,
+    })
+      .then(async (response) => {
+        if (!response?.ok) {
+          alert(response?.error || 'Could not start recording this tab.');
+        }
+        await refreshApplySession();
+      })
+      .catch((err) => alert(err.message || 'Could not start recording this tab.'))
+      .finally(() => {
+        startRecordingBtn.disabled = false;
+        renderTabRecordingControl();
+      });
+  });
+}
+
+async function stopCurrentTabRecording() {
+  const tabId = currentTabId;
+  if (tabId == null) return;
+  startRecordingBtn.disabled = true;
+  startRecordingBtn.textContent = 'Stopping…';
+  try {
+    const response = await sendMessage({ type: 'STOP_TAB_RECORDING', tabId });
+    if (!response?.ok) {
+      alert(response?.error || 'Could not stop recording this tab.');
+    }
+    await refreshApplySession();
+  } finally {
+    startRecordingBtn.disabled = false;
+    renderTabRecordingControl();
+  }
 }
 
 async function finishApply(tabId, finishAction = 'submit', button) {
@@ -1023,39 +1151,73 @@ function renderQueue() {
       job.status = 'in_process';
       renderQueue();
 
-      // Create tab + capture stream in one gesture inside the service worker.
-      sendMessage({
-        type: 'APPLY_TO_JOB',
-        poolId: pool.id,
-        jobId: job.id,
-        jobUrl: job.jdUrl,
-      })
-        .then(async (response) => {
-          if (!response?.ok) {
-            alert(response?.error || 'Failed to open job application.');
-            job.status = 'pending';
-            button.disabled = false;
-            button.textContent = 'Apply';
-            renderQueue();
-            return;
-          }
-          button.disabled = false;
-          button.textContent = 'Apply';
-          await loadDashboard({ force: true });
-          await refreshApplySession();
-          applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          if (!response.autoStarted) {
-            startRecordingBtn?.classList.add('pulse');
-            setTimeout(() => startRecordingBtn?.classList.remove('pulse'), 2000);
-          }
-        })
-        .catch((err) => {
-          alert(err.message || 'Failed to open job application.');
+      const resetApplyButton = () => {
+        button.disabled = false;
+        button.textContent = 'Apply';
+      };
+
+      const afterApplyResponse = async (response) => {
+        if (!response?.ok) {
+          alert(response?.error || 'Failed to open job application.');
           job.status = 'pending';
-          button.disabled = false;
-          button.textContent = 'Apply';
+          resetApplyButton();
           renderQueue();
+          return;
+        }
+        resetApplyButton();
+        await loadDashboard({ force: true });
+        await refreshApplySession();
+        applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        if (!response.autoStarted) {
+          startRecordingBtn?.classList.add('pulse');
+          setTimeout(() => startRecordingBtn?.classList.remove('pulse'), 2000);
+          if (response.recordingError) {
+            alert(response.recordingError);
+          }
+        }
+      };
+
+      // Capture must stay inside this click. Creating the tab + streamId in the
+      // service worker after sendMessage usually loses Chrome's user gesture.
+      chrome.tabs.create({ url: job.jdUrl, active: true }, (tab) => {
+        if (chrome.runtime.lastError || !tab?.id) {
+          alert(chrome.runtime.lastError?.message || 'Failed to open job application.');
+          job.status = 'pending';
+          resetApplyButton();
+          renderQueue();
+          return;
+        }
+
+        trackedWebTabId = tab.id;
+        currentTabId = tab.id;
+
+        const sendApply = (streamId) => {
+          sendMessage({
+            type: 'APPLY_TO_JOB',
+            poolId: pool.id,
+            jobId: job.id,
+            jobUrl: job.jdUrl,
+            tabId: tab.id,
+            streamId: streamId || null,
+          })
+            .then(afterApplyResponse)
+            .catch((err) => {
+              alert(err.message || 'Failed to open job application.');
+              job.status = 'pending';
+              resetApplyButton();
+              renderQueue();
+            });
+        };
+
+        if (!chrome.tabCapture?.getMediaStreamId) {
+          sendApply(null);
+          return;
+        }
+
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+          sendApply(chrome.runtime.lastError ? null : streamId || null);
         });
+      });
     });
   });
 }
@@ -1291,7 +1453,13 @@ async function runAnalyze() {
 }
 
 startRecordingBtn?.addEventListener('click', () => {
-  showRecordingInstructions();
+  if (currentTabRecordingState?.isRecording) {
+    stopCurrentTabRecording().catch((err) =>
+      alert(err.message || 'Could not stop recording this tab.'),
+    );
+  } else {
+    startCurrentTabRecording();
+  }
 });
 
 analyzeBtn?.addEventListener('click', () => {
@@ -1643,16 +1811,23 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'PANEL_HIGHLIGHT_START' || message.type === 'PANEL_HIGHLIGHT_FINISH') {
     refreshApplySession()
       .then(() => {
-        applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        finishFooter?.classList.remove('hidden');
-        submitRecordingBtn?.classList.add('pulse');
-        setTimeout(() => submitRecordingBtn?.classList.remove('pulse'), 2000);
+        if (message.type === 'PANEL_HIGHLIGHT_START') {
+          tabRecordingControl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          startRecordingBtn?.classList.add('pulse');
+          setTimeout(() => startRecordingBtn?.classList.remove('pulse'), 2000);
+        } else {
+          applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          finishFooter?.classList.remove('hidden');
+          submitRecordingBtn?.classList.add('pulse');
+          setTimeout(() => submitRecordingBtn?.classList.remove('pulse'), 2000);
+        }
       })
       .catch(() => {});
   }
 });
 
-chrome.tabs.onActivated.addListener(() => {
+chrome.tabs.onActivated.addListener((info) => {
+  if (info?.tabId != null) trackedWebTabId = info.tabId;
   refreshApplySession().catch(() => {});
 });
 
@@ -1712,6 +1887,7 @@ chrome.windows.onFocusChanged.addListener(() => {
     await loadDashboard({ preferCache: true });
   }
 
+  await refreshApplySession().catch(() => {});
   setInterval(() => refreshApplySession().catch(() => {}), 12000);
   setInterval(() => refreshBridgeBadge().catch(() => {}), 15000);
 })();

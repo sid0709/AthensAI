@@ -60,6 +60,16 @@
         <span id="statusStripText">Select a Bid Ready job to apply</span>
       </div>
 
+      <section id="tabRecordingControl" class="tab-recording-control card">
+        <div class="tab-recording-copy">
+          <strong>Current tab</strong>
+          <span id="tabRecordingStatus">Not recording</span>
+        </div>
+        <button id="startRecordingBtn" class="btn btn-primary" type="button">
+          Start recording
+        </button>
+      </section>
+
       <section id="activeSessionsView" class="active-sessions card hidden">
         <div class="apply-session-head">
           <h2>Your applications</h2>
@@ -95,10 +105,9 @@
 
         <div id="startRecordBlock" class="start-record-block">
           <p class="start-record-copy">
-            Recording usually starts when you click <strong>Apply</strong>.
-            If a clip is missing, tap the <strong>Bid Monitor</strong> icon on that tab.
+            Recording usually starts when you click <strong>Apply</strong>. Use
+            <strong>Start recording</strong> above for another tab.
           </p>
-          <button id="startRecordingBtn" class="btn btn-secondary" type="button">How to record</button>
         </div>
 
         <div class="action-grid">
