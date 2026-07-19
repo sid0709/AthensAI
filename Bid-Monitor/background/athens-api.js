@@ -46,6 +46,11 @@ const AthensApi = (() => {
       data = null;
     }
     if (!response.ok || data?.success === false) {
+      if (response.status === 413) {
+        throw new Error(
+          'Recording too large for the server (413). If you use host nginx/HTTPS, set client_max_body_size 4096m there too.',
+        );
+      }
       throw new Error(data?.error || `Athens request failed (${response.status})`);
     }
     return data;

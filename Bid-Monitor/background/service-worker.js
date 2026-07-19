@@ -1282,7 +1282,6 @@ async function completeRecordingSession({
     return finishPendingApplyWithoutRecording({ tabId, closeApplyTab, finishAction: action });
   }
 
-  const folder = `bid-monitor/${sanitizeFileName(session.bidderName)}-${session.id}`;
   let stoppedRecording = recordingResult;
   if (!stoppedRecording) {
     try {
@@ -1330,25 +1329,9 @@ async function completeRecordingSession({
   await notifyTab(tabId, { isRecording: false });
 
   const hasVideo = (stoppedRecording?.size ?? 0) > 0;
-  if (hasVideo) {
-    const ext = videoExtension(
-      stoppedRecording?.mimeType ?? stopped.videoMimeType,
-      stoppedRecording?.videoFormat ?? stopped.videoFormat,
-    );
-    try {
-      await downloadVideoFromStore(session.id, `${folder}/session.${ext}`);
-    } catch (err) {
-      console.error('Bid Monitor: video download failed', err);
-    }
+  // No local Chrome download on submit/skip — recording goes to Firebase only.
 
-    await downloadSessionFiles(stopped, {
-      mimeType: stoppedRecording?.mimeType,
-      videoSizeBytes: stoppedRecording?.size,
-      skipVideoDownload: true,
-    });
-  }
-
-  // Athens status + optional Firebase upload for Bid Ready apply flow.
+  // Athens status + Firebase upload for Bid Ready apply flow.
   if (session.applyFlow && session.jobId) {
     try {
       const auth = await MockApi.getAuth();
@@ -1435,7 +1418,7 @@ async function completeRecordingSession({
   return {
     ok: true,
     session: stopped,
-    downloaded: hasVideo,
+    downloaded: false,
     finishAction: action,
     jobOutcome,
     jobMarkedApplied: jobOutcome === 'submitted',

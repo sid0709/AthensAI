@@ -68,8 +68,8 @@ let mongoReady = false;
 
 function createApp() {
 	const app = express();
-	// Keep JSON body limit large — AI/resume payloads must not be capped for throughput.
-	app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "120mb" }));
+	// Keep JSON body limit large — AI/resume + Bid Monitor base64 video → Firebase.
+	app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "4096mb" }));
 	app.use(cors({ origin: "*" }));
 	app.use(requestLogger("api"));
 

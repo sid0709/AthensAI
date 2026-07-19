@@ -585,6 +585,8 @@
             ? 'Submitted — recording uploaded'
             : 'Submitted — ticket moved to Submitted',
         );
+      } else if (response.uploaded) {
+        showToast('Recording uploaded');
       } else if (response.downloaded) {
         showToast('Session saved to Downloads');
       } else {

@@ -115,7 +115,8 @@ server {
 
     # ssl_certificate / ssl_certificate_key … (your existing certs)
 
-    client_max_body_size 50m;
+    # Bid Monitor base64 video uploads — keep in sync with docker/nginx.conf (~4GB)
+    client_max_body_size 4096m;
 
     location / {
         proxy_pass http://127.0.0.1:9030;
