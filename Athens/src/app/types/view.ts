@@ -14,4 +14,5 @@ export type View =
   | "firebase"
   | "bid-management"
   | "apps-plugins"
+  | "changelog"
   | "settings";

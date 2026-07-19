@@ -15,6 +15,7 @@ import {
   Flame,
   Clapperboard,
   Puzzle,
+  ScrollText,
   Settings,
 } from "lucide-react";
 import type { View } from "../types";
@@ -46,6 +47,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "ai-usage", label: "AI API Usage", icon: Cpu, admin: true },
   { id: "api-usage-monitor", label: "API Usage Monitor", icon: Gauge, admin: true },
   { id: "settings", label: "Settings", icon: Settings },
+  { id: "changelog", label: "Changelog", icon: ScrollText },
 ];
 
 export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
@@ -56,7 +58,7 @@ export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
     ids: ["agents", "mail", "calendar", "interviews", "bid-management", "apps-plugins", "firebase"],
   },
   { label: "INSIGHTS", ids: ["reports", "ai-usage", "api-usage-monitor"] },
-  { label: null, ids: ["settings"] },
+  { label: null, ids: ["settings", "changelog"] },
 ];
 
 export const VIEW_TITLES: Record<View, string> = {
@@ -74,6 +76,7 @@ export const VIEW_TITLES: Record<View, string> = {
   "api-usage-monitor": "API Usage Monitor",
   "bid-management": "Bid Management",
   "apps-plugins": "Apps & Plugins",
+  changelog: "Changelog",
   firebase: "Firebase Atlas",
   settings: "Settings",
 };

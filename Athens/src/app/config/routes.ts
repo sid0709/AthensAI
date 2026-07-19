@@ -20,6 +20,7 @@ export const PATHS = {
   firebase: "/firebase",
   bidManagement: "/bid-management",
   appsPlugins: "/apps",
+  changelog: "/changelog",
   settings: "/settings",
   signin: "/signin",
   signup: "/signup",
@@ -54,6 +55,7 @@ const VIEW_TO_BASE: Record<View, string> = {
   firebase: PATHS.firebase,
   "bid-management": PATHS.bidManagement,
   "apps-plugins": PATHS.appsPlugins,
+  changelog: PATHS.changelog,
   settings: PATHS.settings,
 };
 
@@ -102,6 +104,7 @@ export function viewFromPathname(pathname: string): View {
   if (p.startsWith(PATHS.firebase)) return "firebase";
   if (p.startsWith(PATHS.bidManagement)) return "bid-management";
   if (p.startsWith(PATHS.appsPlugins)) return "apps-plugins";
+  if (p.startsWith(PATHS.changelog)) return "changelog";
   if (p.startsWith(PATHS.settings)) return "settings";
   return "dashboard";
 }
