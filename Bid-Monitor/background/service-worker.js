@@ -227,37 +227,12 @@ function videoExtension(mimeType, videoFormat) {
   return videoFormat === 'mp4' ? 'mp4' : 'webm';
 }
 
-async function downloadVideoFromStore(sessionId, filename) {
-  await ensureOffscreenDocument();
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(onDone);
-      reject(new Error('Video download timed out.'));
-    }, 15000);
-
-    function onDone(message) {
-      if (message.type !== 'VIDEO_DOWNLOAD_DONE' || message.sessionId !== sessionId) return;
-      chrome.runtime.onMessage.removeListener(onDone);
-      clearTimeout(timeout);
-      if (message.ok) resolve();
-      else reject(new Error(message.error ?? 'Video download failed.'));
-    }
-
-    chrome.runtime.onMessage.addListener(onDone);
-
-    const url = chrome.runtime.getURL(
-      `download/download.html?sessionId=${encodeURIComponent(sessionId)}&filename=${encodeURIComponent(filename)}`,
-    );
-
-    chrome.windows.create({ url, type: 'popup', width: 1, height: 1, focused: false }, () => {
-      if (chrome.runtime.lastError) {
-        chrome.runtime.onMessage.removeListener(onDone);
-        clearTimeout(timeout);
-        reject(new Error(chrome.runtime.lastError.message));
-      }
-    });
-  });
+/**
+ * Local video download is disabled — recordings are uploaded to Firebase only.
+ * Kept as a no-op so any stale caller cannot open Chrome's Save dialog.
+ */
+async function downloadVideoFromStore(_sessionId, _filename) {
+  console.info('Bid Monitor: local video download skipped (Firebase upload only).');
 }
 
 async function ensureOffscreenDocument() {
@@ -281,52 +256,9 @@ async function ensureOffscreenDocument() {
   }
 }
 
-async function downloadSessionFiles(session, options = {}) {
-  const folder = `bid-monitor/${sanitizeFileName(session.bidderName)}-${session.id}`;
-  const ext = videoExtension(
-    session.videoMimeType ?? options.mimeType,
-    session.videoFormat ?? options.videoFormat,
-  );
-  const videoSizeBytes = options.videoSizeBytes ?? session.videoSizeBytes ?? 0;
-  const hasVideo = videoSizeBytes > 0;
-  const shouldDownloadVideo = hasVideo && !options.skipVideoDownload;
-
-  if (shouldDownloadVideo) {
-    try {
-      await downloadVideoFromStore(session.id, `${folder}/session.${ext}`);
-    } catch (err) {
-      console.error('Bid Monitor: video download failed', err);
-    }
-  }
-
-  const manifest = {
-    id: session.id,
-    bidderName: session.bidderName,
-    resumeSetFolder: session.resumeSetFolder,
-    jobId: session.jobId ?? null,
-    poolId: session.poolId ?? null,
-    companyName: session.companyName ?? null,
-    jobTitle: session.jobTitle ?? null,
-    jdUrl: session.jdUrl ?? null,
-    tabId: session.tabId ?? null,
-    recorderStatus: session.recorderStatus ?? null,
-    startedAt: session.startedAt,
-    stoppedAt: session.stoppedAt,
-    recordingWindowId: session.recordingWindowId ?? null,
-    videoFile: hasVideo ? `session.${ext}` : null,
-    videoFormat: session.videoFormat ?? VideoFormat.extensionForMimeType(session.videoMimeType ?? options.mimeType),
-    videoMimeType: session.videoMimeType ?? options.mimeType ?? null,
-    videoSizeBytes: hasVideo ? videoSizeBytes : null,
-    resumeEvents: session.resumeEvents ?? [],
-  };
-
-  const manifestJson = JSON.stringify(manifest, null, 2);
-  const manifestDataUrl = `data:application/json;charset=utf-8,${encodeURIComponent(manifestJson)}`;
-
-  await chrome.downloads.download({
-    url: manifestDataUrl,
-    filename: `${folder}/session.json`,
-  });
+/** Local session export disabled — use Bid Management / Firebase for recordings. */
+async function downloadSessionFiles(_session, _options = {}) {
+  console.info('Bid Monitor: local session export skipped (Firebase upload only).');
 }
 
 function updateBadge(isRecording) {
@@ -2647,15 +2579,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case 'EXPORT_SESSION': {
-        const sessions = await getSessions();
-        const session = sessions.find((s) => s.id === message.sessionId);
-        if (!session) {
-          sendResponse({ ok: false, error: 'Session not found.' });
-          break;
-        }
-
-        await downloadSessionFiles(session);
-        sendResponse({ ok: true });
+        // Local export removed — recordings live in Firebase / Bid Management.
+        sendResponse({
+          ok: false,
+          error: 'Local session export is disabled. Recordings upload to Firebase on Submit.',
+        });
         break;
       }
 
