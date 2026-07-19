@@ -107,6 +107,7 @@ jobs:
             PUBLIC_ORIGIN=http://${{ secrets.VPS_HOST }}
             WXT_AVALON_RELAY_URL=http://${{ secrets.VPS_HOST }}/avalon
             WXT_API_URL=http://${{ secrets.VPS_HOST }}/api
+            ATHENS_API_URL=http://${{ secrets.VPS_HOST }}/api
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

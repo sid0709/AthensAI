@@ -93,17 +93,6 @@ function AppCard({
           </div>
         </div>
 
-        {app.bannerSrc && (
-          <div className="relative h-28 sm:h-32 rounded-2xl overflow-hidden border border-border/60">
-            <img
-              src={app.bannerSrc}
-              alt=""
-              className="absolute inset-0 w-full h-full object-cover object-center opacity-90"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-card via-card/20 to-transparent" />
-          </div>
-        )}
-
         <p className="text-sm text-muted-foreground leading-relaxed">{app.description}</p>
 
         <div className="flex flex-wrap gap-1.5">
@@ -174,7 +163,7 @@ export function AppsPluginsPage() {
         {/* Hero */}
         <section className="relative min-h-[280px] sm:min-h-[320px]">
           <img
-            src="/apps/apps-hero.png"
+            src="/apps/avalon-banner.png"
             alt=""
             className="absolute inset-0 w-full h-full object-cover"
           />

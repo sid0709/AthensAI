@@ -11,11 +11,14 @@ AVALON_ZIP_NAME="avalon-extension.zip"
 PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-http://83.229.67.146}"
 WXT_AVALON_RELAY_URL="${WXT_AVALON_RELAY_URL:-${PUBLIC_ORIGIN}/avalon}"
 WXT_API_URL="${WXT_API_URL:-${PUBLIC_ORIGIN}/api}"
+ATHENS_API_URL="${ATHENS_API_URL:-${PUBLIC_ORIGIN}/api}"
 
 mkdir -p "${OUT_DIR}"
 
-echo "==> Packing Bid Monitor extension"
-bash "${ROOT}/Bid-Monitor/pack-extension.sh"
+echo "==> Packing Bid Monitor extension (ATHENS_API_URL=${ATHENS_API_URL})"
+PUBLIC_ORIGIN="${PUBLIC_ORIGIN}" \
+ATHENS_API_URL="${ATHENS_API_URL}" \
+  bash "${ROOT}/Bid-Monitor/pack-extension.sh"
 cp -f "${ROOT}/Bid-Monitor/dist/${BID_ZIP_NAME}" "${OUT_DIR}/${BID_ZIP_NAME}"
 BID_VERSION="$(python3 -c "import json; print(json.load(open('${ROOT}/Bid-Monitor/manifest.json'))['version'])")"
 

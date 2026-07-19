@@ -1,4 +1,5 @@
 importScripts(
+  chrome.runtime.getURL('config.js'),
   'video-format.js',
   'video-store.js',
   'session-recorder.js',

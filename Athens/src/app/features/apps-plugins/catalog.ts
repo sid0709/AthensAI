@@ -6,7 +6,6 @@ export type AppPlugin = {
   version: string;
   downloadUrl: string;
   iconSrc: string;
-  bannerSrc?: string;
   accent: "indigo" | "teal";
   badges: string[];
   highlights: string[];
@@ -41,7 +40,6 @@ export const APPS_CATALOG: AppPlugin[] = [
     version: "0.1.0",
     downloadUrl: "/downloads/avalon-extension.zip",
     iconSrc: "/apps/avalon.png",
-    bannerSrc: "/apps/avalon-banner.png",
     accent: "teal",
     badges: ["Chrome MV3", "Developer mode", "Agents"],
     highlights: [
