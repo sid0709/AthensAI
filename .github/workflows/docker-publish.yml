@@ -94,6 +94,8 @@ jobs:
 
       # Extensions must hit container nginx (9030) or your host TLS vhost — not bare :80.
       # Avalon relay is NOT published on 3847; only via /avalon/ on the web port.
+      # WXT_AVALON_RELAY_URL must be the public origin (no /avalon path) — Socket.IO
+      # treats URL path as a namespace; the Engine.IO path is /avalon/socket.io.
       - name: Resolve public origin
         id: origin
         shell: bash
@@ -114,7 +116,7 @@ jobs:
           fi
           {
             echo "origin=${ORIGIN}"
-            echo "relay_url=${ORIGIN}/avalon"
+            echo "relay_url=${ORIGIN}"
             echo "api_url=${ORIGIN}/api"
           } >> "$GITHUB_OUTPUT"
           echo "Extension public origin: ${ORIGIN}"

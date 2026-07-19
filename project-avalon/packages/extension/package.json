@@ -10,7 +10,7 @@
     "zip": "wxt zip",
     "postinstall": "wxt prepare",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build -w @avalon/shared && tsx src/utils/dropdown-probe.test.ts && tsx src/utils/actionable-tree.test.ts",
+    "test": "npm run build -w @avalon/shared && tsx src/utils/endpoint.test.ts && tsx src/utils/dropdown-probe.test.ts && tsx src/utils/actionable-tree.test.ts",
     "test:live": "node scripts/test-live-actionable-tree.mjs"
   },
   "dependencies": {

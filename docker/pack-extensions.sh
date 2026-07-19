@@ -13,12 +13,13 @@ if [[ -z "${PUBLIC_ORIGIN}" && -z "${WXT_AVALON_RELAY_URL:-}" && -z "${WXT_API_U
   echo "error: set PUBLIC_ORIGIN (or WXT_*/ATHENS_API_URL) before packing extensions" >&2
   exit 1
 fi
-WXT_AVALON_RELAY_URL="${WXT_AVALON_RELAY_URL:-${PUBLIC_ORIGIN%/}/avalon}"
+WXT_AVALON_RELAY_URL="${WXT_AVALON_RELAY_URL:-${PUBLIC_ORIGIN%/}}"
 WXT_API_URL="${WXT_API_URL:-${PUBLIC_ORIGIN%/}/api}"
 ATHENS_API_URL="${ATHENS_API_URL:-${PUBLIC_ORIGIN%/}/api}"
 
 ENCODE_PY="${ROOT}/docker/encode-endpoint.py"
 # Bake opaque tokens into Avalon so the zip has no plaintext VPS host.
+# Relay URL must be origin-only (no /avalon path) — Socket.IO treats URL path as a namespace.
 WXT_AVALON_RELAY_ENC="enc:$(python3 "${ENCODE_PY}" "${WXT_AVALON_RELAY_URL}")"
 WXT_API_ENC="enc:$(python3 "${ENCODE_PY}" "${WXT_API_URL}")"
 
