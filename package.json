@@ -4,7 +4,9 @@
   "workspaces": [
     "packages/shared",
     "Athens-server",
-    "ai-bff"
+    "ai-bff",
+    "project-avalon/packages/shared",
+    "project-avalon/packages/backend"
   ],
   "dependencies": {
     "@nextoffer/shared": "file:packages/shared",
@@ -23,6 +25,7 @@
     "test:shared": "node --test packages/shared/src/pricing.test.mjs",
     "start:athens-server": "npm run start -w Athens-server",
     "start:ai": "npm run start -w ai-bff",
+    "start:avalon-relay": "npm run start -w @avalon/backend",
     "start:ui": "npm run dev --prefix Athens"
   }
 }

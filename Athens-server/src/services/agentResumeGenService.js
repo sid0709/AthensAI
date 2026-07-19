@@ -46,12 +46,13 @@ async function pdfPayloadForAgent(
     identityFingerprint,
   );
   if (onDisk) {
-    // Buffer.from() guards against a non-Buffer (e.g. Uint8Array), whose
-    // .toString("base64") ignores the encoding and yields comma-joined bytes.
-    return { pdfBase64: Buffer.from(onDisk.buffer).toString("base64"), resumePdfPath: onDisk.draftPath };
+    // Base64 encode off the main thread via the PDF worker pool.
+    const { encodeBufferBase64 } = await import("./pdf/pdfRenderPool.js");
+    const pdfBase64 = await encodeBufferBase64(onDisk.buffer);
+    return { pdfBase64, resumePdfPath: onDisk.draftPath };
   }
   if (!sections) throw new Error("No résumé sections to render as PDF");
-  const { buffer, savedPath } = await renderAgentResumePdf({
+  const { buffer, savedPath, pdfBase64 } = await renderAgentResumePdf({
     sections,
     identity,
     applierName,
@@ -59,12 +60,13 @@ async function pdfPayloadForAgent(
     config: savedConfig,
     titlePolicyFingerprint,
     identityFingerprint,
+    asBase64: true,
   });
-  if (!buffer?.length) throw new Error("PDF render returned empty buffer");
-  // page.pdf() returns a Uint8Array in modern puppeteer — wrap so toString("base64")
-  // actually base64-encodes (a bare Uint8Array.toString("base64") returns garbage,
-  // which the extension's atob() then rejects → 0 files attached).
-  return { pdfBase64: Buffer.from(buffer).toString("base64"), resumePdfPath: savedPath };
+  if (!pdfBase64 && !buffer?.length) throw new Error("PDF render returned empty buffer");
+  return {
+    pdfBase64: pdfBase64 || Buffer.from(buffer).toString("base64"),
+    resumePdfPath: savedPath,
+  };
 }
 
 const cleanString = (v) => String(v ?? "").trim();
@@ -506,8 +508,18 @@ export async function resolveSubmissionKitPdf({ applierName }) {
 /**
  * Generate (or reuse) a job-tailored resume for an agent run.
  * Uses saved resume-generator config; only the job description is replaced.
+ *
+ * @param {object} opts
+ * @param {boolean} [opts.deferPdf] — skip Chromium PDF (Job Search bulk); Agents render later.
  */
-export async function ensureAgentJobResume({ applierName, jobId, jobDescription, forceRegenerate = false, onStep }) {
+export async function ensureAgentJobResume({
+  applierName,
+  jobId,
+  jobDescription,
+  forceRegenerate = false,
+  deferPdf = false,
+  onStep,
+}) {
   const name = cleanString(applierName);
   const parentId = cleanString(jobId);
   const jd = cleanString(jobDescription);
@@ -558,16 +570,8 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   if (existing?.resume) {
     if (onStep) onStep({ phase: "reused", name: "Existing draft" });
     const usage = usageToAgentShape(existing.generation?.usage, existing.generation?.model);
-    const pdf = await pdfPayloadForAgent(
-      existing.generation?.sections,
-      identity,
-      savedConfig,
-      name,
-      parentId,
-      titlePolicyFingerprint,
-    );
     const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
-    return {
+    const base = {
       reused: true,
       resumeId: String(existing.resume._id),
       fileName,
@@ -578,16 +582,27 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
       model: usage.model,
       provider: existing.generation?.provider ?? savedConfig.provider ?? null,
       titlePolicyFingerprint,
-      ...pdf,
     };
+    if (deferPdf) return base;
+    const pdf = await pdfPayloadForAgent(
+      existing.generation?.sections,
+      identity,
+      savedConfig,
+      name,
+      parentId,
+      titlePolicyFingerprint,
+    );
+    return { ...base, ...pdf };
   }
 
   console.info(
-    `[agent-resume-gen] ${name} job ${parentId.slice(0, 8)}… — provider=${body.provider} model=${body.model} beta=${prep.isBeta}`,
+    `[agent-resume-gen] ${name} job ${parentId.slice(0, 8)}… — provider=${body.provider} model=${body.model} beta=${prep.isBeta} deferPdf=${Boolean(deferPdf)}`,
   );
 
   const startedAt = new Date();
-  return resumeGenLimiter.run(
+  // Hold the resume-gen slot for LLM + persistence only — PDF runs outside so the
+  // next job can start generating while Chromium finishes the previous one.
+  const generated = await resumeGenLimiter.run(
     name,
     async () => {
       const result = await runGeneration(
@@ -658,30 +673,12 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
         console.warn("[agent-resume-gen] persistence/enrichment failed (non-fatal):", err.message);
       }
 
-      const usage = usageToAgentShape(result.usage, prep.model);
-      if (onStep) onStep({ phase: "rendering-pdf", name: "Rendering PDF" });
-      const pdf = await pdfPayloadForAgent(
-        result.sections,
-        identity,
-        savedConfig,
-        name,
-        parentId,
-        titlePolicyFingerprint,
-      );
-      const finalName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
-
       return {
-        reused: false,
-        resumeId: sync?.resumeId || null,
-        fileName: finalName,
-        techStack: sync?.techStack || techStack || "Generated",
-        extractedText: sectionsToText(result.sections, identity),
-        generationId: generationId ? String(generationId) : null,
-        usage,
-        model: prep.model,
-        provider: prep.providerId,
-        titlePolicyFingerprint,
-        ...pdf,
+        result,
+        sync,
+        generationId,
+        skillProfile,
+        techStack,
       };
     },
     {
@@ -690,4 +687,32 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
       },
     },
   );
+
+  const usage = usageToAgentShape(generated.result.usage, prep.model);
+  const finalName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
+  const base = {
+    reused: false,
+    resumeId: generated.sync?.resumeId || null,
+    fileName: finalName,
+    techStack: generated.sync?.techStack || generated.techStack || "Generated",
+    extractedText: sectionsToText(generated.result.sections, identity),
+    generationId: generated.generationId ? String(generated.generationId) : null,
+    usage,
+    model: prep.model,
+    provider: prep.providerId,
+    titlePolicyFingerprint,
+  };
+
+  if (deferPdf) return base;
+
+  if (onStep) onStep({ phase: "rendering-pdf", name: "Rendering PDF" });
+  const pdf = await pdfPayloadForAgent(
+    generated.result.sections,
+    identity,
+    savedConfig,
+    name,
+    parentId,
+    titlePolicyFingerprint,
+  );
+  return { ...base, ...pdf };
 }

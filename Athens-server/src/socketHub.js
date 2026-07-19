@@ -1,4 +1,6 @@
 import { Server } from 'socket.io';
+import { createAdapter } from '@socket.io/cluster-adapter';
+import { setupWorker } from '@socket.io/sticky';
 import { SOCKET_PROTOCOL } from './config/socketProtocol.js';
 
 let io = null;
@@ -17,8 +19,26 @@ function corsConfig() {
 	return { origin: origins, methods: ['GET', 'POST'] };
 }
 
-export function initSocket(httpServer) {
-	io = new Server(httpServer, { cors: corsConfig() });
+/**
+ * @param {import('http').Server} httpServer
+ * @param {{ clustered?: boolean }} [opts]
+ */
+export function initSocket(httpServer, opts = {}) {
+	io = new Server(httpServer, {
+		cors: corsConfig(),
+		pingInterval: 25_000,
+		pingTimeout: 60_000,
+		maxHttpBufferSize: 1e8,
+		connectionStateRecovery: {
+			maxDisconnectionDuration: 2 * 60 * 1000,
+			skipMiddlewares: true,
+		},
+	});
+
+	if (opts.clustered) {
+		io.adapter(createAdapter());
+		setupWorker(io);
+	}
 
 	io.on('connection', (socket) => {
 		console.log('[socket] client connected:', socket.id);
@@ -63,4 +83,13 @@ export function initSocket(httpServer) {
 
 export function getIO() {
 	return io;
+}
+
+export async function closeSocket() {
+	if (!io) return;
+	await new Promise((resolve) => {
+		io.close(() => resolve());
+		setTimeout(resolve, 3000);
+	});
+	io = null;
 }

@@ -86,6 +86,7 @@ COPY --from=builder /app/ai-bff ./ai-bff
 COPY --from=builder /app/project-avalon/package.json /app/project-avalon/package-lock.json ./project-avalon/
 COPY --from=builder /app/project-avalon/node_modules ./project-avalon/node_modules
 COPY --from=builder /app/project-avalon/packages/shared ./project-avalon/packages/shared
+COPY --from=builder /app/project-avalon/packages/backend ./project-avalon/packages/backend
 COPY --from=builder /app/Athens/dist ./Athens/dist
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /app/docker/supervisord.conf
@@ -101,7 +102,7 @@ RUN chmod +x /app/docker/entrypoint.sh \
 
 VOLUME ["/data/db", "/data/puppeteer"]
 
-EXPOSE 80 3920 8979
+EXPOSE 80 3920 8979 3847
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD node -e "const http=require('http');http.get('http://127.0.0.1/avalon/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"

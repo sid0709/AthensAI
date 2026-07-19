@@ -44,7 +44,9 @@ export function JobBulkActionsBar({
   const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
   const progressPct =
     resumeProgress && resumeProgress.total > 0
-      ? Math.round((resumeProgress.done / resumeProgress.total) * 100)
+      ? Math.round(
+          ((resumeProgress.done + (resumeProgress.partial ?? 0)) / resumeProgress.total) * 100,
+        )
       : 0;
   const hasSelection = totalSelected > 0;
 
@@ -145,7 +147,7 @@ export function JobBulkActionsBar({
                 className="h-8 gap-1.5"
                 onClick={onGenerateResumes}
                 disabled={totalSelected === 0}
-                title="Generate tailored résumés for the selected jobs (max 10 at a time)"
+                title="Generate tailored résumés for the selected jobs (max 12 at a time)"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Generate résumés</span>

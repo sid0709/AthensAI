@@ -3,18 +3,18 @@
  * Env knobs are read at factory-call time so tests can override process.env first.
  *
  * Env knobs:
- *   RESUME_GEN_GLOBAL_CONCURRENCY (default 16)
- *   RESUME_GEN_PER_USER_CONCURRENCY (default 6)
+ *   RESUME_GEN_GLOBAL_CONCURRENCY (default 32)
+ *   RESUME_GEN_PER_USER_CONCURRENCY (default 12)
  *   PDF_RENDER_CONCURRENCY (default 16)
- *   LLM_GLOBAL_CONCURRENCY (default 24)
+ *   LLM_GLOBAL_CONCURRENCY (default 48)
  *   MAIL_AI_LABEL_CONCURRENCY (default 8)
  */
 
-export const DEFAULT_RESUME_GEN_GLOBAL_CONCURRENCY = 16;
-export const DEFAULT_RESUME_GEN_PER_USER_CONCURRENCY = 6;
+export const DEFAULT_RESUME_GEN_GLOBAL_CONCURRENCY = 32;
+export const DEFAULT_RESUME_GEN_PER_USER_CONCURRENCY = 12;
 /** Match resume throughput — override via PDF_RENDER_CONCURRENCY. */
 export const DEFAULT_PDF_RENDER_CONCURRENCY = 16;
-export const DEFAULT_LLM_GLOBAL_CONCURRENCY = 24;
+export const DEFAULT_LLM_GLOBAL_CONCURRENCY = 48;
 export const DEFAULT_MAIL_AI_LABEL_CONCURRENCY = 8;
 
 /** Lower number = higher priority for LLM admission. */

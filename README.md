@@ -92,17 +92,17 @@ cd project-avalon && npm run dev:extension    # Chrome extension
 ```
 NextOffer/
 ├── Athens/              Frontend (React + Vite)
-├── Athens-server/       API, matching, jobs, resumes, Avalon relay
+├── Athens-server/       API, matching, jobs, resumes (clustered HTTP)
 ├── ai-bff/              GPT + DeepSeek gateway + ai_api_usage logging
-├── project-avalon/      Chrome extension + @avalon/shared
+├── project-avalon/      Chrome extension + @avalon/shared + @avalon/backend (relay :3847)
 └── packages/shared/     Pricing, models, skill-normalize
 ```
 
 ## Troubleshooting
 
-**Relay offline** — Ensure Athens-server is running (`npm start` or `npm run start:athens-server`). Avalon Socket.IO is on `/avalon/socket.io` (port **8979**).
+**Relay offline** — Start the Avalon relay (`npm run start:avalon-relay` or full `npm start`). Socket.IO is on `/avalon/socket.io` (port **3847**). In Docker, nginx proxies `/avalon/` to that process.
 
-**Extension not connected** — Load the unpacked extension from `project-avalon/packages/extension/.output/chrome-mv3` (after `npm run dev:extension`). Point `WXT_AVALON_RELAY_URL` at `http://127.0.0.1:8979` if needed.
+**Extension not connected** — Load the unpacked extension from `project-avalon/packages/extension/.output/chrome-mv3` (after `npm run dev:extension`). Point `WXT_AVALON_RELAY_URL` at `http://127.0.0.1:3847` if needed.
 
 **Best Match shows 0%** — Ensure Redis is up and backfill ran: `npm run backfill-job-skills`.
 

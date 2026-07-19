@@ -124,6 +124,39 @@ export function formatUsageSummary(usage) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Default chat timeout — generous so long completions are never cut off mid-stream. */
+const DEFAULT_CHAT_TIMEOUT_MS = Number.parseInt(String(process.env.LLM_TIMEOUT_MS || ''), 10) || 600_000;
+
+/**
+ * Fail-fast only when ai-bff is genuinely DOWN (connection errors).
+ * Does NOT limit normal AI usage — open circuit recovers automatically.
+ */
+const breaker = {
+  failures: 0,
+  openUntil: 0,
+  threshold: Number.parseInt(String(process.env.AI_BFF_BREAKER_THRESHOLD || ''), 10) || 8,
+  cooldownMs: Number.parseInt(String(process.env.AI_BFF_BREAKER_COOLDOWN_MS || ''), 10) || 15_000,
+};
+
+function breakerAllow() {
+  return Date.now() >= breaker.openUntil;
+}
+
+function breakerSuccess() {
+  breaker.failures = 0;
+  breaker.openUntil = 0;
+}
+
+function breakerFailure() {
+  breaker.failures += 1;
+  if (breaker.failures >= breaker.threshold) {
+    breaker.openUntil = Date.now() + breaker.cooldownMs;
+    console.warn(
+      `[llm] ai-bff circuit open for ${breaker.cooldownMs}ms after ${breaker.failures} consecutive connection failures`,
+    );
+  }
+}
+
 function combinedSignal(externalSignal, timeoutMs) {
   const timeout = AbortSignal.timeout(timeoutMs);
   if (!externalSignal) return timeout;
@@ -132,14 +165,22 @@ function combinedSignal(externalSignal, timeoutMs) {
   return externalSignal.aborted ? externalSignal : timeout;
 }
 
-async function fetchRetry(url, init, { timeoutMs = 120000, retries = 4, baseDelayMs = 1000, signal } = {}) {
+async function fetchRetry(url, init, { timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, retries = 4, baseDelayMs = 1000, signal } = {}) {
+  if (!breakerAllow()) {
+    const err = new Error('ai-bff circuit open — gateway unreachable, retry shortly');
+    err.status = 503;
+    throw err;
+  }
+
   for (let attempt = 0; ; attempt += 1) {
     let response;
     try {
       response = await fetch(url, { ...init, signal: combinedSignal(signal, timeoutMs) });
+      breakerSuccess();
     } catch (err) {
       // A caller-requested abort is terminal — never retry through a Stop.
       if (signal?.aborted) throw err;
+      breakerFailure();
       if (attempt >= retries) throw err;
       console.warn(`[llm] fetch error (attempt ${attempt + 1}/${retries + 1}) ${url} — ${err.message}, retrying...`);
       await sleep(baseDelayMs * 2 ** attempt);
@@ -165,7 +206,7 @@ export async function chatCompletion({
   jsonMode = false,
   cacheKey,
   reasoningEffort,
-  timeoutMs = 120000,
+  timeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
   runId,
   feature = 'resume-analysis',
   applierName,
@@ -353,9 +394,22 @@ export async function verifyKey({ provider, apiKey }) {
 export async function listModels({ provider, apiKey, force = false }) {
   const p = getProvider(provider);
   if (Array.isArray(p.models)) return p.models;
-  const cached = modelCache.get(p.id);
-  if (!force && cached && Date.now() - cached.at < MODEL_TTL_MS) return cached.models;
   if (!apiKey) throw new Error(`No API key configured for ${p.label}.`);
+
+  // Cache per provider + key fingerprint so profile keys (DB) never share a
+  // stale empty list from a missing ai-bff .env key.
+  const cacheKey = `${p.id}:${String(apiKey).slice(-12)}`;
+  const cached = modelCache.get(cacheKey);
+  if (!force && cached && Date.now() - cached.at < MODEL_TTL_MS) return cached.models;
+
+  // OpenAI: list with the profile/DB key directly — do not use ai-bff /v1/models,
+  // which only exposes providers configured in ai-bff .env.
+  if (p.id === 'openai') {
+    const catalog = await listOpenAiModels(apiKey);
+    const models = catalog.map((m) => String(m.id)).filter(Boolean).sort();
+    modelCache.set(cacheKey, { at: Date.now(), models });
+    return models;
+  }
 
   const response = await fetchRetry(
     `${AI_BASE}/v1/models`,
@@ -373,15 +427,12 @@ export async function listModels({ provider, apiKey, force = false }) {
     : Array.isArray(data?.data)
       ? data.data
       : [];
-  const ids = catalog.map((m) => String(m?.id || '')).filter(Boolean);
-  const models = ids
-    .filter((id) => {
-      if (p.id === 'openai') return /(gpt|o1|o3|o4)/i.test(id);
-      return true;
-    })
+  const models = catalog
+    .map((m) => String(m?.id || ''))
+    .filter(Boolean)
     .filter((id) => !/(embedding|whisper|tts|audio|image|moderation|realtime|search|transcribe)/i.test(id))
     .sort();
-  modelCache.set(p.id, { at: Date.now(), models });
+  modelCache.set(cacheKey, { at: Date.now(), models });
   return models;
 }
 

@@ -19,6 +19,7 @@ import { useApplier } from "@/context/applier-context";
 import { JobDescriptionDialog } from "./JobDescriptionDialog";
 import { JobResumePreviewDialog } from "./JobResumePreviewDialog";
 import { JobStatusActions } from "./JobStatusActions";
+import { JobUrlLink } from "./JobUrlLink";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
@@ -256,6 +257,7 @@ export function JobCard({
               <FileText className="w-4 h-4" />
               View JD
             </Button>
+            <JobUrlLink job={job} />
             {onGenerateResume ? (
               <Button
                 variant="outline"

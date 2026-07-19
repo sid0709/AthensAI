@@ -87,7 +87,7 @@ Container nginx (port **9030**) already routes:
 |------|---------|
 | `/` | Athens SPA |
 | `/api/`, `/personal/`, `/socket.io/` | Athens-server |
-| `/avalon/` | Athens-server Avalon relay (Socket.IO + health) |
+| `/avalon/` | Avalon relay process (`@avalon/backend` on :3847) |
 | `/ai-bff/` | ai-bff |
 
 ## Host nginx (HTTPS → container)

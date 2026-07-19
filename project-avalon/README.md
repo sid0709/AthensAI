@@ -1,6 +1,6 @@
 # Project Avalon
 
-Chrome extension + shared types for remote browser control. The Socket.IO relay lives in **Athens-server** (`/avalon/socket.io`). LLM traffic goes through top-level **ai-bff**.
+Chrome extension + shared types for remote browser control. The Socket.IO relay is a **dedicated process** (`@avalon/backend` on port **3847**, path `/avalon/socket.io`). LLM traffic goes through top-level **ai-bff**.
 
 ## Packages
 
@@ -8,17 +8,19 @@ Chrome extension + shared types for remote browser control. The Socket.IO relay 
 |---------|-------------|
 | `@avalon/shared` | Shared types, target matching, action definitions |
 | `@avalon/extension` | Chrome MV3 extension (WXT + React sidebar) |
+| `@avalon/backend` | Standalone Socket.IO relay (isolated from Athens-server) |
 
 ## Quick start
 
 ```bash
 npm install
-npm run dev:extension  # loads unpacked extension with HMR
+npm run start:relay      # Avalon relay on :3847
+npm run dev:extension    # loads unpacked extension with HMR
 ```
 
 Load the extension from `packages/extension/.output/chrome-mv3` (or the path WXT prints).
 
-Default relay URL is `http://127.0.0.1:8979` (Athens-server).
+Default relay URL is `http://127.0.0.1:3847`. In Docker/nginx, clients still use `/avalon` (proxied to the relay).
 
 ## Target selector
 

@@ -347,9 +347,12 @@ export async function renderAgentResumePdf({
   titlePolicyFingerprint,
   identityFingerprint,
   skipReviewCopy = false,
+  asBase64 = false,
 }) {
   const theme = (config && config.theme) || {};
   const html = sectionsToHtml(sections, identity, config);
+  // When asBase64 is requested we still need a Buffer for the on-disk draft —
+  // render once as Buffer, then encode off-thread if needed.
   const buffer = await htmlToPdf({
     html,
     paper: theme.paper === "a4" ? "a4" : "letter",
@@ -369,5 +372,11 @@ export async function renderAgentResumePdf({
     identityFingerprint: identityFingerprint ?? config?.identityFingerprint,
     skipReviewCopy,
   });
+
+  if (asBase64) {
+    const { encodeBufferBase64 } = await import("./pdf/pdfRenderPool.js");
+    const pdfBase64 = await encodeBufferBase64(buffer);
+    return { buffer, savedPath: draftPath, reviewPath, pdfBase64 };
+  }
   return { buffer, savedPath: draftPath, reviewPath };
 }
