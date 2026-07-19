@@ -14,6 +14,26 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "session-based-bid-recording",
+    version: "0.4.0",
+    title: "Session-based Bid Recording",
+    date: "2026-07-19",
+    merge: "bid-management-update",
+    branch: "bid-management-update",
+    summary:
+      "Keep one complete recording per job application, even when bidders move through verification links and multiple tabs.",
+    tags: ["Bid Monitor", "Recording", "Chrome Extension"],
+    current: true,
+    changes: [
+      "Application sessions group multiple tab recordings under the same Bid Ready job",
+      "Child application tabs are matched automatically, while uncertain verification clips ask the bidder where they belong",
+      "New active-applications view shows recording status, clip count, open tabs, warnings, and finish actions",
+      "Merged clips are re-encoded chronologically into one playable video before upload",
+      "Session and segment metadata survive panel closure and extension reloads with guided recording recovery",
+      "Parallel applications and multiple Workday jobs remain isolated without silent cross-job merges",
+    ],
+  },
+  {
     id: "apps-plugins",
     version: "0.3.0",
     title: "Apps & Plugins",
@@ -23,7 +43,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Ship Chrome extension packs with every deploy, plus safer endpoint wiring so builds never embed plaintext API URLs.",
     tags: ["Extensions", "Docker", "Security"],
-    current: true,
     changes: [
       "New Apps & Plugins page to download Bid Monitor and Project Avalon zips from the VPS deploy",
       "Docker pack pipeline builds extension archives and Nginx serves them under /downloads",
