@@ -414,7 +414,7 @@ const AthensApi = (() => {
         healthy: response.ok,
         apiUrl: settings.apiUrl,
         status: response.status,
-        error: response.ok ? null : `HTTP ${response.status} from ${base}/agents/health`,
+        error: response.ok ? null : `Athens health check failed (HTTP ${response.status}).`,
       };
     } catch (err) {
       return {

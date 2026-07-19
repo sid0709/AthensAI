@@ -616,16 +616,17 @@ async function refreshBridgeBadge() {
     if (res?.healthy) {
       bridgeBadgeEl.textContent = 'Athens OK';
       bridgeBadgeEl.className = 'bridge-badge ok';
-      bridgeBadgeEl.title = res.apiUrl || ATHENS_API_URL;
+      bridgeBadgeEl.removeAttribute('title');
     } else {
       bridgeBadgeEl.textContent = 'Athens down';
       bridgeBadgeEl.className = 'bridge-badge down';
-      bridgeBadgeEl.title =
-        res?.error || res?.apiUrl || `Cannot reach Athens at ${ATHENS_API_URL}`;
+      // Do not surface host/IP/URL in the UI (tooltip or label).
+      bridgeBadgeEl.title = 'Cannot reach Athens right now.';
     }
   } catch {
     bridgeBadgeEl.textContent = 'Athens ?';
     bridgeBadgeEl.className = 'bridge-badge unknown';
+    bridgeBadgeEl.removeAttribute('title');
   }
 }
 

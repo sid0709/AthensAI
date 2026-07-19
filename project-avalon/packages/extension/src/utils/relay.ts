@@ -547,7 +547,8 @@ export async function connectRelay(
   if (options?.waitForHealth) {
     const reachable = await probeRelayHealthWithRetry(serverUrl);
     if (!reachable) {
-      const message = `Relay server unreachable at ${serverUrl}. Start the Avalon relay (@avalon/backend, port 3847) — path /avalon.`;
+      const message =
+        'Relay server unreachable. Check that the Avalon relay is running, then reconnect.';
       await persistRelayError(message);
       onConnectError?.(new Error(message));
       return null;
