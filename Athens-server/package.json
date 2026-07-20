@@ -27,6 +27,7 @@
 		"@nextoffer/shared": "file:../packages/shared",
 		"@socket.io/cluster-adapter": "^0.2.2",
 		"@socket.io/sticky": "^1.0.4",
+		"archiver": "^8.0.0",
 		"bcrypt": "^5.1.1",
 		"cheerio": "^1.2.0",
 		"cors": "^2.8.5",
