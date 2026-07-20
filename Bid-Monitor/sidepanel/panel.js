@@ -705,11 +705,13 @@ function showMergeModal(segment, sessions) {
     btn.addEventListener('click', () => mergeSegmentInto(btn.dataset.mergeInto));
   });
 
+  mergeModal.dataset.segmentId = segment.segmentId || '';
   mergeModal.classList.remove('hidden');
 }
 
 function hideMergeModal() {
   mergeModal?.classList.add('hidden');
+  if (mergeModal) delete mergeModal.dataset.segmentId;
   pendingMergeSegment = null;
 }
 
@@ -958,6 +960,32 @@ async function refreshApplySession() {
   renderTabRecordingControl();
   renderApplySession(currentTabState);
   renderRecordingsList();
+
+  // Dismiss a merge modal that another window/tab already resolved. Track the
+  // shown clip via dataset so a pending-pointer advance (next queued clip)
+  // can't confuse the check. After hide, the auto-show below opens the next.
+  if (ui?.ok && mergeModal && !mergeModal.classList.contains('hidden')) {
+    const shownId = mergeModal.dataset.segmentId || pendingMergeSegment?.segmentId;
+    const stillWaiting =
+      shownId &&
+      (unassignedClips || []).some(
+        (s) => s.segmentId === shownId && Number(s.videoSizeBytes) > 0,
+      );
+    const stillPending = ui.pendingMergeSegment?.segmentId === shownId;
+    if (!shownId || (!stillWaiting && !stillPending)) {
+      hideMergeModal();
+    }
+  }
+
+  // Dismiss a finish prompt already handled elsewhere.
+  if (
+    ui?.ok &&
+    finishPromptModal &&
+    !finishPromptModal.classList.contains('hidden') &&
+    !ui.pendingFinishSession
+  ) {
+    hideFinishPrompt();
+  }
 
   if (ui?.pendingMergeSegment && mergeModal?.classList.contains('hidden')) {
     showMergeModal(ui.pendingMergeSegment, applicationSessions);
@@ -1276,7 +1304,7 @@ function renderQueue() {
     li.innerHTML = `
       <strong>${escapeHtml(job.companyName)}</strong>
       <span class="meta-line">${escapeHtml(job.title)}</span>
-      ${resumeFileNameMarkup(expectedName)}
+      ${job.hasGeneratedResume ? resumeFileNameMarkup(expectedName) : ''}
       <span class="status-badge ${statusClass}">${statusLabel}</span>
       <div class="item-actions">
         ${resumeActions}

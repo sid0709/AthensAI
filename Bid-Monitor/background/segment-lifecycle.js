@@ -54,6 +54,26 @@ const SegmentLifecycle = (() => {
     }
   }
 
+  /**
+   * Promote the oldest waiting recorded unassigned clip into the single
+   * pending-merge slot (FIFO by startedAt). If none remain, clear pending.
+   * Broadcasts SHOW_MERGE_MODAL when a next clip is promoted.
+   */
+  async function advancePendingMerge() {
+    const unassigned = await ApplicationSessionStore.getUnassignedSegments();
+    const waiting = unassigned
+      .filter((s) => Number(s.videoSizeBytes) > 0)
+      .sort((a, b) => String(a.startedAt || '').localeCompare(String(b.startedAt || '')));
+    const next = waiting[0] || null;
+    if (next) {
+      await ApplicationSessionStore.setPendingMerge(next.segmentId);
+      broadcast('SHOW_MERGE_MODAL', { segmentId: next.segmentId });
+      return next;
+    }
+    await ApplicationSessionStore.clearPendingMerge();
+    return null;
+  }
+
   async function promptUnassignedClip(segment, { hasRecording }) {
     if (hasRecording) {
       const active = await ApplicationSessionStore.listActiveSessions();
@@ -62,8 +82,14 @@ const SegmentLifecycle = (() => {
           status: 'needs_merge',
         });
       }
-      await ApplicationSessionStore.setPendingMerge(segment.segmentId);
-      broadcast('SHOW_MERGE_MODAL', { segmentId: segment.segmentId });
+      // Only one merge modal at a time. If another clip is already pending,
+      // leave this one in the backlog — advancePendingMerge will promote it
+      // after the current clip is resolved.
+      const existingPending = await ApplicationSessionStore.getPendingMerge();
+      if (!existingPending) {
+        await ApplicationSessionStore.setPendingMerge(segment.segmentId);
+        broadcast('SHOW_MERGE_MODAL', { segmentId: segment.segmentId });
+      }
       await notifyClipWaiting(segment, { empty: false });
     } else {
       const marked = await ApplicationSessionStore.upsertSegment(segment.segmentId, {
@@ -597,14 +623,15 @@ const SegmentLifecycle = (() => {
         return { ok: false, code: 'session_missing', error: err.message };
       }
       if (err?.code === 'segment_missing') {
-        await ApplicationSessionStore.clearPendingMerge();
+        await advancePendingMerge();
         broadcast('APPLICATION_SESSIONS_UPDATED');
         await refreshNeedsMergeBadge();
         return { ok: false, code: 'segment_missing', error: err.message };
       }
       throw err;
     }
-    await ApplicationSessionStore.clearPendingMerge();
+    // Promote the next waiting clip (if any) so the panel can chain modals.
+    await advancePendingMerge();
     // Restore other sessions from needs_merge if no unassigned left
     const unassigned = await ApplicationSessionStore.getUnassignedSegments();
     if (!unassigned.length) {
@@ -627,7 +654,7 @@ const SegmentLifecycle = (() => {
     } catch {
       // ignore
     }
-    await ApplicationSessionStore.clearPendingMerge();
+    await advancePendingMerge();
     const unassigned = await ApplicationSessionStore.getUnassignedSegments();
     const empty = await ApplicationSessionStore.getEmptyRecordingClips();
     if (!unassigned.length && !empty.length) {
