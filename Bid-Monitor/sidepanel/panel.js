@@ -82,6 +82,8 @@ const mergeModalSub = mergeModal?.querySelector('.bm-modal-sub');
 const mergeSessionList = document.getElementById('mergeSessionList');
 const mergeDiscardBtn = document.getElementById('mergeDiscardBtn');
 const mergeKeepBtn = document.getElementById('mergeKeepBtn');
+const busyOverlay = document.getElementById('busyOverlay');
+const busyOverlayText = document.getElementById('busyOverlayText');
 const finishPromptModal = document.getElementById('finishPromptModal');
 const finishPromptBody = document.getElementById('finishPromptBody');
 const finishPromptSubmitBtn = document.getElementById('finishPromptSubmitBtn');
@@ -112,6 +114,43 @@ let rejectedLoading = false;
 
 async function sendMessage(message) {
   return chrome.runtime.sendMessage(message);
+}
+
+/**
+ * Global busy state for long operations (submit / skip / merge / apply).
+ * Shows a blocking overlay + spinner and prevents re-entry, so background
+ * re-renders can't re-enable buttons mid-flight and users can't double-submit.
+ */
+let uiBusy = null;
+
+function setUiBusy(label) {
+  uiBusy = { label: label || 'Working…' };
+  if (busyOverlayText) busyOverlayText.textContent = uiBusy.label;
+  busyOverlay?.classList.remove('hidden');
+}
+
+function clearUiBusy() {
+  uiBusy = null;
+  busyOverlay?.classList.add('hidden');
+}
+
+function isUiBusy() {
+  return uiBusy != null;
+}
+
+/**
+ * Run an async operation behind the busy overlay. Guarantees only one runs at
+ * a time and the overlay stays up until everything (including the follow-up
+ * refresh) finishes, so the queue visibly updates before controls return.
+ */
+async function runExclusive(label, fn) {
+  if (isUiBusy()) return { ok: false, busy: true };
+  setUiBusy(label);
+  try {
+    return await fn();
+  } finally {
+    clearUiBusy();
+  }
 }
 
 function escapeHtml(value) {
@@ -517,32 +556,30 @@ function renderActiveSessions() {
 }
 
 async function finishApplicationSession(sessionId, jobId, finishAction, button) {
-  if (button) {
-    button.disabled = true;
-    button.textContent = finishAction === 'skip' ? 'Skipping…' : 'Finishing…';
-  }
-  try {
-    const result = await sendMessage({
-      type: 'FINISH_APPLICATION_SESSION',
-      sessionId,
-      finishAction,
-      closeTabs: true,
-    });
-    if (!result?.ok) {
-      alert(result?.error || 'Could not finish application.');
-    } else if (result.stitchWarning) {
-      alert(`Application finished with a video warning:\n${result.stitchWarning}`);
+  if (isUiBusy()) return;
+  const action = finishAction === 'skip' ? 'skip' : 'submit';
+  await runExclusive(action === 'skip' ? 'Skipping this job…' : 'Submitting your bid…', async () => {
+    try {
+      const result = await sendMessage({
+        type: 'FINISH_APPLICATION_SESSION',
+        sessionId,
+        finishAction,
+        closeTabs: true,
+      });
+      // Update the queue before the overlay clears so the item disappears
+      // as processing ends, not several seconds later.
+      await loadDashboard({ force: true });
+      await refreshApplySession();
+      if (!result?.ok) {
+        alert(result?.error || 'Could not finish application.');
+      } else if (result.stitchWarning) {
+        alert(`Application finished with a video warning:\n${result.stitchWarning}`);
+      }
+    } catch (err) {
+      alert(err.message || 'Could not finish application.');
+      await refreshApplySession().catch(() => {});
     }
-    await loadDashboard({ force: true });
-    await refreshApplySession();
-  } catch (err) {
-    alert(err.message || 'Could not finish application.');
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = finishAction === 'skip' ? 'Skip' : 'Finish';
-    }
-  }
+  });
 }
 
 function renderUnassignedClips() {
@@ -678,39 +715,42 @@ function hideMergeModal() {
 
 async function mergeSegmentInto(sessionId) {
   if (!pendingMergeSegment?.segmentId || !sessionId) return;
+  if (isUiBusy()) return;
   const segment = pendingMergeSegment;
-  const result = await sendMessage({
-    type: 'MERGE_SEGMENT',
-    segmentId: segment.segmentId,
-    sessionId,
-  });
-  if (!result?.ok) {
-    if (result?.code === 'session_missing') {
-      // The job's tabs were closed and it left the active list. Refresh and
-      // re-show the picker with the current jobs instead of a dead-end error.
-      await refreshApplySession();
-      const stillThere = (unassignedClips || []).some(
-        (s) => s.segmentId === segment.segmentId,
-      );
-      if (stillThere) {
-        alert(result.error || 'That application is no longer active. Pick another job.');
-        showMergeModal(segment, applicationSessions);
-      } else {
-        hideMergeModal();
+  await runExclusive('Attaching recording…', async () => {
+    const result = await sendMessage({
+      type: 'MERGE_SEGMENT',
+      segmentId: segment.segmentId,
+      sessionId,
+    });
+    if (!result?.ok) {
+      if (result?.code === 'session_missing') {
+        // The job's tabs were closed and it left the active list. Refresh and
+        // re-show the picker with the current jobs instead of a dead-end error.
+        await refreshApplySession();
+        const stillThere = (unassignedClips || []).some(
+          (s) => s.segmentId === segment.segmentId,
+        );
+        if (stillThere) {
+          alert(result.error || 'That application is no longer active. Pick another job.');
+          showMergeModal(segment, applicationSessions);
+        } else {
+          hideMergeModal();
+        }
+        return;
       }
+      if (result?.code === 'segment_missing') {
+        alert(result.error || 'This recording is no longer available.');
+        hideMergeModal();
+        await refreshApplySession();
+        return;
+      }
+      alert(result?.error || 'Could not attach recording.');
       return;
     }
-    if (result?.code === 'segment_missing') {
-      alert(result.error || 'This recording is no longer available.');
-      hideMergeModal();
-      await refreshApplySession();
-      return;
-    }
-    alert(result?.error || 'Could not attach recording.');
-    return;
-  }
-  hideMergeModal();
-  await refreshApplySession();
+    hideMergeModal();
+    await refreshApplySession();
+  });
 }
 
 async function discardMergeSegment() {
@@ -718,9 +758,13 @@ async function discardMergeSegment() {
     hideMergeModal();
     return;
   }
-  await sendMessage({ type: 'DISCARD_SEGMENT', segmentId: pendingMergeSegment.segmentId });
-  hideMergeModal();
-  await refreshApplySession();
+  if (isUiBusy()) return;
+  const segmentId = pendingMergeSegment.segmentId;
+  await runExclusive('Discarding clip…', async () => {
+    await sendMessage({ type: 'DISCARD_SEGMENT', segmentId });
+    hideMergeModal();
+    await refreshApplySession();
+  });
 }
 
 async function keepMergeSegment() {
@@ -728,9 +772,13 @@ async function keepMergeSegment() {
     hideMergeModal();
     return;
   }
-  await sendMessage({ type: 'KEEP_SEGMENT_UNASSIGNED', segmentId: pendingMergeSegment.segmentId });
-  hideMergeModal();
-  await refreshApplySession();
+  if (isUiBusy()) return;
+  const segmentId = pendingMergeSegment.segmentId;
+  await runExclusive('Saving clip…', async () => {
+    await sendMessage({ type: 'KEEP_SEGMENT_UNASSIGNED', segmentId });
+    hideMergeModal();
+    await refreshApplySession();
+  });
 }
 
 function showFinishPrompt(session) {
@@ -1015,108 +1063,99 @@ async function stopCurrentTabRecording() {
 }
 
 async function finishApply(tabId, finishAction = 'submit', button) {
-  let resolveTabId = tabId;
-  if (!resolveTabId && activeJobId) {
-    const reopen = await sendMessage({ type: 'REOPEN_APPLY_TAB', jobId: activeJobId });
-    resolveTabId = reopen?.tabId || null;
-  }
-  if (!resolveTabId && !activeJobId) {
-    alert('No active job tab. Open a Bid Ready job with Apply first.');
-    return;
-  }
+  if (isUiBusy()) return;
   const action = finishAction === 'skip' ? 'skip' : 'submit';
+  const busyLabel = action === 'skip' ? 'Skipping this job…' : 'Submitting your bid…';
 
-  if (button) {
-    button.disabled = true;
-    button.textContent = action === 'skip' ? 'Skipping…' : 'Submitting…';
-  }
+  setUiBusy(busyLabel);
   statusStrip.className = 'status-strip finishing';
   statusStripText.textContent = action === 'skip' ? 'Skipping…' : 'Submitting…';
-  if (submitRecordingBtn) submitRecordingBtn.disabled = true;
-  if (skipRecordingBtn) skipRecordingBtn.disabled = true;
 
-  let response = null;
   try {
-    response = await sendMessage({
-      type: 'STOP_CAPTURE',
-      tabId: resolveTabId,
-      jobId: activeJobId,
-      closeApplyTab: true,
-      finishAction: action,
-    });
-  } catch (err) {
-    response = { ok: false, error: err?.message || 'Failed to finish job.' };
-  }
-
-  if (submitRecordingBtn) {
-    submitRecordingBtn.disabled = false;
-    submitRecordingBtn.textContent = 'Submit';
-  }
-  if (skipRecordingBtn) {
-    skipRecordingBtn.disabled = false;
-    skipRecordingBtn.textContent = 'Skip this Job';
-  }
-  if (button) {
-    button.disabled = false;
-    button.textContent = action === 'skip' ? 'Skip this Job' : 'Submit';
-  }
-
-  if (!response?.ok) {
-    statusStrip.className = 'status-strip idle';
-    statusStripText.textContent = action === 'skip' ? 'Skip failed' : 'Submit failed';
-    alert(response?.error || 'Failed to finish job. Check Athens is running, then try again.');
-    await refreshApplySession();
-    return;
-  }
-
-  if (response.jobOutcome === 'submitted' || response.jobOutcome === 'skipped') {
-    completedTodayCount += 1;
-    updateCompletedPill();
-    const todayKey = new Date().toISOString().slice(0, 10);
-    await chrome.storage.local.set({
-      bidMonitorCompletedDay: { dayKey: todayKey, count: completedTodayCount },
-    });
-  }
-
-  const warnings = [response.uploadError, response.statusError, response.stitchWarning]
-    .filter(Boolean)
-    .join('\n');
-
-  let outcomeTitle = '';
-  let outcomeDetail = '';
-  if (response.jobOutcome === 'skipped') {
-    outcomeTitle = 'Skipped';
-    outcomeDetail = 'Ticket moved to Skipped in Bid Management.';
-  } else if (response.jobOutcome === 'submitted') {
-    outcomeTitle = 'Submitted';
-    if (response.uploaded) {
-      outcomeDetail = 'Recording uploaded. Ticket is Submitted in Bid Management.';
-    } else if (response.withoutRecording) {
-      outcomeDetail = 'Submitted without video. Ticket is Submitted in Bid Management.';
-    } else {
-      outcomeDetail = 'Ticket is Submitted in Bid Management.';
+    let resolveTabId = tabId;
+    if (!resolveTabId && activeJobId) {
+      const reopen = await sendMessage({ type: 'REOPEN_APPLY_TAB', jobId: activeJobId });
+      resolveTabId = reopen?.tabId || null;
     }
-  } else {
-    outcomeTitle = action === 'skip' ? 'Finished' : 'Finished';
-    outcomeDetail =
-      'Recording stopped, but Athens ticket status was not updated. Check Athens and Bid Management.';
+    if (!resolveTabId && !activeJobId) {
+      statusStrip.className = 'status-strip idle';
+      statusStripText.textContent = 'Select a Bid Ready job to apply';
+      alert('No active job tab. Open a Bid Ready job with Apply first.');
+      return;
+    }
+
+    let response = null;
+    try {
+      response = await sendMessage({
+        type: 'STOP_CAPTURE',
+        tabId: resolveTabId,
+        jobId: activeJobId,
+        closeApplyTab: true,
+        finishAction: action,
+      });
+    } catch (err) {
+      response = { ok: false, error: err?.message || 'Failed to finish job.' };
+    }
+
+    if (!response?.ok) {
+      statusStrip.className = 'status-strip idle';
+      statusStripText.textContent = action === 'skip' ? 'Skip failed' : 'Submit failed';
+      alert(response?.error || 'Failed to finish job. Check Athens is running, then try again.');
+      await refreshApplySession();
+      return;
+    }
+
+    if (response.jobOutcome === 'submitted' || response.jobOutcome === 'skipped') {
+      completedTodayCount += 1;
+      updateCompletedPill();
+      const todayKey = new Date().toISOString().slice(0, 10);
+      await chrome.storage.local.set({
+        bidMonitorCompletedDay: { dayKey: todayKey, count: completedTodayCount },
+      });
+    }
+
+    const warnings = [response.uploadError, response.statusError, response.stitchWarning]
+      .filter(Boolean)
+      .join('\n');
+
+    let outcomeTitle = '';
+    let outcomeDetail = '';
+    if (response.jobOutcome === 'skipped') {
+      outcomeTitle = 'Skipped';
+      outcomeDetail = 'Ticket moved to Skipped in Bid Management.';
+    } else if (response.jobOutcome === 'submitted') {
+      outcomeTitle = 'Submitted';
+      if (response.uploaded) {
+        outcomeDetail = 'Recording uploaded. Ticket is Submitted in Bid Management.';
+      } else if (response.withoutRecording) {
+        outcomeDetail = 'Submitted without video. Ticket is Submitted in Bid Management.';
+      } else {
+        outcomeDetail = 'Ticket is Submitted in Bid Management.';
+      }
+    } else {
+      outcomeTitle = 'Finished';
+      outcomeDetail =
+        'Recording stopped, but Athens ticket status was not updated. Check Athens and Bid Management.';
+    }
+
+    statusStrip.className = warnings ? 'status-strip finishing' : 'status-strip ready';
+    statusStripText.textContent = warnings ? `${outcomeTitle} with warning` : outcomeTitle;
+
+    // Refresh the queue BEFORE releasing the overlay so the item visibly
+    // disappears as the spinner clears — no "sudden" late update.
+    persistedAnalysis = null;
+    activeJobId = null;
+    await refreshApplySession();
+    await loadDashboard({ force: true });
+
+    if (warnings) {
+      alert(`${outcomeTitle} with a warning:\n${warnings}\n\n${outcomeDetail}`);
+    } else {
+      alert(`${outcomeTitle}.\n\n${outcomeDetail}`);
+    }
+  } finally {
+    clearUiBusy();
   }
-
-  statusStrip.className = warnings ? 'status-strip finishing' : 'status-strip ready';
-  statusStripText.textContent = warnings
-    ? `${outcomeTitle} with warning`
-    : outcomeTitle;
-
-  if (warnings) {
-    alert(`${outcomeTitle} with a warning:\n${warnings}\n\n${outcomeDetail}`);
-  } else {
-    alert(`${outcomeTitle}.\n\n${outcomeDetail}`);
-  }
-
-  persistedAnalysis = null;
-  activeJobId = null;
-  await refreshApplySession();
-  await loadDashboard({ force: true });
 }
 
 function updateCompletedPill() {
@@ -1309,9 +1348,11 @@ function renderQueue() {
  * after sendMessage loses Chrome's user gesture and tabCapture is rejected.
  */
 function launchApplyForJob(job, pool, button, { reopen = false } = {}) {
+  if (isUiBusy()) return;
   const idleLabel = reopen ? 'Reopen' : 'Apply';
   button.disabled = true;
   button.textContent = reopen ? 'Reopening…' : 'Opening…';
+  setUiBusy(reopen ? 'Reopening the job…' : 'Opening the job…');
 
   if (!reopen) {
     // Optimistic In process badge for a fresh apply.
@@ -1325,6 +1366,7 @@ function launchApplyForJob(job, pool, button, { reopen = false } = {}) {
   };
 
   const onFailure = (message) => {
+    clearUiBusy();
     alert(message || 'Failed to open job application.');
     if (!reopen) job.status = 'pending';
     resetButton();
@@ -1339,6 +1381,7 @@ function launchApplyForJob(job, pool, button, { reopen = false } = {}) {
     resetButton();
     await loadDashboard({ force: true });
     await refreshApplySession();
+    clearUiBusy();
     applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     if (!response.autoStarted) {
       startRecordingBtn?.classList.add('pulse');
@@ -1874,6 +1917,9 @@ function scheduleDashboardReload() {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
+  // Skip reactive refreshes while a submit/skip/merge is running; the operation
+  // performs its own refresh and the overlay is blocking interaction anyway.
+  if (isUiBusy()) return;
   if (
     changes.bidReadyCache ||
     changes.activeAppliesByJobId ||
@@ -1937,6 +1983,9 @@ finishPromptModal?.querySelector('[data-finish-dismiss]')?.addEventListener('cli
 });
 
 chrome.runtime.onMessage.addListener((message) => {
+  // Defer all reactive UI updates while an operation is running behind the
+  // busy overlay to avoid re-render races and flicker.
+  if (isUiBusy()) return;
   if (
     message.type === 'APPLY_SESSION_UPDATED' ||
     message.type === 'QUEUE_ENRICHED' ||
@@ -1998,20 +2047,23 @@ chrome.runtime.onMessage.addListener((message) => {
 
 chrome.tabs.onActivated.addListener((info) => {
   if (info?.tabId != null) trackedWebTabId = info.tabId;
+  if (isUiBusy()) return;
   refreshApplySession().catch(() => {});
 });
 
 chrome.windows.onFocusChanged.addListener(() => {
+  if (isUiBusy()) return;
   refreshApplySession().catch(() => {});
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
+  if (!document.hidden && !isUiBusy()) {
     refreshApplySession().catch(() => {});
   }
 });
 
 window.addEventListener('focus', () => {
+  if (isUiBusy()) return;
   refreshApplySession().catch(() => {});
 });
 
@@ -2071,6 +2123,9 @@ window.addEventListener('focus', () => {
   }
 
   await refreshApplySession().catch(() => {});
-  setInterval(() => refreshApplySession().catch(() => {}), 12000);
+  setInterval(() => {
+    if (isUiBusy()) return;
+    refreshApplySession().catch(() => {});
+  }, 12000);
   setInterval(() => refreshBridgeBadge().catch(() => {}), 15000);
 })();

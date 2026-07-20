@@ -245,6 +245,13 @@
     <span id="jobsPoolStatus" class="hidden"></span>
     <button id="backToPoolsBtn" class="hidden" type="button"></button>
 
+    <div id="busyOverlay" class="busy-overlay hidden" role="alert" aria-live="assertive" aria-busy="true">
+      <div class="busy-card">
+        <span class="busy-spinner" aria-hidden="true"></span>
+        <span id="busyOverlayText" class="busy-text">Working…</span>
+      </div>
+    </div>
+
     <script src="../config.js"></script>
     <script src="../background/canonical-resume-name.js"></script>
     <script src="panel.js"></script>
