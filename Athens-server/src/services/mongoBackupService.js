@@ -1,13 +1,9 @@
-import fs from "node:fs";
-import { createRequire } from "node:module";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
+import { once } from "node:events";
+import { PassThrough } from "node:stream";
+import { finished } from "node:stream/promises";
 import { EJSON } from "bson";
+import { ZipArchive } from "archiver";
 import { getMongoDb } from "../db/mongo.js";
-
-const require = createRequire(import.meta.url);
-const archiver = require("archiver");
 
 function stampFileName() {
 	const d = new Date();
@@ -15,34 +11,42 @@ function stampFileName() {
 	return `AthensDB-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.zip`;
 }
 
+async function writeWithBackpressure(pass, chunk) {
+	if (!pass.write(chunk)) {
+		await once(pass, "drain");
+	}
+}
+
 /**
- * Write one collection as a JSON array file (MongoDB EJSON, restore-friendly).
+ * Append one collection as a streaming JSON array entry.
+ * Backpressure keeps zip bytes flowing to the client while we read Mongo.
  */
-async function writeCollectionJson(collection, filePath) {
-	const out = fs.createWriteStream(filePath, { encoding: "utf8" });
-	out.write("[\n");
+async function appendCollectionJson(archive, collection, fileName) {
+	const pass = new PassThrough({ highWaterMark: 512 * 1024 });
+	archive.append(pass, { name: fileName });
+
 	let first = true;
 	const cursor = collection.find({}).batchSize(200);
 	try {
+		await writeWithBackpressure(pass, "[\n");
 		for await (const doc of cursor) {
 			const chunk = `${first ? "" : ",\n"}${EJSON.stringify(doc, { relaxed: false })}`;
 			first = false;
-			if (!out.write(chunk)) {
-				await new Promise((resolve) => out.once("drain", resolve));
-			}
+			await writeWithBackpressure(pass, chunk);
 		}
+		await writeWithBackpressure(pass, "\n]\n");
 	} finally {
 		await cursor.close().catch(() => {});
 	}
-	out.write("\n]\n");
-	await new Promise((resolve, reject) => {
-		out.end(() => resolve());
-		out.on("error", reject);
-	});
+
+	pass.end();
+	// Only wait for the writable side — archiver owns the readable consumer.
+	await finished(pass, { readable: false });
 }
 
 /**
  * Stream a zip of every collection in AthensDB as `<name>.json`.
+ * Headers are flushed immediately so Vite/browsers do not idle-timeout.
  * @param {import("express").Response} res
  */
 export async function streamFullMongoBackupZip(res) {
@@ -59,7 +63,6 @@ export async function streamFullMongoBackupZip(res) {
 		.filter((name) => name && !name.startsWith("system."))
 		.sort((a, b) => a.localeCompare(b));
 
-	const tmpDir = await mkdtemp(path.join(os.tmpdir(), "athens-mongo-backup-"));
 	const fileName = stampFileName();
 	const manifest = {
 		database: db.databaseName,
@@ -67,31 +70,40 @@ export async function streamFullMongoBackupZip(res) {
 		collections: [],
 	};
 
-	try {
-		for (const name of names) {
-			const collection = db.collection(name);
-			const count = await collection.countDocuments();
-			manifest.collections.push({ name, count });
-			await writeCollectionJson(collection, path.join(tmpDir, `${name}.json`));
-		}
-		await writeFile(path.join(tmpDir, "_manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-
-		res.setHeader("Content-Type", "application/zip");
-		res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-		res.setHeader("Cache-Control", "no-store");
-
-		const archive = archiver("zip", { zlib: { level: 9 } });
-		const done = new Promise((resolve, reject) => {
-			archive.on("error", reject);
-			archive.on("end", resolve);
-		});
-		archive.pipe(res);
-		archive.directory(tmpDir, false);
-		await archive.finalize();
-		await done;
-
-		return { fileName, collectionCount: names.length };
-	} finally {
-		await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+	// Send response headers before any collection work so the proxy stays alive.
+	res.setHeader("Content-Type", "application/zip");
+	res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+	res.setHeader("Cache-Control", "no-store");
+	res.setHeader("X-Accel-Buffering", "no");
+	if (typeof res.flushHeaders === "function") {
+		res.flushHeaders();
 	}
+
+	const archive = new ZipArchive({
+		zlib: { level: 6 },
+		highWaterMark: 1024 * 1024,
+	});
+
+	let archiveError = null;
+	archive.on("error", (err) => {
+		archiveError = err;
+		console.error("[mongo-backup] archive error", err);
+		if (!res.destroyed) res.destroy(err);
+	});
+
+	archive.pipe(res);
+
+	for (const name of names) {
+		if (archiveError) throw archiveError;
+		const collection = db.collection(name);
+		const count = await collection.estimatedDocumentCount();
+		manifest.collections.push({ name, count });
+		await appendCollectionJson(archive, collection, `${name}.json`);
+	}
+
+	archive.append(`${JSON.stringify(manifest, null, 2)}\n`, { name: "_manifest.json" });
+	await archive.finalize();
+	if (archiveError) throw archiveError;
+
+	return { fileName, collectionCount: names.length };
 }
