@@ -795,15 +795,27 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     persistAvalonSessionId(sessionId);
   }, [persistSession, sessionId]);
 
-  // If the session ID or display label changes while connected, re-register
-  // (debounced) so the extension picker sees fresh Athens session names.
+  // If the session ID, display label, or profile changes while connected,
+  // re-register (debounced) so the extension picker sees fresh Athens session
+  // names — and, critically, so the session lands under the right profile.
+  //
+  // The Athens applier (hence `profileId`) loads asynchronously, so the initial
+  // `connect()` almost always registers under the "default" profile bucket. When
+  // the applier resolves we MUST re-register under the real profile id, otherwise
+  // the extension — which lists sessions filtered by the signed-in profile — never
+  // sees this controller and can never pair (the "match the session ID" banner
+  // stays stuck even though everything else is correct).
   const sessionLabel = options?.sessionLabel?.trim() || "";
+  const profileId = options?.profileId ?? "";
   useEffect(() => {
     if (!connected || !registered) return;
     const desired = sessionId.trim() || DEFAULT_SESSION_ID;
+    // Empty profile id resolves to the relay's "default" bucket server-side.
+    const desiredProfile = profileId.trim() || "default";
     const needId = desired !== registered.sessionId;
     const needLabel = sessionLabel !== advertisedLabelRef.current;
-    if (!needId && !needLabel) return;
+    const needProfile = desiredProfile !== registered.profileId;
+    if (!needId && !needLabel && !needProfile) return;
     const timer = setTimeout(() => {
       const sock = socketRef.current;
       if (!sock?.connected) return;
@@ -824,7 +836,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       );
     }, 800);
     return () => clearTimeout(timer);
-  }, [connected, registered, sessionId, sessionLabel, pushLog]);
+  }, [connected, registered, sessionId, sessionLabel, profileId, pushLog]);
 
   /** Aggregated token + cost usage for the current job (total + per-request list). */
   const jobUsage = useMemo(() => {

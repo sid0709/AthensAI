@@ -1,0 +1,33 @@
+---
+description: Bump the extension version whenever Bid-Monitor or project-avalon extension code changes
+globs: Bid-Monitor/**,project-avalon/packages/extension/**
+alwaysApply: false
+---
+
+# Extension Versioning
+
+Whenever you change functional code in either browser extension, bump its version in the same change. Do not ship extension changes with a stale version.
+
+## Where the version lives
+
+| Extension | File | Field | Notes |
+|-----------|------|-------|-------|
+| Bid Monitor | `Bid-Monitor/manifest.json` | `version` | Source of truth. `pack-extension.sh` reads it. |
+| Project Avalon | `project-avalon/packages/extension/package.json` | `version` | WXT derives the manifest version from this. |
+
+## Rules
+
+- **Bid Monitor** already bumps regularly (e.g. `2.18.5`). Keep incrementing it — patch for fixes, minor for features.
+- **Project Avalon** is stuck at `0.1.0`. It must be bumped too. Increment it on every extension change (patch for fixes, minor for features, major for breaking changes).
+- Use semver (`MAJOR.MINOR.PATCH`). Bump exactly one segment per change.
+- If a change spans both extensions, bump both.
+
+## What counts as a change requiring a bump
+
+Background/service worker, content scripts, side panel / popup UI (JS/HTML/CSS), config, manifest permissions — anything that alters the packaged extension's behavior. Pure docs/comment-only edits do not require a bump.
+
+## Do not
+
+- Do not leave `project-avalon` at `0.1.0` after modifying its extension.
+- Do not edit `Bid-Monitor/dist/**` versions by hand — bump `manifest.json` and repack.
+- Do not hard-code the version in a second place; keep the single source of truth above.

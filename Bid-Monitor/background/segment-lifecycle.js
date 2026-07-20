@@ -12,6 +12,100 @@ const SegmentLifecycle = (() => {
     chrome.runtime.sendMessage({ type, ...payload }).catch(() => {});
   }
 
+  async function refreshNeedsMergeBadge() {
+    if (typeof updateNeedsMergeBadge === 'function') {
+      try {
+        await updateNeedsMergeBadge();
+      } catch {
+        // Badge helper may not be ready during early SW boot.
+      }
+    }
+  }
+
+  async function notifyClipWaiting(segment, { empty = false } = {}) {
+    if (!chrome.notifications?.create) return;
+    const domain = segment?.domain || 'this tab';
+    const notificationId = `bid-monitor-clip-${segment?.segmentId || Date.now()}`;
+    const iconUrl =
+      chrome.runtime?.getURL?.('icons/icon128.png') || 'icons/icon128.png';
+    try {
+      await chrome.notifications.create(notificationId, {
+        type: 'basic',
+        iconUrl,
+        title: empty ? "Recording didn't start" : 'Recording saved',
+        message: empty
+          ? `Nothing was captured on ${domain}. Open Bid Monitor to dismiss.`
+          : `Clip from ${domain} is waiting. Open Bid Monitor to attach it to a job.`,
+        priority: 1,
+      });
+    } catch (err) {
+      console.warn('Bid Monitor: notification failed', err);
+    }
+  }
+
+  async function openSidePanelBestEffort() {
+    try {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (activeTab?.windowId != null) {
+        await chrome.sidePanel.open({ windowId: activeTab.windowId });
+      }
+    } catch {
+      // Chrome rejects sidePanel.open without a user gesture.
+    }
+  }
+
+  /**
+   * Promote the oldest waiting recorded unassigned clip into the single
+   * pending-merge slot (FIFO by startedAt). If none remain, clear pending.
+   * Broadcasts SHOW_MERGE_MODAL when a next clip is promoted.
+   */
+  async function advancePendingMerge() {
+    const unassigned = await ApplicationSessionStore.getUnassignedSegments();
+    const waiting = unassigned
+      .filter((s) => Number(s.videoSizeBytes) > 0)
+      .sort((a, b) => String(a.startedAt || '').localeCompare(String(b.startedAt || '')));
+    const next = waiting[0] || null;
+    if (next) {
+      await ApplicationSessionStore.setPendingMerge(next.segmentId);
+      broadcast('SHOW_MERGE_MODAL', { segmentId: next.segmentId });
+      return next;
+    }
+    await ApplicationSessionStore.clearPendingMerge();
+    return null;
+  }
+
+  async function promptUnassignedClip(segment, { hasRecording }) {
+    if (hasRecording) {
+      const active = await ApplicationSessionStore.listActiveSessions();
+      for (const session of active) {
+        await ApplicationSessionStore.upsertSession(session.sessionId, {
+          status: 'needs_merge',
+        });
+      }
+      // Only one merge modal at a time. If another clip is already pending,
+      // leave this one in the backlog — advancePendingMerge will promote it
+      // after the current clip is resolved.
+      const existingPending = await ApplicationSessionStore.getPendingMerge();
+      if (!existingPending) {
+        await ApplicationSessionStore.setPendingMerge(segment.segmentId);
+        broadcast('SHOW_MERGE_MODAL', { segmentId: segment.segmentId });
+      }
+      await notifyClipWaiting(segment, { empty: false });
+    } else {
+      const marked = await ApplicationSessionStore.upsertSegment(segment.segmentId, {
+        status: 'failed',
+        emptyRecording: true,
+        sessionId: null,
+        error:
+          "Recording didn't start — the tab may have closed too fast, or capture wasn't granted.",
+      });
+      await notifyClipWaiting(marked || segment, { empty: true });
+    }
+    await openSidePanelBestEffort();
+    await refreshNeedsMergeBadge();
+    broadcast('APPLICATION_SESSIONS_UPDATED');
+  }
+
   async function openSidePanelForTab(tabId) {
     try {
       const tab = await chrome.tabs.get(tabId);
@@ -24,7 +118,7 @@ const SegmentLifecycle = (() => {
   }
 
   async function requestCaptureGesture(segment, tab) {
-    const message = 'Tap the Bid Monitor icon to record this tab.';
+    const message = 'Click the Bid Monitor toolbar icon on this tab to start recording.';
     await ApplicationSessionStore.upsertSegment(segment.segmentId, {
       status: segment.sessionId ? 'failed' : 'unassigned',
       error: message,
@@ -87,7 +181,7 @@ const SegmentLifecycle = (() => {
       });
       if (segment.sessionId) {
         await ApplicationSessionStore.upsertSession(segment.sessionId, {
-          warning: 'Tap the Bid Monitor icon on this tab to keep recording.',
+          warning: 'Click the Bid Monitor toolbar icon on this tab to start recording.',
         });
       }
       broadcast('APPLICATION_SESSIONS_UPDATED');
@@ -98,7 +192,10 @@ const SegmentLifecycle = (() => {
   /**
    * Stop capture for a tab's segment and persist the blob under segmentId.
    */
-  async function stopSegmentForTab(tabId, { closeReason = 'tab_closed' } = {}) {
+  async function stopSegmentForTab(
+    tabId,
+    { closeReason = 'tab_closed', preserveTab = false } = {},
+  ) {
     const segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
     if (!segment) return null;
 
@@ -143,14 +240,102 @@ const SegmentLifecycle = (() => {
       videoSizeBytes: entry?.blob?.size ?? stopped?.size ?? segment.videoSizeBytes,
     });
 
-    await ApplicationSessionStore.unlinkTab(tabId);
     await ApplicationSessionStore.unlinkSegmentTab(tabId);
 
-    if (segment.sessionId) {
+    if (!preserveTab) {
+      await ApplicationSessionStore.unlinkTab(tabId);
+    }
+    if (segment.sessionId && !preserveTab) {
       await ApplicationSessionStore.removeTabFromSession(segment.sessionId, tabId);
     }
 
     return updated;
+  }
+
+  async function startManualSegment(tabId, streamId) {
+    if (tabId == null || !streamId) {
+      throw new Error('This tab is not ready to record.');
+    }
+    const tab = await chrome.tabs.get(tabId);
+    if (!SessionRecorder.isCapturableUrl(tab.url)) {
+      throw new Error('This page cannot be recorded.');
+    }
+
+    let segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
+    if (segment && SessionRecorder.getSessionIdForTab(tabId)) {
+      return { ok: true, alreadyRecording: true, segment };
+    }
+
+    if (!segment) {
+      const session = await ApplicationSessionStore.getSessionByTabId(tabId);
+      segment = await ApplicationSessionStore.createSegment({
+        sessionId: session?.sessionId || null,
+        tabId,
+        openerTabId: tab.openerTabId ?? null,
+        url: tab.url || '',
+        status: session ? 'recording' : 'unassigned',
+      });
+    }
+
+    const { videoFormat = 'webm' } = await chrome.storage.local.get('videoFormat');
+    const result = await startSegmentCapture(segment, tab, { streamId, videoFormat });
+    if (!result.ok) throw new Error(result.error || 'Could not start recording.');
+    if (segment.sessionId) {
+      const session = await ApplicationSessionStore.getSession(segment.sessionId);
+      if (session?.jobId) {
+        await ApplyLifecycle.upsert(session.jobId, {
+          applicationSessionId: session.sessionId,
+          applyTabId: tabId,
+          recorderStatus: result.recording?.startedPaused ? 'paused' : 'recording',
+          error: null,
+        });
+      }
+    }
+    broadcast('APPLICATION_SESSIONS_UPDATED');
+    return { ...result, segment: await ApplicationSessionStore.getSegment(segment.segmentId) };
+  }
+
+  async function stopManualSegment(tabId) {
+    const segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
+    if (!segment || !SessionRecorder.getSessionIdForTab(tabId)) {
+      return { ok: false, error: 'This tab is not being recorded.' };
+    }
+
+    const wasUnassigned = segment.status === 'unassigned' || !segment.sessionId;
+    const updated = await stopSegmentForTab(tabId, {
+      closeReason: 'manual_stop',
+      preserveTab: true,
+    });
+    const hasRecording = Number(updated?.videoSizeBytes) > 0;
+
+    if (wasUnassigned && updated) {
+      await promptUnassignedClip(updated, { hasRecording });
+    }
+
+    chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+    chrome.action
+      .setTitle({ tabId, title: 'Bid Monitor' })
+      .catch(() => {});
+    if (!wasUnassigned) {
+      broadcast('APPLICATION_SESSIONS_UPDATED');
+      await refreshNeedsMergeBadge();
+    }
+    return {
+      ok: true,
+      segment: updated,
+      needsMerge: wasUnassigned && hasRecording,
+      emptyRecording: wasUnassigned && !hasRecording,
+    };
+  }
+
+  async function getTabRecordingState(tabId) {
+    if (tabId == null) return { isRecording: false, segment: null };
+    const segment = await ApplicationSessionStore.getSegmentByTabId(tabId);
+    return {
+      isRecording: Boolean(SessionRecorder.getSessionIdForTab(tabId)),
+      segment,
+      assigned: Boolean(segment?.sessionId),
+    };
   }
 
   async function handleTabCreated(tab) {
@@ -335,43 +520,32 @@ const SegmentLifecycle = (() => {
       });
     }
 
-    if (wasUnassigned && updated && hasRecording) {
-      // Mark active sessions that might want this merge
-      const active = await ApplicationSessionStore.listActiveSessions();
-      for (const s of active) {
-        await ApplicationSessionStore.upsertSession(s.sessionId, { status: 'needs_merge' });
-      }
-      await ApplicationSessionStore.setPendingMerge(updated.segmentId);
-      broadcast('SHOW_MERGE_MODAL', { segmentId: updated.segmentId });
-      try {
-        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (activeTab?.windowId != null) {
-          await chrome.sidePanel.open({ windowId: activeTab.windowId });
-        }
-      } catch {
-        // ignore
-      }
-    } else if (wasUnassigned && updated) {
-      // No recording exists when the tab was closed before the required
-      // toolbar gesture; do not ask the bidder to merge an empty clip.
-      await ApplicationSessionStore.discardSegment(updated.segmentId);
+    if (wasUnassigned && updated) {
+      await promptUnassignedClip(updated, { hasRecording });
     } else if (segment.sessionId) {
       const session = await ApplicationSessionStore.getSession(segment.sessionId);
       if (session && !(session.activeTabIds || []).length) {
+        // The job's last tab was closed. Drop the stale tab pointer (so the
+        // panel shows "reopen to continue" and Apply/Reopen can resume), and
+        // prompt the bidder to Submit / Skip / Keep the recording — the
+        // "Keep it open" choice preserves the session for reopening.
+        if (session.jobId) {
+          try {
+            await ApplyLifecycle.upsert(session.jobId, { applyTabId: null });
+          } catch {
+            // ApplyLifecycle entry may already be gone.
+          }
+        }
         await ApplicationSessionStore.setPendingFinishPrompt(session.sessionId);
         broadcast('SHOW_FINISH_PROMPT', { sessionId: session.sessionId });
-        try {
-          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (activeTab?.windowId != null) {
-            await chrome.sidePanel.open({ windowId: activeTab.windowId });
-          }
-        } catch {
-          // ignore
-        }
+        await openSidePanelBestEffort();
       }
+      broadcast('APPLICATION_SESSIONS_UPDATED');
+      await refreshNeedsMergeBadge();
+    } else {
+      broadcast('APPLICATION_SESSIONS_UPDATED');
+      await refreshNeedsMergeBadge();
     }
-
-    broadcast('APPLICATION_SESSIONS_UPDATED');
   }
 
   /**
@@ -436,8 +610,28 @@ const SegmentLifecycle = (() => {
   }
 
   async function mergePendingSegment(segmentId, sessionId) {
-    const result = await ApplicationSessionStore.attachSegmentToSession(segmentId, sessionId);
-    await ApplicationSessionStore.clearPendingMerge();
+    let result;
+    try {
+      result = await ApplicationSessionStore.attachSegmentToSession(segmentId, sessionId);
+    } catch (err) {
+      // The chosen job (or the clip) was closed/removed between showing the
+      // merge list and the click. Clear the stale pending state and let the UI
+      // refresh instead of dead-ending on an error.
+      if (err?.code === 'session_missing') {
+        broadcast('APPLICATION_SESSIONS_UPDATED');
+        await refreshNeedsMergeBadge();
+        return { ok: false, code: 'session_missing', error: err.message };
+      }
+      if (err?.code === 'segment_missing') {
+        await advancePendingMerge();
+        broadcast('APPLICATION_SESSIONS_UPDATED');
+        await refreshNeedsMergeBadge();
+        return { ok: false, code: 'segment_missing', error: err.message };
+      }
+      throw err;
+    }
+    // Promote the next waiting clip (if any) so the panel can chain modals.
+    await advancePendingMerge();
     // Restore other sessions from needs_merge if no unassigned left
     const unassigned = await ApplicationSessionStore.getUnassignedSegments();
     if (!unassigned.length) {
@@ -449,6 +643,7 @@ const SegmentLifecycle = (() => {
       }
     }
     broadcast('APPLICATION_SESSIONS_UPDATED');
+    await refreshNeedsMergeBadge();
     return result;
   }
 
@@ -459,9 +654,10 @@ const SegmentLifecycle = (() => {
     } catch {
       // ignore
     }
-    await ApplicationSessionStore.clearPendingMerge();
+    await advancePendingMerge();
     const unassigned = await ApplicationSessionStore.getUnassignedSegments();
-    if (!unassigned.length) {
+    const empty = await ApplicationSessionStore.getEmptyRecordingClips();
+    if (!unassigned.length && !empty.length) {
       const active = await ApplicationSessionStore.listActiveSessions();
       for (const s of active) {
         if (s.status === 'needs_merge') {
@@ -470,11 +666,13 @@ const SegmentLifecycle = (() => {
       }
     }
     broadcast('APPLICATION_SESSIONS_UPDATED');
+    await refreshNeedsMergeBadge();
   }
 
   async function keepUnassignedForLater(segmentId) {
     await ApplicationSessionStore.clearPendingMerge();
     broadcast('APPLICATION_SESSIONS_UPDATED');
+    await refreshNeedsMergeBadge();
   }
 
   /**
@@ -548,7 +746,7 @@ const SegmentLifecycle = (() => {
   }
 
   /**
-   * Resume capture for a failed segment when user clicks toolbar on that tab.
+   * Resume capture for a failed segment after a user-approved capture request.
    */
   async function resumeFailedSegmentOnTab(tab, streamId) {
     const segment = await ApplicationSessionStore.getSegmentByTabId(tab.id);
@@ -583,27 +781,40 @@ const SegmentLifecycle = (() => {
     listenersAttached = true;
   }
 
-  async function restoreFromStorage() {
+  async function restoreFromStorage(liveSessionIds = new Set()) {
     attachListeners();
-    // Metadata only — live MediaRecorder cannot be restored; mark recording segments as needing gesture
+    const live = liveSessionIds instanceof Set ? liveSessionIds : new Set(liveSessionIds || []);
+    // A "recording" segment whose recorder key (segmentId) is still live in the
+    // offscreen document survived the SW restart — leave it alone. Only segments
+    // whose recorder is genuinely gone are marked as needing a manual restart.
     const sessions = await ApplicationSessionStore.listActiveSessions();
     const allSegMap = await chrome.storage.local.get('recordingSegmentsById');
     const segments = allSegMap.recordingSegmentsById || {};
     for (const session of sessions) {
       for (const segId of session.recordingSegmentIds || []) {
         const seg = segments[segId];
-        if (seg?.status === 'recording') {
+        if (seg?.status === 'recording' && !live.has(segId)) {
           await ApplicationSessionStore.upsertSegment(segId, {
             status: 'failed',
-            error: 'Recording interrupted — tap the Bid Monitor icon on this tab.',
+            error: 'Recording interrupted — click the Bid Monitor toolbar icon on this tab.',
           });
           await ApplicationSessionStore.upsertSession(session.sessionId, {
-            warning: 'Tap the Bid Monitor icon on the job tab to resume recording.',
+            warning: 'Click the Bid Monitor toolbar icon on the job tab to resume.',
           });
         }
       }
     }
+    // Sweep dead unassigned recordings (no owning session, recorder gone).
+    for (const seg of Object.values(segments)) {
+      if (seg?.status === 'recording' && !seg.sessionId && !live.has(seg.segmentId)) {
+        await ApplicationSessionStore.upsertSegment(seg.segmentId, {
+          status: 'unassigned',
+          error: null,
+        });
+      }
+    }
     broadcast('APPLICATION_SESSIONS_UPDATED');
+    await refreshNeedsMergeBadge();
   }
 
   return {
@@ -612,6 +823,9 @@ const SegmentLifecycle = (() => {
     onApplyOpened,
     startSegmentCapture,
     stopSegmentForTab,
+    startManualSegment,
+    stopManualSegment,
+    getTabRecordingState,
     mergePendingSegment,
     discardPendingSegment,
     keepUnassignedForLater,

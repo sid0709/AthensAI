@@ -60,6 +60,27 @@
         <span id="statusStripText">Select a Bid Ready job to apply</span>
       </div>
 
+      <section id="tabRecordingControl" class="tab-recording-control card">
+        <div class="tab-recording-copy">
+          <strong>Current tab</strong>
+          <span id="tabRecordingStatus">Not recording</span>
+        </div>
+        <button id="startRecordingBtn" class="btn btn-primary" type="button">
+          Start recording
+        </button>
+      </section>
+
+      <section id="unassignedClipsView" class="unassigned-clips card hidden">
+        <div class="apply-session-head">
+          <h2>Recordings waiting</h2>
+          <span id="unassignedClipsBadge" class="needs-merge-badge hidden">Needs a choice</span>
+        </div>
+        <p class="unassigned-clips-copy">
+          These clips are not attached to a job yet. Choose where each belongs, or discard.
+        </p>
+        <ul id="unassignedClipsList" class="unassigned-clips-list"></ul>
+      </section>
+
       <section id="activeSessionsView" class="active-sessions card hidden">
         <div class="apply-session-head">
           <h2>Your applications</h2>
@@ -95,10 +116,9 @@
 
         <div id="startRecordBlock" class="start-record-block">
           <p class="start-record-copy">
-            Recording usually starts when you click <strong>Apply</strong>.
-            If a clip is missing, tap the <strong>Bid Monitor</strong> icon on that tab.
+            Recording usually starts when you click <strong>Apply</strong>. Use
+            <strong>Start recording</strong> above for another tab.
           </p>
-          <button id="startRecordingBtn" class="btn btn-secondary" type="button">How to record</button>
         </div>
 
         <div class="action-grid">
@@ -167,6 +187,7 @@
           <p id="finishPromptBody" class="bm-modal-sub">All related tabs are closed.</p>
           <div class="bm-modal-actions finish-prompt-actions">
             <button type="button" id="finishPromptSubmitBtn" class="btn btn-primary">Finish &amp; submit</button>
+            <button type="button" id="finishPromptSkipBtn" class="btn btn-muted">Skip this job</button>
             <button type="button" id="finishPromptKeepBtn" class="btn btn-secondary">Keep it open</button>
           </div>
         </div>
@@ -223,6 +244,13 @@
     <span id="jobsPoolTitle" class="hidden"></span>
     <span id="jobsPoolStatus" class="hidden"></span>
     <button id="backToPoolsBtn" class="hidden" type="button"></button>
+
+    <div id="busyOverlay" class="busy-overlay hidden" role="alert" aria-live="assertive" aria-busy="true">
+      <div class="busy-card">
+        <span class="busy-spinner" aria-hidden="true"></span>
+        <span id="busyOverlayText" class="busy-text">Working…</span>
+      </div>
+    </div>
 
     <script src="../config.js"></script>
     <script src="../background/canonical-resume-name.js"></script>

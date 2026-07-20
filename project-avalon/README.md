@@ -20,7 +20,7 @@ npm run dev:extension    # loads unpacked extension with HMR
 
 Load the extension from `packages/extension/.output/chrome-mv3` (or the path WXT prints).
 
-Default relay URL is `http://127.0.0.1:3847`. In Docker/nginx, clients still use `/avalon` (proxied to the relay).
+Default relay URL is `http://127.0.0.1:3847`. In Docker/nginx, bake the **public origin** (e.g. `https://host:9030`) into `WXT_AVALON_RELAY_URL` — **not** `…/avalon`. Socket.IO uses path `/avalon/socket.io` on the default namespace; a `/avalon` URL suffix is treated as a namespace and fails with `Invalid namespace`.
 
 ## Target selector
 

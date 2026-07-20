@@ -75,6 +75,35 @@ async function getSessionForTab(tabId) {
 
 let badgedTabIds = new Set();
 
+async function updateNeedsMergeBadge() {
+  const waitingCount = await ApplicationSessionStore.getWaitingClipCount();
+  const active = await getRecordingSessions();
+  const hasLiveRec = active.some((s) => s.tabId != null);
+
+  // Prefer per-tab REC badges while recording; otherwise show waiting count.
+  if (hasLiveRec) {
+    chrome.action.setBadgeText({ text: '' }).catch(() => {});
+    return waitingCount;
+  }
+
+  if (waitingCount > 0) {
+    chrome.action.setBadgeText({ text: String(Math.min(waitingCount, 9)) }).catch(() => {});
+    chrome.action.setBadgeBackgroundColor({ color: '#d97706' }).catch(() => {});
+    chrome.action
+      .setTitle({
+        title:
+          waitingCount === 1
+            ? 'Bid Monitor: 1 recording waiting — open to attach or dismiss'
+            : `Bid Monitor: ${waitingCount} recordings waiting — open to attach or dismiss`,
+      })
+      .catch(() => {});
+  } else {
+    chrome.action.setBadgeText({ text: '' }).catch(() => {});
+    chrome.action.setTitle({ title: 'Bid Monitor' }).catch(() => {});
+  }
+  return waitingCount;
+}
+
 async function updateRecordingBadge() {
   const active = await getRecordingSessions();
   const activeTabIds = new Set(active.map((s) => s.tabId).filter((id) => id != null));
@@ -94,8 +123,8 @@ async function updateRecordingBadge() {
 
   badgedTabIds = activeTabIds;
 
-  // No global badge — recording is per tab.
-  chrome.action.setBadgeText({ text: '' }).catch(() => {});
+  // Global badge shows waiting clips when nothing is actively recording.
+  await updateNeedsMergeBadge();
 }
 
 async function ensureTabScriptsReady(tabId) {
@@ -589,8 +618,14 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
 
   await cleanupOrphanRecordingSessions();
 
+  // Reopening an in-process job (its ApplicationSession already exists) must NOT
+  // re-run the Athens start — that would double-start the bid. Only start the
+  // bid the first time Apply is used for this job.
+  const existingAppSession = await ApplicationSessionStore.getSessionByJobId(job.id);
+  const isResume = Boolean(existingAppSession);
+
   // Mark Athens Bid Ready job as in-process — fail Apply if this fails.
-  if (pool.source === 'athens' || pool.id === 'athens-bid-ready') {
+  if ((pool.source === 'athens' || pool.id === 'athens-bid-ready') && !isResume) {
     const settings = await AthensApi.getSettings();
     const applierName = settings.applierName || auth.applierName || auth.displayName;
     if (!applierName || !job.id) {
@@ -797,7 +832,86 @@ async function handleStartApplyRecording(message, sender, sendResponse) {
   beginCapture(resolvedTabId);
 }
 
+async function finishApplyToJobTab(tab, message, streamId, sendResponse) {
+  try {
+    const result = await openApplyOnTab(
+      tab.id,
+      message.poolId,
+      message.jobId,
+      streamId || null,
+    );
+
+    if (!streamId) {
+      sendResponse({
+        ...result,
+        autoStarted: false,
+        recordingError:
+          'Recording did not start automatically. Focus the job tab and click the Bid Monitor toolbar icon.',
+      });
+      return;
+    }
+
+    try {
+      const started = await startApplyRecording(tab.id, {
+        streamId,
+        recordInTab: false,
+        skipCapturableCheck: true,
+      });
+      sendResponse({
+        ...result,
+        autoStarted: true,
+        fallbackUsed: started.recording?.fallbackUsed ?? false,
+      });
+    } catch (startErr) {
+      const pendingAll = await getPendingApplyTabs();
+      const pending = pendingAll[tab.id];
+      if (pending?.job) {
+        await setPendingApply(tab.id, {
+          ...pending,
+          recorderStatus: 'ready',
+          error: formatTabCaptureError(startErr.message),
+          streamId,
+        });
+        await notifyApplyPanel(tab.id, {
+          profileName: pending.profileName,
+          recorderStatus: 'ready',
+          error: formatTabCaptureError(startErr.message),
+          session: {
+            resumeSetFolder: pending.job.resumeFolderName,
+            applyFlow: true,
+            pending: true,
+          },
+          job: pending.job,
+        });
+      }
+      sendResponse({
+        ...result,
+        autoStarted: false,
+        recordingError: formatTabCaptureError(startErr.message),
+      });
+    }
+  } catch (err) {
+    sendResponse({ ok: false, error: formatTabCaptureError(err.message) });
+  }
+}
+
 function handleApplyToJob(message, sendResponse) {
+  // Preferred path: side panel / popup already created the tab and captured
+  // streamId inside the user-gesture click (required by Chrome tabCapture).
+  if (message.tabId != null) {
+    chrome.tabs.get(Number(message.tabId), (tab) => {
+      if (chrome.runtime.lastError || !tab?.id) {
+        sendResponse({
+          ok: false,
+          error: chrome.runtime.lastError?.message || 'Failed to open job tab.',
+        });
+        return;
+      }
+      void finishApplyToJobTab(tab, message, message.streamId || null, sendResponse);
+    });
+    return;
+  }
+
   chrome.tabs.create({ url: message.jobUrl, active: true }, (tab) => {
     if (chrome.runtime.lastError || !tab?.id) {
       sendResponse({ ok: false, error: chrome.runtime.lastError?.message || 'Failed to open job tab.' });
@@ -805,63 +919,7 @@ function handleApplyToJob(message, sendResponse) {
     }
 
     chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
-      (async () => {
-        try {
-          const result = await openApplyOnTab(
-            tab.id,
-            message.poolId,
-            message.jobId,
-            streamId || null,
-          );
-
-          if (!streamId) {
-            sendResponse(result);
-            return;
-          }
-
-          try {
-            const started = await startApplyRecording(tab.id, {
-              streamId,
-              recordInTab: false,
-              skipCapturableCheck: true,
-            });
-            sendResponse({
-              ...result,
-              autoStarted: true,
-              fallbackUsed: started.recording?.fallbackUsed ?? false,
-            });
-          } catch (startErr) {
-            const pendingAll = await getPendingApplyTabs();
-            const pending = pendingAll[tab.id];
-            if (pending?.job) {
-              await setPendingApply(tab.id, {
-                ...pending,
-                recorderStatus: 'ready',
-                error: formatTabCaptureError(startErr.message),
-                streamId,
-              });
-              await notifyApplyPanel(tab.id, {
-                profileName: pending.profileName,
-                recorderStatus: 'ready',
-                error: formatTabCaptureError(startErr.message),
-                session: {
-                  resumeSetFolder: pending.job.resumeFolderName,
-                  applyFlow: true,
-                  pending: true,
-                },
-                job: pending.job,
-              });
-            }
-            sendResponse({
-              ...result,
-              autoStarted: false,
-              recordingError: formatTabCaptureError(startErr.message),
-            });
-          }
-        } catch (err) {
-          sendResponse({ ok: false, error: formatTabCaptureError(err.message) });
-        }
-      })();
+      void finishApplyToJobTab(tab, message, streamId || null, sendResponse);
     });
   });
 }
@@ -1506,6 +1564,11 @@ async function completeRecordingSession({
               startedAt && Number.isFinite(startedAt)
                 ? Math.max(0, Math.round((stoppedAt - startedAt) / 1000))
                 : null;
+            // Wall-clock recording window (not just duration).
+            const recordedStartAt =
+              stopped.startedAt || appSession?.createdAt || null;
+            const recordedEndAt =
+              stopped?.stoppedAt || new Date(stoppedAt).toISOString();
             const ext = videoExtension(
               stoppedRecording?.mimeType ?? stopped.videoMimeType,
               stoppedRecording?.videoFormat ?? stopped.videoFormat,
@@ -1519,6 +1582,8 @@ async function completeRecordingSession({
               fileName: `session.${ext}`,
               videoBase64,
               durationSec,
+              recordedStartAt,
+              recordedEndAt,
               markCompleted: action === 'submit',
             });
             if (session?.id) {
@@ -1586,6 +1651,7 @@ async function completeRecordingSession({
     jobOutcome,
     jobMarkedApplied: jobOutcome === 'submitted',
     uploaded: Boolean(uploadResult?.success || uploadResult?.recording),
+    withoutRecording: Boolean(applyFlow && !hasVideo),
     uploadError,
     statusError,
     recordingPath: uploadResult?.recording?.storagePath || null,
@@ -1636,6 +1702,15 @@ async function downloadPoolZip(poolId) {
 }
 
 async function restoreActiveRecordingIfNeeded() {
+  // Rehydrate the in-memory tab→session map first. Any session id returned here
+  // is still actively recording in the offscreen document (survived the SW
+  // restart), so it must NOT be marked failed/interrupted below.
+  let liveSessionIds = new Set();
+  try {
+    liveSessionIds = await SessionRecorder.rehydrateFromStorage();
+  } catch (err) {
+    console.warn('Bid Monitor: recorder rehydrate failed', err);
+  }
   await cleanupOrphanRecordingSessions();
   const sessions = await getRecordingSessions();
   if (sessions.length) {
@@ -1643,25 +1718,20 @@ async function restoreActiveRecordingIfNeeded() {
     await SessionRecorder.restore(sessions);
     await notifyAllRecordingTabs();
   }
-  await SegmentLifecycle.restoreFromStorage();
+  await SegmentLifecycle.restoreFromStorage(liveSessionIds);
 }
 
 restoreActiveRecordingIfNeeded().catch(console.error);
 
-// Silent tab capture requires an "invoke" gesture (toolbar click or context
-// menu). Both grant activeTab, which lets getMediaStreamId capture the tab with
-// no picker. Recording runs in the offscreen document so it survives the panel
-// closing, and the REC badge is set per tab.
+// Chrome only grants tabCapture after the extension is invoked for the page
+// (toolbar icon or context menu). A side-panel button click is not enough.
+// Capture streamId synchronously in this gesture, then start recording.
 chrome.action.onClicked.addListener((tab) => {
   if (tab?.windowId != null) {
     chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
   }
-
   if (!tab?.id) return;
 
-  // getMediaStreamId MUST be called synchronously in the gesture (no awaits
-  // before it) or Chrome drops the activeTab grant. We capture first, then
-  // decide start vs. stop in the callback.
   chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
     const err = chrome.runtime.lastError;
     void handleRecordingGesture(tab, err ? null : streamId);
@@ -1669,11 +1739,28 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 async function handleRecordingGesture(tab, streamId) {
+  // Already recording on this tab — open finish controls for apply flow.
+  if (SessionRecorder.getSessionIdForTab(tab.id)) {
+    const existing = await getSessionForTab(tab.id);
+    if (existing?.applyFlow || (await ApplicationSessionStore.getSessionByTabId(tab.id))) {
+      if (tab?.windowId != null) {
+        chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+      }
+      chrome.runtime
+        .sendMessage({ type: 'PANEL_HIGHLIGHT_FINISH', tabId: tab.id })
+        .catch(() => {});
+      return;
+    }
+  }
+
   // Resume a failed segment on this tab if present.
   if (streamId) {
     const resumed = await SegmentLifecycle.resumeFailedSegmentOnTab(tab, streamId);
     if (resumed?.ok) {
       broadcastApplySessionUpdate(tab.id);
+      chrome.runtime
+        .sendMessage({ type: 'PANEL_HIGHLIGHT_START', tabId: tab.id })
+        .catch(() => {});
       return;
     }
     if (resumed?.reason === 'already_recording') return;
@@ -1681,7 +1768,9 @@ async function handleRecordingGesture(tab, streamId) {
       chrome.tabs
         .sendMessage(tab.id, {
           type: 'SEGMENT_CAPTURE_REQUIRED',
-          message: resumed?.error || 'Could not record this tab. Tap the Bid Monitor icon to retry.',
+          message:
+            resumed?.error ||
+            'Could not record this tab. Click the Bid Monitor toolbar icon again.',
         })
         .catch(() => {});
       return;
@@ -1690,8 +1779,6 @@ async function handleRecordingGesture(tab, streamId) {
 
   const existing = await getSessionForTab(tab.id);
   if (existing) {
-    // Apply-flow: open the panel so the bidder picks Submit vs Skip.
-    // Non-apply recordings still stop on toggle.
     if (existing.applyFlow) {
       if (tab?.windowId != null) {
         chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
@@ -1709,66 +1796,103 @@ async function handleRecordingGesture(tab, streamId) {
     return;
   }
 
-  // Start recording on an apply tab that has an application session but no live recorder yet.
-  const appSession = await ApplicationSessionStore.getSessionByTabId(tab.id);
-  if (appSession && streamId) {
-    await startRecordingFromGesture(tab, streamId);
+  if (!streamId) {
+    chrome.runtime
+      .sendMessage({ type: 'PANEL_HIGHLIGHT_START', tabId: tab?.id ?? null })
+      .catch(() => {});
     return;
   }
 
-  if (!streamId) return; // Not capturable (e.g. chrome:// page).
   await startRecordingFromGesture(tab, streamId);
 }
 
 async function startRecordingFromGesture(tab, streamId) {
-  const pendingAll = await getPendingApplyTabs();
-  const pending = pendingAll[tab.id];
-  if (!pending?.job) return; // Not a job-apply tab: icon just opens the panel.
-
   const auth = await MockApi.getAuth();
   if (!auth || auth.role !== 'bidder') return;
 
-  const { videoFormat = 'webm' } = await chrome.storage.local.get('videoFormat');
+  const pendingAll = await getPendingApplyTabs();
+  const pending = pendingAll[tab.id];
 
   try {
-    let appSession =
-      (await ApplicationSessionStore.getSessionByTabId(tab.id)) ||
-      (await ApplicationSessionStore.getSessionByJobId(pending.job.id));
-    if (!appSession) {
-      const opened = await SegmentLifecycle.onApplyOpened({
-        jobId: pending.job.id,
-        jobTitle: pending.job.title,
-        companyName: pending.job.companyName,
-        originalJobUrl: pending.job.jdUrl,
-        tabId: tab.id,
-        poolId: pending.poolId,
-        athensJobId: pending.job.athensJobId || pending.job.id,
+    if (pending?.job) {
+      const { videoFormat = 'webm' } = await chrome.storage.local.get('videoFormat');
+      let appSession =
+        (await ApplicationSessionStore.getSessionByTabId(tab.id)) ||
+        (await ApplicationSessionStore.getSessionByJobId(pending.job.id));
+      if (!appSession) {
+        const opened = await SegmentLifecycle.onApplyOpened({
+          jobId: pending.job.id,
+          jobTitle: pending.job.title,
+          companyName: pending.job.companyName,
+          originalJobUrl: pending.job.jdUrl,
+          tabId: tab.id,
+          poolId: pending.poolId,
+          athensJobId: pending.job.athensJobId || pending.job.id,
+        });
+        appSession = opened.session;
+      }
+
+      let segment = await ApplicationSessionStore.getSegmentByTabId(tab.id);
+      if (!segment) {
+        segment = await ApplicationSessionStore.createSegment({
+          sessionId: appSession.sessionId,
+          tabId: tab.id,
+          openerTabId: tab.openerTabId ?? null,
+          url: tab.url || pending.job.jdUrl,
+          status: 'recording',
+        });
+      }
+
+      const result = await SegmentLifecycle.startSegmentCapture(segment, tab, {
+        streamId,
+        videoFormat,
       });
-      appSession = opened.session;
+      if (!result.ok) throw new Error(result.error || 'Could not start recording.');
+      await ApplyLifecycle.upsert(pending.job.id, {
+        applicationSessionId: appSession.sessionId,
+        recorderStatus: result.recording?.startedPaused ? 'paused' : 'recording',
+        error: null,
+      });
+
+      // Mirror legacy bidMonitorSessions so GET_ACTIVE_APPLY / finish UI stay in sync.
+      if (!(await getSessionForTab(tab.id))) {
+        await beginRecordingSession({
+          tab,
+          bidderName: auth.displayName,
+          resumeSetFolder: pending.job.resumeFolderName,
+          videoFormat,
+          jobId: pending.job.id,
+          poolId: pending.poolId,
+          companyName: pending.job.companyName,
+          jobTitle: pending.job.title,
+          jdUrl: pending.job.jdUrl,
+          applyFlow: true,
+          streamId,
+          applicationSessionId: appSession.sessionId,
+          segmentId: segment.segmentId,
+          skipRecorderStart: true,
+          recordingMeta: result.recording,
+        });
+      }
+    } else {
+      // Manual start on any http(s) tab — unassigned until Stop/close merge prompt.
+      const manual = await SegmentLifecycle.startManualSegment(tab.id, streamId);
+      if (manual?.segment?.sessionId) {
+        const linked = await ApplicationSessionStore.getSession(manual.segment.sessionId);
+        if (linked?.jobId) {
+          await ApplyLifecycle.upsert(linked.jobId, {
+            applicationSessionId: linked.sessionId,
+            recorderStatus: 'recording',
+            error: null,
+          });
+        }
+      }
     }
 
-    let segment = await ApplicationSessionStore.getSegmentByTabId(tab.id);
-    if (!segment) {
-      segment = await ApplicationSessionStore.createSegment({
-        sessionId: appSession.sessionId,
-        tabId: tab.id,
-        openerTabId: tab.openerTabId ?? null,
-        url: tab.url || pending.job.jdUrl,
-        status: 'recording',
-      });
-    }
-
-    const result = await SegmentLifecycle.startSegmentCapture(segment, tab, {
-      streamId,
-      videoFormat,
-    });
-    if (!result.ok) throw new Error(result.error || 'Could not start recording.');
-    await ApplyLifecycle.upsert(pending.job.id, {
-      applicationSessionId: appSession.sessionId,
-      recorderStatus: result.recording?.startedPaused ? 'paused' : 'recording',
-      error: null,
-    });
     broadcastApplySessionUpdate(tab.id);
+    chrome.runtime
+      .sendMessage({ type: 'PANEL_HIGHLIGHT_START', tabId: tab.id })
+      .catch(() => {});
   } catch (err) {
     const p = (await getPendingApplyTabs())[tab.id];
     if (p?.job) {
@@ -1779,6 +1903,13 @@ async function startRecordingFromGesture(tab, streamId) {
       });
     }
     broadcastApplySessionUpdate(tab.id);
+    chrome.runtime
+      .sendMessage({
+        type: 'PANEL_HIGHLIGHT_START',
+        tabId: tab.id,
+        error: err?.message || 'Could not start recording.',
+      })
+      .catch(() => {});
   }
 }
 
@@ -1940,14 +2071,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           refreshing: Boolean(dashboard.refreshing),
           activeApply,
           session,
-          isRecording: Boolean(session),
+          isRecording: Boolean(session) ||
+            (activeApply?.applyTabId != null &&
+              Boolean(SessionRecorder.getSessionIdForTab(activeApply.applyTabId))) ||
+            Boolean(
+              activeApply?.jobId &&
+                (await ApplicationSessionStore.getSessionByJobId(activeApply.jobId))?.activeTabIds?.some(
+                  (tid) => Boolean(SessionRecorder.getSessionIdForTab(Number(tid))),
+                ),
+            ),
           athensHealthy: Boolean(health.healthy),
           recordingSessions: await getRecordingSessions(),
           applicationSessions: applicationUi.sessions,
           unassignedSegments: applicationUi.unassignedSegments,
+          emptyClips: applicationUi.emptyClips,
           pendingMergeSegment: applicationUi.pendingMergeSegment,
           pendingFinishSession: applicationUi.pendingFinishSession,
           needsMergeBadge: applicationUi.needsMergeBadge,
+          waitingClipCount: applicationUi.waitingClipCount,
         });
         break;
       }
@@ -1965,12 +2106,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
       }
 
+      case 'GET_TAB_RECORDING_STATE': {
+        sendResponse({
+          ok: true,
+          ...(await SegmentLifecycle.getTabRecordingState(message.tabId)),
+        });
+        break;
+      }
+
+      case 'START_TAB_RECORDING_WITH_STREAM': {
+        try {
+          const result = await SegmentLifecycle.startManualSegment(
+            message.tabId,
+            message.streamId,
+          );
+          sendResponse({ ok: true, ...result });
+        } catch (err) {
+          sendResponse({
+            ok: false,
+            error: formatTabCaptureError(err.message || String(err)),
+          });
+        }
+        break;
+      }
+
+      case 'STOP_TAB_RECORDING': {
+        try {
+          const result = await SegmentLifecycle.stopManualSegment(message.tabId);
+          if (result?.ok) {
+            const legacySession = await getSessionForTab(message.tabId);
+            if (legacySession) {
+              const sessions = await getSessions();
+              await saveSessions(
+                sessions.filter((session) => session.id !== legacySession.id),
+              );
+            }
+            await updateRecordingBadge();
+          }
+          sendResponse(result);
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Could not stop recording.' });
+        }
+        break;
+      }
+
       case 'MERGE_SEGMENT': {
         try {
           const result = await SegmentLifecycle.mergePendingSegment(
             message.segmentId,
             message.sessionId,
           );
+          await updateNeedsMergeBadge();
           sendResponse({ ok: true, ...result });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Merge failed.' });
@@ -1981,6 +2167,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'DISCARD_SEGMENT': {
         try {
           await SegmentLifecycle.discardPendingSegment(message.segmentId);
+          await updateNeedsMergeBadge();
           sendResponse({ ok: true });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Discard failed.' });
@@ -1991,6 +2178,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'KEEP_SEGMENT_UNASSIGNED': {
         try {
           await SegmentLifecycle.keepUnassignedForLater(message.segmentId);
+          await updateNeedsMergeBadge();
           sendResponse({ ok: true });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Keep failed.' });
@@ -2772,18 +2960,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           : null;
 
+        // Live capture may exist without a legacy bidMonitorSessions row
+        // (toolbar / side-panel Start paths). Prefer SessionRecorder truth.
+        let isLiveRecording = Boolean(session);
+        if (!isLiveRecording && tabId != null) {
+          isLiveRecording = Boolean(SessionRecorder.getSessionIdForTab(tabId));
+        }
+        if (!isLiveRecording && apply?.jobId) {
+          const appSession = await ApplicationSessionStore.getSessionByJobId(apply.jobId);
+          if (appSession) {
+            isLiveRecording = (appSession.activeTabIds || []).some((tid) =>
+              Boolean(SessionRecorder.getSessionIdForTab(Number(tid))),
+            );
+          }
+        }
+        if (
+          !isLiveRecording &&
+          (apply?.recorderStatus === 'recording' || apply?.recorderStatus === 'paused')
+        ) {
+          isLiveRecording = true;
+        }
+
+        if (isLiveRecording && !recorderStatus) {
+          recorderStatus = 'recording';
+        }
+
         sendResponse({
           ok: true,
           tabId,
           jobId: apply?.jobId || applyJob?.id || null,
           pending,
           session,
-          isRecording: !!session,
+          isRecording: isLiveRecording,
           applyJob,
           recorderStatus,
           error,
           analysis: apply?.analysis || null,
-          tabMissing: Boolean(apply?.job && apply.applyTabId == null && !session),
+          tabMissing: Boolean(apply?.job && apply.applyTabId == null && !session && !isLiveRecording),
         });
         break;
       }

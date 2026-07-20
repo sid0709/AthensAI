@@ -3,6 +3,95 @@ const SessionRecorder = (() => {
   let listenersAttached = false;
   let switching = false;
 
+  // MV3 terminates the service worker after ~30s idle, wiping this in-memory
+  // map — but the offscreen document keeps recording. Mirror the map into
+  // chrome.storage.session (survives SW restarts, cleared on browser close,
+  // same lifetime as the offscreen recorder) so we can rehydrate on boot and
+  // avoid falsely reporting a live recording as stopped/failed.
+  const STATE_KEY = 'sessionRecorderTabState';
+
+  async function persistTabSessions() {
+    try {
+      const serialized = [...tabSessions.entries()].map(([tabId, meta]) => ({
+        tabId,
+        sessionId: meta.sessionId,
+        windowId: meta.windowId ?? null,
+        videoFormat: meta.videoFormat === 'mp4' ? 'mp4' : 'webm',
+        paused: Boolean(meta.paused),
+        recordInTab: Boolean(meta.recordInTab),
+      }));
+      await chrome.storage.session.set({ [STATE_KEY]: serialized });
+    } catch {
+      // storage.session may be unavailable during teardown — safe to ignore.
+    }
+  }
+
+  async function listOffscreenSessions() {
+    try {
+      const hasDoc = await chrome.offscreen?.hasDocument?.();
+      if (!hasDoc) return { hasDoc: false, sessionIds: new Set() };
+      const response = await chrome.runtime.sendMessage({ type: 'OFFSCREEN_LIST_SESSIONS' });
+      if (response?.ok && Array.isArray(response.sessionIds)) {
+        return { hasDoc: true, sessionIds: new Set(response.sessionIds) };
+      }
+    } catch {
+      // Offscreen not reachable — treat as no live recordings.
+    }
+    return { hasDoc: false, sessionIds: new Set() };
+  }
+
+  /**
+   * Rebuild the tab→session map after a service-worker restart. Only keeps
+   * entries whose tab still exists AND whose recording is still live in the
+   * offscreen document. Returns the Set of session ids confirmed still
+   * recording so callers can avoid marking them as failed.
+   */
+  async function rehydrateFromStorage() {
+    let stored = [];
+    try {
+      const { [STATE_KEY]: arr = [] } = await chrome.storage.session.get(STATE_KEY);
+      if (Array.isArray(arr)) stored = arr;
+    } catch {
+      stored = [];
+    }
+    if (!stored.length) return new Set();
+
+    const { hasDoc, sessionIds: liveIds } = await listOffscreenSessions();
+    if (!hasDoc) {
+      // The offscreen document is gone, so no recording survived. Clear stale
+      // state and report nothing alive.
+      try {
+        await chrome.storage.session.remove(STATE_KEY);
+      } catch {
+        // ignore
+      }
+      return new Set();
+    }
+
+    const rehydrated = new Set();
+    for (const meta of stored) {
+      if (meta?.tabId == null || !meta.sessionId) continue;
+      if (!liveIds.has(meta.sessionId)) continue;
+      try {
+        await chrome.tabs.get(meta.tabId);
+      } catch {
+        continue;
+      }
+      tabSessions.set(meta.tabId, {
+        sessionId: meta.sessionId,
+        windowId: meta.windowId ?? null,
+        videoFormat: meta.videoFormat === 'mp4' ? 'mp4' : 'webm',
+        paused: Boolean(meta.paused),
+        recordInTab: Boolean(meta.recordInTab),
+      });
+      rehydrated.add(meta.sessionId);
+    }
+
+    if (tabSessions.size) attachListeners();
+    await persistTabSessions();
+    return rehydrated;
+  }
+
   async function ensureOffscreenDocument() {
     const existing = await chrome.offscreen.hasDocument?.();
     if (!existing) {
@@ -103,20 +192,25 @@ const SessionRecorder = (() => {
   }
 
   function removeTabSessionsBySessionId(sessionId) {
+    let changed = false;
     for (const [tabId, meta] of tabSessions) {
       if (meta.sessionId === sessionId) {
         tabSessions.delete(tabId);
+        changed = true;
       }
     }
     if (!tabSessions.size) detachListeners();
+    if (changed) void persistTabSessions();
   }
 
   async function pruneStaleTabSessions() {
+    let changed = false;
     for (const [tabId, meta] of [...tabSessions]) {
       try {
         await chrome.tabs.get(tabId);
       } catch {
         tabSessions.delete(tabId);
+        changed = true;
         try {
           await sendToOffscreen({ type: 'OFFSCREEN_STOP_RECORDING', sessionId: meta.sessionId });
         } catch {
@@ -126,6 +220,7 @@ const SessionRecorder = (() => {
     }
 
     if (!tabSessions.size) detachListeners();
+    if (changed) await persistTabSessions();
   }
 
   async function sendToTab(tabId, message, maxAttempts = 15) {
@@ -236,6 +331,7 @@ const SessionRecorder = (() => {
     } finally {
       switching = false;
     }
+    void persistTabSessions();
   }
 
   async function onTabActivated(activeInfo) {
@@ -270,27 +366,10 @@ const SessionRecorder = (() => {
     }
   }
 
-  async function onTabRemoved(tabId) {
-    if (!tabSessions.has(tabId)) return;
-    const meta = tabSessions.get(tabId);
-    tabSessions.delete(tabId);
-    try {
-      if (meta.recordInTab) {
-        await sendToTab(tabId, { type: 'CONTENT_STOP_RECORDING', sessionId: meta.sessionId }).catch(() => {});
-      } else {
-        await sendToOffscreen({ type: 'OFFSCREEN_STOP_RECORDING', sessionId: meta.sessionId });
-      }
-    } catch (err) {
-      console.warn('Bid Monitor: cleanup on tab close failed', err);
-    }
-    if (!tabSessions.size) detachListeners();
-  }
-
   function attachListeners() {
     if (listenersAttached) return;
     chrome.tabs.onActivated.addListener(onTabActivated);
     chrome.tabs.onUpdated.addListener(onTabUpdated);
-    chrome.tabs.onRemoved.addListener(onTabRemoved);
     listenersAttached = true;
   }
 
@@ -298,7 +377,6 @@ const SessionRecorder = (() => {
     if (!listenersAttached) return;
     chrome.tabs.onActivated.removeListener(onTabActivated);
     chrome.tabs.onUpdated.removeListener(onTabUpdated);
-    chrome.tabs.onRemoved.removeListener(onTabRemoved);
     listenersAttached = false;
   }
 
@@ -343,6 +421,7 @@ const SessionRecorder = (() => {
       paused: !isActive,
       recordInTab,
     });
+    await persistTabSessions();
 
     attachListeners();
     const [activeTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
@@ -426,6 +505,7 @@ const SessionRecorder = (() => {
 
     if (tabIdToRemove != null) {
       tabSessions.delete(tabIdToRemove);
+      await persistTabSessions();
     }
 
     if (!tabSessions.size) {
@@ -473,6 +553,7 @@ const SessionRecorder = (() => {
     start,
     startWithStreamId,
     restore,
+    rehydrateFromStorage,
     stop,
     pruneStaleTabSessions,
     hasActiveRecordings,

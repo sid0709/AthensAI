@@ -20,3 +20,35 @@ export function resolveEndpoint(value: string | undefined, fallback: string): st
   if (!v) return fallback;
   return decodeEndpoint(v) || fallback;
 }
+
+/**
+ * Socket.IO origin for the Avalon relay.
+ *
+ * Accepts either a bare origin (`https://host:9030`) or the legacy VPS form
+ * (`https://host:9030/avalon`). Socket.IO treats any URL path as a namespace, so
+ * `/avalon` must never be passed to `io()` — that path belongs only on the
+ * Engine.IO transport (`path: '/avalon/socket.io'`) and HTTP routes.
+ */
+export function relaySocketOrigin(serverUrl: string): string {
+  const trimmed = serverUrl.trim().replace(/\/+$/, '');
+  if (!trimmed) return trimmed;
+
+  try {
+    const url = new URL(trimmed);
+    const path = url.pathname.replace(/\/+$/, '') || '/';
+    if (path === '/avalon') {
+      url.pathname = '/';
+    }
+    return url.origin;
+  } catch {
+    // Relative or malformed — strip a trailing /avalon heuristically.
+    return trimmed.replace(/\/avalon$/i, '') || trimmed;
+  }
+}
+
+/** HTTP base for `/avalon/health` and `/avalon/sessions` (always ends with `/avalon`). */
+export function relayHttpBase(serverUrl: string): string {
+  const origin = relaySocketOrigin(serverUrl);
+  if (!origin) return '/avalon';
+  return `${origin.replace(/\/+$/, '')}/avalon`;
+}

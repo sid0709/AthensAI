@@ -94,8 +94,9 @@ Container nginx (port **9030**) already routes:
 Chrome extensions baked in CI must use this public origin (default
 `http://$VPS_HOST:9030`). Optional secret `PUBLIC_ORIGIN` overrides it when you
 terminate TLS on a hostname (e.g. `https://sid.example.com`). Do **not** point
-extensions at `:3847` — that port is not published; always use `/avalon/` on the
-web port.
+extensions at `:3847` — that port is not published. Bake `WXT_AVALON_RELAY_URL`
+as the **origin only** (no `/avalon` path); the Engine.IO path is always
+`/avalon/socket.io` on the web port.
 
 ## Host nginx (HTTPS → container)
 

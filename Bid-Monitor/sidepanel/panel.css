@@ -280,6 +280,43 @@ body {
   animation: pulse-dot 1.1s infinite;
 }
 
+.tab-recording-control {
+  margin: 0 12px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tab-recording-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tab-recording-copy strong {
+  font-family: var(--bm-display);
+}
+
+.tab-recording-copy span {
+  color: var(--bm-muted);
+  font-size: 11px;
+}
+
+.tab-recording-control .btn {
+  width: auto;
+  flex-shrink: 0;
+}
+
+.tab-recording-control.is-recording {
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.tab-recording-control.is-recording .tab-recording-copy span {
+  color: #b91c1c;
+}
+
 @keyframes pulse-dot {
   0%,
   100% {
@@ -983,6 +1020,46 @@ body {
   margin: 0 12px 10px;
 }
 
+.unassigned-clips {
+  margin: 0 12px 10px;
+  border-color: color-mix(in srgb, #d97706 35%, var(--bm-line));
+}
+
+.unassigned-clips-copy {
+  margin: 0 0 8px;
+  color: var(--bm-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.unassigned-clips-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.unassigned-clip-item {
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, #d97706 30%, var(--bm-line));
+  border-radius: var(--bm-radius);
+  background: color-mix(in srgb, #d97706 8%, transparent);
+}
+
+.unassigned-clip-item.is-empty {
+  border-color: color-mix(in srgb, #b45309 25%, var(--bm-line));
+  background: color-mix(in srgb, #b45309 6%, transparent);
+}
+
+.unassigned-clip-note {
+  margin: 6px 0 8px;
+  color: var(--bm-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .active-sessions-list {
   list-style: none;
   margin: 0;
@@ -1185,4 +1262,77 @@ body {
 
 .finish-prompt-actions {
   flex-direction: column;
+}
+
+/* Blocking busy overlay for submit / skip / merge / apply operations. */
+.busy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(1.5px);
+}
+
+.busy-overlay.hidden {
+  display: none !important;
+}
+
+.busy-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 280px;
+  padding: 16px 18px;
+  background: var(--bm-panel-solid);
+  border: 1px solid var(--bm-line);
+  border-radius: var(--bm-radius-lg);
+  box-shadow: var(--bm-shadow-sm);
+}
+
+.busy-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bm-ink, inherit);
+  line-height: 1.35;
+}
+
+.busy-spinner {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2.5px solid color-mix(in srgb, var(--bm-teal) 30%, transparent);
+  border-top-color: var(--bm-teal);
+  animation: busy-spin 0.7s linear infinite;
+}
+
+@keyframes busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Inline button spinner (leading) for in-place busy buttons. */
+.btn.is-busy {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+
+.btn.is-busy::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-top-color: #fff;
+  animation: busy-spin 0.7s linear infinite;
 }

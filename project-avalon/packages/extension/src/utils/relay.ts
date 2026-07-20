@@ -20,6 +20,7 @@ import {
   DEFAULT_SERVER_URL,
   EXTENSION_MESSAGES,
 } from './constants';
+import { relayHttpBase, relaySocketOrigin } from './endpoint';
 import { ensureContentScript, runActionInTab } from './tab-messages';
 import { waitForPageReady } from './page-ready';
 
@@ -42,9 +43,7 @@ async function persistRelayConnected(connected: boolean) {
 }
 
 function relayHealthUrl(serverUrl: string): string {
-  const base = serverUrl.replace(/\/$/, '');
-  if (base.endsWith('/avalon')) return `${base}/health`;
-  return `${base}/avalon/health`;
+  return `${relayHttpBase(serverUrl)}/health`;
 }
 
 async function probeRelayHealth(serverUrl: string): Promise<boolean> {
@@ -563,7 +562,12 @@ export async function connectRelay(
   // transport fails immediately ("xhr poll error"). WebSocket IS available in the
   // worker, so we use it exclusively — this is what makes the extension actually
   // connect to the relay.
-  socket = io(serverUrl, {
+  //
+  // Origin only: legacy VPS builds baked `…/avalon` into serverUrl. Socket.IO
+  // treats that path as a namespace ("Invalid namespace") — strip it here so
+  // upgraded extensions still work with stale chrome.storage values.
+  const socketOrigin = relaySocketOrigin(serverUrl);
+  socket = io(socketOrigin, {
     path: '/avalon/socket.io',
     transports: ['websocket'],
     reconnection: true,
@@ -596,7 +600,7 @@ export async function connectRelay(
       (response: RegisteredPayload) => {
         currentSessionId = response.sessionId;
         void browser.storage.local.set({
-          [AVALON_SERVER_KEY]: serverUrl,
+          [AVALON_SERVER_KEY]: socketOrigin,
           [AVALON_SESSION_KEY]: response.sessionId,
           [AVALON_PROFILE_KEY]: response.profileId,
         });
@@ -714,7 +718,7 @@ export async function readStoredRelayError(): Promise<string | null> {
 
 export async function saveRelayConfig(serverUrl: string, sessionId?: string, profileId?: string) {
   await browser.storage.local.set({
-    [AVALON_SERVER_KEY]: serverUrl,
+    [AVALON_SERVER_KEY]: relaySocketOrigin(serverUrl),
     ...(sessionId ? { [AVALON_SESSION_KEY]: sessionId } : {}),
     ...(profileId ? { [AVALON_PROFILE_KEY]: profileId } : {}),
   });

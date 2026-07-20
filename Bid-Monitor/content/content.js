@@ -509,7 +509,7 @@
       ${readyLine}
       ${errorLine}
       ${isReady
-        ? `<button id="bid-monitor-start-btn" type="button">How to start recording</button>${finishActionsHtml}`
+        ? `<button id="bid-monitor-start-btn" type="button">Open recording controls</button>${finishActionsHtml}`
         : isError
           ? '<button id="bid-monitor-retry-btn" type="button">Try Start Recording Again</button>'
           : isApplyFlow
@@ -542,12 +542,12 @@
   }
 
   async function handleStartClick() {
-    const message = 'To start recording, click the Bid Monitor icon in the Chrome toolbar '
-      + '(top-right) while this job tab is active. Recording then starts automatically.';
+    const message = 'Click the Bid Monitor toolbar icon on this tab to start recording.';
     recorderStatusCache = 'ready';
     recordingErrorCache = message;
     renderPanelContent();
     showToast(message);
+    chrome.runtime.sendMessage({ type: 'REQUEST_PANEL_START_RECORDING' }).catch(() => {});
   }
 
   async function handleRetryClick() {
@@ -769,7 +769,9 @@
 
       if (message.type === 'SEGMENT_CAPTURE_REQUIRED') {
         if (isTopFrame) {
-          showToast(message.message || 'Tap the Bid Monitor icon to record this tab.');
+          showToast(
+            message.message || 'Click the Bid Monitor toolbar icon on this tab to start recording.',
+          );
         }
         sendResponse({ ok: true });
         return;

@@ -8,6 +8,7 @@ import {
   EXTENSION_MESSAGES,
   RELAY_KEEPALIVE_PORT,
 } from '../../utils/constants';
+import { relayHttpBase } from '../../utils/endpoint';
 import { saveRelayConfig } from '../../utils/relay';
 
 type PanelNotification = {
@@ -104,9 +105,7 @@ export default function SidePanel() {
     setSessionsLoading(true);
     setSessionsError(null);
     try {
-      const base = serverUrl.replace(/\/$/, '');
-      const sessionsPath = base.endsWith('/avalon') ? `${base}/sessions` : `${base}/avalon/sessions`;
-      const url = `${sessionsPath}?profileId=${encodeURIComponent(profileId)}`;
+      const url = `${relayHttpBase(serverUrl)}/sessions?profileId=${encodeURIComponent(profileId)}`;
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Relay returned ${res.status}`);
       const data = (await res.json()) as { ok?: boolean; active?: DiscoverableSession[] };
