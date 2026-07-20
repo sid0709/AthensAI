@@ -497,9 +497,17 @@ const SegmentLifecycle = (() => {
     } else if (segment.sessionId) {
       const session = await ApplicationSessionStore.getSession(segment.sessionId);
       if (session && !(session.activeTabIds || []).length) {
-        await ApplicationSessionStore.setPendingFinishPrompt(session.sessionId);
-        broadcast('SHOW_FINISH_PROMPT', { sessionId: session.sessionId });
-        await openSidePanelBestEffort();
+        // The job tab was closed mid-apply. Keep the application In process so
+        // the user can reopen it (via Apply/Reopen) and resume recording,
+        // instead of forcing a Submit/Skip decision through a modal. Drop the
+        // stale tab pointer so the panel shows the "reopen to continue" state.
+        if (session.jobId) {
+          try {
+            await ApplyLifecycle.upsert(session.jobId, { applyTabId: null });
+          } catch {
+            // ApplyLifecycle entry may already be gone.
+          }
+        }
       }
       broadcast('APPLICATION_SESSIONS_UPDATED');
       await refreshNeedsMergeBadge();
@@ -571,7 +579,26 @@ const SegmentLifecycle = (() => {
   }
 
   async function mergePendingSegment(segmentId, sessionId) {
-    const result = await ApplicationSessionStore.attachSegmentToSession(segmentId, sessionId);
+    let result;
+    try {
+      result = await ApplicationSessionStore.attachSegmentToSession(segmentId, sessionId);
+    } catch (err) {
+      // The chosen job (or the clip) was closed/removed between showing the
+      // merge list and the click. Clear the stale pending state and let the UI
+      // refresh instead of dead-ending on an error.
+      if (err?.code === 'session_missing') {
+        broadcast('APPLICATION_SESSIONS_UPDATED');
+        await refreshNeedsMergeBadge();
+        return { ok: false, code: 'session_missing', error: err.message };
+      }
+      if (err?.code === 'segment_missing') {
+        await ApplicationSessionStore.clearPendingMerge();
+        broadcast('APPLICATION_SESSIONS_UPDATED');
+        await refreshNeedsMergeBadge();
+        return { ok: false, code: 'segment_missing', error: err.message };
+      }
+      throw err;
+    }
     await ApplicationSessionStore.clearPendingMerge();
     // Restore other sessions from needs_merge if no unassigned left
     const unassigned = await ApplicationSessionStore.getUnassignedSegments();
@@ -722,16 +749,19 @@ const SegmentLifecycle = (() => {
     listenersAttached = true;
   }
 
-  async function restoreFromStorage() {
+  async function restoreFromStorage(liveSessionIds = new Set()) {
     attachListeners();
-    // Metadata only — live MediaRecorder cannot be restored; mark recording segments as needing gesture
+    const live = liveSessionIds instanceof Set ? liveSessionIds : new Set(liveSessionIds || []);
+    // A "recording" segment whose recorder key (segmentId) is still live in the
+    // offscreen document survived the SW restart — leave it alone. Only segments
+    // whose recorder is genuinely gone are marked as needing a manual restart.
     const sessions = await ApplicationSessionStore.listActiveSessions();
     const allSegMap = await chrome.storage.local.get('recordingSegmentsById');
     const segments = allSegMap.recordingSegmentsById || {};
     for (const session of sessions) {
       for (const segId of session.recordingSegmentIds || []) {
         const seg = segments[segId];
-        if (seg?.status === 'recording') {
+        if (seg?.status === 'recording' && !live.has(segId)) {
           await ApplicationSessionStore.upsertSegment(segId, {
             status: 'failed',
             error: 'Recording interrupted — click the Bid Monitor toolbar icon on this tab.',
@@ -740,6 +770,15 @@ const SegmentLifecycle = (() => {
             warning: 'Click the Bid Monitor toolbar icon on the job tab to resume.',
           });
         }
+      }
+    }
+    // Sweep dead unassigned recordings (no owning session, recorder gone).
+    for (const seg of Object.values(segments)) {
+      if (seg?.status === 'recording' && !seg.sessionId && !live.has(seg.segmentId)) {
+        await ApplicationSessionStore.upsertSegment(seg.segmentId, {
+          status: 'unassigned',
+          error: null,
+        });
       }
     }
     broadcast('APPLICATION_SESSIONS_UPDATED');

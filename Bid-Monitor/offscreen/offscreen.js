@@ -397,6 +397,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return;
   }
 
+  if (message.type === 'OFFSCREEN_LIST_SESSIONS') {
+    // Report which recordings are still live so the service worker can
+    // rehydrate its in-memory tab→session map after an idle restart.
+    sendResponse({
+      ok: true,
+      sessionIds: [...recorders.keys()].filter(
+        (id) => recorders.get(id)?.mediaRecorder?.state !== 'inactive',
+      ),
+    });
+    return;
+  }
+
   if (!message.type?.startsWith('OFFSCREEN_')) {
     return false;
   }

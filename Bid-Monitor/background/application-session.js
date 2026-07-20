@@ -248,7 +248,16 @@ const ApplicationSessionStore = (() => {
   async function attachSegmentToSession(segmentId, sessionId) {
     const segment = await getSegment(segmentId);
     const session = await getSession(sessionId);
-    if (!segment || !session) throw new Error('Segment or session not found.');
+    if (!segment) {
+      const err = new Error('This recording is no longer available.');
+      err.code = 'segment_missing';
+      throw err;
+    }
+    if (!session) {
+      const err = new Error('That application is no longer active. Pick another job.');
+      err.code = 'session_missing';
+      throw err;
+    }
 
     const updatedSegment = await upsertSegment(segmentId, {
       sessionId,

@@ -618,8 +618,14 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
 
   await cleanupOrphanRecordingSessions();
 
+  // Reopening an in-process job (its ApplicationSession already exists) must NOT
+  // re-run the Athens start — that would double-start the bid. Only start the
+  // bid the first time Apply is used for this job.
+  const existingAppSession = await ApplicationSessionStore.getSessionByJobId(job.id);
+  const isResume = Boolean(existingAppSession);
+
   // Mark Athens Bid Ready job as in-process — fail Apply if this fails.
-  if (pool.source === 'athens' || pool.id === 'athens-bid-ready') {
+  if ((pool.source === 'athens' || pool.id === 'athens-bid-ready') && !isResume) {
     const settings = await AthensApi.getSettings();
     const applierName = settings.applierName || auth.applierName || auth.displayName;
     if (!applierName || !job.id) {
@@ -1689,6 +1695,15 @@ async function downloadPoolZip(poolId) {
 }
 
 async function restoreActiveRecordingIfNeeded() {
+  // Rehydrate the in-memory tab→session map first. Any session id returned here
+  // is still actively recording in the offscreen document (survived the SW
+  // restart), so it must NOT be marked failed/interrupted below.
+  let liveSessionIds = new Set();
+  try {
+    liveSessionIds = await SessionRecorder.rehydrateFromStorage();
+  } catch (err) {
+    console.warn('Bid Monitor: recorder rehydrate failed', err);
+  }
   await cleanupOrphanRecordingSessions();
   const sessions = await getRecordingSessions();
   if (sessions.length) {
@@ -1696,7 +1711,7 @@ async function restoreActiveRecordingIfNeeded() {
     await SessionRecorder.restore(sessions);
     await notifyAllRecordingTabs();
   }
-  await SegmentLifecycle.restoreFromStorage();
+  await SegmentLifecycle.restoreFromStorage(liveSessionIds);
 }
 
 restoreActiveRecordingIfNeeded().catch(console.error);

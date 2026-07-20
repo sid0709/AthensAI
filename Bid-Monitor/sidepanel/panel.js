@@ -677,12 +677,34 @@ function hideMergeModal() {
 
 async function mergeSegmentInto(sessionId) {
   if (!pendingMergeSegment?.segmentId || !sessionId) return;
+  const segment = pendingMergeSegment;
   const result = await sendMessage({
     type: 'MERGE_SEGMENT',
-    segmentId: pendingMergeSegment.segmentId,
+    segmentId: segment.segmentId,
     sessionId,
   });
   if (!result?.ok) {
+    if (result?.code === 'session_missing') {
+      // The job's tabs were closed and it left the active list. Refresh and
+      // re-show the picker with the current jobs instead of a dead-end error.
+      await refreshApplySession();
+      const stillThere = (unassignedClips || []).some(
+        (s) => s.segmentId === segment.segmentId,
+      );
+      if (stillThere) {
+        alert(result.error || 'That application is no longer active. Pick another job.');
+        showMergeModal(segment, applicationSessions);
+      } else {
+        hideMergeModal();
+      }
+      return;
+    }
+    if (result?.code === 'segment_missing') {
+      alert(result.error || 'This recording is no longer available.');
+      hideMergeModal();
+      await refreshApplySession();
+      return;
+    }
     alert(result?.error || 'Could not attach recording.');
     return;
   }
@@ -1205,9 +1227,10 @@ function renderQueue() {
         <button type="button" class="btn btn-secondary" data-download-resume="${escapeHtml(resumeJobId)}">Download</button>
       `
       : '';
-    // Apply only while Pending; In process jobs are already started.
+    // Pending → Apply (starts the bid). In process → Reopen (reopens the job
+    // tab and resumes recording without re-starting the bid).
     const applyAction = inProcess
-      ? ''
+      ? `<button type="button" class="btn btn-apply" data-reopen-apply-job="${job.id}" data-pool="${job.poolId}">Reopen</button>`
       : `<button type="button" class="btn btn-apply" data-apply-job="${job.id}" data-pool="${job.poolId}">Apply</button>`;
 
     li.innerHTML = `
@@ -1264,86 +1287,96 @@ function renderQueue() {
 
   jobList.querySelectorAll('[data-apply-job]').forEach((button) => {
     button.addEventListener('click', () => {
-      const jobId = button.dataset.applyJob;
-      const poolId = button.dataset.pool;
-      const pool = (dashboardState.pools ?? []).find((p) => p.id === poolId);
-      const job = pool?.jobs?.find((item) => item.id === jobId);
-      if (!job || !pool) return;
+      const pool = (dashboardState.pools ?? []).find((p) => p.id === button.dataset.pool);
+      const job = pool?.jobs?.find((item) => item.id === button.dataset.applyJob);
+      if (job && pool) launchApplyForJob(job, pool, button, { reopen: false });
+    });
+  });
 
-      button.disabled = true;
-      button.textContent = 'Opening…';
+  jobList.querySelectorAll('[data-reopen-apply-job]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const pool = (dashboardState.pools ?? []).find((p) => p.id === button.dataset.pool);
+      const job = pool?.jobs?.find((item) => item.id === button.dataset.reopenApplyJob);
+      if (job && pool) launchApplyForJob(job, pool, button, { reopen: true });
+    });
+  });
+}
 
-      // Optimistic In process badge.
-      job.status = 'in_process';
-      renderQueue();
+/**
+ * Open (or reopen) a job tab and start/resume recording. Capture must happen
+ * inside the click gesture — creating the tab + streamId in the service worker
+ * after sendMessage loses Chrome's user gesture and tabCapture is rejected.
+ */
+function launchApplyForJob(job, pool, button, { reopen = false } = {}) {
+  const idleLabel = reopen ? 'Reopen' : 'Apply';
+  button.disabled = true;
+  button.textContent = reopen ? 'Reopening…' : 'Opening…';
 
-      const resetApplyButton = () => {
-        button.disabled = false;
-        button.textContent = 'Apply';
-      };
+  if (!reopen) {
+    // Optimistic In process badge for a fresh apply.
+    job.status = 'in_process';
+    renderQueue();
+  }
 
-      const afterApplyResponse = async (response) => {
-        if (!response?.ok) {
-          alert(response?.error || 'Failed to open job application.');
-          job.status = 'pending';
-          resetApplyButton();
-          renderQueue();
-          return;
-        }
-        resetApplyButton();
-        await loadDashboard({ force: true });
-        await refreshApplySession();
-        applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        if (!response.autoStarted) {
-          startRecordingBtn?.classList.add('pulse');
-          setTimeout(() => startRecordingBtn?.classList.remove('pulse'), 2000);
-          if (response.recordingError) {
-            alert(response.recordingError);
-          }
-        }
-      };
+  const resetButton = () => {
+    button.disabled = false;
+    button.textContent = idleLabel;
+  };
 
-      // Capture must stay inside this click. Creating the tab + streamId in the
-      // service worker after sendMessage usually loses Chrome's user gesture.
-      chrome.tabs.create({ url: job.jdUrl, active: true }, (tab) => {
-        if (chrome.runtime.lastError || !tab?.id) {
-          alert(chrome.runtime.lastError?.message || 'Failed to open job application.');
-          job.status = 'pending';
-          resetApplyButton();
-          renderQueue();
-          return;
-        }
+  const onFailure = (message) => {
+    alert(message || 'Failed to open job application.');
+    if (!reopen) job.status = 'pending';
+    resetButton();
+    renderQueue();
+  };
 
-        trackedWebTabId = tab.id;
-        currentTabId = tab.id;
+  const afterApplyResponse = async (response) => {
+    if (!response?.ok) {
+      onFailure(response?.error);
+      return;
+    }
+    resetButton();
+    await loadDashboard({ force: true });
+    await refreshApplySession();
+    applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (!response.autoStarted) {
+      startRecordingBtn?.classList.add('pulse');
+      setTimeout(() => startRecordingBtn?.classList.remove('pulse'), 2000);
+      if (response.recordingError) {
+        alert(response.recordingError);
+      }
+    }
+  };
 
-        const sendApply = (streamId) => {
-          sendMessage({
-            type: 'APPLY_TO_JOB',
-            poolId: pool.id,
-            jobId: job.id,
-            jobUrl: job.jdUrl,
-            tabId: tab.id,
-            streamId: streamId || null,
-          })
-            .then(afterApplyResponse)
-            .catch((err) => {
-              alert(err.message || 'Failed to open job application.');
-              job.status = 'pending';
-              resetApplyButton();
-              renderQueue();
-            });
-        };
+  chrome.tabs.create({ url: job.jdUrl, active: true }, (tab) => {
+    if (chrome.runtime.lastError || !tab?.id) {
+      onFailure(chrome.runtime.lastError?.message);
+      return;
+    }
 
-        if (!chrome.tabCapture?.getMediaStreamId) {
-          sendApply(null);
-          return;
-        }
+    trackedWebTabId = tab.id;
+    currentTabId = tab.id;
 
-        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
-          sendApply(chrome.runtime.lastError ? null : streamId || null);
-        });
-      });
+    const sendApply = (streamId) => {
+      sendMessage({
+        type: 'APPLY_TO_JOB',
+        poolId: pool.id,
+        jobId: job.id,
+        jobUrl: job.jdUrl,
+        tabId: tab.id,
+        streamId: streamId || null,
+      })
+        .then(afterApplyResponse)
+        .catch((err) => onFailure(err.message));
+    };
+
+    if (!chrome.tabCapture?.getMediaStreamId) {
+      sendApply(null);
+      return;
+    }
+
+    chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+      sendApply(chrome.runtime.lastError ? null : streamId || null);
     });
   });
 }
