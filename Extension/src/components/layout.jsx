@@ -16,6 +16,7 @@ import ComponentTracker from './Tracker';
 import ScrapperPage from './Scrapper';
 import BackendTrafficLight from './BackendTrafficLight';
 import { athensDisplayFont } from '../theme/athensTheme';
+import packageJson from '../../package.json';
 
 function CustomTabPanel(props) {
 	const { children, value, index, ...other } = props;
@@ -84,7 +85,7 @@ export default function LayoutPage() {
 					<Box
 						component="img"
 						src="/logo.png"
-						alt="AutoLancer"
+						alt="Avalon Scrapper"
 						sx={{
 							width: 40,
 							height: 40,
@@ -104,13 +105,13 @@ export default function LayoutPage() {
 								lineHeight: 1.2,
 							}}
 						>
-							AutoLancer
+							Avalon Scrapper
 						</Typography>
 						<Typography
 							variant="caption"
 							sx={{ color: 'text.secondary', lineHeight: 1.3 }}
 						>
-							Extension · Athens design
+							Extension · v{packageJson.version}
 						</Typography>
 					</Box>
 				</Box>

@@ -48,6 +48,20 @@ const ComponentTracker = () => {
 					notification.fail(message.payload?.error || 'Fetch failed');
 				}
 			}
+			if (message?.action === 'highlightResult') {
+				const { success, matched, highlighted, error } = message.payload || {};
+				if (success === false) {
+					notification.fail(error || 'Highlight failed');
+					return;
+				}
+				if (!matched) {
+					notification.warning('No elements matched that pattern.');
+				} else if (!highlighted) {
+					notification.warning(`Found ${matched} match(es), but none were visible to outline.`);
+				} else {
+					notification.success(`Highlighted ${highlighted} element(s).`);
+				}
+			}
 		};
 		addListener(listener);
 		return () => removeListener(listener);

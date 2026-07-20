@@ -9,19 +9,38 @@
  *   - 'text' -> exact match
  * @returns {NodeListOf<HTMLElement>} A collection of matching elements.
  */
+function escapeAttrSelectorValue(value) {
+	// Escape characters that break CSS attribute selector values inside double quotes.
+	return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 export function findElements(componentType, propertyName, pattern) {
-	let selector;
-	const p = (pattern || '').replace(/"/g, '"');
-	if (pattern.startsWith("?") && pattern.endsWith("?")) {
-		selector = `${componentType}[${propertyName}*="${p.slice(1, -1)}"]`;
-	} else if (pattern.endsWith("?")) {
-		selector = `${componentType}[${propertyName}^="${p.slice(0, -1)}"]`;
-	} else if (pattern.startsWith("?")) {
-		selector = `${componentType}[${propertyName}$="${p.slice(1)}"]`;
+	const tag = componentType || '*';
+	// In CSS attribute selectors the HTML attribute is "class" (not className).
+	const attr = propertyName === 'className' ? 'class' : (propertyName || 'id');
+	const raw = pattern || '';
+	let needle;
+	let matcher; // *= contains, ^= starts-with, $= ends-with, = exact
+	if (raw.startsWith('?') && raw.endsWith('?') && raw.length >= 2) {
+		needle = raw.slice(1, -1);
+		matcher = '*=';
+	} else if (raw.endsWith('?')) {
+		needle = raw.slice(0, -1);
+		matcher = '^=';
+	} else if (raw.startsWith('?')) {
+		needle = raw.slice(1);
+		matcher = '$=';
 	} else {
-		selector = `${componentType}[${propertyName}="${p}"]`;
+		needle = raw;
+		matcher = '=';
 	}
-	return document.querySelectorAll(selector);
+	const selector = `${tag}[${attr}${matcher}"${escapeAttrSelectorValue(needle)}"]`;
+	try {
+		return document.querySelectorAll(selector);
+	} catch (e) {
+		console.error('findElements invalid selector', selector, e);
+		return [];
+	}
 }
 
 // Wait up to timeoutMs for elements to appear (polling). Returns NodeList or null.

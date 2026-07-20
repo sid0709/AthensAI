@@ -1,8 +1,23 @@
 import { findElements } from './elementFinder';
 import { disableAutolancerInputEffects } from './inputEffects';
 
+const STYLE_ID = 'autolancer-tracker-highlight-styles';
 let highlightCounter = 1;
 let highlightLabels = [];
+
+function ensureHighlightStyles() {
+	if (document.getElementById(STYLE_ID)) return;
+	const style = document.createElement('style');
+	style.id = STYLE_ID;
+	style.textContent = `
+[data-highlighter-outline="true"] {
+	outline: 2px solid var(--autolancer-highlight-color, red) !important;
+	outline-offset: 2px !important;
+	box-shadow: 0 0 0 2px var(--autolancer-highlight-color, red) !important;
+}
+`;
+	(document.head || document.documentElement || document.body).appendChild(style);
+}
 
 export function clearHighlights() {
 	document.querySelectorAll('[data-autolancer-highlight]').forEach((element) => {
@@ -23,10 +38,20 @@ export function clearHighlights() {
 	highlightLabels.forEach((label) => label.remove());
 	highlightLabels = [];
 	document.querySelectorAll("[data-highlighter-outline]").forEach((el) => {
-		el.style.outline =
-			el.getAttribute("data-highlighter-original-outline") || "";
+		el.style.removeProperty('outline');
+		el.style.removeProperty('outline-offset');
+		el.style.removeProperty('box-shadow');
+		el.style.removeProperty('--autolancer-highlight-color');
+		const originalOutline = el.getAttribute("data-highlighter-original-outline");
+		const originalOutlineOffset = el.getAttribute("data-highlighter-original-outline-offset");
+		const originalBoxShadow = el.getAttribute("data-highlighter-original-box-shadow");
+		if (originalOutline) el.style.outline = originalOutline;
+		if (originalOutlineOffset) el.style.outlineOffset = originalOutlineOffset;
+		if (originalBoxShadow) el.style.boxShadow = originalBoxShadow;
 		el.removeAttribute("data-highlighter-outline");
 		el.removeAttribute("data-highlighter-original-outline");
+		el.removeAttribute("data-highlighter-original-outline-offset");
+		el.removeAttribute("data-highlighter-original-box-shadow");
 		el.removeAttribute("data-highlighter-id");
 	});
 	document.querySelectorAll('[data-highlighter-parent]').forEach((element) => {
@@ -45,11 +70,23 @@ export function clearHighlights() {
  */
 export function applyHighlight(element, color) {
 	if (element.hasAttribute("data-highlighter-outline")) return;
-	if (!element.getBoundingClientRect().width || !element.getBoundingClientRect().height) return;
+	const rect = element.getBoundingClientRect();
+	if (!rect.width || !rect.height) return;
+
+	ensureHighlightStyles();
+
 	const originalOutline = element.style.outline;
+	const originalOutlineOffset = element.style.outlineOffset;
+	const originalBoxShadow = element.style.boxShadow;
 	element.setAttribute("data-highlighter-original-outline", originalOutline || "");
-	element.setAttribute("data-highlighter-id", highlightCounter);
-	element.style.outline = `2px solid ${color}`;
+	element.setAttribute("data-highlighter-original-outline-offset", originalOutlineOffset || "");
+	element.setAttribute("data-highlighter-original-box-shadow", originalBoxShadow || "");
+	element.setAttribute("data-highlighter-id", String(highlightCounter));
+	element.style.setProperty('--autolancer-highlight-color', color || 'red');
+	// Inline !important as a second line of defense against page resets that strip classes.
+	element.style.setProperty('outline', `2px solid ${color || 'red'}`, 'important');
+	element.style.setProperty('outline-offset', '2px', 'important');
+	element.style.setProperty('box-shadow', `0 0 0 2px ${color || 'red'}`, 'important');
 	element.setAttribute("data-highlighter-outline", "true");
 	addLabel(element, highlightCounter);
 	highlightCounter++;
@@ -61,11 +98,18 @@ export function applyHighlight(element, color) {
  * @param {string} propertyName The attribute to search against.
  * @param {string} pattern The pattern for the property's value.
  * @param {string} color The highlight color.
+ * @returns {{ matched: number, highlighted: number }}
  */
 export function highlightByPattern(componentType, propertyName, pattern, color) {
 	const elementsToHighlight = findElements(componentType, propertyName, pattern);
-	elementsToHighlight.forEach(el => applyHighlight(el, color));
-	console.log(`Found and highlighted ${elementsToHighlight.length} elements.`);
+	let highlighted = 0;
+	elementsToHighlight.forEach((el) => {
+		const before = el.hasAttribute('data-highlighter-outline');
+		applyHighlight(el, color);
+		if (!before && el.hasAttribute('data-highlighter-outline')) highlighted += 1;
+	});
+	console.log(`Found ${elementsToHighlight.length} elements, highlighted ${highlighted}.`);
+	return { matched: elementsToHighlight.length, highlighted };
 }
 
 function addLabel(el, id) {

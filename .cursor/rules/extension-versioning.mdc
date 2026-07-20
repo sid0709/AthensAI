@@ -1,26 +1,36 @@
 ---
-description: Bump the extension version whenever Bid-Monitor or project-avalon extension code changes
-globs: Bid-Monitor/**,project-avalon/packages/extension/**
+description: Bump browser extension versions on every functional change; Avalon Scrapper / Bid Monitor / project-avalon
+globs: Extension/**,Bid-Monitor/**,project-avalon/packages/extension/**
 alwaysApply: false
 ---
 
 # Extension Versioning
 
-Whenever you change functional code in either browser extension, bump its version in the same change. Do not ship extension changes with a stale version.
+Whenever you change functional code in any browser extension, bump its version in the same change. Do not ship extension changes with a stale version.
 
 ## Where the version lives
 
-| Extension | File | Field | Notes |
-|-----------|------|-------|-------|
-| Bid Monitor | `Bid-Monitor/manifest.json` | `version` | Source of truth. `pack-extension.sh` reads it. |
-| Project Avalon | `project-avalon/packages/extension/package.json` | `version` | WXT derives the manifest version from this. |
+| Extension | Display name | File | Field | Notes |
+|-----------|--------------|------|-------|-------|
+| `Extension/` | **Avalon Scrapper** | `Extension/manifest.json` | `version` | Source of truth. Copied into `dist/` on build. Also keep `Extension/package.json` `version` in sync. |
+| Bid Monitor | Bid Monitor | `Bid-Monitor/manifest.json` | `version` | Source of truth. `pack-extension.sh` reads it. |
+| Project Avalon | Avalon | `project-avalon/packages/extension/package.json` | `version` | WXT derives the manifest version from this. |
+
+## Display name
+
+- The Chrome Web Store / `chrome://extensions` name for `Extension/` is **Avalon Scrapper** (`manifest.json` → `name`).
+- Keep the side panel title (`index.html`, layout header, action `default_title`) aligned with that name when renaming or branding.
+- Do not rename internal `autolancer-*` DOM attributes / storage keys unless intentionally migrating data — those are implementation IDs, not the product name.
 
 ## Rules
 
-- **Bid Monitor** already bumps regularly (e.g. `2.18.5`). Keep incrementing it — patch for fixes, minor for features.
-- **Project Avalon** is stuck at `0.1.0`. It must be bumped too. Increment it on every extension change (patch for fixes, minor for features, major for breaking changes).
-- Use semver (`MAJOR.MINOR.PATCH`). Bump exactly one segment per change.
-- If a change spans both extensions, bump both.
+- Use semver (`MAJOR.MINOR.PATCH`). Bump exactly one segment per change (patch for fixes, minor for features, major for breaking changes).
+- **Avalon Scrapper** (`Extension/`): bump `manifest.json` (and matching `package.json`) on every functional change, then rebuild so `dist/manifest.json` matches.
+- **Bid Monitor** already bumps regularly (e.g. `2.18.5`). Keep incrementing it.
+- **Project Avalon**: bump on every extension change (do not leave a stale `0.1.0` after modifying it).
+- If a change spans multiple extensions, bump each affected one.
+- After bumping Avalon Scrapper, rebuild (`npm run build` in `Extension/`) so `dist/manifest.json` matches.
+- Keep `Extension/manifest.json` and `Extension/package.json` versions identical. The side panel reads the version from `package.json`.
 
 ## What counts as a change requiring a bump
 
@@ -28,6 +38,7 @@ Background/service worker, content scripts, side panel / popup UI (JS/HTML/CSS),
 
 ## Do not
 
-- Do not leave `project-avalon` at `0.1.0` after modifying its extension.
-- Do not edit `Bid-Monitor/dist/**` versions by hand — bump `manifest.json` and repack.
-- Do not hard-code the version in a second place; keep the single source of truth above.
+- Do not leave `Extension/manifest.json` at a stale version after Tracker/Scrap/content-script fixes.
+- Do not leave `project-avalon` at a stale version after modifying its extension.
+- Do not edit `Bid-Monitor/dist/**` or `Extension/dist/**` versions by hand — bump the source of truth and rebuild/repack.
+- Do not hard-code the version in extra places beyond the source of truth files above.
