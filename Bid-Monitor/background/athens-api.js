@@ -195,6 +195,8 @@ const AthensApi = (() => {
         fileName: payload.fileName || undefined,
         videoBase64: payload.videoBase64,
         durationSec: payload.durationSec ?? undefined,
+        recordedStartAt: payload.recordedStartAt ?? undefined,
+        recordedEndAt: payload.recordedEndAt ?? undefined,
         markCompleted: Boolean(payload.markCompleted),
       },
       timeoutMs: UPLOAD_TIMEOUT_MS,

@@ -1564,6 +1564,11 @@ async function completeRecordingSession({
               startedAt && Number.isFinite(startedAt)
                 ? Math.max(0, Math.round((stoppedAt - startedAt) / 1000))
                 : null;
+            // Wall-clock recording window (not just duration).
+            const recordedStartAt =
+              stopped.startedAt || appSession?.createdAt || null;
+            const recordedEndAt =
+              stopped?.stoppedAt || new Date(stoppedAt).toISOString();
             const ext = videoExtension(
               stoppedRecording?.mimeType ?? stopped.videoMimeType,
               stoppedRecording?.videoFormat ?? stopped.videoFormat,
@@ -1577,6 +1582,8 @@ async function completeRecordingSession({
               fileName: `session.${ext}`,
               videoBase64,
               durationSec,
+              recordedStartAt,
+              recordedEndAt,
               markCompleted: action === 'submit',
             });
             if (session?.id) {

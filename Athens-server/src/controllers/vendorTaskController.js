@@ -87,6 +87,14 @@ export function serializeTask(doc) {
 				: doc.bidderInProcessAt ?? null,
 		recordingDurationSec:
 			typeof doc.recordingDurationSec === "number" ? doc.recordingDurationSec : null,
+		recordingStartedAt:
+			doc.recordingStartedAt instanceof Date
+				? doc.recordingStartedAt.toISOString()
+				: doc.recordingStartedAt ?? null,
+		recordingEndedAt:
+			doc.recordingEndedAt instanceof Date
+				? doc.recordingEndedAt.toISOString()
+				: doc.recordingEndedAt ?? null,
 		biddingDurationSec:
 			typeof doc.biddingDurationSec === "number" ? doc.biddingDurationSec : null,
 		flags: doc.flags && typeof doc.flags === "object" ? doc.flags : null,

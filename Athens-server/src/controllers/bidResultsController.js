@@ -853,6 +853,13 @@ export async function uploadBidRecording(req, res) {
 			typeof req.body?.durationSec === "number" && Number.isFinite(req.body.durationSec)
 				? Math.max(0, Math.round(req.body.durationSec))
 				: null;
+		const parseDate = (value) => {
+			if (!value) return null;
+			const d = new Date(value);
+			return Number.isNaN(d.getTime()) ? null : d;
+		};
+		const recordingStartedAt = parseDate(req.body?.recordedStartAt);
+		const recordingEndedAt = parseDate(req.body?.recordedEndAt);
 
 		if (!applierName || !jobId) {
 			return res
@@ -894,6 +901,8 @@ export async function uploadBidRecording(req, res) {
 			recordingContentType: uploaded.contentType,
 			recordingSize: uploaded.sizeBytes,
 			recordingDurationSec: durationSec,
+			recordingStartedAt: recordingStartedAt || undefined,
+			recordingEndedAt: recordingEndedAt || undefined,
 		};
 		if (applyUrl) fields.applyUrl = applyUrl;
 		if (markCompleted) {

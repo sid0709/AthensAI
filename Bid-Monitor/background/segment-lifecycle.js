@@ -26,10 +26,12 @@ const SegmentLifecycle = (() => {
     if (!chrome.notifications?.create) return;
     const domain = segment?.domain || 'this tab';
     const notificationId = `bid-monitor-clip-${segment?.segmentId || Date.now()}`;
+    const iconUrl =
+      chrome.runtime?.getURL?.('icons/icon128.png') || 'icons/icon128.png';
     try {
       await chrome.notifications.create(notificationId, {
         type: 'basic',
-        iconUrl: 'icons/icon128.png',
+        iconUrl,
         title: empty ? "Recording didn't start" : 'Recording saved',
         message: empty
           ? `Nothing was captured on ${domain}. Open Bid Monitor to dismiss.`
@@ -497,10 +499,10 @@ const SegmentLifecycle = (() => {
     } else if (segment.sessionId) {
       const session = await ApplicationSessionStore.getSession(segment.sessionId);
       if (session && !(session.activeTabIds || []).length) {
-        // The job tab was closed mid-apply. Keep the application In process so
-        // the user can reopen it (via Apply/Reopen) and resume recording,
-        // instead of forcing a Submit/Skip decision through a modal. Drop the
-        // stale tab pointer so the panel shows the "reopen to continue" state.
+        // The job's last tab was closed. Drop the stale tab pointer (so the
+        // panel shows "reopen to continue" and Apply/Reopen can resume), and
+        // prompt the bidder to Submit / Skip / Keep the recording — the
+        // "Keep it open" choice preserves the session for reopening.
         if (session.jobId) {
           try {
             await ApplyLifecycle.upsert(session.jobId, { applyTabId: null });
@@ -508,6 +510,9 @@ const SegmentLifecycle = (() => {
             // ApplyLifecycle entry may already be gone.
           }
         }
+        await ApplicationSessionStore.setPendingFinishPrompt(session.sessionId);
+        broadcast('SHOW_FINISH_PROMPT', { sessionId: session.sessionId });
+        await openSidePanelBestEffort();
       }
       broadcast('APPLICATION_SESSIONS_UPDATED');
       await refreshNeedsMergeBadge();

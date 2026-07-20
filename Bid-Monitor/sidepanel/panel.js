@@ -85,6 +85,7 @@ const mergeKeepBtn = document.getElementById('mergeKeepBtn');
 const finishPromptModal = document.getElementById('finishPromptModal');
 const finishPromptBody = document.getElementById('finishPromptBody');
 const finishPromptSubmitBtn = document.getElementById('finishPromptSubmitBtn');
+const finishPromptSkipBtn = document.getElementById('finishPromptSkipBtn');
 const finishPromptKeepBtn = document.getElementById('finishPromptKeepBtn');
 
 let dashboardState = { auth: null, pools: [] };
@@ -1914,6 +1915,16 @@ finishPromptSubmitBtn?.addEventListener('click', async () => {
   const jobId = pendingFinishSession.jobId;
   hideFinishPrompt();
   await finishApplicationSession(sessionId, jobId, 'submit');
+});
+finishPromptSkipBtn?.addEventListener('click', async () => {
+  if (!pendingFinishSession?.sessionId) {
+    hideFinishPrompt();
+    return;
+  }
+  const sessionId = pendingFinishSession.sessionId;
+  const jobId = pendingFinishSession.jobId;
+  hideFinishPrompt();
+  await finishApplicationSession(sessionId, jobId, 'skip');
 });
 finishPromptKeepBtn?.addEventListener('click', async () => {
   await sendMessage({ type: 'DISMISS_FINISH_PROMPT' });
