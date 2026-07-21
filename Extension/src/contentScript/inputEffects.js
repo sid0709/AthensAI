@@ -15,7 +15,7 @@ const AUTOFILL_MIN_DELAY = 10;
 const AUTOFILL_MAX_DELAY = 40;
 
 const CURSOR_LOGO_SRC = chrome.runtime.getURL('icons/icon48.png');
-const CURSOR_LOGO_ALT = 'AutoLancer';
+const CURSOR_LOGO_ALT = 'Avalon Scrapper';
 
 const JOB_DESCRIPTION_STORAGE_KEY = 'autolancerJobDescription';
 const API_BASE_URL_STORAGE_KEY = 'spiritApiBaseUrl';

@@ -8,6 +8,7 @@ import { ensureJobMarketIndexes, backfillMissingJobSourceFields, dedupeJobMarket
 import { migrateAllExternalScrapedJobsToMarket } from "../services/promoteExternalJobToMarket.js";
 
 let mongoClient;
+let mongoDb;
 let mongoCloudClient;
 let jobsCollection;
 let companyCategoryCollection;
@@ -165,6 +166,7 @@ async function initMongo() {
 	mongoClient = new MongoClient(mongoUrl);
 	await mongoClient.connect();
 	const db = mongoClient.db(mongoDbName);
+	mongoDb = db;
 	jobsCollection = db.collection('job_market');
 	companyCategoryCollection = db.collection('company_category');
 	personalInfoCollection = db.collection('personal_info');
@@ -304,6 +306,7 @@ async function closeMongo() {
 		await mongoClient.close();
 		mongoClient = null;
 	}
+	mongoDb = null;
 	if (mongoCloudClient) {
 		await mongoCloudClient.close();
 		mongoCloudClient = null;
@@ -315,8 +318,14 @@ async function closeMongo() {
 	cloudMirrorConnectError = null;
 }
 
+/** Active AthensDB handle, or null before `initMongo` / after close. */
+function getMongoDb() {
+	return mongoDb || null;
+}
+
 export {
 	initMongo,
+	getMongoDb,
 	jobsCollection,
 	companyCategoryCollection,
 	personalInfoCollection,

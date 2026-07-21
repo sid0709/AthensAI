@@ -518,25 +518,42 @@ export function BidDetailPane({
                   )}
                 </Section>
 
-                {editable && submission ? (
+                {editable && (submission || result.resumeOriginalName) ? (
                   <Section title="Résumé used for submission">
                     <div className="bm-resume-card used">
                       <div className="bm-resume-icon">
                         <FileText className="w-4 h-4" />
                       </div>
                       <div className="bm-resume-body">
-                        <div className="bm-resume-name">{submission.name}</div>
-                        <div className="bm-resume-meta">
-                          {submission.techStack || "Tailored stack"}
-                          {submission.source ? ` · ${submission.source}` : ""}
-                          {submission.scorePercent != null
-                            ? ` · ${submission.scorePercent}% match`
-                            : ""}
+                        <div className="bm-resume-name">
+                          {submission?.name || "Uploaded résumé"}
                         </div>
-                        {submission.fileName ? (
+                        {submission ? (
+                          <div className="bm-resume-meta">
+                            {submission.techStack || "Tailored stack"}
+                            {submission.source ? ` · ${submission.source}` : ""}
+                            {submission.scorePercent != null
+                              ? ` · ${submission.scorePercent}% match`
+                              : ""}
+                          </div>
+                        ) : null}
+                        {result.resumeOriginalName ? (
+                          <div className="bm-resume-file" title={result.resumeOriginalName}>
+                            Original upload: {result.resumeOriginalName}
+                          </div>
+                        ) : null}
+                        {result.resumeCleanedName &&
+                        result.resumeCleanedName !== result.resumeOriginalName ? (
+                          <div className="bm-resume-file" title={result.resumeCleanedName}>
+                            Form received: {result.resumeCleanedName}
+                            {result.resumeRenamed ? " (renamed)" : ""}
+                          </div>
+                        ) : null}
+                        {submission?.fileName &&
+                        submission.fileName !== result.resumeOriginalName ? (
                           <div className="bm-resume-file">{submission.fileName}</div>
                         ) : null}
-                        {submission.usedAt ? (
+                        {submission?.usedAt ? (
                           <div className="bm-resume-file">
                             Submitted {formatWhen(submission.usedAt)}
                           </div>

@@ -10,35 +10,51 @@ export const commonProperties = [
 
 /* global chrome */
 
-export const highlightByPattern = (tag, property, pattern) => {
+async function resolveActivePageTabId() {
+	try {
+		const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+		if (tab?.id && /^https?:/i.test(tab.url || '')) return tab.id;
+	} catch {
+		// Background will fall back to its own tab resolution.
+	}
+	return undefined;
+}
+
+export const highlightByPattern = async (tag, property, pattern) => {
 	if (!pattern) return;
+	const tabId = await resolveActivePageTabId();
 	chrome.runtime.sendMessage({
 		action: "highlightByPattern",
+		tabId,
 		payload: {
 			componentType: tag,
 			propertyName: property,
 			pattern: pattern,
+			tabId,
 		},
 	});
 };
 
 export const handleHighlight = highlightByPattern;
 
-export const clearHighlights = () => {
-	chrome.runtime.sendMessage({ action: "clearHighlight" });
+export const clearHighlights = async () => {
+	const tabId = await resolveActivePageTabId();
+	chrome.runtime.sendMessage({ action: "clearHighlight", tabId, payload: { tabId } });
 };
 
 export const handleClear = clearHighlights;
 
 // Send an executeAction command to the content script. If `identifier` is provided
 // and action === 'fetch', content script will echo back a `fetchResult` with same identifier.
-export const executeAction = (tag, property, pattern, order, action, actionValue, fetchType, identifier) => {
+export const executeAction = async (tag, property, pattern, order, action, actionValue, fetchType, identifier) => {
+	const tabId = await resolveActivePageTabId();
 	const payload = {
 		componentType: tag,
 		propertyName: property,
 		pattern: pattern,
 		order: parseInt(order, 10) || 0,
 		action: action,
+		tabId,
 	};
 
 	if (actionValue !== undefined && actionValue !== null) payload.value = actionValue;
@@ -47,6 +63,7 @@ export const executeAction = (tag, property, pattern, order, action, actionValue
 
 	chrome.runtime.sendMessage({
 		action: "executeAction",
+		tabId,
 		payload,
 	});
 };

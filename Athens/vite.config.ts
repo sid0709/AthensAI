@@ -78,6 +78,9 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
           secure: false,
+          // Full MongoDB backup downloads can take several minutes.
+          timeout: 0,
+          proxyTimeout: 0,
         },
         '/avalon': {
           target: avalonTarget,

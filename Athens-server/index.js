@@ -34,6 +34,7 @@ import settingsRoutes from "./src/routes/settingsRoutes.js";
 import agentRoutes from "./src/routes/agentRoutes.js";
 import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
+import backupRoutes from "./src/routes/backupRoutes.js";
 import firebaseRoutes from "./src/routes/firebaseRoutes.js";
 import bidResultsRoutes from "./src/routes/bidResultsRoutes.js";
 import jobAnalyzeRoutes from "./src/routes/jobAnalyzeRoutes.js";
@@ -102,6 +103,7 @@ function createApp() {
 	app.use("/api/agents", agentRoutes);
 	app.use("/api", scrapedJobIngestRoutes);
 	app.use("/api", aiUsageRoutes);
+	app.use("/api", backupRoutes);
 	app.use("/api", firebaseRoutes);
 	app.use("/api", bidResultsRoutes);
 	app.use("/api", jobAnalyzeRoutes);

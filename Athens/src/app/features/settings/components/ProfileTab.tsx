@@ -13,6 +13,7 @@ import {
   setVendorAccessPassword,
   testLlmKey,
 } from "../../../services/profileApi";
+import { isAdminPermission } from "../../../lib/admin";
 import { isBetaTier } from "../../../lib/beta";
 import { ProfileBanner, VendorAccessRow } from "./ProfileBanner";
 import {
@@ -23,6 +24,7 @@ import {
 } from "./ProfileCards";
 import { CareerTimeline } from "./CareerTimeline";
 import { DefaultModelCard } from "./DefaultModelCard";
+import { MongoBackupCard } from "./MongoBackupCard";
 
 export function ProfileTab() {
   const { applier, applierReady, setApplier } = useApplier();
@@ -42,6 +44,7 @@ export function ProfileTab() {
     deepseek: { state: "idle" },
   });
   const isBeta = isBetaTier(applier?.tier);
+  const isAdmin = isAdminPermission(applier?.permission);
   const load = useCallback(async () => {
     if (!applier?.name) {
       setProfile(emptyProfile());
@@ -329,6 +332,8 @@ export function ProfileTab() {
           No <span className="font-medium">{applier.name}</span> row in account_info yet. Create this account before saving the profile.
         </div>
       )}
+
+      {isAdmin && applier?.name ? <MongoBackupCard applierName={applier.name} /> : null}
 
       {loading ? (
         <div className="rounded-xl border border-border bg-card p-10 text-sm text-muted-foreground text-center flex items-center justify-center gap-2">

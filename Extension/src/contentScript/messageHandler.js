@@ -284,7 +284,20 @@ export const messageHandler = (request, sender, sendResponse) => {
 				case 'highlightByPattern': {
 					const { componentType, propertyName, pattern, color } = request.payload || {};
 					clearHighlights();
-					doHighlightByPattern(componentType || '*', propertyName || 'id', pattern || '', color || 'red');
+					const result = doHighlightByPattern(componentType || '*', propertyName || 'id', pattern || '', color || 'red');
+					try {
+						chrome.runtime.sendMessage({
+							action: 'highlightResult',
+							payload: {
+								success: true,
+								matched: result?.matched ?? 0,
+								highlighted: result?.highlighted ?? 0,
+								pattern: pattern || '',
+							},
+						});
+					} catch (e) {
+						console.error('Failed to send highlightResult', e);
+					}
 					break;
 				}
 				case 'clearHighlight': {

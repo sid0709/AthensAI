@@ -1236,34 +1236,42 @@ export async function saveResumeAudit(req, res) {
 }
 
 /**
- * GET /bid-results/resumes.zip?applierName=&jobIds=id1,id2
- * Bulk zip of generated résumés with canonical folder/file names. No size/count limits.
+ * GET/POST /bid-results/resumes.zip
+ * Bulk zip of generated résumés with flat canonical filenames (Windows-safe).
+ * Prefer POST body `{ applierName, jobIds }` — long GET query strings break on Windows.
  */
 export async function downloadBidResumesZip(req, res) {
 	try {
-		const applierName = String(req.query.applierName ?? "").trim();
-		const jobIdsRaw = String(req.query.jobIds ?? "").trim();
+		const body = req.body && typeof req.body === "object" ? req.body : {};
+		const applierName = String(
+			body.applierName ?? req.query.applierName ?? "",
+		).trim();
 		if (!applierName) {
 			return res.status(400).json({ success: false, error: "applierName is required." });
 		}
 
-		const jobIds = jobIdsRaw
-			? jobIdsRaw.split(",").map((s) => s.trim()).filter(Boolean)
-			: [];
+		let jobIds = [];
+		if (Array.isArray(body.jobIds)) {
+			jobIds = body.jobIds.map(String).filter(Boolean);
+		} else {
+			const jobIdsRaw = String(req.query.jobIds ?? "").trim();
+			jobIds = jobIdsRaw
+				? jobIdsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+				: [];
+		}
 
-		// Lazy import so zip dependency stays optional at module load.
 		const { buildBidResumesZip } = await import("../services/bidResumesZipService.js");
 		const built = await buildBidResumesZip({ applierName, jobIds });
 		if (!built.ok) {
 			return res.status(built.status || 400).json({ success: false, error: built.error });
 		}
 
+		const fileName = built.fileName.replace(/"/g, "");
 		res.setHeader("Content-Type", "application/zip");
-		res.setHeader(
-			"Content-Disposition",
-			`attachment; filename="${built.fileName.replace(/"/g, "")}"`,
-		);
-		return res.send(built.buffer);
+		res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+		res.setHeader("Content-Length", String(built.buffer.length));
+		res.setHeader("Cache-Control", "no-store");
+		return res.end(built.buffer);
 	} catch (err) {
 		console.error("[bid-results] resumes.zip failed", err);
 		return res.status(500).json({

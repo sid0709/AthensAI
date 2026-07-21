@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
-	"name": "AutoLancer",
-	"version": "2.0",
+	"name": "Avalon Scrapper",
+	"version": "2.1.0",
 	"description": "AI based assistant to help freelancers apply and manage job postings more efficiently.",
 	"permissions": [
 		"sidePanel",
@@ -18,7 +18,7 @@
 		"default_path": "index.html"
 	},
 	"action": {
-		"default_title": "Open Sidebar",
+		"default_title": "Avalon Scrapper",
 		"default_icon": {
 			"16": "icons/icon16.png",
 			"48": "icons/icon48.png",

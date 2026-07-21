@@ -1292,7 +1292,7 @@ function renderQueue() {
     const resumeActions = job.hasGeneratedResume
       ? `
         <button type="button" class="btn btn-secondary" data-view-resume="${escapeHtml(resumeJobId)}">View résumé</button>
-        <button type="button" class="btn btn-secondary" data-download-resume="${escapeHtml(resumeJobId)}">Download</button>
+        <button type="button" class="btn btn-secondary" data-download-resume="${escapeHtml(resumeJobId)}" data-download-filename="${escapeHtml(expectedName || '')}">Download</button>
       `
       : '';
     // Pending → Apply (starts the bid). In process → Reopen (reopens the job
@@ -1342,6 +1342,7 @@ function renderQueue() {
         const response = await sendMessage({
           type: 'DOWNLOAD_JOB_RESUME',
           jobId: button.dataset.downloadResume,
+          fileName: button.dataset.downloadFilename || undefined,
         });
         if (!response?.ok) alert(response?.error || 'Failed to download résumé.');
       } catch (err) {
@@ -1806,7 +1807,12 @@ applyDownloadResumeBtn?.addEventListener('click', async () => {
   const prev = applyDownloadResumeBtn.textContent;
   applyDownloadResumeBtn.textContent = 'Downloading…';
   try {
-    const res = await sendMessage({ type: 'DOWNLOAD_JOB_RESUME', jobId: applyResumeJobId });
+    const fileName = applyResumeFileName?.textContent?.trim() || undefined;
+    const res = await sendMessage({
+      type: 'DOWNLOAD_JOB_RESUME',
+      jobId: applyResumeJobId,
+      fileName,
+    });
     if (!res?.ok) alert(res?.error || 'Failed to download résumé.');
   } catch (err) {
     alert(err?.message || 'Failed to download résumé.');
