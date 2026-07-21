@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import { accountInfoCollection } from "../db/mongo.js";
 import { updateAccountInfoById } from "../services/accountInfoStore.js";
+import { findAccountForDelete, wipeAccountData } from "../services/deleteAccountService.js";
 
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -106,5 +107,73 @@ export async function changePassword(req, res) {
 	} catch (err) {
 		console.error("POST /api/auth/change-password error", err);
 		return res.status(500).json({ success: false, message: err.message });
+	}
+}
+
+/**
+ * POST /api/auth/delete-account
+ * Body: { name, password, confirmName }
+ * Permanently deletes the account and all related user data.
+ */
+export async function deleteAccount(req, res) {
+	try {
+		if (!accountInfoCollection) {
+			return res.status(503).json({ success: false, message: "Database not ready" });
+		}
+		const body = req.body || {};
+		const name = String(body.name ?? "").trim();
+		const password = String(body.password ?? "");
+		const confirmName = String(body.confirmName ?? "").trim();
+
+		if (!name || !password) {
+			return res.status(400).json({
+				success: false,
+				message: "Name and password are required",
+			});
+		}
+		if (!confirmName || confirmName !== name) {
+			return res.status(400).json({
+				success: false,
+				message: "Type your account name exactly to confirm deletion",
+			});
+		}
+
+		const user = await findAccountForDelete(name);
+		if (!user) {
+			return res.status(404).json({ success: false, message: "Account not found" });
+		}
+		// Require exact canonical name match for the confirm field (already checked),
+		// but resolve account case-insensitively for lookup.
+		if (String(user.name) !== name) {
+			return res.status(400).json({
+				success: false,
+				message: `Type your account name exactly as "${user.name}"`,
+			});
+		}
+
+		let valid = false;
+		if (!user.password) {
+			valid = password === "12345678";
+		} else {
+			valid = await bcrypt.compare(password, user.password);
+		}
+		if (!valid) {
+			return res.status(401).json({ success: false, message: "Password is incorrect" });
+		}
+
+		const summary = await wipeAccountData({ name: user.name, accountId: user._id });
+		console.log("[auth/delete-account] wiped", user.name, summary);
+
+		return res.json({
+			success: true,
+			message: "Account and all related data deleted",
+			summary,
+		});
+	} catch (err) {
+		console.error("POST /api/auth/delete-account error", err);
+		return res.status(500).json({
+			success: false,
+			message: err.message || "Failed to delete account",
+		});
 	}
 }

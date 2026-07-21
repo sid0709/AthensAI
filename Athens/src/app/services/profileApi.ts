@@ -321,4 +321,22 @@ export async function changePassword(
   return { success: Boolean(data?.success), message: data?.message };
 }
 
+export async function deleteAccount(
+  name: string,
+  password: string,
+  confirmName: string,
+): Promise<{ success: boolean; message?: string }> {
+  const url = `${API_BASE.replace(/\/$/, "")}/auth/delete-account`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, password, confirmName }),
+  });
+  const data = (await parseJson(res)) as { success?: boolean; message?: string } | null;
+  return {
+    success: Boolean(data?.success),
+    message: data?.message || (res.ok ? undefined : "Could not delete account"),
+  };
+}
+
 export { emptyProfile };
