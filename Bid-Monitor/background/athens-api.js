@@ -309,6 +309,41 @@ const AthensApi = (() => {
     return `${base}/bid-results/resumes.zip?${params}`;
   }
 
+  /**
+   * Fetch résumé zip as a Blob via POST (avoids long GET query strings that
+   * break chrome.downloads on Windows). Returns { blob, fileName }.
+   */
+  async function fetchResumesZip(applierName, jobIds) {
+    const settings = await getSettings();
+    const base = settings.apiUrl.replace(/\/$/, '');
+    const url = `${base}/bid-results/resumes.zip`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        applierName,
+        jobIds: Array.isArray(jobIds) ? jobIds.map(String).filter(Boolean) : [],
+      }),
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      let message = `Résumé zip failed (${response.status})`;
+      try {
+        const data = await response.json();
+        if (data?.error) message = data.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const matched = /filename="([^"]+)"/i.exec(disposition);
+    const safeApplier = String(applierName).replace(/[^\w.\-()+ ]+/g, '_').trim() || 'resumes';
+    const fileName = matched?.[1] || `${safeApplier}-bid-resumes.zip`;
+    return { blob, fileName };
+  }
+
   async function saveBidFlags(applierName, { jobId, flags, summary }) {
     return fetchJson('/bid-results/flags', {
       method: 'POST',
@@ -495,6 +530,7 @@ const AthensApi = (() => {
     markBidFixed,
     saveResumeAudit,
     getResumesZipUrl,
+    fetchResumesZip,
     startBid,
     uploadRecording,
     completeBid,

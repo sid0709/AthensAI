@@ -96,6 +96,14 @@ function TicketCard({
         {result.recording ? <Film className="w-3 h-3 bm-ticket-rec" /> : null}
       </div>
       <div className="bm-ticket-title">{result.job.title}</div>
+      {result.resumeOriginalName &&
+      (result.status === "submitted" ||
+        result.status === "reviewed" ||
+        result.status === "rejected") ? (
+        <div className="bm-ticket-resume" title={result.resumeOriginalName}>
+          {result.resumeOriginalName}
+        </div>
+      ) : null}
       {(result.resubmitCount ?? 0) > 0 ||
       result.resumeMismatch ||
       result.resumeStackMatch === "mismatch" ||
@@ -293,6 +301,14 @@ function ListBoard({
                     <div className="bm-list-sub">
                       {r.job.company} · {r.status === "pending" ? "Bid ready" : r.bidder.name} · {r.job.source}
                     </div>
+                    {r.resumeOriginalName &&
+                    (r.status === "submitted" ||
+                      r.status === "reviewed" ||
+                      r.status === "rejected") ? (
+                      <div className="bm-list-resume" title={r.resumeOriginalName}>
+                        Uploaded: {r.resumeOriginalName}
+                      </div>
+                    ) : null}
                   </div>
                   {!editable ? <StatusPill status={r.status} /> : null}
                   <span className="bm-list-dur">{formatDuration(r.durationSec)}</span>

@@ -1,6 +1,8 @@
-import PizZip from "pizzip";
-import { jobsCollection, getVendorTasksCollection } from "../db/mongo.js";
+import { PassThrough } from "node:stream";
+import { finished } from "node:stream/promises";
+import { ZipArchive } from "archiver";
 import { ObjectId } from "mongodb";
+import { jobsCollection, getVendorTasksCollection } from "../db/mongo.js";
 import { buildCanonicalResumeStem } from "../lib/canonicalResumeName.js";
 import { listBidQueueJobs } from "./jobBidStatusService.js";
 import { resolveAgentJobDraftPdf } from "./agentResumeGenService.js";
@@ -46,8 +48,32 @@ async function resolveJobMeta(jobId, applierName) {
 }
 
 /**
+ * Build a standard ZIP buffer via archiver (more reliable on Windows Explorer
+ * than PizZip nested paths). Flat entries only: `{stem}.pdf` — nested
+ * `stem/stem.pdf` paths exceed Windows MAX_PATH and show as "invalid zip".
+ */
+async function archiveToBuffer(appendEntries) {
+	const archive = new ZipArchive({ zlib: { level: 6 } });
+	const pass = new PassThrough();
+	const chunks = [];
+	pass.on("data", (chunk) => chunks.push(chunk));
+
+	let archiveError = null;
+	archive.on("error", (err) => {
+		archiveError = err;
+	});
+
+	archive.pipe(pass);
+	await appendEntries(archive);
+	await archive.finalize();
+	await finished(pass);
+	if (archiveError) throw archiveError;
+	return Buffer.concat(chunks);
+}
+
+/**
  * Build a zip of generated résumés for Bid Ready jobs.
- * Folder stem === file stem (canonical naming). No size/count limits.
+ * Flat canonical filenames (no nested folders) for Windows compatibility.
  */
 export async function buildBidResumesZip({ applierName, jobIds }) {
 	const name = String(applierName || "").trim();
@@ -62,8 +88,7 @@ export async function buildBidResumesZip({ applierName, jobIds }) {
 		return { ok: false, status: 404, error: "No Bid Ready jobs to zip." };
 	}
 
-	const zip = new PizZip();
-	let added = 0;
+	const entries = [];
 	const usedStems = new Set();
 
 	for (const jobId of ids) {
@@ -73,16 +98,15 @@ export async function buildBidResumesZip({ applierName, jobIds }) {
 		const meta = await resolveJobMeta(jobId, name);
 		let stem = buildCanonicalResumeStem(meta.company, meta.title, name, jobId);
 		if (usedStems.has(stem)) {
-			stem = `${stem}-${added + 1}`;
+			stem = `${stem}-${entries.length + 1}`;
 		}
 		usedStems.add(stem);
 
-		const entryName = `${stem}/${stem}.pdf`;
-		zip.file(entryName, draft.buffer);
-		added += 1;
+		// Flat entry — Windows Explorer rejects long nested stem/stem.pdf paths.
+		entries.push({ name: `${stem}.pdf`, buffer: draft.buffer });
 	}
 
-	if (added === 0) {
+	if (entries.length === 0) {
 		return {
 			ok: false,
 			status: 404,
@@ -90,12 +114,17 @@ export async function buildBidResumesZip({ applierName, jobIds }) {
 		};
 	}
 
-	const buffer = zip.generate({ type: "nodebuffer", compression: "DEFLATE" });
+	const buffer = await archiveToBuffer(async (archive) => {
+		for (const entry of entries) {
+			archive.append(entry.buffer, { name: entry.name });
+		}
+	});
+
 	const safeApplier = name.replace(/[^\w.\-()+ ]+/g, "_").trim() || "resumes";
 	return {
 		ok: true,
 		buffer,
 		fileName: `${safeApplier}-bid-resumes.zip`,
-		count: added,
+		count: entries.length,
 	};
 }

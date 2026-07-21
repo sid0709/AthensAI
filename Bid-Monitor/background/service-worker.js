@@ -259,6 +259,40 @@ function sanitizeFileName(name) {
   return (name || 'bidder').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
 }
 
+/** Windows-safe download basename — keeps spaces / dashes for canonical names. */
+function sanitizeResumeDownloadName(name) {
+  let stem = String(name || 'resume')
+    .normalize('NFC')
+    .replace(/\.pdf$/i, '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[\/\\:\*\?"<>\|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '');
+  if (!stem) stem = 'resume';
+  if (stem.length > 180) stem = stem.slice(0, 180).replace(/[. ]+$/g, '') || 'resume';
+  return stem;
+}
+
+async function downloadBlobAsFile(blob, filename, { saveAs = false } = {}) {
+  const url = URL.createObjectURL(blob);
+  try {
+    await chrome.downloads.download({
+      url,
+      filename,
+      saveAs,
+    });
+  } finally {
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* ignore */
+      }
+    }, 60_000);
+  }
+}
+
 function videoExtension(mimeType, videoFormat) {
   if (mimeType) return VideoFormat.extensionForMimeType(mimeType);
   return videoFormat === 'mp4' ? 'mp4' : 'webm';
@@ -2322,22 +2356,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({ ok: false, error: 'Missing applier or job for résumé.' });
             break;
           }
-          const { blob, fileName } = await AthensApi.fetchResumePdf(applierName, jobId);
-          const buffer = await blob.arrayBuffer();
-          const bytes = new Uint8Array(buffer);
-          let binary = '';
-          const chunk = 0x8000;
-          for (let i = 0; i < bytes.length; i += chunk) {
-            binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-          }
-          const dataUrl = `data:application/pdf;base64,${btoa(binary)}`;
-          const safeName = sanitizeFileName(fileName).replace(/\.pdf$/i, '') || 'resume';
-          await chrome.downloads.download({
-            url: dataUrl,
-            filename: `bid-monitor/${safeName}.pdf`,
-            saveAs: true,
-          });
-          sendResponse({ ok: true, fileName });
+          const preferredName = String(message.fileName || '').trim();
+          const { blob, fileName: headerName } = await AthensApi.fetchResumePdf(
+            applierName,
+            jobId,
+          );
+          const rawName = preferredName || headerName || `${applierName}.pdf`;
+          const safeStem = sanitizeResumeDownloadName(rawName);
+          await downloadBlobAsFile(blob, `bid-monitor/${safeStem}.pdf`, { saveAs: true });
+          sendResponse({ ok: true, fileName: `${safeStem}.pdf` });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Failed to download résumé.' });
         }
@@ -3161,12 +3188,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             break;
           }
           const jobIds = Array.isArray(message.jobIds) ? message.jobIds : [];
-          const url = await AthensApi.getResumesZipUrl(applierName, jobIds);
-          await chrome.downloads.download({
-            url,
-            filename: `bid-monitor/resumes/${applierName.replace(/[^\w.\-()+ ]+/g, '_')}-bid-resumes.zip`,
-          });
-          sendResponse({ ok: true });
+          const { blob, fileName } = await AthensApi.fetchResumesZip(applierName, jobIds);
+          const safeZip = sanitizeResumeDownloadName(fileName.replace(/\.zip$/i, '')) || 'bid-resumes';
+          await downloadBlobAsFile(blob, `bid-monitor/resumes/${safeZip}.zip`);
+          sendResponse({ ok: true, fileName: `${safeZip}.zip` });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || String(err) });
         }
