@@ -74,9 +74,11 @@ export async function createJob(req, res) {
 		if (!job) return res.status(400).json({ error: 'Missing job in request body' });
 
 		// Requirement 2: if title is empty(""), not create.
-		if (!job.title) {
+		const title = typeof job.title === 'string' ? job.title.trim() : '';
+		if (!title) {
 			return res.status(400).json({ error: 'Job title cannot be empty' });
 		}
+		job.title = title;
 
 		// Check if the job is blocked by any rule
 		const blockingRule = await isJobBlocked(job);
@@ -118,7 +120,31 @@ export async function createJob(req, res) {
 			}
 		}
 
+		// Same company + title + description → treat as duplicate (even if applyLink differs).
+		const companyName = typeof job.company?.name === 'string' ? job.company.name.trim() : '';
+		const description = typeof job.description === 'string' ? job.description.trim() : '';
+		if (companyName && description) {
+			const existingByContent = await jobsCollection.findOne({
+				'company.name': companyName,
+				title,
+				description,
+			});
+			if (existingByContent) {
+				return res.status(200).json({
+					success: false,
+					created: false,
+					reason: 'Job with this company, title, and description already exists',
+				});
+			}
+		}
+
 		stripScraperOnlyJobFields(job);
+
+		// Persist trimmed content fields so future content-dedupe lookups stay consistent.
+		job.description = description;
+		if (job.company && typeof job.company === 'object') {
+			job.company.name = companyName;
+		}
 
 		job._createdAt = createdAt;
 		job.postedAt = postedAt;
