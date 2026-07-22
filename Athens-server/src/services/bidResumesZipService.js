@@ -71,6 +71,23 @@ async function archiveToBuffer(appendEntries) {
 	return Buffer.concat(chunks);
 }
 
+/** Run async work over items with a fixed concurrency limit. */
+async function mapPool(items, concurrency, worker) {
+	const results = new Array(items.length);
+	let next = 0;
+	const limit = Math.max(1, concurrency);
+
+	async function run() {
+		while (next < items.length) {
+			const index = next++;
+			results[index] = await worker(items[index], index);
+		}
+	}
+
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => run()));
+	return results;
+}
+
 /**
  * Build a zip of generated résumés for Bid Ready jobs.
  * Flat canonical filenames (no nested folders) for Windows compatibility.
@@ -88,22 +105,31 @@ export async function buildBidResumesZip({ applierName, jobIds }) {
 		return { ok: false, status: 404, error: "No Bid Ready jobs to zip." };
 	}
 
+	const resolved = await mapPool(ids, 4, async (jobId) => {
+		const draft = await resolveAgentJobDraftPdf({ applierName: name, jobId });
+		if (!draft?.buffer?.length) return null;
+		const meta = await resolveJobMeta(jobId, name);
+		return { jobId, buffer: draft.buffer, meta };
+	});
+
 	const entries = [];
 	const usedStems = new Set();
 
-	for (const jobId of ids) {
-		const draft = await resolveAgentJobDraftPdf({ applierName: name, jobId });
-		if (!draft?.buffer?.length) continue;
-
-		const meta = await resolveJobMeta(jobId, name);
-		let stem = buildCanonicalResumeStem(meta.company, meta.title, name, jobId);
+	for (const item of resolved) {
+		if (!item) continue;
+		let stem = buildCanonicalResumeStem(
+			item.meta.company,
+			item.meta.title,
+			name,
+			item.jobId,
+		);
 		if (usedStems.has(stem)) {
 			stem = `${stem}-${entries.length + 1}`;
 		}
 		usedStems.add(stem);
 
 		// Flat entry — Windows Explorer rejects long nested stem/stem.pdf paths.
-		entries.push({ name: `${stem}.pdf`, buffer: draft.buffer });
+		entries.push({ name: `${stem}.pdf`, buffer: item.buffer });
 	}
 
 	if (entries.length === 0) {

@@ -43,6 +43,8 @@
   function isFileValue(value) {
     if (!value || typeof value !== 'object') return false;
     if (value instanceof File) return true;
+    // Require a real Blob so duck-typed lookalikes cannot enter FormData's Blob overload.
+    if (!(value instanceof Blob)) return false;
     return (
       typeof value.name === 'string' &&
       typeof value.size === 'number' &&
@@ -220,7 +222,11 @@
           emitAuditForFile(renamed, 'formdata');
           return method.call(this, name, renamed, renamed.name);
         }
-        return method.call(this, name, value, fileName);
+        // Preserve arg count: 3-arg FormData.append/set requires param 2 to be a Blob.
+        if (arguments.length >= 3) {
+          return method.call(this, name, value, fileName);
+        }
+        return method.call(this, name, value);
       };
     }
 

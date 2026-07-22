@@ -2357,13 +2357,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             break;
           }
           const preferredName = String(message.fileName || '').trim();
-          const { blob, fileName: headerName } = await AthensApi.fetchResumePdf(
-            applierName,
-            jobId,
-          );
-          const rawName = preferredName || headerName || `${applierName}.pdf`;
-          const safeStem = sanitizeResumeDownloadName(rawName);
-          await downloadBlobAsFile(blob, `bid-monitor/${safeStem}.pdf`, { saveAs: true });
+          const url = await AthensApi.getResumePdfUrl(applierName, jobId);
+          const safeStem = sanitizeResumeDownloadName(preferredName || applierName);
+          await chrome.downloads.download({
+            url,
+            filename: `bid-monitor/${safeStem}.pdf`,
+            saveAs: false,
+          });
           sendResponse({ ok: true, fileName: `${safeStem}.pdf` });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Failed to download résumé.' });

@@ -15,6 +15,8 @@ type JobListStickyBarProps = {
   onRemove: () => void;
   onMarkBidReady?: () => void;
   bidReadyPending?: boolean;
+  onMoveToNew?: () => void;
+  moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
   onStopGenerateResumes?: () => void;
   resumeGenerating?: boolean;
@@ -40,6 +42,8 @@ export function JobListStickyBar({
   onRemove,
   onMarkBidReady,
   bidReadyPending,
+  onMoveToNew,
+  moveToNewPending,
   onGenerateResumes,
   onStopGenerateResumes,
   resumeGenerating,
@@ -49,7 +53,7 @@ export function JobListStickyBar({
   total,
   onPageChange,
   onPageSizeChange,
-  pageSizeOptions = [10, 25, 50, 100],
+  pageSizeOptions = [10, 25, 50, 100, 250, 500],
   showGrid,
   onToggleGrid,
   className,
@@ -67,6 +71,8 @@ export function JobListStickyBar({
           onRemove={onRemove}
           onMarkBidReady={onMarkBidReady}
           bidReadyPending={bidReadyPending}
+          onMoveToNew={onMoveToNew}
+          moveToNewPending={moveToNewPending}
           onGenerateResumes={onGenerateResumes}
           onStopGenerateResumes={onStopGenerateResumes}
           resumeGenerating={resumeGenerating}
