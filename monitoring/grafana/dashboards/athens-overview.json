@@ -1,0 +1,18 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {"type":"timeseries","title":"CPU utilization","gridPos":{"h":8,"w":12,"x":0,"y":0},"targets":[{"expr":"athens:node_cpu_utilization:ratio * 100","legendFormat":"CPU %"}]},
+    {"type":"timeseries","title":"Memory utilization","gridPos":{"h":8,"w":12,"x":12,"y":0},"targets":[{"expr":"athens:node_memory_utilization:ratio * 100","legendFormat":"Memory %"}]},
+    {"type":"timeseries","title":"Root filesystem utilization","gridPos":{"h":8,"w":12,"x":0,"y":8},"targets":[{"expr":"athens:root_filesystem_utilization:ratio * 100","legendFormat":"Disk %"}]},
+    {"type":"timeseries","title":"Public probe success","gridPos":{"h":8,"w":12,"x":12,"y":8},"targets":[{"expr":"probe_success{job=\"public-http\"}","legendFormat":"{{instance}}"}]}
+  ],
+  "schemaVersion": 39,
+  "tags": ["athensai"],
+  "templating": {"list": []},
+  "time": {"from":"now-24h","to":"now"},
+  "title":"AthensAI Overview",
+  "uid":"athens-overview",
+  "version":1
+}

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Athens dashboards
+    orgId: 1
+    folder: AthensAI
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

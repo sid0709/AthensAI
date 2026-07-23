@@ -12,6 +12,8 @@
 # Optional secrets / variables:
 #   VPS_SSH_PORT        — default 22
 #   DOCKER_IMAGE        — default: omnimuh730/nextoffer
+#   SLACK_WEBHOOK_URL   — optional Slack incoming-webhook URL for monitoring alerts
+#   GRAFANA_ADMIN_PASSWORD — optional; otherwise generated and persisted on the VPS
 #   PUBLIC_ORIGIN       — public web origin baked into extension zips
 #                         (e.g. https://sid.example.com or http://IP:9030).
 #                         Default: http://$VPS_HOST:9030 (container nginx port map).
@@ -192,23 +194,183 @@ jobs:
           target: /opt/nextoffer/
           strip_components: 1
 
-      - name: Pull image and recreate container
-        id: deploy
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Sync monitoring configuration to VPS
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
-          script_stop: true
+          source: monitoring
+          target: /opt/athens-monitoring/
+          strip_components: 1
+
+      - name: Pull image and recreate container
+        id: deploy
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          envs: SLACK_WEBHOOK_URL,GRAFANA_ADMIN_PASSWORD
           script: |
-            set -euo pipefail
-            if [[ -f /opt/nextoffer/deploy-remote.sh ]]; then
-              mv -f /opt/nextoffer/deploy-remote.sh /opt/nextoffer/deploy.sh
-            elif [[ -f /opt/nextoffer/docker/deploy-remote.sh ]]; then
-              mv -f /opt/nextoffer/docker/deploy-remote.sh /opt/nextoffer/deploy.sh
+            set -eu
+            echo "Preparing Athens monitoring and deployment"
+            as_root() {
+              if [ "$(id -u)" -eq 0 ]; then
+                "$@"
+              elif command -v sudo >/dev/null 2>&1; then
+                sudo "$@"
+              else
+                echo "Root or passwordless sudo is required for VPS provisioning." >&2
+                exit 1
+              fi
+            }
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "Docker is not installed; installing Docker Engine and Compose."
+              if command -v apt-get >/dev/null 2>&1; then
+                as_root apt-get update
+                if ! as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-v2; then
+                  as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-plugin
+                fi
+              elif command -v dnf >/dev/null 2>&1; then
+                as_root dnf install -y docker docker-compose-plugin
+              else
+                echo "Unsupported VPS package manager; install Docker Engine manually." >&2
+                exit 1
+              fi
+            fi
+            if command -v systemctl >/dev/null 2>&1; then
+              as_root systemctl enable --now docker || as_root systemctl start docker
+            fi
+            if ! docker info >/dev/null 2>&1; then
+              echo "Docker is installed but unavailable to the SSH user." >&2
+              docker --version >&2 || true
+              exit 1
+            fi
+            echo "Docker prerequisite is ready: $(docker --version)"
+            if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+              echo "Docker Compose is not installed; installing the Compose plugin."
+              if command -v apt-get >/dev/null 2>&1; then
+                as_root apt-get update
+                if ! as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2; then
+                  as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
+                fi
+              elif command -v dnf >/dev/null 2>&1; then
+                as_root dnf install -y docker-compose-plugin
+              else
+                echo "Unsupported VPS package manager; install Docker Compose manually." >&2
+                exit 1
+              fi
+            fi
+            deploy_source=""
+            for candidate in \
+              /opt/nextoffer/deploy-remote.sh \
+              /opt/nextoffer/docker/deploy-remote.sh \
+              /opt/nextoffer/deploy.sh; do
+              if [ -f "$candidate" ]; then
+                deploy_source="$candidate"
+                break
+              fi
+            done
+            if [ -z "$deploy_source" ]; then
+              echo "Could not find the synced deploy script under /opt/nextoffer." >&2
+              find /opt/nextoffer -maxdepth 3 -type f -print 2>/dev/null || true
+              exit 1
+            fi
+            if [ "$deploy_source" != /opt/nextoffer/deploy.sh ]; then
+              cp "$deploy_source" /opt/nextoffer/deploy.sh
             fi
             chmod 755 /opt/nextoffer/deploy.sh
+            echo "Deploy script staged from ${deploy_source}"
+            echo "Preparing monitoring directories"
+            as_root install -d -m 750 /opt/athens-monitoring/alertmanager \
+              /opt/athens-monitoring/data/prometheus \
+              /opt/athens-monitoring/data/grafana \
+              /opt/athens-monitoring/data/alertmanager
+            echo "Monitoring directories are ready"
+            if [ "$(id -u)" -eq 0 ]; then
+              chown 65534:65534 /opt/athens-monitoring/data/prometheus /opt/athens-monitoring/data/alertmanager
+              chown 472:472 /opt/athens-monitoring/data/grafana
+            elif command -v sudo >/dev/null 2>&1; then
+              sudo chown 65534:65534 /opt/athens-monitoring/data/prometheus /opt/athens-monitoring/data/alertmanager
+              sudo chown 472:472 /opt/athens-monitoring/data/grafana
+            else
+              echo "Cannot set monitoring data ownership: root or sudo is required." >&2
+              exit 1
+            fi
+            echo "Monitoring data ownership is ready"
+            grafana_password="${GRAFANA_ADMIN_PASSWORD:-}"
+            if [ -z "$grafana_password" ] && [ -f /opt/athens-monitoring/.env ]; then
+              grafana_password="$(awk -F= '$1 == "GRAFANA_ADMIN_PASSWORD" {print substr($0, index($0, "=") + 1)}' /opt/athens-monitoring/.env)"
+            fi
+            grafana_password="${grafana_password:-$(openssl rand -hex 24)}"
+            alertmanager_config_file=alertmanager.yml
+            if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+              alertmanager_config_file=alertmanager.slack.yml
+            fi
+            umask 077
+            monitoring_env_tmp="$(mktemp)"
+            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\nALERTMANAGER_CONFIG_FILE=%s\n' \
+              "$grafana_password" "$alertmanager_config_file" > "$monitoring_env_tmp"
+            as_root install -o "$(id -u)" -g "$(id -g)" -m 600 \
+              "$monitoring_env_tmp" /opt/athens-monitoring/.env
+            rm -f "$monitoring_env_tmp"
+            echo "Monitoring environment file is installed"
+            if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+              alertmanager_tmp="$(mktemp)"
+              printf '%s\n' \
+                'global:' \
+                '  resolve_timeout: 5m' \
+                '' \
+                'route:' \
+                '  receiver: slack' \
+                '  group_by: [alertname, component]' \
+                '  group_wait: 30s' \
+                '  group_interval: 5m' \
+                '  repeat_interval: 4h' \
+                '' \
+                'receivers:' \
+                '  - name: slack' \
+                '    slack_configs:' > "$alertmanager_tmp"
+              printf "      - api_url: '%s'\n" "$SLACK_WEBHOOK_URL" >> "$alertmanager_tmp"
+              printf '%s\n' \
+                '        channel: "#athens-alerts"' \
+                '        send_resolved: true' >> "$alertmanager_tmp"
+              as_root install -m 600 "$alertmanager_tmp" \
+                /opt/athens-monitoring/alertmanager/alertmanager.slack.yml
+              rm -f "$alertmanager_tmp"
+            else
+              echo "SLACK_WEBHOOK_URL is not configured; monitoring alerts will not be delivered to Slack."
+            fi
+            echo "Alertmanager configuration is installed"
+            if docker compose version >/dev/null 2>&1; then
+              compose_cmd="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              compose_cmd="docker-compose"
+            else
+              echo "Docker Compose is not installed on the VPS; install the Docker Compose plugin or docker-compose." >&2
+              docker --version >&2 || true
+              exit 1
+            fi
+            export GRAFANA_ADMIN_USER=admin
+            export GRAFANA_ADMIN_PASSWORD="$grafana_password"
+            export GRAFANA_ROOT_URL=http://127.0.0.1:3000
+            export ALERTMANAGER_CONFIG_FILE="$alertmanager_config_file"
+            echo "Using ${compose_cmd} for Athens monitoring"
+            echo "Validating monitoring Compose configuration"
+            ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml config >/dev/null
+            echo "Pulling monitoring images"
+            ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml pull
+            echo "Starting monitoring services"
+            ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml up -d
+            echo "Reloading Prometheus recording and alert rules"
+            ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml restart prometheus
+            echo "Starting Athens application deploy"
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 
       - name: Summary
@@ -223,6 +385,7 @@ jobs:
             echo "| Image | \`${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}\` |"
             echo "| Commit | \`${{ needs.build-and-push.outputs.sha_short }}\` |"
             echo ""
-            echo "Health: \`curl -sS http://127.0.0.1:9030/avalon/health\` on the VPS."
+            echo "Health: Athens readiness, AI BFF, Avalon, and public status checks run on the VPS."
+            echo "Monitoring: Prometheus/Grafana/Alertmanager are maintained by the same SSH deploy."
             echo "Rollback: \`ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '/opt/nextoffer/deploy.sh sha-<old>'\`"
           } >> "$GITHUB_STEP_SUMMARY"

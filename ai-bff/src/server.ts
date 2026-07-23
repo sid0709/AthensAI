@@ -5,6 +5,7 @@ import { loadConfigFromEnv, serverConfig } from './config.js';
 import { createAiKit } from './kit.js';
 import { errorMiddleware } from './middleware/error.js';
 import { createRoutes } from './routes/index.js';
+import { metricsMiddleware, renderMetrics } from './metrics.js';
 
 export function createAiBffApp(config = loadConfigFromEnv()) {
   const kit = createAiKit(config);
@@ -15,6 +16,10 @@ export function createAiBffApp(config = loadConfigFromEnv()) {
   app.use(cors({ origin: serverConfig.corsOrigin }));
   app.use(express.json({ limit: '20mb' }));
   app.use(requestLogger('api'));
+  app.use(metricsMiddleware);
+  app.get('/metrics', (_req, res) => {
+    res.type('text/plain; version=0.0.4').send(renderMetrics());
+  });
   app.use(createRoutes(kit));
   app.use(errorMiddleware);
 
