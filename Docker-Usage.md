@@ -148,7 +148,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ```bash
 # Relay HTTP path through the public host
-curl -sS https://sid.remotepairnet.net/avalon/health
+curl -sS https://sid.remotepair.net/avalon/health
 
 # Same check hitting the container directly (bypasses host nginx)
 curl -sS http://127.0.0.1:9030/avalon/health

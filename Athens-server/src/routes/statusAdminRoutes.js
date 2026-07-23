@@ -2,7 +2,7 @@ import { ObjectId } from 'mongodb';
 import { Router } from 'express';
 import { requireAdmin } from '../middleware/requireAdmin.js';
 import { getMongoDb } from '../db/mongo.js';
-import { getComponentDefinitions } from '../services/monitoring/statusStore.js';
+import { getComponentDefinitions, STATUS_SOURCE } from '../services/monitoring/statusStore.js';
 
 const router = Router();
 const allowedStates = new Set(['detected', 'investigating', 'identified', 'monitoring', 'resolved']);
@@ -22,7 +22,7 @@ router.post('/status/incidents', requireAdmin, async (req, res, next) => {
 		const db = getMongoDb();
 		if (!db) return res.status(503).json({ error: 'Database not ready' });
 		const now = new Date();
-		const incident = { component, name: definition.name, status: allowedStates.has(req.body?.status) ? req.body.status : 'investigating', severity: text(req.body?.severity, 30) || 'warning', title, description, startedAt: now, resolvedAt: null, updates: [{ status: 'investigating', message: description, createdAt: now }] };
+		const incident = { source: STATUS_SOURCE, component, name: definition.name, status: allowedStates.has(req.body?.status) ? req.body.status : 'investigating', severity: text(req.body?.severity, 30) || 'warning', title, description, startedAt: now, resolvedAt: null, updates: [{ status: 'investigating', message: description, createdAt: now }] };
 		const result = await db.collection('monitor_incidents').insertOne(incident);
 		res.status(201).json({ ok: true, incident: { ...incident, id: String(result.insertedId) } });
 	} catch (error) { next(error); }
@@ -40,7 +40,7 @@ router.patch('/status/incidents/:id', requireAdmin, async (req, res, next) => {
 		if (status) set.status = status;
 		if (status === 'resolved') set.resolvedAt = new Date();
 		const push = status || message ? { updates: { status: status || undefined, message: message || undefined, createdAt: new Date() } } : null;
-		const result = await db.collection('monitor_incidents').findOneAndUpdate({ _id: new ObjectId(req.params.id) }, { $set: set, ...(push ? { $push: push } : {}) }, { returnDocument: 'after', projection: { _id: 0, internalReason: 0 } });
+		const result = await db.collection('monitor_incidents').findOneAndUpdate({ _id: new ObjectId(req.params.id), source: STATUS_SOURCE }, { $set: set, ...(push ? { $push: push } : {}) }, { returnDocument: 'after', projection: { _id: 0, source: 0, internalReason: 0 } });
 		if (!result) return res.status(404).json({ error: 'Incident not found' });
 		res.json({ ok: true, incident: result });
 	} catch (error) { next(error); }
