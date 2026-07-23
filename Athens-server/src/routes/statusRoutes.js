@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { overallStatus, readCurrentStatus, readDailyRollups, readIncidents, readLiveMetrics } from '../services/monitoring/statusStore.js';
+import { overallStatus, readCurrentStatus, readDailyRollups, readIncidents, readLiveMetrics, readTodayTimelines } from '../services/monitoring/statusStore.js';
 
 const router = Router();
 router.get('/status/current', async (_req, res, next) => {
@@ -28,6 +28,13 @@ router.get('/status/live', async (req, res, next) => {
 		res.set('Cache-Control', 'no-store');
 		const current = points.at(-1) || null;
 		return res.json({ ok: true, minutes, updatedAt: current?.timestamp || null, current, points });
+	} catch (error) { return next(error); }
+});
+router.get('/status/today', async (_req, res, next) => {
+	try {
+		const timeline = await readTodayTimelines();
+		res.set('Cache-Control', 'no-store');
+		return res.json({ ok: true, ...timeline });
 	} catch (error) { return next(error); }
 });
 export default router;

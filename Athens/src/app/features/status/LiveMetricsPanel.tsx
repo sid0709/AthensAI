@@ -25,6 +25,13 @@ export type VpsAvailabilityPoint = {
   percent: number | null;
 };
 
+export type TodayHealthSegment = {
+  timestamp: string;
+  status: "operational" | "degraded" | "partial_outage" | "major_outage" | "maintenance" | "unknown";
+  availabilityPercent: number | null;
+  sampleCount: number;
+};
+
 type MetricKey = "cpuPercent" | "memoryPercent" | "diskPercent";
 
 const ranges: Array<{ value: LiveRange; label: string }> = [
@@ -96,12 +103,12 @@ function MetricChart({ metric, points }: { metric: (typeof metrics)[number]; poi
         <div className={`h-full rounded-full transition-[width] duration-500 ${health.bar}`} style={{ width: `${Math.min(Math.max(current ?? 0, 0), 100)}%` }} />
       </div>
 
-      <div className="mt-3 h-32" aria-label={`${metric.label} time-series chart`}>
+      <div className="mt-3 h-40 px-2 pb-2" aria-label={`${metric.label} time-series chart`}>
         {points.length === 0 ? (
-          <div className="mx-5 flex h-28 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-xs font-medium text-slate-500">Waiting for the first VPS sample</div>
+          <div className="mx-3 flex h-32 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-xs font-medium text-slate-500">Waiting for the first VPS sample</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: -28 }}>
+            <AreaChart data={points} margin={{ top: 8, right: 10, bottom: 8, left: 0 }}>
               <defs>
                 <linearGradient id={`fill-${metric.key}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="4%" stopColor={metric.color} stopOpacity={0.28} />
@@ -109,8 +116,8 @@ function MetricChart({ metric, points }: { metric: (typeof metrics)[number]; poi
                 </linearGradient>
               </defs>
               <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 5" vertical={false} />
-              <XAxis dataKey="timestamp" minTickGap={40} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value: string) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} />
-              <YAxis domain={[0, 100]} ticks={[0, 50, 100]} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value: number) => `${value}%`} />
+              <XAxis dataKey="timestamp" height={28} minTickGap={44} tickMargin={8} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value: string) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} />
+              <YAxis width={42} domain={[0, 100]} ticks={[0, 50, 100]} tickMargin={8} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value: number) => `${value}%`} />
               <Tooltip contentStyle={{ borderRadius: 12, borderColor: "#cbd5e1", boxShadow: "0 12px 30px rgba(15,23,42,.12)", fontSize: 12 }} labelFormatter={(value) => new Date(String(value)).toLocaleString()} formatter={(value) => [`${Number(value).toFixed(1)}%`, metric.label]} />
               <Area connectNulls type="monotone" dataKey={metric.key} stroke={metric.color} fill={`url(#fill-${metric.key})`} strokeWidth={2.5} isAnimationActive={false} />
             </AreaChart>
@@ -130,6 +137,7 @@ export function LiveMetricsPanel({
   error,
   vpsStatus,
   availability,
+  todaySegments,
 }: {
   points: LiveMetricPoint[];
   range: LiveRange;
@@ -139,6 +147,7 @@ export function LiveMetricsPanel({
   error: string | null;
   vpsStatus: VpsStatus;
   availability: VpsAvailabilityPoint[];
+  todaySegments: TodayHealthSegment[];
 }) {
   const current = points.at(-1);
   const isFresh = Boolean(updatedAt) && Date.now() - new Date(updatedAt || 0).getTime() < 120000 && !error;
@@ -177,8 +186,21 @@ export function LiveMetricsPanel({
           </div>
         </div>
         <div className="border-t border-white/10 bg-black/10 px-6 py-5 sm:px-8">
-          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center"><div><p className="text-sm font-bold text-white">VPS availability</p><p className="mt-0.5 text-xs text-slate-400">Daily status over the last 90 days</p></div><div className="flex items-center gap-3 text-[11px] font-semibold text-slate-300"><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#58a6ff]" />Up</span><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#f85149]" />Down</span><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#d29922]" />Degraded</span></div></div>
-          <div className="mt-4 grid h-8 grid-cols-[repeat(90,minmax(2px,1fr))] gap-[2px]" aria-label="VPS 90-day availability">
+          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center"><div><p className="text-sm font-bold text-white">VPS availability</p><p className="mt-0.5 text-xs text-slate-400">Today in 15-minute intervals and daily over 90 days</p></div><div className="flex items-center gap-3 text-[11px] font-semibold text-slate-300"><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#58a6ff]" />Up</span><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#f85149]" />Down</span><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#d29922]" />Degraded</span></div></div>
+          <div className="mt-5 flex items-center justify-between text-xs font-bold text-slate-300"><span>Today</span><span className="font-medium text-slate-500">15-minute intervals · UTC</span></div>
+          <div className="mt-2 flex h-8 gap-[2px]" aria-label="VPS health today">
+            {(todaySegments.length ? todaySegments : [{ timestamp: "no-data", status: "unknown" as const, availabilityPercent: null, sampleCount: 0 }]).map((point) => {
+              const state = point.status === "operational" ? "up" : point.status === "degraded" || point.status === "maintenance" ? "degraded" : point.status === "unknown" ? "no_data" : "down";
+              const style = state === "up" ? { backgroundColor: "#58a6ff" } : state === "down" ? { backgroundColor: "#f85149", backgroundImage: "linear-gradient(135deg, transparent 35%, rgba(255,255,255,.5) 35%, rgba(255,255,255,.5) 48%, transparent 48%)" } : state === "degraded" ? { backgroundColor: "#d29922" } : { backgroundColor: "#30363d", backgroundImage: "repeating-linear-gradient(135deg, transparent 0, transparent 3px, #6e7681 3px, #6e7681 4px)" };
+              const time = point.timestamp === "no-data" ? "Today" : `${new Date(point.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+              const label = `${time}: ${state.replace("_", " ")}${point.availabilityPercent == null ? "" : `, ${point.availabilityPercent.toFixed(2)}% available`}`;
+              return <span key={point.timestamp} role="img" aria-label={label} title={label} className="min-w-[3px] flex-1 rounded-[2px]" style={style} />;
+            })}
+          </div>
+          <div className="mt-2 flex justify-between text-[10px] font-medium text-slate-500"><span>00:00 UTC</span><span>Now</span></div>
+
+          <div className="mt-5 flex items-center justify-between text-xs font-bold text-slate-300"><span>Last 90 days</span><span className="font-medium text-slate-500">One summary per day</span></div>
+          <div className="mt-2 grid h-8 grid-cols-[repeat(90,minmax(2px,1fr))] gap-[2px]" aria-label="VPS 90-day availability">
             {availability.map((point) => {
               const style = point.state === "up"
                 ? { backgroundColor: "#58a6ff" }

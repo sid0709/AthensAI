@@ -80,6 +80,66 @@ export async function readLiveMetrics(minutes = 60) {
 	return summarizeLiveSamples(docs);
 }
 
+const STATUS_PRIORITY = {
+	operational: 0,
+	unknown: 1,
+	maintenance: 2,
+	degraded: 3,
+	partial_outage: 4,
+	major_outage: 5,
+};
+
+function worstStatus(statuses = []) {
+	return statuses.reduce((worst, status) => (STATUS_PRIORITY[status] ?? 1) > (STATUS_PRIORITY[worst] ?? 1) ? status : worst, 'operational');
+}
+
+export function buildTodayTimelines(grouped, now = new Date(), bucketMinutes = 15) {
+	const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+	const bucketMs = bucketMinutes * 60 * 1000;
+	const slotCount = Math.floor((now.getTime() - start.getTime()) / bucketMs) + 1;
+	const bySlot = new Map(grouped.map((item) => [
+		`${item._id.component}:${new Date(item._id.timestamp).getTime()}`,
+		item,
+	]));
+	const components = COMPONENTS.map((component) => ({
+		component: component.id,
+		name: component.name,
+		segments: Array.from({ length: slotCount }, (_, index) => {
+			const timestamp = new Date(start.getTime() + index * bucketMs);
+			const item = bySlot.get(`${component.id}:${timestamp.getTime()}`);
+			return {
+				timestamp,
+				status: item ? worstStatus(item.statuses) : 'unknown',
+				availabilityPercent: item?.sampleCount ? (item.successCount / item.sampleCount) * 100 : null,
+				sampleCount: item?.sampleCount || 0,
+			};
+		}),
+	}));
+	return { startAt: start, endAt: now, bucketMinutes, components };
+}
+
+export async function readTodayTimelines(now = new Date(), bucketMinutes = 15) {
+	const samples = collection('monitor_samples');
+	const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+	if (!samples) return buildTodayTimelines([], now, bucketMinutes);
+	const grouped = await samples.aggregate([
+		{ $match: { source: STATUS_SOURCE, checkedAt: { $gte: start, $lte: now } } },
+		{ $project: {
+			component: 1,
+			status: 1,
+			ok: 1,
+			timestamp: { $dateTrunc: { date: '$checkedAt', unit: 'minute', binSize: bucketMinutes, timezone: 'UTC' } },
+		} },
+		{ $group: {
+			_id: { component: '$component', timestamp: '$timestamp' },
+			statuses: { $addToSet: '$status' },
+			sampleCount: { $sum: 1 },
+			successCount: { $sum: { $cond: ['$ok', 1, 0] } },
+		} },
+	]).toArray();
+	return buildTodayTimelines(grouped, now, bucketMinutes);
+}
+
 export async function readIncidents(limit = 20) {
 	const incidents = collection('monitor_incidents');
 	if (!incidents) return [];
