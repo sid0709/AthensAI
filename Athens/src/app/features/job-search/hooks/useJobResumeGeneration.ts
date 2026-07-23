@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
 import {
+  deleteJobsGeneratedResumes,
   fetchJobDescription,
   fetchJobsWithGeneratedResumes,
   generateJobResumeStream,
@@ -50,6 +51,7 @@ export function useJobResumeGeneration(jobs: Job[]) {
   const { applier } = useApplier();
   const [resumeStates, setResumeStates] = useState<Record<string, JobResumeGenerationState>>({});
   const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkRemoving, setBulkRemoving] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<JobResumeBulkProgress | null>(null);
   const inflightRef = useRef<Map<string, Promise<boolean | null>>>(new Map());
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -126,7 +128,7 @@ export function useJobResumeGeneration(jobs: Job[]) {
           const jd =
             cachedJd.length > CACHED_JD_MIN_CHARS
               ? cachedJd
-              : await fetchJobDescription(backendId, signal);
+              : await fetchJobDescription(backendId, signal, applier.name);
           if (!jd) throw new Error("No job description saved for this job");
           if (cachedJd.length > CACHED_JD_MIN_CHARS) {
             options?.onStepProgress?.(0.05);
@@ -305,12 +307,62 @@ export function useJobResumeGeneration(jobs: Job[]) {
     setBulkProgress(null);
   }, [bulkRunning]);
 
+  /** Remove generated résumés for selected jobs (jobs themselves are kept). */
+  const removeBulkResumes = useCallback(
+    async (selected: Job[]) => {
+      if (bulkRunning || bulkRemoving || selected.length === 0) return;
+      if (!applier?.name) {
+        toast.error("Select a profile before removing résumés");
+        return;
+      }
+
+      const withResumes = selected.filter((job) => resumeStatesRef.current[job.id]?.status === "done");
+      if (withResumes.length === 0) {
+        toast.info("None of the selected jobs have a generated résumé");
+        return;
+      }
+
+      const noun = withResumes.length === 1 ? "résumé" : "résumés";
+      if (
+        !confirm(
+          `Remove ${withResumes.length} generated ${noun} for the selected job${withResumes.length === 1 ? "" : "s"}? The jobs stay in your list.`,
+        )
+      ) {
+        return;
+      }
+
+      setBulkRemoving(true);
+      try {
+        await deleteJobsGeneratedResumes(
+          applier.name,
+          withResumes.map((job) => job.backendId || job.id),
+        );
+        const clearedUiIds = new Set(withResumes.map((job) => job.id));
+        setResumeStates((prev) => {
+          const next = { ...prev };
+          for (const jobId of clearedUiIds) delete next[jobId];
+          return next;
+        });
+        toast.success(
+          `Removed ${withResumes.length} generated ${withResumes.length === 1 ? "résumé" : "résumés"}`,
+        );
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to remove résumés");
+      } finally {
+        setBulkRemoving(false);
+      }
+    },
+    [applier, bulkRemoving, bulkRunning],
+  );
+
   return {
     resumeStates,
     generateForJob,
     generateBulk,
     cancelBulk,
+    removeBulkResumes,
     bulkRunning,
+    bulkRemoving,
     bulkProgress,
   };
 }

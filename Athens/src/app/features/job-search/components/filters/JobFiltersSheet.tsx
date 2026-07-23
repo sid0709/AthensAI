@@ -16,6 +16,7 @@ import {
   JOB_SENIORITIES,
   JOB_WORK_MODES,
 } from "../../../../data/jobs";
+import { JOB_TITLE_SCAN_ROLE_OPTIONS } from "../../../../data/jobTitleRoles";
 import { JobSourceTitles } from "../../../../data/jobs/pub";
 import type { JobSearchFilterState } from "../../../../hooks/useJobSearchFilters";
 import { clearAttributeFilters } from "../../../../hooks/useJobSearchFilters";
@@ -107,6 +108,17 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
 
           <Section title="Role attributes">
             <div className="grid grid-cols-1 gap-3">
+              <AthensMultiSelect
+                label="Title role (AI)"
+                values={filters.titleRoles}
+                onChange={(titleRoles) => patch({ titleRoles })}
+                placeholder="All title roles"
+                options={JOB_TITLE_SCAN_ROLE_OPTIONS.map((o) => ({
+                  value: o.value,
+                  label: o.label,
+                }))}
+                hint="From Analyze title — checkbox multi-select"
+              />
               <AthensMultiSelect
                 label="Seniority"
                 values={filters.seniority}

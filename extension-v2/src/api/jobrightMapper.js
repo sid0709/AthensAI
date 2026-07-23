@@ -93,6 +93,8 @@ export function mapJobrightItemToResultData(item) {
 		description: mapDescription(jobResult),
 		skills: mapSkills(jobResult),
 		companyLink: asString(companyResult.companyURL),
+		/** Marks job_market docs from extension-v2 (beta-only visibility). */
+		version: 'v2',
 	};
 
 	return { resultData, jobrightJobId };

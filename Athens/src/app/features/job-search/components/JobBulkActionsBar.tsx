@@ -1,5 +1,5 @@
 import React from "react";
-import { ClipboardList, Download, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
+import { ClipboardList, Download, FileX, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { Progress } from "../../../components/ui/progress";
@@ -20,7 +20,10 @@ type JobBulkActionsBarProps = {
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
   onStopGenerateResumes?: () => void;
+  onRemoveResumes?: () => void;
   resumeGenerating?: boolean;
+  resumeRemoving?: boolean;
+  hasSelectedResumes?: boolean;
   resumeProgress?: JobResumeBulkProgress;
   embedded?: boolean;
   className?: string;
@@ -40,7 +43,10 @@ export function JobBulkActionsBar({
   moveToNewPending = false,
   onGenerateResumes,
   onStopGenerateResumes,
+  onRemoveResumes,
   resumeGenerating = false,
+  resumeRemoving = false,
+  hasSelectedResumes = false,
   resumeProgress,
   embedded = false,
   className,
@@ -167,7 +173,7 @@ export function JobBulkActionsBar({
                 size="sm"
                 className="h-8 gap-1.5"
                 onClick={onGenerateResumes}
-                disabled={totalSelected === 0}
+                disabled={totalSelected === 0 || resumeRemoving}
                 title="Generate tailored résumés for the selected jobs (max 12 at a time)"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -175,6 +181,29 @@ export function JobBulkActionsBar({
                 <span className="sm:hidden">Generate</span>
               </Button>
             )
+          ) : null}
+          {onRemoveResumes ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onRemoveResumes}
+              disabled={
+                totalSelected === 0 ||
+                !hasSelectedResumes ||
+                resumeGenerating ||
+                resumeRemoving
+              }
+              title="Remove generated résumés for the selected jobs (jobs stay in the list)"
+            >
+              {resumeRemoving ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              ) : (
+                <FileX className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">Remove résumés</span>
+              <span className="sm:hidden">Résumés</span>
+            </Button>
           ) : null}
           <Button
             variant="outline"

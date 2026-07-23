@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { Job, JobStatus } from "../types/job";
 import { JOBS } from "../data/jobs";
+import { JOB_TITLE_SCAN_ROLES } from "../data/jobTitleRoles";
 
 export type JobSortKey =
   | "newest"
@@ -26,6 +27,11 @@ export type JobSearchFilterState = {
   workMode: string;
   /** Empty = all seniority levels */
   seniority: string[];
+  /**
+   * Empty = all AI title roles. Multi-select of titleScanned values
+   * (Software Engineer, DevOps, Data Engineer, AI engineer, Healthcare Engineer, Others).
+   */
+  titleRoles: string[];
   industry: string;
   postedFrom: string;
   postedTo: string;
@@ -47,6 +53,7 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
   location: "all",
   workMode: "all",
   seniority: [],
+  titleRoles: [],
   industry: "all",
   postedFrom: "",
   postedTo: "",
@@ -152,6 +159,7 @@ export function countAttributeFilters(filters: JobSearchFilterState): number {
   if (filters.location !== "all") n++;
   if (filters.workMode !== "all") n++;
   if (filters.seniority.length) n++;
+  // titleRoles uses its own toolbar control / chips — not the Filters sheet badge.
   if (filters.industry !== "all") n++;
   if (filters.postedFrom || filters.postedTo) n++;
   return n;
@@ -173,6 +181,7 @@ export function clearAttributeFilters(filters: JobSearchFilterState): JobSearchF
     location: "all",
     workMode: "all",
     seniority: [],
+    titleRoles: [],
     industry: "all",
     postedFrom: "",
     postedTo: "",
@@ -243,6 +252,16 @@ export function getActiveFilterChips(filters: JobSearchFilterState): ActiveFilte
       label: level,
       apply: (f) => ({ ...f, seniority: f.seniority.filter((s) => s !== level) }),
     });
+  }
+  // Hide chips when every role is selected — same as “no role filter”.
+  if (filters.titleRoles.length > 0 && filters.titleRoles.length < JOB_TITLE_SCAN_ROLES.length) {
+    for (const role of filters.titleRoles) {
+      chips.push({
+        id: `titleRole-${role}`,
+        label: `Role: ${role}`,
+        apply: (f) => ({ ...f, titleRoles: f.titleRoles.filter((r) => r !== role) }),
+      });
+    }
   }
   if (filters.industry !== "all") {
     chips.push({

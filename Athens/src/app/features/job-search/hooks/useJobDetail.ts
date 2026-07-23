@@ -32,7 +32,10 @@ export function useJobDetail(job: Job | null, enabled: boolean) {
     setLoading(true);
     setError(null);
     try {
-      const res = (await get(`/jobs/${jobId}`)) as DetailResponse;
+      const qs = applier?.name
+        ? `?applierName=${encodeURIComponent(applier.name)}`
+        : "";
+      const res = (await get(`/jobs/${jobId}${qs}`)) as DetailResponse;
       if (res?.success && res.data) {
         const mapped = mergeListJobMetadata(job, mapDocToJob(res.data, applier));
         cacheRef.current.set(jobId, mapped);

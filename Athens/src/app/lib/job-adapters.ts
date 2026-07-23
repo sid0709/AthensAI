@@ -196,6 +196,14 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     bestResumeId,
     skillHighlights,
     aiSkills,
+    titleScanned:
+      typeof doc.titleScanned === "string" && doc.titleScanned.trim()
+        ? doc.titleScanned.trim()
+        : null,
+    version:
+      typeof doc.version === "string" && doc.version.trim()
+        ? doc.version.trim()
+        : null,
     catalog: isExternal ? "external" : "market",
   };
 }

@@ -20,8 +20,10 @@ import {
 import { ActiveFilterChips } from "./filters/ActiveFilterChips";
 import { JobFiltersSheet } from "./filters/JobFiltersSheet";
 import { JobScoreFiltersPopover } from "./filters/JobScoreFiltersPopover";
+import { JobTitleRoleFilterPopover } from "./filters/JobTitleRoleFilterPopover";
 import { MySkillsPopover } from "./MySkillsPopover";
 import { SkillExtractionButton } from "./SkillExtractionButton";
+import { TitleScanButton } from "./TitleScanButton";
 
 const STATUS_TABS: {
   id: JobStatusTab;
@@ -176,7 +178,7 @@ export function JobSearchFilterPanel({
               onChange={(companyQuery) => patch({ companyQuery })}
               placeholder="Company…"
               nested
-              className="flex-1 min-w-[100px] sm:max-w-[160px]"
+              className="w-[96px] sm:w-[112px] shrink-0"
             />
           </div>
 
@@ -191,27 +193,7 @@ export function JobSearchFilterPanel({
               className="w-[140px] shrink-0"
             />
 
-            <div className="inline-flex items-center rounded-lg border border-border/60 bg-muted/40 p-0.5 shrink-0">
-              {([
-                { key: false, label: "All" },
-                { key: true, label: "AI-analyzed" },
-              ] as const).map((opt) => (
-                <button
-                  key={String(opt.key)}
-                  type="button"
-                  onClick={() => patch({ aiExtractedOnly: opt.key })}
-                  className={cn(
-                    "px-2.5 h-9 rounded-md text-xs font-semibold whitespace-nowrap transition-all",
-                    filters.aiExtractedOnly === opt.key
-                      ? "bg-card text-foreground shadow-sm ring-1 ring-border/60"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  title={opt.key ? "Show only jobs with AI-extracted skills" : "Show all jobs"}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
+            <JobTitleRoleFilterPopover filters={filters} onChange={onChange} />
           </div>
 
           <ToolbarDivider />
@@ -246,6 +228,7 @@ export function JobSearchFilterPanel({
               <ToolbarDivider />
               <div className="flex items-center gap-1.5 sm:ml-auto shrink-0">
                 <MySkillsPopover />
+                <TitleScanButton />
                 <SkillExtractionButton />
               </div>
             </>

@@ -10,7 +10,12 @@ import {
 } from "../db/mongo.js";
 import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
 import { attachStaticScoreFields } from '../services/jobListPipeline.js';
-import { JOB_MARKET_MODEL_VERSION, stripScraperOnlyJobFields } from '../config/jobMarketSchema.js';
+import {
+	JOB_MARKET_EXTENSION_VERSION_V2,
+	JOB_MARKET_MODEL_VERSION,
+	stripScraperOnlyJobFields,
+} from '../config/jobMarketSchema.js';
+import { isBetaTier } from '../lib/betaTier.js';
 import {
 	buildJobsListQuery,
 	STATUS_TABS,
@@ -144,6 +149,13 @@ export async function createJob(req, res) {
 		job.description = description;
 		if (job.company && typeof job.company === 'object') {
 			job.company.name = companyName;
+		}
+
+		const incomingVersion = typeof job.version === 'string' ? job.version.trim() : '';
+		if (incomingVersion === JOB_MARKET_EXTENSION_VERSION_V2) {
+			job.version = JOB_MARKET_EXTENSION_VERSION_V2;
+		} else {
+			delete job.version;
 		}
 
 		job._createdAt = createdAt;
@@ -726,7 +738,23 @@ export async function getJobById(req, res) {
 			{ _id: new ObjectId(id) },
 			{ projection: JOB_DETAIL_PROJECTION },
 		);
-		if (doc) return res.json({ success: true, data: doc });
+		if (doc) {
+			if (doc.version === JOB_MARKET_EXTENSION_VERSION_V2) {
+				const applierName = String(req.query.applierName || '').trim();
+				let canView = false;
+				if (applierName && accountInfoCollection) {
+					const acc = await accountInfoCollection.findOne(
+						{ name: applierName },
+						{ projection: { tier: 1 } },
+					);
+					canView = isBetaTier(acc?.tier);
+				}
+				if (!canView) {
+					return res.status(404).json({ success: false, error: 'Job not found' });
+				}
+			}
+			return res.json({ success: true, data: doc });
+		}
 
 		if (externalScrapedJobsCollection) {
 			const externalDoc = await externalScrapedJobsCollection.findOne({ _id: new ObjectId(id) });

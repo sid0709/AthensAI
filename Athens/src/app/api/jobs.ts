@@ -66,9 +66,16 @@ export async function removeJobs(ids: string[]): Promise<{ success?: boolean; de
 }
 
 /** Fetch a job's full detail (incl. description) by Mongo id. Returns "" if unavailable. */
-export async function fetchJobDescription(jobId: string, signal?: AbortSignal): Promise<string> {
+export async function fetchJobDescription(
+  jobId: string,
+  signal?: AbortSignal,
+  applierName?: string,
+): Promise<string> {
   try {
-    const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`, { signal });
+    const qs = applierName
+      ? `?applierName=${encodeURIComponent(applierName)}`
+      : "";
+    const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}${qs}`, { signal });
     if (!res.ok) return "";
     const data = (await res.json()) as { data?: { description?: string; jobDescription?: string } };
     return String(data.data?.description ?? data.data?.jobDescription ?? "").trim();
@@ -95,6 +102,41 @@ export async function fetchJobsWithGeneratedResumes(
   } catch {
     return new Set();
   }
+}
+
+export type DeleteJobsGeneratedResumesResult = {
+  success: boolean;
+  deletedJobIds: string[];
+  generationsDeleted: number;
+  resumesDeleted: number;
+  error?: string;
+};
+
+/** Remove generated résumés for the given jobs (not the jobs themselves). */
+export async function deleteJobsGeneratedResumes(
+  applierName: string,
+  jobIds: string[],
+): Promise<DeleteJobsGeneratedResumesResult> {
+  if (!applierName || jobIds.length === 0) {
+    return { success: true, deletedJobIds: [], generationsDeleted: 0, resumesDeleted: 0 };
+  }
+  const res = await fetch(`${API_BASE}/personal/agent-job-resumes/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applierName, jobIds }),
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<DeleteJobsGeneratedResumesResult> & {
+    error?: string;
+  };
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || "Failed to remove generated résumés");
+  }
+  return {
+    success: true,
+    deletedJobIds: Array.isArray(data.deletedJobIds) ? data.deletedJobIds : [],
+    generationsDeleted: data.generationsDeleted ?? 0,
+    resumesDeleted: data.resumesDeleted ?? 0,
+  };
 }
 
 export interface GeneratedResumeUsage {

@@ -18,6 +18,12 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 			{ aiSkillStatus: 1, postedAt: -1 },
 			{ partialFilterExpression: { aiSkillStatus: 'pending' } },
 		),
+		// Title-role filter + pending title-scan claims.
+		jobsCollection.createIndex({ titleScanned: 1, postedAt: -1 }),
+		jobsCollection.createIndex(
+			{ titleScanStatus: 1, postedAt: -1 },
+			{ partialFilterExpression: { titleScanStatus: 'scanning' } },
+		),
 	]);
 }
 

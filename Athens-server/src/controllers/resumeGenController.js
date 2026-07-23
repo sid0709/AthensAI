@@ -941,6 +941,26 @@ export async function getAgentJobResumesStatus(req, res) {
   }
 }
 
+/**
+ * POST /personal/agent-job-resumes/delete — remove generated résumés for selected
+ * jobs. Body: { applierName, jobIds: [] }. Does not delete the jobs themselves.
+ */
+export async function deleteAgentJobResumesHandler(req, res) {
+  try {
+    const applierName = cleanString(req.body?.applierName);
+    const jobIds = Array.isArray(req.body?.jobIds) ? req.body.jobIds : [];
+    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
+    if (!jobIds.length) return res.status(400).json({ success: false, error: "jobIds is required" });
+
+    const { deleteAgentJobResumes } = await import("../services/agentResumeGenService.js");
+    const result = await deleteAgentJobResumes(applierName, jobIds);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.warn("POST /api/personal/agent-job-resumes/delete error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
 /** POST /personal/resume-generate/for-agent-job/stream — SSE progress for agent résumé generation. */
 export async function generateResumeForAgentJobStream(req, res) {
   const body = req.body || {};

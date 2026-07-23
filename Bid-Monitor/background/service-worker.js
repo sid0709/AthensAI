@@ -1646,10 +1646,13 @@ async function completeRecordingSession({
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const name = err && typeof err === 'object' ? String(err.name || '') : '';
+      const detail = err && typeof err === 'object' ? String(err.message || '') : '';
+      const message =
+        (name && detail ? `${name}: ${detail}` : detail || name) || String(err);
       if (message.toLowerCase().includes('upload') || hasVideo) uploadError = message;
       else statusError = message;
-      console.error('Bid Monitor: Athens finish failed', err);
+      console.error('Bid Monitor: Athens finish failed', message, err);
     }
   }
 

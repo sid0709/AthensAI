@@ -222,8 +222,8 @@
           emitAuditForFile(renamed, 'formdata');
           return method.call(this, name, renamed, renamed.name);
         }
-        // Preserve arg count: 3-arg FormData.append/set requires param 2 to be a Blob.
-        if (arguments.length >= 3) {
+        // 3-arg FormData.append/set requires param 2 to be a Blob.
+        if (arguments.length >= 3 && value instanceof Blob) {
           return method.call(this, name, value, fileName);
         }
         return method.call(this, name, value);

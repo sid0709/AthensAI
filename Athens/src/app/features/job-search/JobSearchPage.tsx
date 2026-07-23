@@ -52,8 +52,16 @@ export function JobSearchPage() {
     clearBidReadyBulk,
     isPending,
   } = useJobApplicationActions(patchJob, refreshStatusCounts);
-  const { resumeStates, generateForJob, generateBulk, cancelBulk, bulkRunning, bulkProgress } =
-    useJobResumeGeneration(jobs);
+  const {
+    resumeStates,
+    generateForJob,
+    generateBulk,
+    cancelBulk,
+    removeBulkResumes,
+    bulkRunning,
+    bulkRemoving,
+    bulkProgress,
+  } = useJobResumeGeneration(jobs);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
 
@@ -74,6 +82,10 @@ export function JobSearchPage() {
     [pageIds, selectedIds],
   );
   const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
+  const hasSelectedResumes = useMemo(
+    () => selectedJobs.some((job) => resumeStates[job.id]?.status === "done"),
+    [selectedJobs, resumeStates],
+  );
 
   const toggleSelectAllOnPage = () => {
     selectAllOnPage(pageIds, allOnPageSelected);
@@ -204,7 +216,12 @@ export function JobSearchPage() {
           void generateBulk(selectedJobs);
         }}
         onStopGenerateResumes={cancelBulk}
+        onRemoveResumes={() => {
+          void removeBulkResumes(selectedJobs);
+        }}
         resumeGenerating={bulkRunning}
+        resumeRemoving={bulkRemoving}
+        hasSelectedResumes={hasSelectedResumes}
         resumeProgress={bulkProgress ?? undefined}
         page={page}
         pageSize={pageSize}
