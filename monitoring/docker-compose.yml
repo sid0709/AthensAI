@@ -7,12 +7,14 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=24h
+      # 0 disables time-based deletion. Data remains on the VPS until an
+      # operator explicitly removes it; disk alerts protect the host.
+      - --storage.tsdb.retention.time=0
       - --web.enable-lifecycle
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
-      - prometheus-data:/prometheus
+      - /opt/athens-monitoring/data/prometheus:/prometheus
     depends_on:
       - node-exporter
       - cadvisor
@@ -29,7 +31,7 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:3000}
     volumes:
-      - grafana-data:/var/lib/grafana
+      - /opt/athens-monitoring/data/grafana:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
@@ -43,7 +45,7 @@ services:
       - --storage.path=/alertmanager
     volumes:
       - ./alertmanager/alertmanager.local.yml:/etc/alertmanager/alertmanager.local.yml:ro
-      - alertmanager-data:/alertmanager
+      - /opt/athens-monitoring/data/alertmanager:/alertmanager
 
   node-exporter:
     image: prom/node-exporter:v1.8.2
@@ -75,8 +77,3 @@ services:
       - --config.file=/etc/blackbox/blackbox.yml
     volumes:
       - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
-
-volumes:
-  prometheus-data:
-  grafana-data:
-  alertmanager-data:
