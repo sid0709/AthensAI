@@ -357,6 +357,10 @@ jobs:
               docker --version >&2 || true
               exit 1
             fi
+            export GRAFANA_ADMIN_USER=admin
+            export GRAFANA_ADMIN_PASSWORD="$grafana_password"
+            export GRAFANA_ROOT_URL=http://127.0.0.1:3000
+            export ALERTMANAGER_CONFIG_FILE="$alertmanager_config_file"
             echo "Using ${compose_cmd} for Athens monitoring"
             echo "Validating monitoring Compose configuration"
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml config >/dev/null
