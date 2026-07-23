@@ -44,7 +44,7 @@ services:
       - --config.file=/etc/alertmanager/alertmanager.local.yml
       - --storage.path=/alertmanager
     volumes:
-      - ./alertmanager/alertmanager.generated.yml:/etc/alertmanager/alertmanager.local.yml:ro
+      - ./alertmanager/${ALERTMANAGER_CONFIG_FILE:-alertmanager.yml}:/etc/alertmanager/alertmanager.local.yml:ro
       - /opt/athens-monitoring/data/alertmanager:/alertmanager
 
   node-exporter:

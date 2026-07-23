@@ -310,15 +310,19 @@ jobs:
               grafana_password="$(awk -F= '$1 == "GRAFANA_ADMIN_PASSWORD" {print substr($0, index($0, "=") + 1)}' /opt/athens-monitoring/.env)"
             fi
             grafana_password="${grafana_password:-$(openssl rand -hex 24)}"
+            alertmanager_config_file=alertmanager.yml
+            if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+              alertmanager_config_file=alertmanager.slack.yml
+            fi
             umask 077
             monitoring_env_tmp="$(mktemp)"
-            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\n' "$grafana_password" > "$monitoring_env_tmp"
+            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\nALERTMANAGER_CONFIG_FILE=%s\n' \
+              "$grafana_password" "$alertmanager_config_file" > "$monitoring_env_tmp"
             as_root install -m 600 "$monitoring_env_tmp" /opt/athens-monitoring/.env
             rm -f "$monitoring_env_tmp"
             echo "Monitoring environment file is installed"
-            alertmanager_target=/opt/athens-monitoring/alertmanager/alertmanager.generated.yml
-            alertmanager_tmp="$(mktemp)"
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+              alertmanager_tmp="$(mktemp)"
               printf '%s\n' \
                 'global:' \
                 '  resolve_timeout: 5m' \
@@ -337,20 +341,12 @@ jobs:
               printf '%s\n' \
                 '        channel: "#athens-alerts"' \
                 '        send_resolved: true' >> "$alertmanager_tmp"
+              as_root install -m 600 "$alertmanager_tmp" \
+                /opt/athens-monitoring/alertmanager/alertmanager.slack.yml
+              rm -f "$alertmanager_tmp"
             else
-              printf '%s\n' \
-                'global:' \
-                '  resolve_timeout: 5m' \
-                '' \
-                'route:' \
-                '  receiver: noop' \
-                '' \
-                'receivers:' \
-                '  - name: noop' > "$alertmanager_tmp"
               echo "SLACK_WEBHOOK_URL is not configured; monitoring alerts will not be delivered to Slack."
             fi
-            as_root install -m 600 "$alertmanager_tmp" "$alertmanager_target"
-            rm -f "$alertmanager_tmp"
             echo "Alertmanager configuration is installed"
             if docker compose version >/dev/null 2>&1; then
               compose_cmd="docker compose"
