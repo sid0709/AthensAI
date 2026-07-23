@@ -208,6 +208,9 @@ jobs:
       - name: Pull image and recreate container
         id: deploy
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -215,9 +218,6 @@ jobs:
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
           script_stop: true
           envs: SLACK_WEBHOOK_URL,GRAFANA_ADMIN_PASSWORD
-          env:
-            SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-            GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           script: |
             set -euo pipefail
             if [[ -f /opt/nextoffer/deploy-remote.sh ]]; then
