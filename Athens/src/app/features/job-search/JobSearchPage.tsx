@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useApplier } from "@/context/applier-context";
 import { removeJobs } from "../../api/jobs";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
@@ -10,6 +11,7 @@ import {
   downloadJobsCsv,
   type JobSearchFilterState,
 } from "../../hooks/useJobSearchFilters";
+import { isBetaTier } from "../../lib/beta";
 import { JobExportDialog } from "./components/JobExportDialog";
 import { JobListSkeleton } from "./components/JobListSkeleton";
 import { JobListStickyBar } from "./components/JobListStickyBar";
@@ -25,6 +27,8 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 500];
 
 export function JobSearchPage() {
   const jobNav = useJobSearchNavigationOptional();
+  const { applier } = useApplier();
+  const isBeta = isBetaTier(applier?.tier);
   const [filters, setFilters] = useState<JobSearchFilterState>(DEFAULT_JOB_FILTERS);
   const [showGrid, setShowGrid] = useState(false);
   const [showScoresOnCards, setShowScoresOnCards] = useState(false);
@@ -75,6 +79,12 @@ export function JobSearchPage() {
   useEffect(() => {
     clearSelection();
   }, [filters, page, clearSelection]);
+
+  // Role filter is beta-only — clear when switching to a non-beta profile.
+  useEffect(() => {
+    if (isBeta) return;
+    setFilters((prev) => (prev.titleRoles.length ? { ...prev, titleRoles: [] } : prev));
+  }, [isBeta]);
 
   const pageIds = useMemo(() => jobs.map((j) => j.id), [jobs]);
   const selectedOnPage = useMemo(

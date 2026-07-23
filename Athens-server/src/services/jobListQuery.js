@@ -1,5 +1,5 @@
 import { accountInfoCollection } from '../db/mongo.js';
-import { JOB_MARKET_EXTENSION_VERSION_V2 } from '../config/jobMarketSchema.js';
+import { excludeExtensionV2JobsFilter } from '../config/jobMarketSchema.js';
 import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
@@ -207,7 +207,7 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 
 	// extension-v2 jobs (version=v2) are beta-tier only.
 	if (!isBeta) {
-		query.$and.push({ version: { $ne: JOB_MARKET_EXTENSION_VERSION_V2 } });
+		query.$and.push(excludeExtensionV2JobsFilter());
 	}
 
 	const titleFilter = buildMongoCaseInsensitiveRegexFilter(q);

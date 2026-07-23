@@ -19,14 +19,14 @@ export function useJobSkillExtraction() {
 
   const refresh = useCallback(async () => {
     try {
-      const status = await fetchSkillExtractStatus();
+      const status = await fetchSkillExtractStatus(applier?.name);
       setSession(status);
       setPending(status.pending ?? 0);
       return status;
     } catch {
       return null;
     }
-  }, []);
+  }, [applier?.name]);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {

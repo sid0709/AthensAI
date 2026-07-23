@@ -26,6 +26,8 @@ type JobFiltersSheetProps = {
   onOpenChange: (open: boolean) => void;
   filters: JobSearchFilterState;
   onChange: (filters: JobSearchFilterState) => void;
+  /** AI title-role multi-select — beta tier only. */
+  showTitleRoleFilter?: boolean;
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -43,7 +45,13 @@ function parseDateStr(s: string): Date | undefined {
   return isValid(d) ? d : undefined;
 }
 
-export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFiltersSheetProps) {
+export function JobFiltersSheet({
+  open,
+  onOpenChange,
+  filters,
+  onChange,
+  showTitleRoleFilter = false,
+}: JobFiltersSheetProps) {
   const patch = (partial: Partial<JobSearchFilterState>) => onChange({ ...filters, ...partial });
 
   return (
@@ -108,17 +116,19 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
 
           <Section title="Role attributes">
             <div className="grid grid-cols-1 gap-3">
-              <AthensMultiSelect
-                label="Title role (AI)"
-                values={filters.titleRoles}
-                onChange={(titleRoles) => patch({ titleRoles })}
-                placeholder="All title roles"
-                options={JOB_TITLE_SCAN_ROLE_OPTIONS.map((o) => ({
-                  value: o.value,
-                  label: o.label,
-                }))}
-                hint="From Analyze title — checkbox multi-select"
-              />
+              {showTitleRoleFilter ? (
+                <AthensMultiSelect
+                  label="Title role (AI)"
+                  values={filters.titleRoles}
+                  onChange={(titleRoles) => patch({ titleRoles })}
+                  placeholder="All title roles"
+                  options={JOB_TITLE_SCAN_ROLE_OPTIONS.map((o) => ({
+                    value: o.value,
+                    label: o.label,
+                  }))}
+                  hint="From Analyze title — checkbox multi-select"
+                />
+              ) : null}
               <AthensMultiSelect
                 label="Seniority"
                 values={filters.seniority}

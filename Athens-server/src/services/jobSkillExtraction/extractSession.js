@@ -4,7 +4,9 @@
  * (external_scraped_jobs is dedupe/provenance; jobs are promoted into job_market).
  */
 import { randomUUID } from 'crypto';
-import { jobsCollection } from '../../db/mongo.js';
+import { excludeExtensionV2JobsFilter } from '../../config/jobMarketSchema.js';
+import { accountInfoCollection, jobsCollection } from '../../db/mongo.js';
+import { isBetaTier } from '../../lib/betaTier.js';
 import { formatCostUsd } from '../llm/llmService.js';
 import {
   resolveExtractionAuth,
@@ -13,7 +15,6 @@ import {
 } from './aiExtractService.js';
 
 const CONCURRENCY = Math.max(1, Number(process.env.JOB_SKILL_EXTRACT_CONCURRENCY || 16));
-const PENDING_QUERY = { aiSkillStatus: 'pending' };
 
 const MARKET_CLAIM_PROJECTION = { title: 1, description: 1, jobDescription: 1, aiSkillAttempts: 1 };
 
@@ -21,24 +22,37 @@ let activeSession = null;
 let cancelRequested = false;
 const inflight = new Set();
 
-async function countPendingInCollection(collection) {
+function pendingQuery(includeV2) {
+  if (includeV2) return { aiSkillStatus: 'pending' };
+  return { aiSkillStatus: 'pending', ...excludeExtensionV2JobsFilter() };
+}
+
+async function resolveIncludeV2Jobs(applierName) {
+  const name = String(applierName || '').trim();
+  if (!name || !accountInfoCollection) return false;
+  const acc = await accountInfoCollection.findOne({ name }, { projection: { tier: 1 } });
+  return isBetaTier(acc?.tier);
+}
+
+async function countPendingInCollection(collection, includeV2) {
   if (!collection) return 0;
-  return collection.countDocuments(PENDING_QUERY);
+  return collection.countDocuments(pendingQuery(includeV2));
 }
 
-export async function countPendingExtraction() {
-  return countPendingInCollection(jobsCollection);
+export async function countPendingExtraction(includeV2 = true) {
+  return countPendingInCollection(jobsCollection, includeV2);
 }
 
-export async function countPendingExtractionBreakdown() {
-  const pendingMarket = await countPendingInCollection(jobsCollection);
+export async function countPendingExtractionBreakdown(includeV2 = true) {
+  const pendingMarket = await countPendingInCollection(jobsCollection, includeV2);
   return { pending: pendingMarket, pendingMarket, pendingExternal: 0 };
 }
 
-async function claimFromCollection(collection, catalog, projection, sortField, n) {
+async function claimFromCollection(collection, catalog, projection, sortField, n, includeV2) {
   if (!collection || n <= 0) return [];
+  const query = pendingQuery(includeV2);
   const jobs = await collection
-    .find(PENDING_QUERY)
+    .find(query)
     .project(projection)
     .sort({ [sortField]: -1 })
     .limit(n)
@@ -57,8 +71,15 @@ async function claimFromCollection(collection, catalog, projection, sortField, n
   }));
 }
 
-async function claimBatch(n) {
-  return claimFromCollection(jobsCollection, 'market', MARKET_CLAIM_PROJECTION, 'postedAt', n);
+async function claimBatch(n, includeV2) {
+  return claimFromCollection(
+    jobsCollection,
+    'market',
+    MARKET_CLAIM_PROJECTION,
+    'postedAt',
+    n,
+    includeV2,
+  );
 }
 
 async function requeue(job) {
@@ -135,7 +156,7 @@ async function runSession(session) {
         take = Math.min(take, session.limit - session.processed);
         if (take <= 0) break;
       }
-      const batch = await claimBatch(take);
+      const batch = await claimBatch(take, session.includeV2Jobs !== false);
       if (!batch.length) break;
       await Promise.all(batch.map((job) => processOne(session, auth, job)));
     }
@@ -143,7 +164,7 @@ async function runSession(session) {
     session.running = false;
     session.finishedAt = new Date().toISOString();
     session.status = cancelRequested ? 'cancelled' : 'completed';
-    const breakdown = await countPendingExtractionBreakdown();
+    const breakdown = await countPendingExtractionBreakdown(session.includeV2Jobs !== false);
     session.remaining = breakdown.pending;
     session.pendingMarket = breakdown.pendingMarket;
     session.pendingExternal = breakdown.pendingExternal;
@@ -181,8 +202,9 @@ export function getExtractionStatus() {
   };
 }
 
-export async function getSkillExtractionStatus() {
-  const breakdown = await countPendingExtractionBreakdown();
+export async function getSkillExtractionStatus({ applierName } = {}) {
+  const includeV2 = await resolveIncludeV2Jobs(applierName);
+  const breakdown = await countPendingExtractionBreakdown(includeV2);
   return { ...breakdown, ...getExtractionStatus() };
 }
 
@@ -195,7 +217,8 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
   await resolveExtractionAuth(applierName);
   await recoverStuckExtracting();
 
-  const breakdown = await countPendingExtractionBreakdown();
+  const includeV2Jobs = await resolveIncludeV2Jobs(applierName);
+  const breakdown = await countPendingExtractionBreakdown(includeV2Jobs);
   const pending = breakdown.pending;
   if (pending === 0) {
     return {
@@ -212,6 +235,7 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
   activeSession = {
     id: randomUUID(),
     applierName: String(applierName || '').trim(),
+    includeV2Jobs,
     running: true,
     status: 'running',
     total: limit != null ? Math.min(pending, Number(limit)) : pending,

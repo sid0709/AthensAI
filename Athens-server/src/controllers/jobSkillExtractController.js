@@ -6,7 +6,8 @@ import {
 
 export async function getSkillExtractStatus(req, res) {
   try {
-    const status = await getSkillExtractionStatus();
+    const applierName = String(req.query.applierName || '').trim();
+    const status = await getSkillExtractionStatus({ applierName });
     return res.json({ success: true, ...status });
   } catch (err) {
     console.error('GET /api/jobs/skill-extract/status error', err);

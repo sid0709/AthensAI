@@ -35,8 +35,11 @@ async function parseJson<T>(res: Response): Promise<T> {
   return data;
 }
 
-export async function fetchSkillExtractStatus(): Promise<SkillExtractSession> {
-  const res = await fetch(`${API_BASE}/jobs/skill-extract/status`);
+export async function fetchSkillExtractStatus(applierName?: string): Promise<SkillExtractSession> {
+  const qs = applierName
+    ? `?applierName=${encodeURIComponent(applierName)}`
+    : "";
+  const res = await fetch(`${API_BASE}/jobs/skill-extract/status${qs}`);
   return parseJson<StatusResponse>(res);
 }
 

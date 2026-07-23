@@ -7,8 +7,10 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { useApplier } from "@/context/applier-context";
 import { Button } from "../../../components/ui/button";
 import { AthensSelect } from "../../../components/forms";
+import { isBetaTier } from "../../../lib/beta";
 import { cn } from "../../../lib/utils";
 import {
   countAttributeFilters,
@@ -115,13 +117,17 @@ export function JobSearchFilterPanel({
   showStatusTabs = true,
   showSkillsTools = true,
 }: JobSearchFilterPanelProps) {
+  const { applier } = useApplier();
+  const isBeta = isBetaTier(applier?.tier);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [chipsOpen, setChipsOpen] = useState(true);
 
   const patch = (partial: Partial<JobSearchFilterState>) => onChange({ ...filters, ...partial });
   const attributeCount = countAttributeFilters(filters);
   const scoreCount = countScoreFilters(filters);
-  const chips = getActiveFilterChips(filters);
+  const chips = getActiveFilterChips(
+    isBeta ? filters : { ...filters, titleRoles: [] },
+  );
   const hasChips = chips.length > 0;
 
   return (
@@ -193,7 +199,9 @@ export function JobSearchFilterPanel({
               className="w-[140px] shrink-0"
             />
 
-            <JobTitleRoleFilterPopover filters={filters} onChange={onChange} />
+            {isBeta ? (
+              <JobTitleRoleFilterPopover filters={filters} onChange={onChange} />
+            ) : null}
           </div>
 
           <ToolbarDivider />
@@ -275,12 +283,13 @@ export function JobSearchFilterPanel({
         ) : null}
       </div>
 
-      <JobFiltersSheet
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
-        filters={filters}
-        onChange={onChange}
-      />
+        <JobFiltersSheet
+          open={sheetOpen}
+          onOpenChange={setSheetOpen}
+          filters={filters}
+          onChange={onChange}
+          showTitleRoleFilter={isBeta}
+        />
     </div>
   );
 }

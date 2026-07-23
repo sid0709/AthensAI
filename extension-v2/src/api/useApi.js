@@ -24,10 +24,16 @@ export default function useApi(baseUrl = import.meta.env.VITE_API_URL) {
 		setError(null);
 		try {
 			const url = buildUrl(path);
+			const { headers: optHeaders, body, ...rest } = options;
 			const res = await fetch(url, {
-				headers: { 'Content-Type': 'application/json' },
-				...options,
-				body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body,
+				...rest,
+				headers: {
+					'Content-Type': 'application/json',
+					// Lets Athens-server stamp job_market.version = "v2" even if body is stripped.
+					'X-Athens-Client': 'extension-v2',
+					...(optHeaders || {}),
+				},
+				body: body && typeof body !== 'string' ? JSON.stringify(body) : body,
 			});
 			const text = await res.text();
 			// Try parse JSON, fallback to text

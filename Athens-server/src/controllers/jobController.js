@@ -11,6 +11,7 @@ import {
 import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
 import { attachStaticScoreFields } from '../services/jobListPipeline.js';
 import {
+	EXTENSION_V2_CLIENT_HEADER,
 	JOB_MARKET_EXTENSION_VERSION_V2,
 	JOB_MARKET_MODEL_VERSION,
 	stripScraperOnlyJobFields,
@@ -151,8 +152,13 @@ export async function createJob(req, res) {
 			job.company.name = companyName;
 		}
 
+		const clientHeader = String(req.get('x-athens-client') || '').trim().toLowerCase();
 		const incomingVersion = typeof job.version === 'string' ? job.version.trim() : '';
-		if (incomingVersion === JOB_MARKET_EXTENSION_VERSION_V2) {
+		const fromExtensionV2 =
+			clientHeader === EXTENSION_V2_CLIENT_HEADER ||
+			incomingVersion === JOB_MARKET_EXTENSION_VERSION_V2;
+		// Never trust arbitrary client versions — only stamp known extension-v2.
+		if (fromExtensionV2) {
 			job.version = JOB_MARKET_EXTENSION_VERSION_V2;
 		} else {
 			delete job.version;
@@ -189,6 +195,10 @@ export async function createJob(req, res) {
 		// Queue for AI skill extraction (run manually from the Extract skills button).
 		job.aiSkillStatus = 'pending';
 		Object.assign(job, attachStaticScoreFields({ ...job, skills }));
+		// Re-assert after static fields — distinct from sourceVersion / modelVersion.
+		if (fromExtensionV2) {
+			job.version = JOB_MARKET_EXTENSION_VERSION_V2;
+		}
 
 		const result = jobsCollection ? await jobsCollection.insertOne(job) : null;
 
