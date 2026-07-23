@@ -317,7 +317,8 @@ jobs:
             monitoring_env_tmp="$(mktemp)"
             printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\nALERTMANAGER_CONFIG_FILE=%s\n' \
               "$grafana_password" "$alertmanager_config_file" > "$monitoring_env_tmp"
-            as_root install -m 600 "$monitoring_env_tmp" /opt/athens-monitoring/.env
+            as_root install -o "$(id -u)" -g "$(id -g)" -m 600 \
+              "$monitoring_env_tmp" /opt/athens-monitoring/.env
             rm -f "$monitoring_env_tmp"
             echo "Monitoring environment file is installed"
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
