@@ -4,7 +4,11 @@ import {
 	AI_API_USAGE_COLLECTION,
 	ensureAiApiUsageIndexes,
 } from "@nextoffer/shared/ai-api-usage";
-import { ensureJobMarketIndexes, backfillMissingJobSourceFields, dedupeJobMarketByApplyLink } from "../services/jobMarketIndexes.js";
+import {
+	ensureJobMarketIndexes,
+	backfillMissingJobSourceFields,
+	dropLegacyUniqueApplyLinkIndex,
+} from "../services/jobMarketIndexes.js";
 import { migrateAllExternalScrapedJobsToMarket } from "../services/promoteExternalJobToMarket.js";
 
 let mongoClient;
@@ -202,23 +206,20 @@ async function initMongo() {
 	} catch (err) {
 		console.warn('[avalon_apply_runs] index creation failed:', err.message);
 	}
-	await ensureJobMarketIndexes(jobsCollection);
 	await ensureSkillCollectionsIndexes();
 	await ensureMailCollectionsIndexes();
 	await ensureMatchScoreIndexes();
 	await ensureExternalScrapedJobsIndexes();
-	// Remove pre-existing duplicate applyLink jobs, then enforce uniqueness so
-	// no duplicate links can be inserted afterward. Index creation must run only
-	// after the cleanup completes, otherwise it would fail on existing dupes.
+	// applyLink is no longer globally unique: Extension may add a non-v2 copy of
+	// a v2 job, and createJob dedupes URL/content within a 30-day window only.
+	// Drop the legacy unique index before ensureJobMarketIndexes recreates a
+	// non-unique applyLink index (same key pattern cannot coexist).
 	try {
-		await dedupeJobMarketByApplyLink(jobsCollection);
-		await jobsCollection.createIndex(
-			{ applyLink: 1 },
-			{ unique: true, partialFilterExpression: { applyLink: { $type: 'string' } } },
-		);
+		await dropLegacyUniqueApplyLinkIndex(jobsCollection);
 	} catch (err) {
-		console.warn('[job_market] applyLink dedupe/index failed', err.message);
+		console.warn('[job_market] applyLink unique-index drop failed', err.message);
 	}
+	await ensureJobMarketIndexes(jobsCollection);
 	void backfillMissingJobSourceFields(jobsCollection).catch((err) => {
 		console.warn('[job_market] source field backfill failed', err.message);
 	});

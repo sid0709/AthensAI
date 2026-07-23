@@ -14,6 +14,7 @@ import {
 	EXTENSION_V2_CLIENT_HEADER,
 	JOB_MARKET_EXTENSION_VERSION_V2,
 	JOB_MARKET_MODEL_VERSION,
+	excludeExtensionV2JobsFilter,
 	stripScraperOnlyJobFields,
 } from '../config/jobMarketSchema.js';
 import { isBetaTier } from '../lib/betaTier.js';
@@ -74,6 +75,17 @@ const extractJobTimestamp = (jobDoc) => {
 	return toValidDate(jobDoc?.postedAt) || toValidDate(jobDoc?._createdAt) || toValidDate(jobDoc?.createdAt);
 };
 
+/** True when existing job is within the 30-day duplicate window of the incoming postedAt. */
+const isWithinDuplicateWindow = (existingJob, newPostedAt) => {
+	const existingTimestamp = extractJobTimestamp(existingJob);
+	const newJobTimestamp = toValidDate(newPostedAt);
+	return (
+		!existingTimestamp ||
+		!newJobTimestamp ||
+		newJobTimestamp.getTime() - existingTimestamp.getTime() < LOOKBACK_WINDOW_MS
+	);
+};
+
 export async function createJob(req, res) {
 	try {
 		const job = req.body;
@@ -97,49 +109,56 @@ export async function createJob(req, res) {
 		const createdAt = now.toISOString();
 		const postedAt = resolvePostedAt(job, now);
 
-		// Requirement 1: prevent duplicates for jobs posted within the last 30 days.
-		if (job.url) {
-			const existingJob = await jobsCollection.findOne(
-				{ url: job.url },
-				{ sort: { postedAt: -1, _createdAt: -1 } }
+		const clientHeader = String(req.get('x-athens-client') || '').trim().toLowerCase();
+		const incomingVersion = typeof job.version === 'string' ? job.version.trim() : '';
+		const fromExtensionV2 =
+			clientHeader === EXTENSION_V2_CLIENT_HEADER ||
+			incomingVersion === JOB_MARKET_EXTENSION_VERSION_V2;
+		// Extension (non-v2) only dedupes against non-v2 jobs; extension-v2 checks all jobs.
+		const duplicateScope = fromExtensionV2 ? {} : excludeExtensionV2JobsFilter();
+
+		// Duplicate = URL/applyLink equals OR (title ∧ company ∧ JD), within 30 days.
+		const urlCandidates = [
+			...new Set(
+				[job.applyLink, job.url]
+					.filter((u) => typeof u === 'string' && u.trim())
+					.map((u) => u.trim()),
+			),
+		];
+		if (urlCandidates.length) {
+			const existingByUrl = await jobsCollection.findOne(
+				{
+					...duplicateScope,
+					$or: [{ applyLink: { $in: urlCandidates } }, { url: { $in: urlCandidates } }],
+				},
+				{ sort: { postedAt: -1, _createdAt: -1 } },
 			);
-
-			if (existingJob) {
-				const existingTimestamp = extractJobTimestamp(existingJob);
-				const newJobTimestamp = toValidDate(postedAt);
-
-				if (!existingTimestamp || !newJobTimestamp || (newJobTimestamp.getTime() - existingTimestamp.getTime()) < LOOKBACK_WINDOW_MS) {
-					return res.status(400).json({ error: 'Job with this URL has been posted recently' });
-				}
-			}
-		}
-
-		// Prevent duplicate apply links entirely — only one job per applyLink.
-		if (job.applyLink && typeof job.applyLink === 'string') {
-			const existingByLink = await jobsCollection.findOne({ applyLink: job.applyLink });
-			if (existingByLink) {
+			if (existingByUrl && isWithinDuplicateWindow(existingByUrl, postedAt)) {
 				return res.status(200).json({
 					success: false,
 					created: false,
-					reason: 'Job with this applyLink already exists',
+					reason: 'Job with this URL has been posted within the last 30 days',
 				});
 			}
 		}
 
-		// Same company + title + description → treat as duplicate (even if applyLink differs).
 		const companyName = typeof job.company?.name === 'string' ? job.company.name.trim() : '';
 		const description = typeof job.description === 'string' ? job.description.trim() : '';
 		if (companyName && description) {
-			const existingByContent = await jobsCollection.findOne({
-				'company.name': companyName,
-				title,
-				description,
-			});
-			if (existingByContent) {
+			const existingByContent = await jobsCollection.findOne(
+				{
+					...duplicateScope,
+					'company.name': companyName,
+					title,
+					description,
+				},
+				{ sort: { postedAt: -1, _createdAt: -1 } },
+			);
+			if (existingByContent && isWithinDuplicateWindow(existingByContent, postedAt)) {
 				return res.status(200).json({
 					success: false,
 					created: false,
-					reason: 'Job with this company, title, and description already exists',
+					reason: 'Job with this company, title, and description already exists within the last 30 days',
 				});
 			}
 		}
@@ -152,11 +171,6 @@ export async function createJob(req, res) {
 			job.company.name = companyName;
 		}
 
-		const clientHeader = String(req.get('x-athens-client') || '').trim().toLowerCase();
-		const incomingVersion = typeof job.version === 'string' ? job.version.trim() : '';
-		const fromExtensionV2 =
-			clientHeader === EXTENSION_V2_CLIENT_HEADER ||
-			incomingVersion === JOB_MARKET_EXTENSION_VERSION_V2;
 		// Never trust arbitrary client versions — only stamp known extension-v2.
 		if (fromExtensionV2) {
 			job.version = JOB_MARKET_EXTENSION_VERSION_V2;

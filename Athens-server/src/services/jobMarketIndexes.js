@@ -5,8 +5,11 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 	await Promise.all([
 		jobsCollection.createIndex({ postedAt: -1 }),
 		jobsCollection.createIndex({ url: 1 }),
+		// Non-unique: same applyLink may exist as v2 + non-v2, and again after 30 days.
+		jobsCollection.createIndex({ applyLink: 1 }),
 		jobsCollection.createIndex({ 'status.applier': 1 }),
 		jobsCollection.createIndex({ source: 1, postedAt: -1 }),
+		jobsCollection.createIndex({ version: 1, applyLink: 1 }),
 		// Match-score fan-out worker claims pending jobs; partial index keeps it
 		// tiny (most jobs are 'scored' or lack the field entirely).
 		jobsCollection.createIndex(
@@ -25,6 +28,31 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 			{ partialFilterExpression: { titleScanStatus: 'scanning' } },
 		),
 	]);
+}
+
+/**
+ * Drop the legacy unique applyLink index so Extension can mirror a v2 job
+ * under the same link, and so URL dedupe can be 30-day (app-level) instead of forever.
+ */
+export async function dropLegacyUniqueApplyLinkIndex(jobsCollection) {
+	if (!jobsCollection) return { dropped: false };
+	try {
+		const indexes = await jobsCollection.indexes();
+		const uniqueApplyLink = indexes.find(
+			(idx) =>
+				idx.unique === true &&
+				idx.key &&
+				Object.keys(idx.key).length === 1 &&
+				idx.key.applyLink === 1,
+		);
+		if (!uniqueApplyLink) return { dropped: false };
+		await jobsCollection.dropIndex(uniqueApplyLink.name);
+		console.log(`[job_market] dropped legacy unique index ${uniqueApplyLink.name}`);
+		return { dropped: true, name: uniqueApplyLink.name };
+	} catch (err) {
+		console.warn('[job_market] drop unique applyLink index failed', err.message);
+		return { dropped: false, error: err.message };
+	}
 }
 
 /** Backfill denormalized `source` for older jobs missing it. */
@@ -66,9 +94,11 @@ export async function backfillMissingJobSourceFields(jobsCollection) {
 }
 
 /**
- * Remove duplicate jobs sharing the same `applyLink`, keeping only the latest
- * one per link (by postedAt, then _createdAt, then _id). Jobs without a
- * non-empty string `applyLink` are left untouched.
+ * Manual/ops helper: remove duplicate jobs sharing the same `applyLink`,
+ * keeping only the latest one per link (by postedAt, then _createdAt, then _id).
+ * Not run on startup — Extension and extension-v2 may intentionally share an
+ * applyLink (v2 vs non-v2), and createJob enforces a 30-day window instead.
+ * Jobs without a non-empty string `applyLink` are left untouched.
  */
 export async function dedupeJobMarketByApplyLink(jobsCollection) {
 	if (!jobsCollection) return { removed: 0 };
