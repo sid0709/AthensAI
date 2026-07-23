@@ -50,9 +50,9 @@ const metrics: Array<{
   warning: number;
   critical: number;
 }> = [
-  { key: "cpuPercent", label: "CPU", helper: "Processor utilization", color: "#2f81f7", icon: Cpu, warning: 75, critical: 90 },
-  { key: "memoryPercent", label: "Memory", helper: "Physical RAM in use", color: "#a371f7", icon: MemoryStick, warning: 80, critical: 95 },
-  { key: "diskPercent", label: "Disk", helper: "Root filesystem used", color: "#d29922", icon: HardDrive, warning: 75, critical: 90 },
+  { key: "cpuPercent", label: "CPU", helper: "5-minute host utilization", color: "#2f81f7", icon: Cpu, warning: 85, critical: 95 },
+  { key: "memoryPercent", label: "Memory", helper: "Host memory used (available-aware)", color: "#a371f7", icon: MemoryStick, warning: 90, critical: 95 },
+  { key: "diskPercent", label: "Disk", helper: "VPS root filesystem used", color: "#d29922", icon: HardDrive, warning: 85, critical: 90 },
 ];
 
 function formatUptime(seconds: number | null | undefined) {

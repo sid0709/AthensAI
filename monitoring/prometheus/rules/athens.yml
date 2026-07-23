@@ -8,6 +8,10 @@ groups:
         expr: 1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
       - record: athens:root_filesystem_utilization:ratio
         expr: 1 - (node_filesystem_avail_bytes{mountpoint="/",fstype!="rootfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!="rootfs"})
+      - record: athens:node_load_utilization:ratio
+        expr: node_load1 / count without(cpu, mode) (node_cpu_seconds_total{mode="idle"})
+      - record: athens:node_uptime_seconds
+        expr: time() - node_boot_time_seconds
       - record: athens:public_probe_success:ratio
         expr: avg_over_time(probe_success{job="public-http"}[5m])
       - record: athens:http_5xx_rate:ratio
@@ -15,6 +19,14 @@ groups:
 
   - name: athens-alerts
     rules:
+      - alert: AthensNodeExporterDown
+        expr: up{job="node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Athens VPS metrics are unavailable
+          description: Prometheus has been unable to scrape node-exporter for more than two minutes.
       - alert: AthensPublicProbeDown
         expr: probe_success{job="public-http"} == 0
         for: 2m
@@ -47,6 +59,38 @@ groups:
         annotations:
           summary: Athens VPS disk usage is critical
           description: Root filesystem usage is above 90 percent.
+      - alert: AthensMemoryPressure
+        expr: athens:node_memory_utilization:ratio > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Athens VPS memory pressure is high
+          description: Available-aware memory usage is above 90 percent.
+      - alert: AthensMemoryCritical
+        expr: athens:node_memory_utilization:ratio > 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Athens VPS memory pressure is critical
+          description: Available-aware memory usage is above 95 percent.
+      - alert: AthensCpuPressure
+        expr: athens:node_cpu_utilization:ratio > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Athens VPS CPU usage is high
+          description: Five-minute CPU utilization is above 85 percent.
+      - alert: AthensCpuCritical
+        expr: athens:node_cpu_utilization:ratio > 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Athens VPS CPU usage is critical
+          description: Five-minute CPU utilization is above 95 percent.
       - alert: AthensHighErrorRate
         expr: athens:http_5xx_rate:ratio > 0.05
         for: 5m

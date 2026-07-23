@@ -368,6 +368,8 @@ jobs:
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml pull
             echo "Starting monitoring services"
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml up -d
+            echo "Reloading Prometheus recording and alert rules"
+            ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml restart prometheus
             echo "Starting Athens application deploy"
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 

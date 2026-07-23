@@ -1,19 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCpuUtilization, isMonitoringEnabled } from './monitorLoop.js';
+import { classifyVpsMetrics, isMonitoringEnabled } from './monitorLoop.js';
 
-test('CPU utilization is calculated from consecutive snapshots', () => {
-	assert.equal(calculateCpuUtilization(
-		{ idle: 1_000, total: 2_000 },
-		{ idle: 1_250, total: 3_000 },
-	), 0.75);
+test('VPS resource pressure degrades health but does not claim the host is offline', () => {
+	assert.equal(classifyVpsMetrics({ cpuUtilization: 0.3, memoryUtilization: 0.6, diskUtilization: 0.7, loadRatio: 0.2 }).status, 'operational');
+	assert.equal(classifyVpsMetrics({ cpuUtilization: 0.86, memoryUtilization: 0.6, diskUtilization: 0.7, loadRatio: 0.2 }).status, 'degraded');
+	assert.equal(classifyVpsMetrics({ cpuUtilization: 0.96, memoryUtilization: 0.6, diskUtilization: 0.7, loadRatio: 0.2 }).status, 'degraded');
+	assert.match(classifyVpsMetrics({ cpuUtilization: 0.96, memoryUtilization: 0.6, diskUtilization: 0.7, loadRatio: 0.2 }).message, /Critical resource pressure/);
 });
 
-test('CPU utilization returns null when no time elapsed', () => {
-	assert.equal(calculateCpuUtilization(
-		{ idle: 1_000, total: 2_000 },
-		{ idle: 1_000, total: 2_000 },
-	), null);
+test('VPS warning message identifies the metric that crossed its threshold', () => {
+	assert.match(classifyVpsMetrics({ cpuUtilization: 0.3, memoryUtilization: 0.91, diskUtilization: 0.7, loadRatio: 0.2 }).message, /memory 91%/);
 });
 
 test('monitoring defaults to production only and supports an explicit override', () => {

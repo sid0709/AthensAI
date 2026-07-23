@@ -10,30 +10,30 @@ rule_files:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: [alertmanager:9093]
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   - job_name: prometheus
     static_configs:
-      - targets: [prometheus:9090]
+      - targets: ["prometheus:9090"]
 
   - job_name: node
     static_configs:
-      - targets: [node-exporter:9100]
+      - targets: ["node-exporter:9100"]
 
   - job_name: containers
     static_configs:
-      - targets: [cadvisor:8080]
+      - targets: ["cadvisor:8080"]
 
   - job_name: athens-server
     metrics_path: /metrics
     static_configs:
-      - targets: [host.docker.internal:8979]
+      - targets: ["host.docker.internal:8979"]
 
   - job_name: ai-bff
     metrics_path: /metrics
     static_configs:
-      - targets: [host.docker.internal:3920]
+      - targets: ["host.docker.internal:3920"]
 
   - job_name: public-http
     metrics_path: /probe

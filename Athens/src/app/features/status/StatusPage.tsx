@@ -6,7 +6,7 @@ import { LiveMetricsPanel, type LiveMetricPoint, type LiveRange, type TodayHealt
 type StatusValue = "operational" | "degraded" | "partial_outage" | "major_outage" | "maintenance" | "unknown";
 type ComponentStatus = { component: string; name: string; status: StatusValue; message: string; lastCheckedAt: string | null; lastSuccessAt: string | null; latencyMs: number | null; uptimePercent: number | null };
 type CurrentResponse = { status: StatusValue; updatedAt: string | null; components: ComponentStatus[] };
-type Rollup = { date: string; component: string; name: string; availabilityPercent: number; avgLatencyMs: number | null; maxLatencyMs: number | null; sampleCount: number };
+type Rollup = { date: string; component: string; name: string; availabilityPercent: number; avgLatencyMs: number | null; maxLatencyMs: number | null; sampleCount: number; healthStatus?: StatusValue };
 type Incident = { component: string; name: string; status: StatusValue; severity: string; title: string; description: string; startedAt: string; resolvedAt: string | null };
 type LiveResponse = { updatedAt: string | null; points: LiveMetricPoint[] };
 type TodayComponent = { component: string; name: string; segments: TodayHealthSegment[] };
@@ -48,9 +48,10 @@ function resolveHistoryState(date: string, today: string, component: ComponentSt
     return "no_data";
   }
   if (!rollup) return "no_data";
-  if (rollup.availabilityPercent >= 99.9) return "up";
-  if (rollup.availabilityPercent >= 95) return "degraded";
-  return "down";
+  if (rollup.healthStatus) return resolveTodayState(rollup.healthStatus);
+  // Legacy rollups tracked reachability only, so they cannot truthfully say
+  // whether the component was healthy or resource-degraded that day.
+  return "no_data";
 }
 
 function resolveTodayState(status: StatusValue): HistoryState {

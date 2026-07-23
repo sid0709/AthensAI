@@ -2,6 +2,8 @@
 
 This is intentionally separate from the Athens application container. It keeps Prometheus, Grafana, Alertmanager, node-exporter, cAdvisor, and blackbox-exporter operational even when the application image is rebuilt.
 
+The public VPS status and live CPU, memory, disk, load, and uptime charts use fixed Prometheus queries backed by node-exporter. Athens-server joins the private `athens-monitoring` Docker network during deployment; Prometheus and exporter ports remain private. If the node-exporter scrape is missing or stale, the public status reports `unknown` instead of reusing old values.
+
 On the VPS:
 
 ```bash
@@ -19,3 +21,5 @@ Prometheus, Grafana, and Alertmanager data are stored in `/opt/athens-monitoring
 Grafana binds to localhost by default. Use an SSH tunnel (`ssh -L 3000:127.0.0.1:3000 user@vps`) or an authenticated HTTPS reverse proxy to access it.
 
 Athens-server writes idempotent daily summaries to MongoDB after each UTC day closes. Grafana's password is generated and persisted on the VPS unless `GRAFANA_ADMIN_PASSWORD` is supplied as an optional repository secret.
+
+Resource warnings must persist for ten monitoring samples (five minutes at the default interval) before the public VPS state becomes degraded. Availability percentages represent reachability; the health-bar color separately preserves operational, degraded, outage, and unknown states.

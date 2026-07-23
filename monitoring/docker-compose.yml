@@ -77,3 +77,7 @@ services:
       - --config.file=/etc/blackbox/blackbox.yml
     volumes:
       - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+
+networks:
+  default:
+    name: athens-monitoring

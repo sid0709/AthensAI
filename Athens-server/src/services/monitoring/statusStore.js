@@ -74,7 +74,7 @@ export async function readLiveMetrics(minutes = 60) {
 	if (!samples) return [];
 	const from = new Date(Date.now() - minutes * 60 * 1000);
 	const docs = await samples.find(
-		{ source: STATUS_SOURCE, component: 'vps', checkedAt: { $gte: from } },
+		{ source: STATUS_SOURCE, component: 'vps', checkedAt: { $gte: from }, 'metrics.cpuUtilization': { $type: 'number' } },
 		{ projection: { _id: 0, checkedAt: 1, metrics: 1 } },
 	).sort({ checkedAt: 1 }).toArray();
 	return summarizeLiveSamples(docs);
@@ -90,7 +90,9 @@ const STATUS_PRIORITY = {
 };
 
 function worstStatus(statuses = []) {
-	return statuses.reduce((worst, status) => (STATUS_PRIORITY[status] ?? 1) > (STATUS_PRIORITY[worst] ?? 1) ? status : worst, 'operational');
+	const known = statuses.filter((status) => status !== 'unknown');
+	if (!known.length) return 'unknown';
+	return known.reduce((worst, status) => (STATUS_PRIORITY[status] ?? 1) > (STATUS_PRIORITY[worst] ?? 1) ? status : worst, 'operational');
 }
 
 export function buildTodayTimelines(grouped, now = new Date(), bucketMinutes = 15) {
@@ -162,6 +164,29 @@ export function overallStatus(components) {
 	return 'operational';
 }
 
+export function stabilizeStatus(result, previous, options = {}) {
+	const warningSamples = options.warningSamples ?? Number(process.env.MONITOR_WARNING_SAMPLES || 10);
+	const criticalSamples = options.criticalSamples ?? Number(process.env.MONITOR_CRITICAL_SAMPLES || 4);
+	const recoverySamples = options.recoverySamples ?? Number(process.env.MONITOR_RECOVERY_SAMPLES || 2);
+	const rawStatus = result.status;
+	const statusStreak = previous?.rawStatus === rawStatus ? (previous.statusStreak || 0) + 1 : 1;
+	let status = rawStatus;
+	let message = result.message;
+
+	if (rawStatus === 'degraded' && statusStreak < warningSamples && previous?.status !== 'degraded' && previous?.status !== 'major_outage') {
+		status = 'operational';
+		message = 'Operating normally. A brief resource warning is being verified.';
+	} else if ((rawStatus === 'partial_outage' || rawStatus === 'major_outage') && statusStreak < criticalSamples && previous?.status !== rawStatus) {
+		status = 'degraded';
+		message = `A failure signal is being verified. ${result.message}`;
+	} else if (rawStatus === 'operational' && previous && ['degraded', 'partial_outage', 'major_outage'].includes(previous.status) && statusStreak < recoverySamples) {
+		status = previous.status;
+		message = 'Resource or service health is recovering; confirmation is in progress.';
+	}
+
+	return { status, message, rawStatus, statusStreak };
+}
+
 export async function recordCheck(result) {
 	const now = new Date();
 	const current = collection('monitor_current_status');
@@ -169,21 +194,19 @@ export async function recordCheck(result) {
 	const incidents = collection('monitor_incidents');
 	if (!current || !samples) return;
 	const previous = await current.findOne({ source: STATUS_SOURCE, component: result.component });
+	const stabilized = stabilizeStatus(result, previous);
 	const outage = result.status === 'partial_outage' || result.status === 'major_outage';
-	const consecutiveFailures = outage ? (previous?.consecutiveFailures || 0) + 1 : 0;
-	const effectiveStatus = result.status === 'unknown'
-		? 'unknown'
-		: outage && consecutiveFailures < 2
-			? 'degraded'
-			: result.status;
+	const consecutiveFailures = outage ? stabilized.statusStreak : 0;
+	const effectiveStatus = stabilized.status;
 	const doc = {
 		source: STATUS_SOURCE,
-		component: result.component, name: result.name, status: effectiveStatus, message: result.message,
+		component: result.component, name: result.name, status: effectiveStatus, message: stabilized.message,
 		lastCheckedAt: now, lastSuccessAt: result.ok ? now : (previous?.lastSuccessAt || null),
 		latencyMs: result.latencyMs ?? null, uptimePercent: result.uptimePercent ?? null, consecutiveFailures,
-		metrics: result.metrics || previous?.metrics || null,
+		rawStatus: stabilized.rawStatus, statusStreak: stabilized.statusStreak,
+		metrics: result.metrics || null,
 	};
-	await current.replaceOne({ component: result.component }, doc, { upsert: true });
+	await current.replaceOne({ source: STATUS_SOURCE, component: result.component }, doc, { upsert: true });
 	await samples.insertOne({ ...doc, ok: Boolean(result.ok), checkedAt: now });
 	const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 	const [sampleCount, successCount] = await Promise.all([
@@ -195,7 +218,7 @@ export async function recordCheck(result) {
 	if (incidents && previous && previous.status !== effectiveStatus && effectiveStatus !== 'operational' && !activeIncident) {
 		await incidents.insertOne({ source: STATUS_SOURCE, component: result.component, name: result.name, status: effectiveStatus,
 			severity: effectiveStatus === 'degraded' ? 'warning' : 'critical',
-			title: `${result.name} is ${effectiveStatus.replaceAll('_', ' ')}`, description: result.message,
+			title: `${result.name} is ${effectiveStatus.replaceAll('_', ' ')}`, description: stabilized.message,
 			internalReason: result.error || result.message, startedAt: now, resolvedAt: null, updates: [] });
 	}
 	if (incidents && activeIncident && effectiveStatus !== 'operational') {
@@ -203,7 +226,7 @@ export async function recordCheck(result) {
 			status: effectiveStatus,
 			severity: effectiveStatus === 'degraded' ? 'warning' : 'critical',
 			title: `${result.name} is ${effectiveStatus.replaceAll('_', ' ')}`,
-			description: result.message,
+			description: stabilized.message,
 			updatedAt: now,
 		} });
 	}
@@ -225,11 +248,12 @@ export async function rollupDay(dateKey) {
 	const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
 	const grouped = await samples.aggregate([{ $match: { source: STATUS_SOURCE, checkedAt: { $gte: start, $lt: end } } }, { $sort: { checkedAt: 1 } }, { $group: {
 		_id: '$component', name: { $last: '$name' }, sampleCount: { $sum: 1 }, successCount: { $sum: { $cond: ['$ok', 1, 0] } },
-		avgLatencyMs: { $avg: '$latencyMs' }, maxLatencyMs: { $max: '$latencyMs' }, lastStatus: { $last: '$status' },
+		avgLatencyMs: { $avg: '$latencyMs' }, maxLatencyMs: { $max: '$latencyMs' }, lastStatus: { $last: '$status' }, statuses: { $addToSet: '$status' },
 	} }]).toArray();
 	for (const item of grouped) await rollups.replaceOne({ date: dateKey, component: item._id }, {
 		source: STATUS_SOURCE, date: dateKey, component: item._id, name: item.name, sampleCount: item.sampleCount, successCount: item.successCount,
 		availabilityPercent: item.sampleCount ? (item.successCount / item.sampleCount) * 100 : 0,
-		avgLatencyMs: item.avgLatencyMs ?? null, maxLatencyMs: item.maxLatencyMs ?? null, lastStatus: item.lastStatus, updatedAt: new Date(),
+		avgLatencyMs: item.avgLatencyMs ?? null, maxLatencyMs: item.maxLatencyMs ?? null, lastStatus: item.lastStatus,
+		healthStatus: worstStatus(item.statuses), updatedAt: new Date(),
 	}, { upsert: true });
 }
