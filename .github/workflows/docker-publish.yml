@@ -216,7 +216,6 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
-          script_stop: true
           envs: SLACK_WEBHOOK_URL,GRAFANA_ADMIN_PASSWORD
           script: |
             set -eu
