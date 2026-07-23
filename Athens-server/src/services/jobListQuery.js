@@ -1,5 +1,7 @@
 import { accountInfoCollection } from '../db/mongo.js';
+import { JOB_MARKET_EXTENSION_VERSION_V2 } from '../config/jobMarketSchema.js';
 import { JobSourceTitles } from '../config/jobSources.js';
+import { isBetaTier } from '../lib/betaTier.js';
 import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
 
 const SCORE_DIMENSIONS = {
@@ -143,18 +145,24 @@ function finalizeQuery(query) {
 }
 
 const APPLIER_CACHE_TTL_MS = 5 * 60 * 1000;
-const applierIdCache = new Map();
+const applierCache = new Map();
 
-async function resolveApplierId(applierName) {
-	if (!applierName || !accountInfoCollection) return null;
+/** Resolve applier Mongo id + beta tier (cached briefly). */
+async function resolveApplierContext(applierName) {
+	if (!applierName || !accountInfoCollection) {
+		return { id: null, isBeta: false };
+	}
 	const name = String(applierName).trim();
-	const cached = applierIdCache.get(name);
-	if (cached && cached.expiresAt > Date.now()) return cached.id;
+	const cached = applierCache.get(name);
+	if (cached && cached.expiresAt > Date.now()) {
+		return { id: cached.id, isBeta: cached.isBeta };
+	}
 
 	const applierDoc = await accountInfoCollection.findOne({ name });
 	const id = applierDoc?._id || null;
-	applierIdCache.set(name, { id, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
-	return id;
+	const isBeta = Boolean(id) && isBetaTier(applierDoc?.tier);
+	applierCache.set(name, { id, isBeta, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
+	return { id, isBeta };
 }
 
 const SCORE_FILTER_KEYS = new Set([
@@ -184,14 +192,23 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 		skip: _skip,
 		countsOnly: _countsOnly,
 		aiExtracted,
+		titleScanned,
+		version: _version,
 		...filters
 	} = body;
 
 	const scoreFilters = extractScoreFilters(body);
 
-	const applierId = applierName ? await resolveApplierId(applierName) : null;
+	const { id: applierId, isBeta } = applierName
+		? await resolveApplierContext(applierName)
+		: { id: null, isBeta: false };
 
 	const query = { $and: [] };
+
+	// extension-v2 jobs (version=v2) are beta-tier only.
+	if (!isBeta) {
+		query.$and.push({ version: { $ne: JOB_MARKET_EXTENSION_VERSION_V2 } });
+	}
 
 	const titleFilter = buildMongoCaseInsensitiveRegexFilter(q);
 	if (titleFilter) query.$and.push({ title: titleFilter });
@@ -199,6 +216,19 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 	// Show only jobs whose skills have been AI-extracted.
 	if (aiExtracted === true || aiExtracted === 'true') {
 		query.$and.push({ aiSkillStatus: 'extracted' });
+	}
+
+	// Multi-select AI title roles (comma-separated exact titleScanned values).
+	if (titleScanned) {
+		const roles = String(titleScanned)
+			.split(',')
+			.map((s) => s.trim())
+			.filter(Boolean);
+		if (roles.length === 1) {
+			query.$and.push({ titleScanned: roles[0] });
+		} else if (roles.length > 1) {
+			query.$and.push({ titleScanned: { $in: roles } });
+		}
 	}
 
 	for (const key in filters) {

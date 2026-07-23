@@ -15,9 +15,14 @@ type JobListStickyBarProps = {
   onRemove: () => void;
   onMarkBidReady?: () => void;
   bidReadyPending?: boolean;
+  onMoveToNew?: () => void;
+  moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
   onStopGenerateResumes?: () => void;
+  onRemoveResumes?: () => void;
   resumeGenerating?: boolean;
+  resumeRemoving?: boolean;
+  hasSelectedResumes?: boolean;
   resumeProgress?: JobResumeBulkProgress;
   page: number;
   pageSize: number;
@@ -40,16 +45,21 @@ export function JobListStickyBar({
   onRemove,
   onMarkBidReady,
   bidReadyPending,
+  onMoveToNew,
+  moveToNewPending,
   onGenerateResumes,
   onStopGenerateResumes,
+  onRemoveResumes,
   resumeGenerating,
+  resumeRemoving,
+  hasSelectedResumes,
   resumeProgress,
   page,
   pageSize,
   total,
   onPageChange,
   onPageSizeChange,
-  pageSizeOptions = [10, 25, 50, 100],
+  pageSizeOptions = [10, 25, 50, 100, 250, 500],
   showGrid,
   onToggleGrid,
   className,
@@ -67,9 +77,14 @@ export function JobListStickyBar({
           onRemove={onRemove}
           onMarkBidReady={onMarkBidReady}
           bidReadyPending={bidReadyPending}
+          onMoveToNew={onMoveToNew}
+          moveToNewPending={moveToNewPending}
           onGenerateResumes={onGenerateResumes}
           onStopGenerateResumes={onStopGenerateResumes}
+          onRemoveResumes={onRemoveResumes}
           resumeGenerating={resumeGenerating}
+          resumeRemoving={resumeRemoving}
+          hasSelectedResumes={hasSelectedResumes}
           resumeProgress={resumeProgress}
           embedded
         />

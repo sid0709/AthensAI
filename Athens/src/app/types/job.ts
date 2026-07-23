@@ -83,6 +83,10 @@ export interface Job {
   skillHighlights?: { name: string; matched: boolean }[];
   /** AI-detected skills with category + requirement (1-5), when analyzed. */
   aiSkills?: { name: string; category: string; requirement: number }[];
+  /** AI title-role classification (Software Engineer, DevOps, …). */
+  titleScanned?: string | null;
+  /** Ingest provenance — "v2" = extension-v2 (beta-only). */
+  version?: string | null;
   /** Data catalog: job_market (default) or external_scraped_jobs. */
   catalog?: "market" | "external";
 }

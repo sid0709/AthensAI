@@ -407,24 +407,22 @@ export function BidDetailPane({
                                   : "—")}
                             </code>
                           </div>
-                          {result.resumeOriginalName ? (
-                            <div>
-                              Uploaded: <code>{result.resumeOriginalName}</code>
-                            </div>
-                          ) : (
-                            <div>Uploaded: <code>—</code></div>
-                          )}
+                          <div>
+                            Original:{" "}
+                            <code>{result.resumeOriginalName || "nothing recorded"}</code>
+                          </div>
                           {result.resumeExpectedName ? (
                             <div>
                               Canonical expected: <code>{result.resumeExpectedName}</code>
                             </div>
                           ) : null}
-                          {result.resumeCleanedName ? (
-                            <div>
-                              Uploaded as: <code>{result.resumeCleanedName}</code>
-                              {result.resumeRenamed ? " (renamed)" : ""}
-                            </div>
-                          ) : null}
+                          <div>
+                            Uploaded as:{" "}
+                            <code>{result.resumeCleanedName || "nothing recorded"}</code>
+                            {result.resumeCleanedName && result.resumeRenamed
+                              ? " (renamed)"
+                              : ""}
+                          </div>
                           {result.recommendedResumeReason ? (
                             <div>{result.recommendedResumeReason}</div>
                           ) : null}
@@ -444,11 +442,17 @@ export function BidDetailPane({
                     <div>
                       <strong>Résumé filename mismatch</strong>
                       <div className="bm-resume-audit-lines">
-                        {result.resumeOriginalName ? (
-                          <div>
-                            Original: <code>{result.resumeOriginalName}</code>
-                          </div>
-                        ) : null}
+                        <div>
+                          Original:{" "}
+                          <code>{result.resumeOriginalName || "nothing recorded"}</code>
+                        </div>
+                        <div>
+                          Uploaded as:{" "}
+                          <code>{result.resumeCleanedName || "nothing recorded"}</code>
+                          {result.resumeCleanedName && result.resumeRenamed
+                            ? " (renamed)"
+                            : ""}
+                        </div>
                         {result.resumeExpectedName ? (
                           <div>
                             Expected: <code>{result.resumeExpectedName}</code>
@@ -518,7 +522,7 @@ export function BidDetailPane({
                   )}
                 </Section>
 
-                {editable && (submission || result.resumeOriginalName) ? (
+                {editable ? (
                   <Section title="Résumé used for submission">
                     <div className="bm-resume-card used">
                       <div className="bm-resume-icon">
@@ -537,18 +541,21 @@ export function BidDetailPane({
                               : ""}
                           </div>
                         ) : null}
-                        {result.resumeOriginalName ? (
-                          <div className="bm-resume-file" title={result.resumeOriginalName}>
-                            Original upload: {result.resumeOriginalName}
-                          </div>
-                        ) : null}
-                        {result.resumeCleanedName &&
-                        result.resumeCleanedName !== result.resumeOriginalName ? (
-                          <div className="bm-resume-file" title={result.resumeCleanedName}>
-                            Form received: {result.resumeCleanedName}
-                            {result.resumeRenamed ? " (renamed)" : ""}
-                          </div>
-                        ) : null}
+                        <div
+                          className="bm-resume-file"
+                          title={result.resumeOriginalName || undefined}
+                        >
+                          Original: {result.resumeOriginalName || "nothing recorded"}
+                        </div>
+                        <div
+                          className="bm-resume-file"
+                          title={result.resumeCleanedName || undefined}
+                        >
+                          Uploaded as: {result.resumeCleanedName || "nothing recorded"}
+                          {result.resumeCleanedName && result.resumeRenamed
+                            ? " (renamed)"
+                            : ""}
+                        </div>
                         {submission?.fileName &&
                         submission.fileName !== result.resumeOriginalName ? (
                           <div className="bm-resume-file">{submission.fileName}</div>

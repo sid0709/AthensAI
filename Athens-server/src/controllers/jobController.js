@@ -10,7 +10,12 @@ import {
 } from "../db/mongo.js";
 import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
 import { attachStaticScoreFields } from '../services/jobListPipeline.js';
-import { JOB_MARKET_MODEL_VERSION, stripScraperOnlyJobFields } from '../config/jobMarketSchema.js';
+import {
+	JOB_MARKET_EXTENSION_VERSION_V2,
+	JOB_MARKET_MODEL_VERSION,
+	stripScraperOnlyJobFields,
+} from '../config/jobMarketSchema.js';
+import { isBetaTier } from '../lib/betaTier.js';
 import {
 	buildJobsListQuery,
 	STATUS_TABS,
@@ -74,9 +79,11 @@ export async function createJob(req, res) {
 		if (!job) return res.status(400).json({ error: 'Missing job in request body' });
 
 		// Requirement 2: if title is empty(""), not create.
-		if (!job.title) {
+		const title = typeof job.title === 'string' ? job.title.trim() : '';
+		if (!title) {
 			return res.status(400).json({ error: 'Job title cannot be empty' });
 		}
+		job.title = title;
 
 		// Check if the job is blocked by any rule
 		const blockingRule = await isJobBlocked(job);
@@ -118,7 +125,38 @@ export async function createJob(req, res) {
 			}
 		}
 
+		// Same company + title + description → treat as duplicate (even if applyLink differs).
+		const companyName = typeof job.company?.name === 'string' ? job.company.name.trim() : '';
+		const description = typeof job.description === 'string' ? job.description.trim() : '';
+		if (companyName && description) {
+			const existingByContent = await jobsCollection.findOne({
+				'company.name': companyName,
+				title,
+				description,
+			});
+			if (existingByContent) {
+				return res.status(200).json({
+					success: false,
+					created: false,
+					reason: 'Job with this company, title, and description already exists',
+				});
+			}
+		}
+
 		stripScraperOnlyJobFields(job);
+
+		// Persist trimmed content fields so future content-dedupe lookups stay consistent.
+		job.description = description;
+		if (job.company && typeof job.company === 'object') {
+			job.company.name = companyName;
+		}
+
+		const incomingVersion = typeof job.version === 'string' ? job.version.trim() : '';
+		if (incomingVersion === JOB_MARKET_EXTENSION_VERSION_V2) {
+			job.version = JOB_MARKET_EXTENSION_VERSION_V2;
+		} else {
+			delete job.version;
+		}
 
 		job._createdAt = createdAt;
 		job.postedAt = postedAt;
@@ -700,7 +738,23 @@ export async function getJobById(req, res) {
 			{ _id: new ObjectId(id) },
 			{ projection: JOB_DETAIL_PROJECTION },
 		);
-		if (doc) return res.json({ success: true, data: doc });
+		if (doc) {
+			if (doc.version === JOB_MARKET_EXTENSION_VERSION_V2) {
+				const applierName = String(req.query.applierName || '').trim();
+				let canView = false;
+				if (applierName && accountInfoCollection) {
+					const acc = await accountInfoCollection.findOne(
+						{ name: applierName },
+						{ projection: { tier: 1 } },
+					);
+					canView = isBetaTier(acc?.tier);
+				}
+				if (!canView) {
+					return res.status(404).json({ success: false, error: 'Job not found' });
+				}
+			}
+			return res.json({ success: true, data: doc });
+		}
 
 		if (externalScrapedJobsCollection) {
 			const externalDoc = await externalScrapedJobsCollection.findOne({ _id: new ObjectId(id) });

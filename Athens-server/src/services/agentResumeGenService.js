@@ -7,7 +7,8 @@ import {
   resumeGenerationsCollection,
   userResumesCollection,
 } from "../db/mongo.js";
-import { syncGeneratedResumeAfterRun } from "./generatedResumeService.js";
+import { syncGeneratedResumeAfterRun, deleteGenerationRun } from "./generatedResumeService.js";
+import { deleteUserResume } from "./userResumeService.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
@@ -412,6 +413,76 @@ export async function findAgentJobResumeStatuses(applierName, jobIds) {
   }
 
   return [...found];
+}
+
+/**
+ * Delete generated résumés for the given agent jobs (library docs, generation
+ * runs, and on-disk draft PDFs). Only touches artifacts linked to these job ids.
+ */
+export async function deleteAgentJobResumes(applierName, jobIds) {
+  const name = cleanString(applierName);
+  const ids = [...new Set((jobIds || []).map(cleanString).filter(Boolean))];
+  if (!name || !ids.length) {
+    return { deletedJobIds: [], generationsDeleted: 0, resumesDeleted: 0 };
+  }
+
+  let generationsDeleted = 0;
+  let resumesDeleted = 0;
+  const deletedJobIds = new Set();
+
+  if (resumeGenerationsCollection) {
+    const generations = await resumeGenerationsCollection
+      .find(
+        { applierName: name, generate_parent_job_id: { $in: ids } },
+        { projection: { _id: 1, generate_parent_job_id: 1 } },
+      )
+      .toArray();
+    for (const gen of generations) {
+      const jobId = cleanString(gen.generate_parent_job_id);
+      try {
+        const result = await deleteGenerationRun(String(gen._id), name);
+        generationsDeleted += 1;
+        if (result?.resumeDeleted) resumesDeleted += 1;
+        if (jobId) deletedJobIds.add(jobId);
+      } catch (err) {
+        if (!String(err?.message || "").toLowerCase().includes("not found")) {
+          console.warn("deleteAgentJobResumes generation:", err?.message || err);
+        }
+      }
+    }
+  }
+
+  // Catch library résumés that were never linked via libraryResumeId / generationId.
+  if (userResumesCollection) {
+    const resumes = await userResumesCollection
+      .find(
+        { ownerName: name, generateParentJobId: { $in: ids }, source: "generated" },
+        { projection: { _id: 1, generateParentJobId: 1 } },
+      )
+      .toArray();
+    for (const resume of resumes) {
+      const jobId = cleanString(resume.generateParentJobId);
+      try {
+        await deleteUserResume(String(resume._id), name);
+        resumesDeleted += 1;
+        if (jobId) deletedJobIds.add(jobId);
+      } catch (err) {
+        if (!String(err?.message || "").toLowerCase().includes("not found")) {
+          console.warn("deleteAgentJobResumes library:", err?.message || err);
+        }
+      }
+    }
+  }
+
+  for (const jobId of ids) {
+    await deleteAgentDraftPdf(name, jobId);
+  }
+
+  return {
+    deletedJobIds: [...deletedJobIds],
+    generationsDeleted,
+    resumesDeleted,
+  };
 }
 
 /** Read or render the per-job draft PDF (stable path under .local/agent-resumes/by-job). */

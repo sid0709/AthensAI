@@ -955,7 +955,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         });
       }
 
-      const jd = await fetchJobDescription(job.id, runSignal());
+      const jd = await fetchJobDescription(job.id, runSignal(), applierName);
       if (!jd) throw new Error(`No job description for "${job.title}" — cannot generate tailored résumé`);
 
       pushLog(

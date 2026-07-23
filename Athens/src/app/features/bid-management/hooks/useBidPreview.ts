@@ -48,8 +48,11 @@ export function useBidPreview(jobId: string | null, applierNameHint?: string | n
 
     void (async () => {
       try {
+        const jobQs = applierName
+          ? `?applierName=${encodeURIComponent(applierName)}`
+          : "";
         const [jobRes, generatedIds] = await Promise.all([
-          get(`/jobs/${encodeURIComponent(jobId)}`) as Promise<{
+          get(`/jobs/${encodeURIComponent(jobId)}${jobQs}`) as Promise<{
             success?: boolean;
             data?: Record<string, unknown>;
             error?: string;

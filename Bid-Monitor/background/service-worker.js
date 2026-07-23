@@ -1646,10 +1646,13 @@ async function completeRecordingSession({
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const name = err && typeof err === 'object' ? String(err.name || '') : '';
+      const detail = err && typeof err === 'object' ? String(err.message || '') : '';
+      const message =
+        (name && detail ? `${name}: ${detail}` : detail || name) || String(err);
       if (message.toLowerCase().includes('upload') || hasVideo) uploadError = message;
       else statusError = message;
-      console.error('Bid Monitor: Athens finish failed', err);
+      console.error('Bid Monitor: Athens finish failed', message, err);
     }
   }
 
@@ -2357,13 +2360,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             break;
           }
           const preferredName = String(message.fileName || '').trim();
-          const { blob, fileName: headerName } = await AthensApi.fetchResumePdf(
-            applierName,
-            jobId,
-          );
-          const rawName = preferredName || headerName || `${applierName}.pdf`;
-          const safeStem = sanitizeResumeDownloadName(rawName);
-          await downloadBlobAsFile(blob, `bid-monitor/${safeStem}.pdf`, { saveAs: true });
+          const url = await AthensApi.getResumePdfUrl(applierName, jobId);
+          const safeStem = sanitizeResumeDownloadName(preferredName || applierName);
+          await chrome.downloads.download({
+            url,
+            filename: `bid-monitor/${safeStem}.pdf`,
+            saveAs: false,
+          });
           sendResponse({ ok: true, fileName: `${safeStem}.pdf` });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Failed to download résumé.' });

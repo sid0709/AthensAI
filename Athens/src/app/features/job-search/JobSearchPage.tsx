@@ -21,7 +21,7 @@ import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { isExternalJob } from "../../types/job";
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 500];
 
 export function JobSearchPage() {
   const jobNav = useJobSearchNavigationOptional();
@@ -43,11 +43,27 @@ export function JobSearchPage() {
   const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
-  const { applyToJob, updateJobStatus, cancelJobStatus, markBidReady, markBidReadyBulk, isPending } =
-    useJobApplicationActions(patchJob, refreshStatusCounts);
-  const { resumeStates, generateForJob, generateBulk, cancelBulk, bulkRunning, bulkProgress } =
-    useJobResumeGeneration(jobs);
+  const {
+    applyToJob,
+    updateJobStatus,
+    cancelJobStatus,
+    markBidReady,
+    markBidReadyBulk,
+    clearBidReadyBulk,
+    isPending,
+  } = useJobApplicationActions(patchJob, refreshStatusCounts);
+  const {
+    resumeStates,
+    generateForJob,
+    generateBulk,
+    cancelBulk,
+    removeBulkResumes,
+    bulkRunning,
+    bulkRemoving,
+    bulkProgress,
+  } = useJobResumeGeneration(jobs);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
+  const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
 
   useEffect(() => {
     const pending = jobNav?.pendingFilters;
@@ -66,6 +82,10 @@ export function JobSearchPage() {
     [pageIds, selectedIds],
   );
   const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
+  const hasSelectedResumes = useMemo(
+    () => selectedJobs.some((job) => resumeStates[job.id]?.status === "done"),
+    [selectedJobs, resumeStates],
+  );
 
   const toggleSelectAllOnPage = () => {
     selectAllOnPage(pageIds, allOnPageSelected);
@@ -180,11 +200,28 @@ export function JobSearchPage() {
           })();
         }}
         bidReadyPending={bidReadyBulkPending}
+        onMoveToNew={() => {
+          void (async () => {
+            setMoveToNewBulkPending(true);
+            try {
+              await clearBidReadyBulk(selectedJobs);
+              clearSelection();
+            } finally {
+              setMoveToNewBulkPending(false);
+            }
+          })();
+        }}
+        moveToNewPending={moveToNewBulkPending}
         onGenerateResumes={() => {
           void generateBulk(selectedJobs);
         }}
         onStopGenerateResumes={cancelBulk}
+        onRemoveResumes={() => {
+          void removeBulkResumes(selectedJobs);
+        }}
         resumeGenerating={bulkRunning}
+        resumeRemoving={bulkRemoving}
+        hasSelectedResumes={hasSelectedResumes}
         resumeProgress={bulkProgress ?? undefined}
         page={page}
         pageSize={pageSize}

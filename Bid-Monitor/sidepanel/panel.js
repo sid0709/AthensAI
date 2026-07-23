@@ -1859,7 +1859,10 @@ downloadResumesZipBtn?.addEventListener('click', async () => {
   downloadResumesZipBtn.textContent = 'Zipping…';
   try {
     const jobs = getQueueJobs();
-    const jobIds = jobs.map((j) => j.athensJobId || j.id).filter(Boolean);
+    const jobIds = jobs
+      .filter((j) => j.hasGeneratedResume)
+      .map((j) => j.athensJobId || j.id)
+      .filter(Boolean);
     const response = await sendMessage({
       type: 'DOWNLOAD_RESUMES_ZIP',
       jobIds,
