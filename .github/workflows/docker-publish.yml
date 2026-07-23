@@ -219,22 +219,23 @@ jobs:
           script_stop: true
           envs: SLACK_WEBHOOK_URL,GRAFANA_ADMIN_PASSWORD
           script: |
-            set -euo pipefail
-            if [[ -f /opt/nextoffer/deploy-remote.sh ]]; then
+            set -eu
+            echo "Preparing Athens monitoring and deployment"
+            if [ -f /opt/nextoffer/deploy-remote.sh ]; then
               mv -f /opt/nextoffer/deploy-remote.sh /opt/nextoffer/deploy.sh
-            elif [[ -f /opt/nextoffer/docker/deploy-remote.sh ]]; then
+            elif [ -f /opt/nextoffer/docker/deploy-remote.sh ]; then
               mv -f /opt/nextoffer/docker/deploy-remote.sh /opt/nextoffer/deploy.sh
             fi
             chmod 755 /opt/nextoffer/deploy.sh
             install -d -m 700 /opt/athens-monitoring/alertmanager
             grafana_password="${GRAFANA_ADMIN_PASSWORD:-}"
-            if [[ -z "$grafana_password" && -f /opt/athens-monitoring/.env ]]; then
+            if [ -z "$grafana_password" ] && [ -f /opt/athens-monitoring/.env ]; then
               grafana_password="$(awk -F= '$1 == "GRAFANA_ADMIN_PASSWORD" {print substr($0, index($0, "=") + 1)}' /opt/athens-monitoring/.env)"
             fi
             grafana_password="${grafana_password:-$(openssl rand -hex 24)}"
             umask 077
             printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\n' "$grafana_password" > /opt/athens-monitoring/.env
-            if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
+            if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
               printf '%s\n' \
                 'global:' \
                 '  resolve_timeout: 5m' \
@@ -254,13 +255,35 @@ jobs:
                 '        channel: "#athens-alerts"' \
                 '        send_resolved: true' >> /opt/athens-monitoring/alertmanager/alertmanager.local.yml
             else
-              cp /opt/athens-monitoring/alertmanager/alertmanager.yml /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+              if [ -f /opt/athens-monitoring/alertmanager/alertmanager.yml ]; then
+                cp /opt/athens-monitoring/alertmanager/alertmanager.yml /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+              else
+                printf '%s\n' \
+                  'global:' \
+                  '  resolve_timeout: 5m' \
+                  '' \
+                  'route:' \
+                  '  receiver: noop' \
+                  '' \
+                  'receivers:' \
+                  '  - name: noop' > /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+              fi
               echo "SLACK_WEBHOOK_URL is not configured; monitoring alerts will not be delivered to Slack."
             fi
             chmod 600 /opt/athens-monitoring/.env /opt/athens-monitoring/alertmanager/alertmanager.local.yml
-            monitoring_compose=(docker compose --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml)
-            "${monitoring_compose[@]}" pull
-            "${monitoring_compose[@]}" up -d
+            if docker compose version >/dev/null 2>&1; then
+              compose_cmd="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              compose_cmd="docker-compose"
+            else
+              echo "Docker Compose is not installed on the VPS; install the Docker Compose plugin or docker-compose." >&2
+              docker --version >&2 || true
+              exit 1
+            fi
+            echo "Using ${compose_cmd} for Athens monitoring"
+            ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml config >/dev/null
+            ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml pull
+            ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml up -d
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 
       - name: Summary
