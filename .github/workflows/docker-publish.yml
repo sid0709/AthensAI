@@ -316,14 +316,7 @@ jobs:
             as_root install -m 600 "$monitoring_env_tmp" /opt/athens-monitoring/.env
             rm -f "$monitoring_env_tmp"
             echo "Monitoring environment file is installed"
-            alertmanager_target=/opt/athens-monitoring/alertmanager/alertmanager.local.yml
-            if [ -d "$alertmanager_target" ]; then
-              alertmanager_backup="${alertmanager_target}.invalid.$(date +%s)"
-              echo "Moving invalid Alertmanager config directory to ${alertmanager_backup}"
-              as_root mv "$alertmanager_target" "$alertmanager_backup"
-            elif [ -e "$alertmanager_target" ] || [ -L "$alertmanager_target" ]; then
-              as_root rm -f "$alertmanager_target"
-            fi
+            alertmanager_target=/opt/athens-monitoring/alertmanager/alertmanager.generated.yml
             alertmanager_tmp="$(mktemp)"
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
               printf '%s\n' \
