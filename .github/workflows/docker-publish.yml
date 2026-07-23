@@ -12,6 +12,8 @@
 # Optional secrets / variables:
 #   VPS_SSH_PORT        — default 22
 #   DOCKER_IMAGE        — default: omnimuh730/nextoffer
+#   SLACK_WEBHOOK_URL   — optional Slack incoming-webhook URL for monitoring alerts
+#   GRAFANA_ADMIN_PASSWORD — optional; otherwise generated and persisted on the VPS
 #   PUBLIC_ORIGIN       — public web origin baked into extension zips
 #                         (e.g. https://sid.example.com or http://IP:9030).
 #                         Default: http://$VPS_HOST:9030 (container nginx port map).
@@ -192,6 +194,17 @@ jobs:
           target: /opt/nextoffer/
           strip_components: 1
 
+      - name: Sync monitoring configuration to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          source: monitoring
+          target: /opt/athens-monitoring/
+          strip_components: 1
+
       - name: Pull image and recreate container
         id: deploy
         uses: appleboy/ssh-action@v1.2.0
@@ -201,6 +214,10 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
           script_stop: true
+          envs: SLACK_WEBHOOK_URL,GRAFANA_ADMIN_PASSWORD
+          env:
+            SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+            GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           script: |
             set -euo pipefail
             if [[ -f /opt/nextoffer/deploy-remote.sh ]]; then
@@ -209,6 +226,41 @@ jobs:
               mv -f /opt/nextoffer/docker/deploy-remote.sh /opt/nextoffer/deploy.sh
             fi
             chmod 755 /opt/nextoffer/deploy.sh
+            install -d -m 700 /opt/athens-monitoring/alertmanager
+            grafana_password="${GRAFANA_ADMIN_PASSWORD:-}"
+            if [[ -z "$grafana_password" && -f /opt/athens-monitoring/.env ]]; then
+              grafana_password="$(awk -F= '$1 == "GRAFANA_ADMIN_PASSWORD" {print substr($0, index($0, "=") + 1)}' /opt/athens-monitoring/.env)"
+            fi
+            grafana_password="${grafana_password:-$(openssl rand -hex 24)}"
+            umask 077
+            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\n' "$grafana_password" > /opt/athens-monitoring/.env
+            if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
+              printf '%s\n' \
+                'global:' \
+                '  resolve_timeout: 5m' \
+                '' \
+                'route:' \
+                '  receiver: slack' \
+                '  group_by: [alertname, component]' \
+                '  group_wait: 30s' \
+                '  group_interval: 5m' \
+                '  repeat_interval: 4h' \
+                '' \
+                'receivers:' \
+                '  - name: slack' \
+                '    slack_configs:' > /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+              printf "      - api_url: '%s'\n" "$SLACK_WEBHOOK_URL" >> /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+              printf '%s\n' \
+                '        channel: "#athens-alerts"' \
+                '        send_resolved: true' >> /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+            else
+              cp /opt/athens-monitoring/alertmanager/alertmanager.yml /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+              echo "SLACK_WEBHOOK_URL is not configured; monitoring alerts will not be delivered to Slack."
+            fi
+            chmod 600 /opt/athens-monitoring/.env /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+            monitoring_compose=(docker compose --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml)
+            "${monitoring_compose[@]}" pull
+            "${monitoring_compose[@]}" up -d
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 
       - name: Summary
@@ -223,6 +275,7 @@ jobs:
             echo "| Image | \`${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}\` |"
             echo "| Commit | \`${{ needs.build-and-push.outputs.sha_short }}\` |"
             echo ""
-            echo "Health: \`curl -sS http://127.0.0.1:9030/avalon/health\` on the VPS."
+            echo "Health: Athens readiness, AI BFF, Avalon, and public status checks run on the VPS."
+            echo "Monitoring: Prometheus/Grafana/Alertmanager are maintained by the same SSH deploy."
             echo "Rollback: \`ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '/opt/nextoffer/deploy.sh sha-<old>'\`"
           } >> "$GITHUB_STEP_SUMMARY"

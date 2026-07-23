@@ -15,7 +15,10 @@ IMAGE_DEFAULT="${DOCKER_IMAGE:-omnimuh730/nextoffer}"
 TAG_OR_REF="${1:-latest}"
 DEPLOY_ENV="${DEPLOY_ENV:-/opt/nextoffer/deploy.env}"
 CONTAINER_NAME="${CONTAINER_NAME:-nextoffer}"
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:9030/avalon/health}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8979/readyz}"
+STATUS_URL="${STATUS_URL:-http://127.0.0.1:9030/api/status/current}"
+AI_BFF_HEALTH_URL="${AI_BFF_HEALTH_URL:-http://127.0.0.1:3920/health}"
+AVALON_HEALTH_URL="${AVALON_HEALTH_URL:-http://127.0.0.1:9030/avalon/health}"
 HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-36}"
 HEALTH_SLEEP_SEC="${HEALTH_SLEEP_SEC:-5}"
 
@@ -90,6 +93,20 @@ if [[ "$ok" -ne 1 ]]; then
   docker logs --tail 80 "$CONTAINER_NAME" || true
   exit 1
 fi
+
+for required_url in "$AI_BFF_HEALTH_URL" "$AVALON_HEALTH_URL" "$STATUS_URL"; do
+  echo "Verifying ${required_url}"
+  ok=0
+  for ((i = 1; i <= HEALTH_ATTEMPTS; i++)); do
+    if curl -fsS "$required_url" >/dev/null 2>&1; then ok=1; break; fi
+    sleep "$HEALTH_SLEEP_SEC"
+  done
+  if [[ "$ok" -ne 1 ]]; then
+    echo "Required post-deploy check failed: ${required_url}" >&2
+    docker logs --tail 80 "$CONTAINER_NAME" || true
+    exit 1
+  fi
+done
 
 echo "Deploy OK: ${IMAGE_REF}"
 curl -sS "$HEALTH_URL" || true

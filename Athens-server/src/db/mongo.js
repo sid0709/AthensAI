@@ -210,6 +210,16 @@ async function initMongo() {
 	await ensureMailCollectionsIndexes();
 	await ensureMatchScoreIndexes();
 	await ensureExternalScrapedJobsIndexes();
+	try {
+		await db.collection('monitor_current_status').createIndex({ component: 1 }, { unique: true });
+		await db.collection('monitor_samples').createIndex({ checkedAt: 1 });
+		await db.collection('monitor_samples').createIndex({ component: 1, checkedAt: -1 });
+		await db.collection('monitor_daily_rollups').createIndex({ date: 1, component: 1 }, { unique: true });
+		await db.collection('monitor_incidents').createIndex({ component: 1, startedAt: -1 });
+		await db.collection('monitor_incidents').createIndex({ component: 1, resolvedAt: 1 });
+	} catch (err) {
+		console.warn('[monitoring] index creation failed', err.message);
+	}
 	// applyLink is no longer globally unique: Extension may add a non-v2 copy of
 	// a v2 job, and createJob dedupes URL/content within a 30-day window only.
 	// Drop the legacy unique index before ensureJobMarketIndexes recreates a

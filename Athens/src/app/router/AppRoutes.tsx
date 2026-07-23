@@ -6,6 +6,7 @@ import { VIEW_COMPONENTS } from "../config/views";
 import { AppLayout } from "./AppLayout";
 import { ProtectedRoute } from "./ProtectedRoute";
 import { AdminRoute } from "./AdminRoute";
+import { StatusPage } from "../features/status/StatusPage";
 
 const {
   dashboard: DashboardPage,
@@ -32,6 +33,7 @@ export function AppRoutes() {
     <Routes>
       <Route path={PATHS.signin} element={<SignInPage />} />
       <Route path={PATHS.signup} element={<SignUpPage />} />
+      <Route path="/status" element={<StatusPage />} />
       <Route
         element={
           <ProtectedRoute>

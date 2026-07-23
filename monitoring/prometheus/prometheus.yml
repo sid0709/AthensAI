@@ -1,0 +1,53 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    service: athensai
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [prometheus:9090]
+
+  - job_name: node
+    static_configs:
+      - targets: [node-exporter:9100]
+
+  - job_name: containers
+    static_configs:
+      - targets: [cadvisor:8080]
+
+  - job_name: athens-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: [host.docker.internal:8979]
+
+  - job_name: ai-bff
+    metrics_path: /metrics
+    static_configs:
+      - targets: [host.docker.internal:3920]
+
+  - job_name: public-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://host.docker.internal:9030/
+          - http://host.docker.internal:9030/api/status/current
+          - http://host.docker.internal:9030/avalon/health
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

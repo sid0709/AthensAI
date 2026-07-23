@@ -123,6 +123,6 @@ VOLUME ["/data/db", "/data/puppeteer"]
 EXPOSE 80 3920 8979 3847
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-  CMD node -e "const http=require('http');http.get('http://127.0.0.1/avalon/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+  CMD node -e "const http=require('http');http.get('http://127.0.0.1/readyz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

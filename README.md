@@ -61,6 +61,12 @@ SKIP_DOCKER=1 npm start
 4. **Builds** `ai-bff`
 5. **Launches** Athens-server, ai-bff, and Athens UI
 
+## Monitoring and public status
+
+The production monitoring stack lives in [`monitoring/`](monitoring/). It runs Prometheus, Grafana, Alertmanager, node-exporter, cAdvisor, and blackbox-exporter as a separate Docker Compose project. Follow [`monitoring/README.md`](monitoring/README.md) for the one-time VPS setup, then open the public status page at `/status`.
+
+Athens-server exposes `/metrics`, `/healthz`, `/readyz`, and the curated public status API under `/api/status/*`. Detailed host and container metrics remain private in Grafana; the public page exposes service availability and safe historical uptime only.
+
 | Service | URL |
 |---------|-----|
 | **Frontend** | http://localhost:9030 |

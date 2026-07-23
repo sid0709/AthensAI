@@ -21,7 +21,9 @@
 		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",
 		"reset-skills": "node src/scripts/resetSkills.js",
 		"remove-embeddings": "node src/scripts/removeEmbeddings.js",
-		"cleanup-job-market-fields": "node src/scripts/cleanupJobMarketFields.js"
+		"cleanup-job-market-fields": "node src/scripts/cleanupJobMarketFields.js",
+		"monitoring:rollup": "node src/scripts/rollupMonitoring.js",
+		"test:monitoring": "node --test src/services/monitoring/*.test.mjs"
 	},
 	"dependencies": {
 		"@nextoffer/shared": "file:../packages/shared",

@@ -13,12 +13,16 @@ import cors from "cors";
 import { setupMaster } from "@socket.io/sticky";
 import { setupPrimary } from "@socket.io/cluster-adapter";
 
-import { initMongo, closeMongo } from "./src/db/mongo.js";
+import { initMongo, closeMongo, getMongoDb } from "./src/db/mongo.js";
 import { initSocket, closeSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 import { shutdownPool as shutdownImapPool } from "./src/services/mail/imapPool.js";
 import { shutdownPdfPool } from "./src/services/pdf/pdfRenderPool.js";
+import statusRoutes from "./src/routes/statusRoutes.js";
+import statusAdminRoutes from "./src/routes/statusAdminRoutes.js";
+import { metricsMiddleware, renderMetrics } from "./src/services/monitoring/metrics.js";
+import { startMonitoringLoop } from "./src/services/monitoring/monitorLoop.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -73,6 +77,10 @@ function createApp() {
 	app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "4096mb" }));
 	app.use(cors({ origin: "*" }));
 	app.use(requestLogger("api"));
+	app.use(metricsMiddleware);
+	app.get("/metrics", (_req, res) => {
+		res.type("text/plain; version=0.0.4").send(renderMetrics("athens-server"));
+	});
 
 	app.get("/healthz", (_req, res) => {
 		res.json({
@@ -84,9 +92,14 @@ function createApp() {
 		});
 	});
 
-	app.get("/readyz", (_req, res) => {
-		if (!mongoReady) return res.status(503).json({ ok: false, mongoReady: false });
-		return res.json({ ok: true, mongoReady: true });
+	app.get("/readyz", async (_req, res) => {
+		if (!mongoReady || !getMongoDb()) return res.status(503).json({ ok: false, mongoReady: false });
+		try {
+			await getMongoDb().command({ ping: 1 });
+			return res.json({ ok: true, mongoReady: true });
+		} catch {
+			return res.status(503).json({ ok: false, mongoReady: false, error: "database unavailable" });
+		}
 	});
 
 	app.use("/api", openTabsRoutes);
@@ -107,6 +120,8 @@ function createApp() {
 	app.use("/api", firebaseRoutes);
 	app.use("/api", bidResultsRoutes);
 	app.use("/api", jobAnalyzeRoutes);
+	app.use("/api", statusRoutes);
+	app.use("/api", statusAdminRoutes);
 
 	app.get("/personal/auto-bid-profile", getAutoBidProfile);
 	app.put("/personal/auto-bid-profile", upsertAutoBidProfile);
@@ -141,6 +156,7 @@ async function startBackgroundWorkers() {
 async function startHttpWorker({ clustered }) {
 	await initMongo();
 	mongoReady = true;
+	if (!clustered) startMonitoringLoop();
 
 	const app = createApp();
 	const server = http.createServer(app);
@@ -211,6 +227,7 @@ async function startPrimary() {
 	});
 
 	await startBackgroundWorkers();
+	startMonitoringLoop();
 
 	let shuttingDown = false;
 	async function shutdown(signal) {
