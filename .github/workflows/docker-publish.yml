@@ -316,8 +316,16 @@ jobs:
             as_root install -m 600 "$monitoring_env_tmp" /opt/athens-monitoring/.env
             rm -f "$monitoring_env_tmp"
             echo "Monitoring environment file is installed"
+            alertmanager_target=/opt/athens-monitoring/alertmanager/alertmanager.local.yml
+            if [ -d "$alertmanager_target" ]; then
+              alertmanager_backup="${alertmanager_target}.invalid.$(date +%s)"
+              echo "Moving invalid Alertmanager config directory to ${alertmanager_backup}"
+              as_root mv "$alertmanager_target" "$alertmanager_backup"
+            elif [ -e "$alertmanager_target" ] || [ -L "$alertmanager_target" ]; then
+              as_root rm -f "$alertmanager_target"
+            fi
+            alertmanager_tmp="$(mktemp)"
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-              alertmanager_tmp="$(mktemp)"
               printf '%s\n' \
                 'global:' \
                 '  resolve_timeout: 5m' \
@@ -336,28 +344,20 @@ jobs:
               printf '%s\n' \
                 '        channel: "#athens-alerts"' \
                 '        send_resolved: true' >> "$alertmanager_tmp"
-              as_root install -m 600 "$alertmanager_tmp" /opt/athens-monitoring/alertmanager/alertmanager.local.yml
-              rm -f "$alertmanager_tmp"
             else
-              if [ -f /opt/athens-monitoring/alertmanager/alertmanager.yml ]; then
-                as_root install -m 600 /opt/athens-monitoring/alertmanager/alertmanager.yml \
-                  /opt/athens-monitoring/alertmanager/alertmanager.local.yml
-              else
-                alertmanager_tmp="$(mktemp)"
-                printf '%s\n' \
-                  'global:' \
-                  '  resolve_timeout: 5m' \
-                  '' \
-                  'route:' \
-                  '  receiver: noop' \
-                  '' \
-                  'receivers:' \
-                  '  - name: noop' > "$alertmanager_tmp"
-                as_root install -m 600 "$alertmanager_tmp" /opt/athens-monitoring/alertmanager/alertmanager.local.yml
-                rm -f "$alertmanager_tmp"
-              fi
+              printf '%s\n' \
+                'global:' \
+                '  resolve_timeout: 5m' \
+                '' \
+                'route:' \
+                '  receiver: noop' \
+                '' \
+                'receivers:' \
+                '  - name: noop' > "$alertmanager_tmp"
               echo "SLACK_WEBHOOK_URL is not configured; monitoring alerts will not be delivered to Slack."
             fi
+            as_root install -m 600 "$alertmanager_tmp" "$alertmanager_target"
+            rm -f "$alertmanager_tmp"
             echo "Alertmanager configuration is installed"
             if docker compose version >/dev/null 2>&1; then
               compose_cmd="docker compose"
