@@ -308,8 +308,12 @@ jobs:
             fi
             grafana_password="${grafana_password:-$(openssl rand -hex 24)}"
             umask 077
-            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\n' "$grafana_password" > /opt/athens-monitoring/.env
+            monitoring_env_tmp="$(mktemp)"
+            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\n' "$grafana_password" > "$monitoring_env_tmp"
+            as_root install -m 600 "$monitoring_env_tmp" /opt/athens-monitoring/.env
+            rm -f "$monitoring_env_tmp"
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+              alertmanager_tmp="$(mktemp)"
               printf '%s\n' \
                 'global:' \
                 '  resolve_timeout: 5m' \
@@ -323,15 +327,19 @@ jobs:
                 '' \
                 'receivers:' \
                 '  - name: slack' \
-                '    slack_configs:' > /opt/athens-monitoring/alertmanager/alertmanager.local.yml
-              printf "      - api_url: '%s'\n" "$SLACK_WEBHOOK_URL" >> /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+                '    slack_configs:' > "$alertmanager_tmp"
+              printf "      - api_url: '%s'\n" "$SLACK_WEBHOOK_URL" >> "$alertmanager_tmp"
               printf '%s\n' \
                 '        channel: "#athens-alerts"' \
-                '        send_resolved: true' >> /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+                '        send_resolved: true' >> "$alertmanager_tmp"
+              as_root install -m 600 "$alertmanager_tmp" /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+              rm -f "$alertmanager_tmp"
             else
               if [ -f /opt/athens-monitoring/alertmanager/alertmanager.yml ]; then
-                cp /opt/athens-monitoring/alertmanager/alertmanager.yml /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+                as_root install -m 600 /opt/athens-monitoring/alertmanager/alertmanager.yml \
+                  /opt/athens-monitoring/alertmanager/alertmanager.local.yml
               else
+                alertmanager_tmp="$(mktemp)"
                 printf '%s\n' \
                   'global:' \
                   '  resolve_timeout: 5m' \
@@ -340,11 +348,12 @@ jobs:
                   '  receiver: noop' \
                   '' \
                   'receivers:' \
-                  '  - name: noop' > /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+                  '  - name: noop' > "$alertmanager_tmp"
+                as_root install -m 600 "$alertmanager_tmp" /opt/athens-monitoring/alertmanager/alertmanager.local.yml
+                rm -f "$alertmanager_tmp"
               fi
               echo "SLACK_WEBHOOK_URL is not configured; monitoring alerts will not be delivered to Slack."
             fi
-            chmod 600 /opt/athens-monitoring/.env /opt/athens-monitoring/alertmanager/alertmanager.local.yml
             if docker compose version >/dev/null 2>&1; then
               compose_cmd="docker compose"
             elif command -v docker-compose >/dev/null 2>&1; then
