@@ -288,10 +288,12 @@ jobs:
             fi
             chmod 755 /opt/nextoffer/deploy.sh
             echo "Deploy script staged from ${deploy_source}"
+            echo "Preparing monitoring directories"
             as_root install -d -m 750 /opt/athens-monitoring/alertmanager \
               /opt/athens-monitoring/data/prometheus \
               /opt/athens-monitoring/data/grafana \
               /opt/athens-monitoring/data/alertmanager
+            echo "Monitoring directories are ready"
             if [ "$(id -u)" -eq 0 ]; then
               chown 65534:65534 /opt/athens-monitoring/data/prometheus /opt/athens-monitoring/data/alertmanager
               chown 472:472 /opt/athens-monitoring/data/grafana
@@ -302,6 +304,7 @@ jobs:
               echo "Cannot set monitoring data ownership: root or sudo is required." >&2
               exit 1
             fi
+            echo "Monitoring data ownership is ready"
             grafana_password="${GRAFANA_ADMIN_PASSWORD:-}"
             if [ -z "$grafana_password" ] && [ -f /opt/athens-monitoring/.env ]; then
               grafana_password="$(awk -F= '$1 == "GRAFANA_ADMIN_PASSWORD" {print substr($0, index($0, "=") + 1)}' /opt/athens-monitoring/.env)"
@@ -312,6 +315,7 @@ jobs:
             printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\n' "$grafana_password" > "$monitoring_env_tmp"
             as_root install -m 600 "$monitoring_env_tmp" /opt/athens-monitoring/.env
             rm -f "$monitoring_env_tmp"
+            echo "Monitoring environment file is installed"
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
               alertmanager_tmp="$(mktemp)"
               printf '%s\n' \
@@ -354,6 +358,7 @@ jobs:
               fi
               echo "SLACK_WEBHOOK_URL is not configured; monitoring alerts will not be delivered to Slack."
             fi
+            echo "Alertmanager configuration is installed"
             if docker compose version >/dev/null 2>&1; then
               compose_cmd="docker compose"
             elif command -v docker-compose >/dev/null 2>&1; then
@@ -364,9 +369,13 @@ jobs:
               exit 1
             fi
             echo "Using ${compose_cmd} for Athens monitoring"
+            echo "Validating monitoring Compose configuration"
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml config >/dev/null
+            echo "Pulling monitoring images"
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml pull
+            echo "Starting monitoring services"
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml up -d
+            echo "Starting Athens application deploy"
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 
       - name: Summary
