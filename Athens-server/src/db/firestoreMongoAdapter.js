@@ -553,7 +553,11 @@ class FirestoreCollection {
 	async findOne(filter = {}, options = {}) { return (await this.find(filter, options).sort(options.sort || {}).limit(1).toArray())[0] || null; }
 	async insertOne(doc) {
 		const id = String(comparable(doc._id || deterministicId(this.collectionName, doc) || new ObjectId()));
-		const data = encode({ ...doc, ...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}) }); delete data._id;
+		const data = encode({
+			...doc,
+			...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}),
+			...(this.collectionName === "job_market" ? { extensionV2: String(doc.version || "") === "v2" } : {}),
+		}); delete data._id;
 		assertFirestoreDocumentSize(data, `${this.collectionName}/${id}`);
 		const batch = this.db.firestore.batch();
 		batch.create(this.ref.doc(id), data);
@@ -600,6 +604,7 @@ class FirestoreCollection {
 				current = found;
 			}
 			const next = applyUpdate(current, update, inserting, options.arrayFilters || []); delete next._id;
+			if (this.collectionName === "job_market") next.extensionV2 = String(next.version || "") === "v2";
 			const encoded = encode(next);
 			assertFirestoreDocumentSize(encoded, `${this.collectionName}/${id}`);
 			const beforeReservations = firestoreUniqueReservations(this.collectionName, current, id);

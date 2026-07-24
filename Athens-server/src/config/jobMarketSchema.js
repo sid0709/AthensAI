@@ -13,6 +13,9 @@ export const EXTENSION_V2_CLIENT_HEADER = 'extension-v2';
 
 /** Mongo clause that hides extension-v2 jobs from non-beta viewers. */
 export function excludeExtensionV2JobsFilter() {
+	if (String(process.env.DATABASE_BACKEND || "").trim().toLowerCase() === "firestore") {
+		return { extensionV2: false };
+	}
 	return { version: { $ne: JOB_MARKET_EXTENSION_VERSION_V2 } };
 }
 

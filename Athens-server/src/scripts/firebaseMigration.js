@@ -196,7 +196,10 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 	const destinationCollection = JOB_COLLECTIONS.has(sourceCollection) ? "jobs" : sourceCollection;
 	let doc = scalar(source);
 	doc._id = sourceId;
-	if (sourceCollection === "job_market") doc.sourceCatalog = "market";
+	if (sourceCollection === "job_market") {
+		doc.sourceCatalog = "market";
+		doc.extensionV2 = String(doc.version || "") === "v2";
+	}
 	if (sourceCollection === "external_scraped_jobs") doc.sourceCatalog = "external";
 	const profileName = String(
 		doc.applierName ||
