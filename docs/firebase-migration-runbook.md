@@ -1,75 +1,133 @@
-# Firebase migration runbook
+# Firebase data-only migration runbook
 
-This runbook moves Athens, AI BFF, Avalon relay, Mongo data, GridFS files, identities, jobs, and caches off the VPS. Production must remain read-only from the final dump until verification passes.
+Athens UI, API, AI BFF, Avalon relay, workers, Redis, Qdrant, nginx, monitoring, and every `remotepairnet.net` route remain on the VPS. Firestore becomes the document database and the protected US Cloud Storage bucket replaces GridFS and inline binary payloads. Firebase Hosting, Firebase Auth, Cloud Run, Cloud Tasks, Scheduler, and Memorystore are not part of this deployment.
 
-## 0. Access and immutable choices
+The retained username/password and browser-local identity model is a deliberate compatibility choice. It does not provide server-enforced authorization against an untrusted caller, so the public VPS API must not be described as securely multi-tenant.
 
-Before applying infrastructure, an organization administrator must confirm that the deployer can manage Cloud Run, Artifact Registry, load balancing, IAM/service accounts, Cloud Tasks, Scheduler, Cloud KMS, Secret Manager, Memorystore, Monitoring, budgets, Firestore, Storage, Firebase Auth, and Firebase Hosting. `Firebase Admin` alone is not sufficient.
+## 0. Safety gates
 
-Confirm that the default Firestore database has not been created in the wrong location. The Terraform configuration requires Native mode in `nam7`; the compute region is `us-east4`. Import any already-created default Firestore database and existing bucket into Terraform state before the first apply.
+- Rehearse in a separate staging Firebase project. Using production as the rehearsal target requires new, written risk acceptance.
+- Keep `FIRESTORE_WRITES_ENABLED=false` through import and verification.
+- Never store the VPS service-account JSON in Git, GitHub Actions, a container image, Terraform state, or a Docker environment variable.
+- Do not apply the production retirement plan until its destroy list contains only the unused Cloud Run-era resources. Firestore, backups, Storage objects, KMS, audit configuration, and the VPS runtime identity must remain.
+- Before cutover, take a final checksummed Mongo dump and both GridFS exports. Keep them and the read-only Mongo volume for 30 days.
 
-Create a separate staging Firebase project. Never rehearse in production.
+## 1. Rehearse in staging
 
-## 1. Provision staging
-
-1. Copy `infra/firebase/terraform.tfvars.example` to an untracked tfvars file. Set the API domain, Hosting origin, exact packaged extension origins (or `*` for signed resumable upload URLs), image tag, bucket, billing account, project number, and budget.
-2. Initialize and apply `infra/firebase` with `bootstrap_images=true`. The first apply uses Google's public hello image so Cloud Run can be provisioned before the private repository contains an Athens image. It also creates Firestore PITR, daily 14-day backups, weekly 14-week backups, a versioned/soft-delete Storage bucket, KMS, secrets, Cloud Run services/jobs, Tasks queues, Scheduler jobs, Memorystore, audit logs, uptime checks, budget thresholds, and the global HTTPS load balancer.
-3. Add current values for the Algolia/OpenAI/DeepSeek secrets in Secret Manager. Do not put secret values in Terraform variables or build substitutions.
-4. Run `cloudbuild.images.yaml` once to build and push the three private images without changing traffic. Set `bootstrap_images=false`, set `image_tag` to that commit SHA, and apply Terraform again; this switches services/jobs to the real images, mounts secret versions, and enables health probes.
-5. Point the API DNS A record at the Terraform `api_ip_address` output and wait for the managed certificate.
-6. Run `cloudbuild.firebase.yaml` using the Terraform-created `athens-deployer` service account. It rebuilds and deploys the three images, packages both Chrome extensions into `/downloads`, updates the Cloud Run services/jobs, and deploys Hosting, rules, and indexes.
-
-Cloud Build assumes Terraform has already created the named services and jobs. Keep Terraform `image_tag` aligned with the deployed commit to prevent a later apply from rolling images backward.
-
-## 2. Audit the source
-
-Run from a trusted migration host with read access to the final Mongo source and Google application credentials:
+Create a staging project and a globally unique staging bucket name. Initialize the same Terraform code with a separate state prefix:
 
 ```bash
-cd Athens-server
-npm run firebase:audit
+cd infra/firebase
+terraform init -reconfigure -backend-config="prefix=firebase/staging"
+terraform plan -var="project_id=drwretail-bm-staging" -var="storage_bucket=drwretail-bm-staging-migrated" -out=staging.tfplan
+terraform apply staging.tfplan
 ```
 
-Review `migration-output/audit.json`. Cutover is blocked by missing/duplicate owner emails or duplicate declared business keys. The report includes every application collection, BSON sizes/types, inline binary fields, both GridFS buckets, and existing target-bucket inventory. Resolve every blocker explicitly; do not silently drop a source row.
+If the staging Firestore database or bucket already exists, import it before applying. Confirm Native Firestore is in `nam7`, PITR is enabled, the daily and weekly backup schedules exist, and public access prevention is enforced on the bucket.
 
-Export the vendor identity grants as `MIGRATION_VENDOR_MAP`. Vendor email addresses must be different from all owner email addresses.
+Create a key only for the staging `athens-vps-runtime` identity, install it on the staging migration host with owner-only permissions, and set:
 
-## 3. Rehearse
+```dotenv
+DATABASE_BACKEND=firestore
+FIREBASE_PROJECT_ID=drwretail-bm-staging
+FIREBASE_STORAGE_BUCKET=drwretail-bm-staging-migrated
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/private/path/athens-vps-runtime.json
+KMS_KEY_NAME=projects/drwretail-bm-staging/locations/us-east4/keyRings/athens/cryptoKeys/profile-secrets
+MIGRATION_INCLUDE_AUTH=false
+MONGO_SOURCE_URL=mongodb://source-host:27017
+MONGO_SOURCE_DB=AthensDB
+```
 
-Run the migration against staging:
+Run the data-only sequence from `Athens-server`:
 
 ```bash
+npm run firebase:audit
 npm run firebase:migrate
-npm run firebase:auth
 npm run firebase:verify
 ```
 
-The migration preserves Mongo ObjectId hex values, maps both job collections into `jobs`, writes binary data to deterministic Storage paths, and records a source/destination/hash manifest. Re-running it with unchanged source data reuses the verified destination and cannot create duplicates. Accounts with the legacy default password or without a valid bcrypt hash are written to `auth-reset-required.json` and cannot sign in until completing Firebase password reset.
+`firebase:audit` does not treat missing or duplicate email addresses as blockers in data-only mode. `firebase:migrate` preserves bcrypt owner and vendor password hashes, ObjectId document IDs, deterministic unique reservations, Storage hashes, and an idempotent manifest. Do not run `firebase:auth`; it is disabled unless `MIGRATION_INCLUDE_AUTH=true` is explicitly set.
 
-Run the complete test suite and the acceptance checks below against staging. Also execute the `athens-search-rebuild`, `athens-job-analysis-backfill`, and `athens-match-score-backfill` Cloud Run Jobs.
+Deploy the staging VPS image with writes disabled and test legacy owner/vendor login, account settings, job and mail pagination, résumé/template/recording access, rendering, AI BFF, Avalon, Socket.IO, local workers, Redis/Qdrant, monitoring, container restart recovery, and Algolia reconstruction from Firestore.
 
-## 4. Production cutover
+## 2. Retire the unused production cloud runtime in two applies
 
-1. Enable the application maintenance/read-only response.
-2. Stop every VPS API, relay, scraper, poller, cron, worker, and extension writer. Confirm Mongo has no active application writers.
-3. Create and checksum the final Mongo dump and both GridFS exports. Keep Mongo read-only.
-4. Re-run audit, then migration, Auth import, and verification against production.
-5. Deploy the Cloud Run revisions and Hosting release with writes still disabled.
-6. Keep `firestore_writes_enabled=false`. Test owner and bidder login, denied cross-profile access, REST, both Socket.IO paths, and read-only queries. An admin may exercise isolated production test-profile mutations with `X-Migration-Test: true`; delete those objects and documents afterward. Run upload, render, mail, outbox, retry, and Cloud Run Job acceptance tests fully in staging.
-7. Compare every source/destination count and canonical hash, every file SHA-256, Auth/grant mapping, declared unique business key, Firestore index, and representative business query. Any verifier failure blocks release.
-8. Take an on-demand Firestore backup, record deployed revisions and Hosting release, then set `firestore_writes_enabled=true` and apply Terraform.
+The phase-one checkpoint is commit `bf79473`. It keeps the old resources present, changes Cloud Run deletion protection to `false`, and creates `athens-vps-runtime` with Firestore, Storage, and KMS access. Apply that exact checkpoint from a temporary worktree:
 
-After step 8, Firestore is authoritative. Rollback means moving traffic to a prior Hosting release or Cloud Run revision. Do not resume Mongo writes.
+```bash
+git worktree add /tmp/athens-firebase-phase1 bf79473
+cd /tmp/athens-firebase-phase1/infra/firebase
+terraform init -reconfigure -backend-config="prefix=firebase/production"
+terraform plan -out=phase1.tfplan
+terraform apply phase1.tfplan
+```
 
-## 5. Acceptance and recovery
+Review the phase-one plan before applying: it must not delete Cloud Run services, Firestore, Storage, KMS, Redis, or any application data.
 
-The release is accepted only when:
+Return to the current `main` checkout for phase two:
 
-- `firebase:verify` has zero failures and no Firestore document exceeds 900 KiB.
-- All GridFS/inline objects have matching byte counts and SHA-256 values.
-- Owner/bidder cross-profile requests fail for REST, Socket.IO, upload sessions, and extension flows.
-- Algolia can be deleted and rebuilt with `athens-search-rebuild` from Firestore.
-- Load, reconnect (including a forced Cloud Run revision change), large upload, worker retry, render, backup restore, and disaster-recovery drills pass.
-- No service configuration references the VPS, Mongo, GridFS, local Redis, local monitoring, or a local persistent file path.
+```bash
+cd /path/to/AthensAI/infra/firebase
+terraform init -reconfigure -backend-config="prefix=firebase/production"
+terraform plan -out=data-only.tfplan
+terraform show data-only.tfplan
+terraform apply data-only.tfplan
+```
 
-Retain the final dump, GridFS export, local manifest, audit/verify reports, deployed-revision record, and read-only VPS for 30 days. Decommission only after written approval; delete data with the organization’s recoverable retention process.
+The reviewed phase-two plan should remove the Cloud Run services/jobs, load balancer, reserved IP, certificate, serverless NEGs, Memorystore, VPC connector/network, Tasks queues, Scheduler jobs, Artifact Registry, Secret Manager placeholders, old runtime identities, Cloud monitoring checks for the retired API, and the unused deployer. The data resources listed in the safety gates must remain. APIs are removed from Terraform state with `disable_on_destroy=false`, so retiring a resource does not disable shared Google APIs.
+
+After the plan succeeds and GitHub no longer has any GCP deployment workflow, remove the unused `GCP_PROJECT_ID`, `GCP_SERVICE_ACCOUNT`, and `GCP_WORKLOAD_IDENTITY_PROVIDER` repository secrets and delete the unused GitHub workload-identity pool after one final access-log check.
+
+## 3. Install the production VPS identity
+
+Create one JSON key for `athens-vps-runtime@drwretail-bm.iam.gserviceaccount.com` using an authorized administrator. Copy it outside the repository to:
+
+```text
+/opt/nextoffer/secrets/athens-vps-runtime.json
+```
+
+Set the directory to owner-only access, the file to mode `0600`, and mount it read-only. In `/opt/nextoffer/deploy.env` use:
+
+```dotenv
+DATABASE_BACKEND=firestore
+EMBEDDED_MONGO=false
+FIREBASE_PROJECT_ID=drwretail-bm
+FIREBASE_STORAGE_BUCKET=drwretail-bm-migrated
+FIREBASE_SECRET_HOST_PATH=/opt/nextoffer/secrets/athens-vps-runtime.json
+GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json
+KMS_KEY_NAME=projects/drwretail-bm/locations/us-east4/keyRings/athens/cryptoKeys/profile-secrets
+FIREBASE_AUTH_REQUIRED=false
+BACKGROUND_WORKERS_MODE=local
+FIRESTORE_WRITES_ENABLED=false
+FIRESTORE_COMPAT_WARN_SCAN=1000
+FIRESTORE_COMPAT_MAX_SCAN=20000
+SEARCH_OUTBOX_INTERVAL_MS=5000
+SEARCH_OUTBOX_BATCH_SIZE=100
+```
+
+Keep the existing local `REDIS_URL`, `QDRANT_URL`, Algolia settings, API encryption key, domain routes, monitoring settings, and service ports. The deploy script skips Mongo startup/readiness when Firestore is selected and refuses a missing or incorrectly mounted Google credential.
+
+## 4. Production audit and cutover
+
+1. While Mongo is live, run the data-only audit. Resolve duplicate declared business keys, documents that cannot be reduced below 900 KiB, missing GridFS objects, and unsupported high-volume query patterns.
+2. Enter maintenance mode and stop every Mongo writer, scraper, poller, and worker. Confirm no application writer remains.
+3. Create and checksum the final Mongo dump and both GridFS exports. Mount or retain the Mongo volume read-only.
+4. Run `firebase:migrate` and `firebase:verify` with `MIGRATION_INCLUDE_AUTH=false`. Re-running must reuse deterministic destinations without duplicates.
+5. Deploy the VPS image with Firestore selected and `FIRESTORE_WRITES_ENABLED=false`. The read-only gate permits `/auth/signin` and `/auth/bidder-signin` so login can be tested without enabling writes.
+6. Test documents, signed file access, rendering, mail, AI BFF, Avalon, Socket.IO, local job-analysis/match-score/search-outbox workers, Prometheus/Grafana, and restart recovery.
+7. Require zero verifier failures, matching collection/manifest counts, matching canonical document hashes, matching Storage SHA-256 values, valid reservations, and representative indexed queries.
+8. After written sign-off, set `FIRESTORE_WRITES_ENABLED=true` in `deploy.env` and redeploy/restart the VPS container. Never resume Mongo writes after this point.
+
+Before step 8, rollback may redeploy the Mongo-backed VPS image. After step 8, rollback must use a prior Firestore-capable image so newly written Firestore data is not lost.
+
+## 5. Acceptance and retention
+
+- Every source document has exactly one manifest entry or an explicit immutable archive record.
+- Every GridFS/inline object has the same byte count and SHA-256 in Storage.
+- No Firestore document exceeds 900 KiB.
+- Firestore and Storage rules deny direct Firebase client access; only controlled VPS Admin SDK and signed-object paths are used.
+- Algolia can be deleted and rebuilt from authoritative Firestore records.
+- Legacy owner/vendor login, local workers, retries, restart recovery, backup restore, and VPS monitoring pass.
+- No running service depends on Cloud Run, Firebase Auth/Hosting, Tasks, Scheduler, Memorystore, or the retired cloud runtime.
+
+Retain the dump, GridFS exports, manifest, verification report, checksums, deployed image reference, and read-only Mongo volume for 30 days. Remove them only after approved decommissioning.

@@ -3,7 +3,38 @@ import assert from "node:assert/strict";
 import { ObjectId } from "mongodb";
 import { firestoreAdapterTest, firestoreUniqueReservations } from "./firestoreMongoAdapter.js";
 
-const { matches, applyUpdate, runPipeline } = firestoreAdapterTest;
+const { matches, applyUpdate, runPipeline, buildNativeQueryPlan, conjunctiveDocumentIds } = firestoreAdapterTest;
+
+test("Firestore compatibility query plan translates bounded indexed filters", () => {
+	const plan = buildNativeQueryPlan({
+		$and: [
+			{ applierName: "Owner One" },
+			{ createdAt: { $gte: new Date("2026-07-01T00:00:00Z") } },
+			{ status: { $in: ["ready", "done"] } },
+		],
+	});
+	assert.equal(plan.complete, true);
+	assert.deepEqual(plan.clauses.map(({ field, operator }) => [field, operator]), [
+		["applierName", "=="],
+		["createdAt", ">="],
+		["status", "in"],
+	]);
+});
+
+test("Firestore compatibility query plan marks regex and OR filters as fallback scans", () => {
+	const plan = buildNativeQueryPlan({ $or: [{ title: /react/i }, { company: "Example" }] });
+	assert.equal(plan.complete, false);
+	assert.deepEqual(plan.clauses, []);
+});
+
+test("Firestore compatibility extracts Algolia document IDs for authoritative point reloads", () => {
+	const first = new ObjectId();
+	const second = new ObjectId();
+	assert.deepEqual(
+		conjunctiveDocumentIds({ $and: [{ sourceCatalog: "market" }, { _id: { $in: [first, second] } }] }),
+		[first.toHexString(), second.toHexString()],
+	);
+});
 
 test("Firestore compatibility filter handles ObjectIds, arrays, regex, and elemMatch", () => {
 	const id = new ObjectId();

@@ -15,19 +15,19 @@
       </header>
       <form id="loginForm" class="form-section card">
         <label>
-          Bidder email
-          <input id="applierName" type="email" placeholder="vendor@company.com" autocomplete="username" required />
+          Profile name
+          <input id="applierName" type="text" placeholder="e.g. Eli Taylor" autocomplete="username" required />
         </label>
         <label>
-          Password
-          <input id="password" type="password" autocomplete="current-password" required />
+          Vendor access password
+          <input id="password" type="password" placeholder="Set in Athens → Profile" autocomplete="current-password" required />
         </label>
         <input id="username" type="hidden" value="" />
         <button id="signInBtn" class="btn btn-primary" type="submit">Sign in</button>
       </form>
       <p id="loginError" class="error hidden"></p>
       <p class="hint">
-        Requires a Firebase bidder account with an explicit Athens profile grant.
+        Requires <strong>Allow vendor access</strong> and a <strong>vendor access password</strong> in Athens → Settings → Profile.
       </p>
     </section>
 

@@ -9,7 +9,7 @@ import { AuthSplitLayout } from "./components/AuthSplitLayout";
 import { display } from "../../lib/utils";
 
 export function SignInPage() {
-  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,15 +23,15 @@ export function SignInPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (!email.trim() || !password) {
+    if (!name.trim() || !password) {
       setError("Please fill in all fields");
       return;
     }
     setLoading(true);
-    const result = await signin(email.trim(), password);
+    const result = await signin(name.trim(), password);
     setLoading(false);
     if (result.success) {
-      toast.success("Signed in", { description: `Welcome back, ${result.user?.name || email.trim()}.` });
+      toast.success("Signed in", { description: `Welcome back, ${result.user?.name || name.trim()}.` });
       navigate("/", { replace: true });
     } else {
       const msg = result.message || "Sign in failed";
@@ -58,7 +58,7 @@ export function SignInPage() {
           <h2 className="text-2xl font-bold text-foreground" style={display}>
             Sign in
           </h2>
-          <p className="text-sm text-muted-foreground">Use your Firebase account</p>
+          <p className="text-sm text-muted-foreground">Use your Athens account</p>
         </div>
       </div>
 
@@ -70,15 +70,15 @@ export function SignInPage() {
 
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
-          <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Email</label>
+          <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Profile name</label>
           <input
             autoFocus
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             className="mt-1.5 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2.5 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
             autoComplete="username"
-            placeholder="you@company.com"
+            placeholder="Your Athens profile name"
           />
         </div>
         <div>

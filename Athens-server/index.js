@@ -17,6 +17,7 @@ import { initMongo, closeMongo, getMongoDb } from "./src/db/mongo.js";
 import { initSocket, closeSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
+import { startLocalSearchOutboxWorker, stopLocalSearchOutboxWorker } from "./src/services/search/localOutboxWorker.js";
 import { shutdownPool as shutdownImapPool } from "./src/services/mail/imapPool.js";
 import { shutdownPdfPool } from "./src/services/pdf/pdfRenderPool.js";
 import statusRoutes from "./src/routes/statusRoutes.js";
@@ -160,6 +161,7 @@ async function startBackgroundWorkers() {
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
 		startJobAnalysisWorker();
 		startMatchScoreWorker();
+		startLocalSearchOutboxWorker();
 	}
 	console.log(`[athens] primary background workers started (pid ${process.pid})`);
 }
@@ -183,6 +185,9 @@ async function startHttpWorker({ clustered }) {
 		try {
 			await closeSocket();
 			if (!clustered) {
+				stopJobAnalysisWorker();
+				stopMatchScoreWorker();
+				stopLocalSearchOutboxWorker();
 				await new Promise((resolve) => server.close(() => resolve()));
 			}
 			await shutdownPdfPool();
@@ -247,6 +252,7 @@ async function startPrimary() {
 		console.log(`[athens] primary ${signal} — stopping workers`);
 		stopJobAnalysisWorker();
 		stopMatchScoreWorker();
+		stopLocalSearchOutboxWorker();
 		for (const id of Object.keys(cluster.workers || {})) {
 			cluster.workers[id]?.process.kill("SIGTERM");
 		}
@@ -276,10 +282,11 @@ async function main() {
 	await startHttpWorker({ clustered });
 	if (!clustered) {
 		// Single process also owns background workers (cluster primary runs them instead).
-	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
-		startJobAnalysisWorker();
-		startMatchScoreWorker();
-	}
+		if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
+			startJobAnalysisWorker();
+			startMatchScoreWorker();
+			startLocalSearchOutboxWorker();
+		}
 	}
 }
 

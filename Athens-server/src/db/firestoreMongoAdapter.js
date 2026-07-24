@@ -15,12 +15,70 @@ const UNIQUE_KEYS = {
 	monitor_current_status: ["component"], monitor_daily_rollups: ["date", "component"],
 };
 
+const warnedScans = new Set();
+const FIRESTORE_OPERATORS = new Map([
+	["$eq", "=="],
+	["$gt", ">"],
+	["$gte", ">="],
+	["$lt", "<"],
+	["$lte", "<="],
+	["$in", "in"],
+]);
+
 // Some Mongo partial unique indexes have alternative business keys. The first
 // complete key set is also used for deterministic IDs on newly inserted rows;
 // every complete key set gets a reservation document.
 
 function isPlain(value) {
 	return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof ObjectId);
+}
+
+function buildNativeQueryPlan(filter = {}) {
+	const clauses = [];
+	let complete = true;
+	function visit(node) {
+		if (!isPlain(node)) { complete = false; return; }
+		for (const [field, condition] of Object.entries(node)) {
+			if (field === "$and" && Array.isArray(condition)) {
+				condition.forEach(visit);
+				continue;
+			}
+			if (field.startsWith("$") || field === "_id" || condition instanceof RegExp) {
+				complete = false;
+				continue;
+			}
+			if (!isPlain(condition) || condition instanceof Date || condition instanceof ObjectId) {
+				clauses.push({ field, operator: "==", value: encode(condition) });
+				continue;
+			}
+			const entries = Object.entries(condition);
+			if (!entries.length || entries.some(([operator, operand]) => !FIRESTORE_OPERATORS.has(operator) || operand instanceof RegExp)) {
+				complete = false;
+				continue;
+			}
+			for (const [operator, operand] of entries) {
+				if (operator === "$in" && (!Array.isArray(operand) || operand.length === 0 || operand.length > 30 || operand.some((item) => item instanceof RegExp))) {
+					complete = false;
+					continue;
+				}
+				clauses.push({ field, operator: FIRESTORE_OPERATORS.get(operator), value: encode(operand) });
+			}
+		}
+	}
+	visit(filter);
+	return { clauses, complete };
+}
+
+function conjunctiveDocumentIds(filter = {}) {
+	if (!isPlain(filter)) return null;
+	if (isPlain(filter._id) && Array.isArray(filter._id.$in)) return filter._id.$in.map((id) => String(comparable(id)));
+	if (Array.isArray(filter.$and)) {
+		for (const child of filter.$and) {
+			const ids = conjunctiveDocumentIds(child);
+			if (ids) return ids;
+		}
+	}
+	return null;
 }
 
 function encode(value) {
@@ -418,7 +476,11 @@ class Cursor {
 	limit(count) { this.limitCount = count; return this; }
 	project(spec) { this.projection = spec; return this; }
 	async toArray() {
-		let docs = await this.collection._read(this.filter);
+		let docs = await this.collection._read(this.filter, {
+			sort: this.sortSpec,
+			skip: this.skipCount,
+			limit: this.limitCount,
+		});
 		if (this.sortSpec) docs = sortDocs(docs, this.sortSpec);
 		if (this.skipCount) docs = docs.slice(this.skipCount);
 		if (this.limitCount != null) docs = docs.slice(0, this.limitCount);
@@ -435,21 +497,56 @@ class FirestoreCollection {
 		this.sourceCatalog = name === "job_market" ? "market" : name === "external_scraped_jobs" ? "external" : null;
 		this.ref = db.firestore.collection(this.sourceCatalog ? "jobs" : name);
 	}
-	async _read(filter = {}) {
+	_filterWithCatalog(filter = {}) {
+		return this.sourceCatalog ? { $and: [{ sourceCatalog: this.sourceCatalog }, filter] } : filter;
+	}
+	_queryFromPlan(plan) {
+		let query = this.ref;
+		for (const clause of plan.clauses) query = query.where(clause.field, clause.operator, clause.value);
+		return query;
+	}
+	async _read(filter = {}, hints = {}) {
 		const id = filter?._id;
-		if (this.sourceCatalog) filter = { $and: [{ sourceCatalog: this.sourceCatalog }, filter] };
+		filter = this._filterWithCatalog(filter);
 		if (id && !isPlain(id)) {
 			const snap = await this.ref.doc(String(comparable(id))).get();
 			const docs = snap.exists ? [decodeDoc(snap.id, snap.data())] : [];
 			return docs.filter((doc) => matches(doc, filter));
 		}
-		let query = this.ref;
-		for (const [field, value] of Object.entries(filter || {})) {
-			if (field.startsWith("$") || isPlain(value) || value instanceof RegExp || Array.isArray(value)) continue;
-			query = query.where(field, "==", encode(value));
-			break;
+		const documentIds = conjunctiveDocumentIds(filter);
+		if (documentIds) {
+			const refs = [...new Set(documentIds)].map((documentId) => this.ref.doc(documentId));
+			if (!refs.length) return [];
+			const snapshots = await this.db.firestore.getAll(...refs);
+			return snapshots
+				.filter((snapshot) => snapshot.exists)
+				.map((snapshot) => decodeDoc(snapshot.id, snapshot.data()))
+				.filter((doc) => matches(doc, filter));
 		}
+		const plan = buildNativeQueryPlan(filter);
+		let query = this._queryFromPlan(plan);
+		const sortEntries = Object.entries(hints.sort || {});
+		const inequalityField = plan.clauses.find((clause) => [">", ">=", "<", "<="].includes(clause.operator))?.field;
+		const nativeSort = plan.complete &&
+			sortEntries.every(([field, direction]) => field !== "_id" && [1, -1].includes(Number(direction))) &&
+			(!inequalityField || !sortEntries.length || sortEntries[0][0] === inequalityField);
+		if (nativeSort) {
+			for (const [field, direction] of sortEntries) query = query.orderBy(field, Number(direction) < 0 ? "desc" : "asc");
+		}
+		if (plan.complete && nativeSort && hints.limit != null) query = query.limit(Math.max(1, Number(hints.skip || 0) + Number(hints.limit)));
 		const snapshot = await query.get();
+		const warnAt = Math.max(1, Number(process.env.FIRESTORE_COMPAT_WARN_SCAN || 1000));
+		const maxScan = Math.max(warnAt, Number(process.env.FIRESTORE_COMPAT_MAX_SCAN || 20000));
+		const scanKey = `${this.collectionName}:${plan.complete ? "native" : "fallback"}`;
+		if (snapshot.size >= warnAt && !warnedScans.has(scanKey)) {
+			warnedScans.add(scanKey);
+			console.warn(`[firestore-adapter] ${scanKey} read scanned ${snapshot.size} documents; add a native indexed query or reduce the page size`);
+		}
+		if (snapshot.size > maxScan) {
+			const error = new Error(`[firestore-adapter] ${this.collectionName} query scanned ${snapshot.size} documents (limit ${maxScan})`);
+			error.code = "FIRESTORE_COMPAT_SCAN_LIMIT";
+			throw error;
+		}
 		return snapshot.docs.map((doc) => decodeDoc(doc.id, doc.data())).filter((doc) => matches(doc, filter));
 	}
 	find(filter = {}, options = {}) { return new Cursor(this, filter, options); }
@@ -550,6 +647,7 @@ class FirestoreCollection {
 	}
 	_kickOutbox(outboxId) {
 		if (!outboxId) return;
+		if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") return;
 		void import("../services/cloudTasks.js")
 			.then(({ enqueueSearchOutboxTask }) => enqueueSearchOutboxTask(outboxId))
 			.catch((error) => console.warn("[search-outbox] task enqueue failed; scheduler will retry:", error?.message || error));
@@ -572,7 +670,14 @@ class FirestoreCollection {
 		for (const doc of docs) await this.deleteOne({ _id: doc._id });
 		return { acknowledged: true, deletedCount: docs.length };
 	}
-	async countDocuments(filter = {}) { return (await this._read(filter)).length; }
+	async countDocuments(filter = {}) {
+		if (filter?._id && !isPlain(filter._id)) return (await this._read(filter)).length;
+		const normalized = this._filterWithCatalog(filter);
+		if (conjunctiveDocumentIds(normalized)) return (await this._read(filter)).length;
+		const plan = buildNativeQueryPlan(normalized);
+		if (!plan.complete) return (await this._read(filter)).length;
+		return (await this._queryFromPlan(plan).count().get()).data().count;
+	}
 	async estimatedDocumentCount() { return this.countDocuments({}); }
 	async distinct(field, filter = {}) { const values = (await this._read(filter)).flatMap((doc) => valuesAt(doc, field)); return values.filter((value, index) => values.findIndex((item) => equal(item, value)) === index); }
 	aggregate(pipeline) { return { toArray: async () => runPipeline(await this.find({}).toArray(), pipeline, this.db), [Symbol.asyncIterator]: async function* () { for (const item of await this.toArray()) yield item; } }; }
@@ -592,4 +697,4 @@ export function createFirestoreMongoAdapter() {
 	return new FirestoreDbAdapter();
 }
 
-export const firestoreAdapterTest = { matches, applyUpdate, runPipeline, evaluate, applyProjection };
+export const firestoreAdapterTest = { matches, applyUpdate, runPipeline, evaluate, applyProjection, buildNativeQueryPlan, conjunctiveDocumentIds };

@@ -2,8 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useAuth } from "@/context/auth-context";
-import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from "firebase/auth";
-import { firebaseAuth } from "@/lib/firebase-client";
 import { AthensInput, FormField } from "../../../components/forms";
 import {
   AlertDialog,
@@ -15,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../../../components/ui/alert-dialog";
-import { deleteAccount } from "../../../services/profileApi";
+import { changePassword, deleteAccount } from "../../../services/profileApi";
 
 /** Client keys tied to the signed-in applier — clear on account wipe. */
 function clearApplierLocalData(applierName: string) {
@@ -85,16 +83,17 @@ export function SecurityTab() {
     }
     setSaving(true);
     try {
-      const currentUser = firebaseAuth.currentUser;
-      if (!currentUser?.email) throw new Error("Firebase session is unavailable");
-      await reauthenticateWithCredential(currentUser, EmailAuthProvider.credential(currentUser.email, current));
-      await updatePassword(currentUser, next);
-      toast.success("Password updated");
-      setCurrent("");
-      setNext("");
-      setConfirm("");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not update password");
+      const res = await changePassword(user.name, current, next);
+      if (res.success) {
+        toast.success("Password updated");
+        setCurrent("");
+        setNext("");
+        setConfirm("");
+      } else {
+        toast.error(res.message || "Could not update password");
+      }
+    } catch {
+      toast.error("Could not update password");
     } finally {
       setSaving(false);
     }
@@ -115,13 +114,7 @@ export function SecurityTab() {
     }
     setDeleting(true);
     try {
-      const currentUser = firebaseAuth.currentUser;
-      if (!currentUser?.email) throw new Error("Firebase session is unavailable");
-      await reauthenticateWithCredential(
-        currentUser,
-        EmailAuthProvider.credential(currentUser.email, deletePassword),
-      );
-      const res = await deleteAccount(user.name, "", deleteConfirmName);
+      const res = await deleteAccount(user.name, deletePassword, deleteConfirmName);
       if (!res.success) {
         toast.error(res.message || "Could not delete account");
         return;
@@ -131,8 +124,8 @@ export function SecurityTab() {
       setDeleteOpen(false);
       toast.success("Account deleted");
       navigate("/signin", { replace: true });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not delete account");
+    } catch {
+      toast.error("Could not delete account");
     } finally {
       setDeleting(false);
     }

@@ -8,13 +8,15 @@ import bcrypt from "bcrypt";
 import { getFirebaseAuth, getFirestoreDb, getStorageBucket } from "../services/firebase/firebaseAdmin.js";
 import { rewrapProfileSecretsWithKms } from "../services/autoBidProfileSecrets.js";
 import { firestoreUniqueReservations } from "../db/firestoreMongoAdapter.js";
+import { applyLegacyCredentialPolicy, includesFirebaseAuth } from "./firebaseMigrationMode.js";
 
 const mode = process.argv[2] || "audit";
 const sourceUrl = process.env.MONGO_SOURCE_URL || process.env.MONGO_URL;
 const sourceDbName = process.env.MONGO_SOURCE_DB || process.env.MONGO_DB || "AthensDB";
 const outputDir = path.resolve(process.env.MIGRATION_OUTPUT_DIR || "migration-output");
 const MAX_FIRESTORE_BYTES = 900 * 1024;
-const TRANSFORMATION_VERSION = 2;
+const TRANSFORMATION_VERSION = 3;
+const INCLUDE_FIREBASE_AUTH = includesFirebaseAuth();
 const GRIDFS = { user_resumes: "user_resume_files", resume_templates: "resume_template_files" };
 const JOB_COLLECTIONS = new Set(["job_market", "external_scraped_jobs"]);
 const BUSINESS_KEYS = {
@@ -205,11 +207,10 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 	const profileId = profileIds.get(profileName) || (doc.profileId ? String(doc.profileId) : "");
 	if (profileId) {
 		doc.profileId ||= profileId;
-		doc.ownerUid ||= `owner_${sha(profileId).slice(0, 32)}`;
+		if (INCLUDE_FIREBASE_AUTH) doc.ownerUid ||= `owner_${sha(profileId).slice(0, 32)}`;
 	}
 	if (sourceCollection === "account_info") {
-		delete doc.password;
-		delete doc.vendorPassword;
+		applyLegacyCredentialPolicy(doc, INCLUDE_FIREBASE_AUTH);
 		if (doc.autoBidProfile) doc.autoBidProfile = await rewrapProfileSecretsWithKms(doc.autoBidProfile);
 	}
 	const objects = [];
@@ -260,7 +261,7 @@ async function writeDestinationWithReservations(firestore, { sourceCollection, d
 
 async function audit(db) {
 	const collections = (await db.listCollections().toArray()).filter(({ name }) => !name.endsWith(".chunks") && !name.endsWith(".files"));
-	const report = { database: sourceDbName, collectionCount: collections.length, collections: [], gridFs: [], storage: null, blockers: [] };
+	const report = { database: sourceDbName, migrationScope: INCLUDE_FIREBASE_AUTH ? "data-and-auth" : "data-only", collectionCount: collections.length, collections: [], gridFs: [], storage: null, blockers: [] };
 	for (const { name } of collections) {
 		let count = 0, maxBsonBytes = 0, oversized = 0, binaryFields = 0;
 		const bsonTypes = new Set();
@@ -295,17 +296,19 @@ async function audit(db) {
 		const files = db.collection(`${bucket}.files`);
 		report.gridFs.push({ bucket, files: await files.countDocuments(), bytes: (await files.aggregate([{ $group: { _id: null, bytes: { $sum: "$length" } } }]).toArray())[0]?.bytes || 0 });
 	}
-	const accounts = await db.collection("account_info").find({}).toArray();
-	const personal = await db.collection("personal_info").find({}).toArray();
-	const personalByName = new Map(personal.map((doc) => [String(doc.name || "").trim().toLowerCase(), doc]));
-	const emailOwners = new Map();
-	for (const account of accounts) {
-		const profile = account.autoBidProfile || personalByName.get(String(account.name || "").trim().toLowerCase()) || {};
-		const email = String(profile.email || account.email || "").trim().toLowerCase();
-		if (!email) report.blockers.push({ collection: "account_info", sourceId: String(account._id), account: account.name, reason: "missing_email" });
-		else emailOwners.set(email, [...(emailOwners.get(email) || []), String(account._id)]);
+	if (INCLUDE_FIREBASE_AUTH) {
+		const accounts = await db.collection("account_info").find({}).toArray();
+		const personal = await db.collection("personal_info").find({}).toArray();
+		const personalByName = new Map(personal.map((doc) => [String(doc.name || "").trim().toLowerCase(), doc]));
+		const emailOwners = new Map();
+		for (const account of accounts) {
+			const profile = account.autoBidProfile || personalByName.get(String(account.name || "").trim().toLowerCase()) || {};
+			const email = String(profile.email || account.email || "").trim().toLowerCase();
+			if (!email) report.blockers.push({ collection: "account_info", sourceId: String(account._id), account: account.name, reason: "missing_email" });
+			else emailOwners.set(email, [...(emailOwners.get(email) || []), String(account._id)]);
+		}
+		for (const [email, ids] of emailOwners) if (ids.length > 1) report.blockers.push({ collection: "account_info", email, ids, reason: "duplicate_email" });
 	}
-	for (const [email, ids] of emailOwners) if (ids.length > 1) report.blockers.push({ collection: "account_info", email, ids, reason: "duplicate_email" });
 	try {
 		const [files] = await getStorageBucket().getFiles();
 		report.storage = {
@@ -449,32 +452,35 @@ async function verify(db) {
 		const actual = (await firestore.collection(collection).count().get()).data().count;
 		if (actual !== expected) failures.push({ collection, error: "destination_count_mismatch", expected, actual });
 	}
-	const accounts = await db.collection("account_info").find({}).toArray();
-	for (const account of accounts) {
-		const uid = `owner_${sha(String(account._id)).slice(0, 32)}`;
-		try { await getFirebaseAuth().getUser(uid); } catch { failures.push({ sourceCollection: "account_info", sourceId: String(account._id), error: "auth_user_missing", uid }); }
-		const grant = await firestore.collection("profile_access").doc(sha(`${uid}\0${String(account._id)}`)).get();
-		if (!grant.exists) failures.push({ sourceCollection: "account_info", sourceId: String(account._id), error: "owner_access_grant_missing", uid });
-	}
-	const vendorMap = process.env.MIGRATION_VENDOR_MAP ? JSON.parse(process.env.MIGRATION_VENDOR_MAP) : [];
-	for (const vendor of vendorMap) {
-		const email = String(vendor.email || "").trim().toLowerCase();
-		try {
-			const user = await getFirebaseAuth().getUserByEmail(email);
-			if (String(user.customClaims?.role || "").toLowerCase() !== "bidder") failures.push({ email, error: "vendor_role_mismatch" });
-			const grant = await firestore.collection("profile_access").doc(sha(`${user.uid}\0${vendor.profileId}`)).get();
-			if (!grant.exists || String(grant.data()?.profileId || "") !== String(vendor.profileId)) failures.push({ email, profileId: vendor.profileId, error: "vendor_access_grant_missing" });
-		} catch {
-			failures.push({ email, profileId: vendor.profileId, error: "vendor_auth_user_missing" });
+	if (INCLUDE_FIREBASE_AUTH) {
+		const accounts = await db.collection("account_info").find({}).toArray();
+		for (const account of accounts) {
+			const uid = `owner_${sha(String(account._id)).slice(0, 32)}`;
+			try { await getFirebaseAuth().getUser(uid); } catch { failures.push({ sourceCollection: "account_info", sourceId: String(account._id), error: "auth_user_missing", uid }); }
+			const grant = await firestore.collection("profile_access").doc(sha(`${uid}\0${String(account._id)}`)).get();
+			if (!grant.exists) failures.push({ sourceCollection: "account_info", sourceId: String(account._id), error: "owner_access_grant_missing", uid });
+		}
+		const vendorMap = process.env.MIGRATION_VENDOR_MAP ? JSON.parse(process.env.MIGRATION_VENDOR_MAP) : [];
+		for (const vendor of vendorMap) {
+			const email = String(vendor.email || "").trim().toLowerCase();
+			try {
+				const user = await getFirebaseAuth().getUserByEmail(email);
+				if (String(user.customClaims?.role || "").toLowerCase() !== "bidder") failures.push({ email, error: "vendor_role_mismatch" });
+				const grant = await firestore.collection("profile_access").doc(sha(`${user.uid}\0${vendor.profileId}`)).get();
+				if (!grant.exists || String(grant.data()?.profileId || "") !== String(vendor.profileId)) failures.push({ email, profileId: vendor.profileId, error: "vendor_access_grant_missing" });
+			} catch {
+				failures.push({ email, profileId: vendor.profileId, error: "vendor_auth_user_missing" });
+			}
 		}
 	}
-	const result = { manifests: manifests.size, failures };
+	const result = { scope: INCLUDE_FIREBASE_AUTH ? "data-and-auth" : "data-only", manifests: manifests.size, failures };
 	await writeFile(path.join(outputDir, "verify.json"), JSON.stringify(result, null, 2));
 	console.log(JSON.stringify(result, null, 2));
 	if (failures.length) process.exitCode = 2;
 }
 
 async function importAuth(db) {
+	if (!INCLUDE_FIREBASE_AUTH) throw new Error("Firebase Auth migration is disabled for data-only mode. Set MIGRATION_INCLUDE_AUTH=true only for an explicitly approved Auth migration.");
 	const accounts = await db.collection("account_info").find({}).toArray();
 	const personal = await db.collection("personal_info").find({}).toArray();
 	const personalByName = new Map(personal.map((doc) => [String(doc.name || "").toLowerCase(), doc]));

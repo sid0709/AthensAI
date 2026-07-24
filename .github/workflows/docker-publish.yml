@@ -1,6 +1,5 @@
-# Build NextOffer and push to Docker Hub when a PR targets master
-# (and again when that PR is merged / pushed to master).
-# On master push / workflow_dispatch, also SSH-deploy to the VPS.
+# Build NextOffer and push to Docker Hub when a PR targets main or legacy master.
+# On a main/master push or workflow_dispatch, also SSH-deploy to the VPS.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   DOCKERHUB_USERNAME  — e.g. omnimuh730
@@ -22,9 +21,9 @@ name: Docker publish
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main, master]
   push:
-    branches: [master]
+    branches: [main, master]
   workflow_dispatch:
 
 concurrency:
@@ -74,7 +73,7 @@ jobs:
             TAGS+=("${IMAGE}:pr-${PR}-${SHA_SHORT}")
             IMAGE_TAG="pr-${PR}-${SHA_SHORT}"
           else
-            # master push / workflow_dispatch: update the live tags.
+            # main/master push / workflow_dispatch: update the live tags.
             TAGS+=("${IMAGE}:latest")
             TAGS+=("${IMAGE}:sha-${SHA_SHORT}")
             TAGS+=("${IMAGE}:amd64")
@@ -165,7 +164,7 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo '```'
             echo ""
-            echo "Pull: \`docker pull ${IMAGE_NAME}:latest\` (master) or \`docker pull ${IMAGE_NAME}:pr-N\` (PR)."
+            echo "Pull: \`docker pull ${IMAGE_NAME}:latest\` (main/master) or \`docker pull ${IMAGE_NAME}:pr-N\` (PR)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:

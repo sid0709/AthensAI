@@ -2071,7 +2071,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'SIGN_IN': {
         if (message.apiUrl || message.applierName) {
           await AthensApi.saveSettings({
-            email: message.username,
+            applierName: message.applierName || message.username,
             apiUrl: message.apiUrl,
           });
         }
