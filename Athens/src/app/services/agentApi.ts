@@ -8,7 +8,6 @@ import type {
   RunSummary,
 } from "../types/agent";
 import { DEFAULT_SESSION_ID } from "@avalon/shared";
-import { getFirebaseIdToken } from "@/lib/firebase-client";
 
 const AGENTS_BASE = `${API_BASE.replace(/\/$/, "")}/agents`;
 
@@ -84,9 +83,6 @@ const AVALON_SOCKET_COMMON = {
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,
   path: "/avalon/socket.io",
-  auth: async (callback: (value: { token: string }) => void) => {
-    callback({ token: await getFirebaseIdToken() });
-  },
 };
 
 export function createAvalonSocket(serverUrl: string): Socket {

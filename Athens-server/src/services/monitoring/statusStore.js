@@ -47,7 +47,8 @@ export async function readCurrentStatus() {
 		lastSuccessAt: 1,
 		latencyMs: 1,
 		uptimePercent: 1,
-	} }).sort({ component: 1 }).toArray() : [];
+	} }).limit(50).toArray() : [];
+	docs.sort((left, right) => String(left.component || '').localeCompare(String(right.component || '')));
 	const byId = new Map(docs.map((doc) => [doc.component, doc]));
 	return components().map((component) => markStaleComponent(byId.get(component.id)) || {
 		component: component.id, name: component.name, status: 'unknown', message: 'No monitoring sample is available yet.',
@@ -160,7 +161,13 @@ export async function readTodayTimelines(now = new Date(), bucketMinutes = 15) {
 export async function readIncidents(limit = 20) {
 	const incidents = collection('monitor_incidents');
 	if (!incidents) return [];
-	return incidents.find({ source: STATUS_SOURCE }, { projection: { _id: 0, source: 0, internalReason: 0 } }).sort({ startedAt: -1 }).limit(limit).toArray();
+	const docs = await incidents.find(
+		{ source: STATUS_SOURCE },
+		{ projection: { _id: 0, source: 0, internalReason: 0 } },
+	).limit(Math.max(limit * 10, 100)).toArray();
+	return docs
+		.sort((left, right) => String(right.startedAt || '').localeCompare(String(left.startedAt || '')))
+		.slice(0, limit);
 }
 
 export async function readDailyRollups(from, to) {
@@ -168,7 +175,11 @@ export async function readDailyRollups(from, to) {
 	if (!rollups) return [];
 	const query = { source: STATUS_SOURCE };
 	if (from || to) query.date = { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) };
-	return rollups.find(query, { projection: { _id: 0, source: 0 } }).sort({ date: 1, component: 1 }).toArray();
+	const docs = await rollups.find(query, { projection: { _id: 0, source: 0 } }).limit(1000).toArray();
+	return docs.sort((left, right) =>
+		String(left.date || '').localeCompare(String(right.date || '')) ||
+		String(left.component || '').localeCompare(String(right.component || '')),
+	);
 }
 
 export function overallStatus(components) {

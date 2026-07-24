@@ -23,7 +23,6 @@ import {
 import { relayHttpBase, relaySocketOrigin } from './endpoint';
 import { ensureContentScript, runActionInTab } from './tab-messages';
 import { waitForPageReady } from './page-ready';
-import { getFirebaseIdToken } from './firebase-auth';
 
 let socket: Socket | null = null;
 let tabListenersBound = false;
@@ -49,11 +48,7 @@ function relayHealthUrl(serverUrl: string): string {
 
 async function probeRelayHealth(serverUrl: string): Promise<boolean> {
   try {
-	const token = await getFirebaseIdToken();
-    const res = await fetch(relayHealthUrl(serverUrl), {
-	  cache: 'no-store',
-	  headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-	});
+    const res = await fetch(relayHealthUrl(serverUrl), { cache: 'no-store' });
     return res.ok;
   } catch {
     return false;
@@ -580,7 +575,6 @@ export async function connectRelay(
     reconnectionDelay: 1500,
     reconnectionDelayMax: 10000,
     timeout: 20000,
-    auth: async (callback) => callback({ token: await getFirebaseIdToken() }),
   });
   bindTabListeners();
 

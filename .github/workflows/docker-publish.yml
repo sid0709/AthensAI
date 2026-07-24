@@ -1,6 +1,5 @@
-# Build NextOffer and push to Docker Hub when a PR targets master
-# (and again when that PR is merged / pushed to master).
-# On master push / workflow_dispatch, also SSH-deploy to the VPS.
+# Build NextOffer and push to Docker Hub when a PR targets main or legacy master.
+# On a main/master push or workflow_dispatch, also SSH-deploy to the VPS.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   DOCKERHUB_USERNAME  — e.g. omnimuh730
@@ -22,10 +21,16 @@ name: Docker publish
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main, master]
   push:
-    branches: [master]
+    branches: [main, master]
   workflow_dispatch:
+    inputs:
+      bootstrap_firebase_runtime:
+        description: Create and install the least-privilege VPS Firebase credential
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: docker-publish-${{ github.workflow }}-${{ github.ref }}
@@ -41,6 +46,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     outputs:
       sha_short: ${{ steps.meta.outputs.sha_short }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
@@ -48,6 +54,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate Google Cloud deployment identity
+        if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/50997156169/locations/global/workloadIdentityPools/athensai-github-actions/providers/github-actions
+          service_account: athens-deployer@drwretail-bm.iam.gserviceaccount.com
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -74,7 +87,7 @@ jobs:
             TAGS+=("${IMAGE}:pr-${PR}-${SHA_SHORT}")
             IMAGE_TAG="pr-${PR}-${SHA_SHORT}"
           else
-            # master push / workflow_dispatch: update the live tags.
+            # main/master push / workflow_dispatch: update the live tags.
             TAGS+=("${IMAGE}:latest")
             TAGS+=("${IMAGE}:sha-${SHA_SHORT}")
             TAGS+=("${IMAGE}:amd64")
@@ -165,7 +178,7 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo '```'
             echo ""
-            echo "Pull: \`docker pull ${IMAGE_NAME}:latest\` (master) or \`docker pull ${IMAGE_NAME}:pr-N\` (PR)."
+            echo "Pull: \`docker pull ${IMAGE_NAME}:latest\` (main/master) or \`docker pull ${IMAGE_NAME}:pr-N\` (PR)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
@@ -178,10 +191,124 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud for VPS bootstrap
+        if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/50997156169/locations/global/workloadIdentityPools/athensai-github-actions/providers/github-actions
+          service_account: athens-deployer@drwretail-bm.iam.gserviceaccount.com
+
+      - name: Set up Google Cloud CLI for VPS bootstrap
+        if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create least-privilege VPS runtime credential
+        if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=drwretail-bm
+          runtime=athens-vps-runtime@drwretail-bm.iam.gserviceaccount.com
+          runtime_name="${runtime%@*}"
+          bucket=drwretail-bm.firebasestorage.app
+
+          if ! gcloud iam service-accounts describe "${runtime}" --project "${project}" >/dev/null 2>&1; then
+            gcloud iam service-accounts create "${runtime_name}" \
+              --project "${project}" \
+              --display-name "Athens VPS data runtime"
+          fi
+          for role in roles/datastore.user roles/serviceusage.serviceUsageConsumer; do
+            gcloud projects add-iam-policy-binding "${project}" \
+              --member "serviceAccount:${runtime}" \
+              --role "${role}" \
+              --condition=None \
+              --quiet >/dev/null
+          done
+          gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
+            --member "serviceAccount:${runtime}" \
+            --role roles/storage.objectUser \
+            --quiet >/dev/null
+          gcloud kms keys add-iam-policy-binding profile-secrets \
+            --project "${project}" \
+            --location us-east4 \
+            --keyring athens \
+            --member "serviceAccount:${runtime}" \
+            --role roles/cloudkms.cryptoKeyEncrypterDecrypter \
+            --quiet >/dev/null
+
+          install -d -m 700 .runtime-transfer
+          gcloud iam service-accounts keys create \
+            .runtime-transfer/firebase-service-account.json \
+            --iam-account "${runtime}" \
+            --project "${project}"
+          chmod 600 .runtime-transfer/firebase-service-account.json
+
+      - name: Transfer VPS runtime credential
+        if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          source: .runtime-transfer/firebase-service-account.json
+          target: /tmp/athens-vps-runtime/
+          strip_components: 1
+
+      - name: Install Firestore VPS configuration
+        if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script: |
+            set -eu
+            as_root() {
+              if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
+            }
+            deploy_env=/opt/nextoffer/deploy.env
+            secret_dir=/opt/nextoffer/secrets
+            incoming=/tmp/athens-vps-runtime/firebase-service-account.json
+            installed=${secret_dir}/firebase-service-account.json
+            test -f "${deploy_env}"
+            test -f "${incoming}"
+            as_root install -d -m 700 "${secret_dir}"
+            as_root install -m 600 "${incoming}" "${installed}"
+            rm -rf /tmp/athens-vps-runtime
+            as_root cp "${deploy_env}" "${deploy_env}.pre-firestore"
+
+            set_env() {
+              key="$1"
+              value="$2"
+              tmp="$(mktemp)"
+              awk -v key="${key}" -v value="${value}" '
+                BEGIN { found = 0 }
+                index($0, key "=") == 1 { print key "=" value; found = 1; next }
+                { print }
+                END { if (!found) print key "=" value }
+              ' "${deploy_env}" > "${tmp}"
+              as_root install -m 600 "${tmp}" "${deploy_env}"
+              rm -f "${tmp}"
+            }
+
+            set_env DATABASE_BACKEND firestore
+            set_env EMBEDDED_MONGO false
+            set_env FIREBASE_PROJECT_ID drwretail-bm
+            set_env FIREBASE_STORAGE_BUCKET drwretail-bm.firebasestorage.app
+            set_env GOOGLE_APPLICATION_CREDENTIALS /run/secrets/firebase-service-account.json
+            set_env FIREBASE_SECRET_HOST_PATH /opt/nextoffer/secrets/firebase-service-account.json
+            set_env KMS_KEY_NAME projects/drwretail-bm/locations/us-east4/keyRings/athens/cryptoKeys/profile-secrets
+            set_env FIREBASE_AUTH_REQUIRED false
+            set_env BACKGROUND_WORKERS_MODE local
+            set_env FIRESTORE_WRITES_ENABLED true
 
       - name: Sync deploy script to VPS
         uses: appleboy/scp-action@v0.1.7
@@ -372,6 +499,18 @@ jobs:
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml restart prometheus
             echo "Starting Athens application deploy"
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
+
+            backend="$(docker inspect nextoffer --format '{{range .Config.Env}}{{println .}}{{end}}' | awk -F= '$1 == "DATABASE_BACKEND" {print $2}')"
+            if [ "${backend}" != firestore ]; then
+              echo "Expected Firestore backend after deployment, got: ${backend:-unset}" >&2
+              exit 1
+            fi
+            docker logs nextoffer 2>&1 | tail -200 | grep -q 'Connected to native Firestore database'
+            if docker logs nextoffer 2>&1 | tail -200 | grep -q 'Connected to MongoDB'; then
+              echo 'MongoDB connection detected after Firestore cutover.' >&2
+              exit 1
+            fi
+            echo "Verified Firestore backend with no MongoDB connection."
 
       - name: Summary
         shell: bash

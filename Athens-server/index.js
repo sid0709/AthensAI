@@ -17,12 +17,14 @@ import { initMongo, closeMongo, getMongoDb } from "./src/db/mongo.js";
 import { initSocket, closeSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
+import { startLocalSearchOutboxWorker, stopLocalSearchOutboxWorker } from "./src/services/search/localOutboxWorker.js";
 import { shutdownPool as shutdownImapPool } from "./src/services/mail/imapPool.js";
 import { shutdownPdfPool } from "./src/services/pdf/pdfRenderPool.js";
 import statusRoutes from "./src/routes/statusRoutes.js";
 import statusAdminRoutes from "./src/routes/statusAdminRoutes.js";
 import { metricsMiddleware, renderMetrics } from "./src/services/monitoring/metrics.js";
 import { startMonitoringLoop } from "./src/services/monitoring/monitorLoop.js";
+import { markForegroundActivity } from "./src/services/runtimeLoad.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -82,6 +84,10 @@ function createApp() {
 	app.use(cors({ origin: corsOrigins.includes("*") ? true : corsOrigins, credentials: false }));
 	app.use(requestLogger("api"));
 	app.use(metricsMiddleware);
+	app.use((req, _res, next) => {
+		if (req.path !== "/healthz" && req.path !== "/readyz" && req.path !== "/metrics") markForegroundActivity();
+		next();
+	});
 	app.get("/metrics", (_req, res) => {
 		res.type("text/plain; version=0.0.4").send(renderMetrics("athens-server"));
 	});
@@ -160,6 +166,7 @@ async function startBackgroundWorkers() {
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
 		startJobAnalysisWorker();
 		startMatchScoreWorker();
+		startLocalSearchOutboxWorker();
 	}
 	console.log(`[athens] primary background workers started (pid ${process.pid})`);
 }
@@ -183,6 +190,9 @@ async function startHttpWorker({ clustered }) {
 		try {
 			await closeSocket();
 			if (!clustered) {
+				stopJobAnalysisWorker();
+				stopMatchScoreWorker();
+				stopLocalSearchOutboxWorker();
 				await new Promise((resolve) => server.close(() => resolve()));
 			}
 			await shutdownPdfPool();
@@ -247,6 +257,7 @@ async function startPrimary() {
 		console.log(`[athens] primary ${signal} — stopping workers`);
 		stopJobAnalysisWorker();
 		stopMatchScoreWorker();
+		stopLocalSearchOutboxWorker();
 		for (const id of Object.keys(cluster.workers || {})) {
 			cluster.workers[id]?.process.kill("SIGTERM");
 		}
@@ -276,10 +287,11 @@ async function main() {
 	await startHttpWorker({ clustered });
 	if (!clustered) {
 		// Single process also owns background workers (cluster primary runs them instead).
-	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
-		startJobAnalysisWorker();
-		startMatchScoreWorker();
-	}
+		if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
+			startJobAnalysisWorker();
+			startMatchScoreWorker();
+			startLocalSearchOutboxWorker();
+		}
 	}
 }
 

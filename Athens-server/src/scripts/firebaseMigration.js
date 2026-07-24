@@ -4,17 +4,22 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { BSON, GridFSBucket, MongoClient, ObjectId } from "mongodb";
-import bcrypt from "bcrypt";
 import { getFirebaseAuth, getFirestoreDb, getStorageBucket } from "../services/firebase/firebaseAdmin.js";
-import { rewrapProfileSecretsWithKms } from "../services/autoBidProfileSecrets.js";
+import { encryptProfileApiKeys, rewrapProfileSecretsWithKms } from "../services/autoBidProfileSecrets.js";
 import { firestoreUniqueReservations } from "../db/firestoreMongoAdapter.js";
+import { applyLegacyCredentialPolicy, includesFirebaseAuth } from "./firebaseMigrationMode.js";
 
 const mode = process.argv[2] || "audit";
-const sourceUrl = process.env.MONGO_SOURCE_URL || process.env.MONGO_URL;
-const sourceDbName = process.env.MONGO_SOURCE_DB || process.env.MONGO_DB || "AthensDB";
+// Migration input is deliberately separate from the runtime database setting.
+// The canonical source is the restored local dump, never the live VPS URL.
+const sourceUrl = process.env.MONGO_SOURCE_URL || "mongodb://127.0.0.1:27017";
+const sourceDbName = process.env.MONGO_SOURCE_DB || "AIMS_local";
 const outputDir = path.resolve(process.env.MIGRATION_OUTPUT_DIR || "migration-output");
 const MAX_FIRESTORE_BYTES = 900 * 1024;
-const TRANSFORMATION_VERSION = 2;
+const TRANSFORMATION_VERSION = 3;
+const MIGRATION_CONCURRENCY = Math.min(64, Math.max(1, Number.parseInt(process.env.MIGRATION_CONCURRENCY || "16", 10) || 16));
+const SECRET_ENCRYPTION_MODE = String(process.env.MIGRATION_SECRET_ENCRYPTION || "kms").trim().toLowerCase();
+const INCLUDE_FIREBASE_AUTH = includesFirebaseAuth();
 const GRIDFS = { user_resumes: "user_resume_files", resume_templates: "resume_template_files" };
 const JOB_COLLECTIONS = new Set(["job_market", "external_scraped_jobs"]);
 const BUSINESS_KEYS = {
@@ -40,7 +45,7 @@ const BUSINESS_KEYS = {
 	external_scraped_jobs: [["jobID"], ["jobLink"]],
 };
 
-if (!sourceUrl) throw new Error("MONGO_SOURCE_URL (or MONGO_URL) is required");
+if (!sourceUrl) throw new Error("MONGO_SOURCE_URL is required");
 
 function scalar(value) {
 	if (value instanceof ObjectId) return value.toHexString();
@@ -194,7 +199,10 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 	const destinationCollection = JOB_COLLECTIONS.has(sourceCollection) ? "jobs" : sourceCollection;
 	let doc = scalar(source);
 	doc._id = sourceId;
-	if (sourceCollection === "job_market") doc.sourceCatalog = "market";
+	if (sourceCollection === "job_market") {
+		doc.sourceCatalog = "market";
+		doc.extensionV2 = String(doc.version || "") === "v2";
+	}
 	if (sourceCollection === "external_scraped_jobs") doc.sourceCatalog = "external";
 	const profileName = String(
 		doc.applierName ||
@@ -205,12 +213,15 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 	const profileId = profileIds.get(profileName) || (doc.profileId ? String(doc.profileId) : "");
 	if (profileId) {
 		doc.profileId ||= profileId;
-		doc.ownerUid ||= `owner_${sha(profileId).slice(0, 32)}`;
+		if (INCLUDE_FIREBASE_AUTH) doc.ownerUid ||= `owner_${sha(profileId).slice(0, 32)}`;
 	}
 	if (sourceCollection === "account_info") {
-		delete doc.password;
-		delete doc.vendorPassword;
-		if (doc.autoBidProfile) doc.autoBidProfile = await rewrapProfileSecretsWithKms(doc.autoBidProfile);
+		applyLegacyCredentialPolicy(doc, INCLUDE_FIREBASE_AUTH);
+		if (doc.autoBidProfile) {
+			if (SECRET_ENCRYPTION_MODE === "legacy") doc.autoBidProfile = await encryptProfileApiKeys(doc.autoBidProfile);
+			else if (SECRET_ENCRYPTION_MODE === "kms") doc.autoBidProfile = await rewrapProfileSecretsWithKms(doc.autoBidProfile);
+			else throw new Error(`Unsupported MIGRATION_SECRET_ENCRYPTION=${SECRET_ENCRYPTION_MODE}; use kms or legacy`);
+		}
 	}
 	const objects = [];
 	const gridObject = await extractGridFs(db, sourceCollection, sourceId, source);
@@ -230,8 +241,19 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 	return { sourceCollection, sourceId, destinationCollection, destinationId: sourceId, doc, objects };
 }
 
-async function writeDestinationWithReservations(firestore, { sourceCollection, destinationCollection, destinationId, data }) {
+async function writeDestinationWithReservations(firestore, { sourceCollection, destinationCollection, destinationId, data, manifestId, manifest }) {
 	const reservations = firestoreUniqueReservations(sourceCollection, data, destinationId);
+	const uniqueReservations = reservations.map((reservation) => reservation.id);
+	const manifestEntry = { ...manifest, uniqueReservations };
+	const destinationRef = firestore.collection(destinationCollection).doc(destinationId);
+	const manifestRef = firestore.collection("migration_manifest").doc(manifestId);
+	if (!reservations.length) {
+		const batch = firestore.batch();
+		batch.set(destinationRef, data, { merge: false });
+		batch.set(manifestRef, manifestEntry, { merge: false });
+		await batch.commit();
+		return manifestEntry;
+	}
 	await firestore.runTransaction(async (transaction) => {
 		const snapshots = new Map();
 		for (const reservation of reservations) {
@@ -244,7 +266,7 @@ async function writeDestinationWithReservations(firestore, { sourceCollection, d
 				throw new Error(`Unique-key reservation ${reservation.id} already points to ${existing.data()?.targetId}`);
 			}
 		}
-		transaction.set(firestore.collection(destinationCollection).doc(destinationId), data, { merge: false });
+		transaction.set(destinationRef, data, { merge: false });
 		for (const reservation of reservations) {
 			transaction.set(firestore.collection("unique_reservations").doc(reservation.id), {
 				collection: reservation.collection,
@@ -254,13 +276,14 @@ async function writeDestinationWithReservations(firestore, { sourceCollection, d
 				updatedAt: new Date(),
 			}, { merge: true });
 		}
+		transaction.set(manifestRef, manifestEntry, { merge: false });
 	});
-	return reservations.map((reservation) => reservation.id);
+	return manifestEntry;
 }
 
 async function audit(db) {
 	const collections = (await db.listCollections().toArray()).filter(({ name }) => !name.endsWith(".chunks") && !name.endsWith(".files"));
-	const report = { database: sourceDbName, collectionCount: collections.length, collections: [], gridFs: [], storage: null, blockers: [] };
+	const report = { database: sourceDbName, migrationScope: INCLUDE_FIREBASE_AUTH ? "data-and-auth" : "data-only", collectionCount: collections.length, collections: [], gridFs: [], storage: null, blockers: [] };
 	for (const { name } of collections) {
 		let count = 0, maxBsonBytes = 0, oversized = 0, binaryFields = 0;
 		const bsonTypes = new Set();
@@ -295,17 +318,19 @@ async function audit(db) {
 		const files = db.collection(`${bucket}.files`);
 		report.gridFs.push({ bucket, files: await files.countDocuments(), bytes: (await files.aggregate([{ $group: { _id: null, bytes: { $sum: "$length" } } }]).toArray())[0]?.bytes || 0 });
 	}
-	const accounts = await db.collection("account_info").find({}).toArray();
-	const personal = await db.collection("personal_info").find({}).toArray();
-	const personalByName = new Map(personal.map((doc) => [String(doc.name || "").trim().toLowerCase(), doc]));
-	const emailOwners = new Map();
-	for (const account of accounts) {
-		const profile = account.autoBidProfile || personalByName.get(String(account.name || "").trim().toLowerCase()) || {};
-		const email = String(profile.email || account.email || "").trim().toLowerCase();
-		if (!email) report.blockers.push({ collection: "account_info", sourceId: String(account._id), account: account.name, reason: "missing_email" });
-		else emailOwners.set(email, [...(emailOwners.get(email) || []), String(account._id)]);
+	if (INCLUDE_FIREBASE_AUTH) {
+		const accounts = await db.collection("account_info").find({}).toArray();
+		const personal = await db.collection("personal_info").find({}).toArray();
+		const personalByName = new Map(personal.map((doc) => [String(doc.name || "").trim().toLowerCase(), doc]));
+		const emailOwners = new Map();
+		for (const account of accounts) {
+			const profile = account.autoBidProfile || personalByName.get(String(account.name || "").trim().toLowerCase()) || {};
+			const email = String(profile.email || account.email || "").trim().toLowerCase();
+			if (!email) report.blockers.push({ collection: "account_info", sourceId: String(account._id), account: account.name, reason: "missing_email" });
+			else emailOwners.set(email, [...(emailOwners.get(email) || []), String(account._id)]);
+		}
+		for (const [email, ids] of emailOwners) if (ids.length > 1) report.blockers.push({ collection: "account_info", email, ids, reason: "duplicate_email" });
 	}
-	for (const [email, ids] of emailOwners) if (ids.length > 1) report.blockers.push({ collection: "account_info", email, ids, reason: "duplicate_email" });
 	try {
 		const [files] = await getStorageBucket().getFiles();
 		report.storage = {
@@ -327,68 +352,94 @@ async function migrate(db) {
 	const manifestPath = path.join(outputDir, "manifest.jsonl");
 	await mkdir(outputDir, { recursive: true });
 	await writeFile(manifestPath, "");
-	const collections = (await db.listCollections().toArray()).filter(({ name }) => !name.endsWith(".chunks") && !name.endsWith(".files") && name !== "migration_manifest");
+	const requestedCollections = new Set(String(process.env.MIGRATION_COLLECTIONS || "").split(",").map((name) => name.trim()).filter(Boolean));
+	const collections = (await db.listCollections().toArray())
+		.filter(({ name }) => !name.endsWith(".chunks") && !name.endsWith(".files") && name !== "migration_manifest")
+		.filter(({ name }) => !requestedCollections.size || requestedCollections.has(name))
+		// Account profiles may require KMS rewrapping. Leave them until last so a
+		// missing KMS grant cannot block migration of unrelated collections.
+		.sort((left, right) => Number(left.name === "account_info") - Number(right.name === "account_info"));
+	if (requestedCollections.size && collections.length !== requestedCollections.size) {
+		const found = new Set(collections.map(({ name }) => name));
+		const missing = [...requestedCollections].filter((name) => !found.has(name));
+		throw new Error(`Unknown MIGRATION_COLLECTIONS: ${missing.join(", ")}`);
+	}
+	const manifestSnapshots = requestedCollections.size
+		? await Promise.all(collections.map(({ name }) => firestore.collection("migration_manifest").where("sourceCollection", "==", name).get()))
+		: [await firestore.collection("migration_manifest").get()];
+	const previousManifests = new Map(manifestSnapshots.flatMap((snapshot) => snapshot.docs).map((doc) => [doc.id, doc.data()]));
 	const accounts = await db.collection("account_info").find({}, { projection: { _id: 1, name: 1 } }).toArray();
 	const profileIds = new Map(accounts.map((account) => [String(account.name || "").trim().toLowerCase(), String(account._id)]));
-	let migrated = 0;
+	let migrated = 0, skipped = 0, processed = 0, nextProgress = 100;
 	const destinations = new Set();
-	for (const { name } of collections) {
-		for await (const source of db.collection(name).find({})) {
-			const sourceId = String(source._id);
-			const sourceCanonicalHash = documentHash(scalar(source));
-			const manifestId = sha(`${name}\0${sourceId}`);
-			const previousManifest = await firestore.collection("migration_manifest").doc(manifestId).get();
-			if (previousManifest.exists) {
-				const previous = previousManifest.data();
-				const existing = await firestore.collection(previous.destinationCollection).doc(previous.destinationId).get();
-				if (
-					previous.transformationVersion === TRANSFORMATION_VERSION &&
-					previous.sourceCanonicalHash === sourceCanonicalHash &&
-					existing.exists &&
-					documentHash(existing.data()) === previous.canonicalHash
-				) {
-					const destinationKey = `${previous.destinationCollection}/${previous.destinationId}`;
-					if (destinations.has(destinationKey)) throw new Error(`Two source documents map to ${destinationKey}; resolve the canonical job collision before cutover`);
-					destinations.add(destinationKey);
-					const uniqueReservations = await writeDestinationWithReservations(firestore, {
-						sourceCollection: previous.sourceCollection,
-						destinationCollection: previous.destinationCollection,
-						destinationId: previous.destinationId,
-						data: existing.data(),
-					});
-					const reused = { ...previous, uniqueReservations };
-					await firestore.collection("migration_manifest").doc(manifestId).set(reused, { merge: false });
-					await appendFile(manifestPath, `${JSON.stringify(reused)}\n`);
-					migrated += 1;
-					continue;
-				}
-			}
-			const item = await transformDocument(db, name, source, profileIds);
-			const destinationKey = `${item.destinationCollection}/${item.destinationId}`;
-			if (destinations.has(destinationKey)) throw new Error(`Two source documents map to ${destinationKey}; resolve the canonical job collision before cutover`);
-			destinations.add(destinationKey);
-			const data = { ...item.doc }; delete data._id;
-			const uniqueReservations = await writeDestinationWithReservations(firestore, {
-				sourceCollection: name,
-				destinationCollection: item.destinationCollection,
-				destinationId: item.destinationId,
-				data,
-			});
-			const entry = {
+	const registerDestination = (collection, id) => {
+		const destinationKey = `${collection}/${id}`;
+		if (destinations.has(destinationKey)) throw new Error(`Two source documents map to ${destinationKey}; resolve the canonical job collision before cutover`);
+		destinations.add(destinationKey);
+	};
+	const migrateSource = async (name, source) => {
+		const sourceId = String(source._id);
+		const sourceCanonicalHash = documentHash(scalar(source));
+		const manifestId = sha(`${name}\0${sourceId}`);
+		const previous = previousManifests.get(manifestId);
+		const expectedSecretEncryption = name === "account_info" ? SECRET_ENCRYPTION_MODE : undefined;
+		if (
+			previous?.transformationVersion === TRANSFORMATION_VERSION &&
+			previous.sourceCanonicalHash === sourceCanonicalHash &&
+			(name !== "account_info" || previous.secretEncryption === expectedSecretEncryption)
+		) {
+			registerDestination(previous.destinationCollection, previous.destinationId);
+			return { entry: previous, skipped: true };
+		}
+		const item = await transformDocument(db, name, source, profileIds);
+		registerDestination(item.destinationCollection, item.destinationId);
+		const data = { ...item.doc }; delete data._id;
+		const entry = await writeDestinationWithReservations(firestore, {
+			sourceCollection: name,
+			destinationCollection: item.destinationCollection,
+			destinationId: item.destinationId,
+			data,
+			manifestId,
+			manifest: {
 				sourceCollection: name, sourceId: item.sourceId,
 				destinationCollection: item.destinationCollection, destinationId: item.destinationId,
 				transformationVersion: TRANSFORMATION_VERSION,
 				sourceCanonicalHash,
 				byteCount: firestoreSize(data), canonicalHash: documentHash(data),
-				objects: item.objects, uniqueReservations, migratedAt: new Date().toISOString(),
-			};
-			await firestore.collection("migration_manifest").doc(manifestId).set(entry, { merge: false });
-			await appendFile(manifestPath, `${JSON.stringify(entry)}\n`);
-			migrated += 1;
-			if (migrated % 100 === 0) console.log(`Migrated ${migrated} documents`);
+				objects: item.objects,
+				...(name === "account_info" ? { secretEncryption: SECRET_ENCRYPTION_MODE } : {}),
+				migratedAt: new Date().toISOString(),
+			},
+		});
+		previousManifests.set(manifestId, entry);
+		return { entry, skipped: false };
+	};
+	const flush = async (name, sources) => {
+		const settled = await Promise.allSettled(sources.map((source) => migrateSource(name, source)));
+		const failure = settled.find((result) => result.status === "rejected");
+		if (failure) throw failure.reason;
+		const results = settled.map((result) => result.value);
+		await appendFile(manifestPath, results.map(({ entry }) => JSON.stringify(entry)).join("\n") + "\n");
+		for (const result of results) result.skipped ? skipped += 1 : migrated += 1;
+		processed += results.length;
+		if (processed >= nextProgress) {
+			console.log(`Processed ${processed} documents (${migrated} migrated, ${skipped} skipped)`);
+			nextProgress = Math.floor(processed / 100 + 1) * 100;
 		}
+	};
+	console.log(`Starting migration with concurrency ${MIGRATION_CONCURRENCY}; loaded ${previousManifests.size} completed manifests for ${collections.length} collections`);
+	for (const { name } of collections) {
+		let sources = [];
+		for await (const source of db.collection(name).find({})) {
+			sources.push(source);
+			if (sources.length === MIGRATION_CONCURRENCY) {
+				await flush(name, sources);
+				sources = [];
+			}
+		}
+		if (sources.length) await flush(name, sources);
 	}
-	console.log(`Migration complete: ${migrated} documents`);
+	console.log(`Migration complete: ${processed} processed (${migrated} migrated, ${skipped} skipped)`);
 }
 
 async function findSourceById(db, collection, id) {
@@ -449,32 +500,36 @@ async function verify(db) {
 		const actual = (await firestore.collection(collection).count().get()).data().count;
 		if (actual !== expected) failures.push({ collection, error: "destination_count_mismatch", expected, actual });
 	}
-	const accounts = await db.collection("account_info").find({}).toArray();
-	for (const account of accounts) {
-		const uid = `owner_${sha(String(account._id)).slice(0, 32)}`;
-		try { await getFirebaseAuth().getUser(uid); } catch { failures.push({ sourceCollection: "account_info", sourceId: String(account._id), error: "auth_user_missing", uid }); }
-		const grant = await firestore.collection("profile_access").doc(sha(`${uid}\0${String(account._id)}`)).get();
-		if (!grant.exists) failures.push({ sourceCollection: "account_info", sourceId: String(account._id), error: "owner_access_grant_missing", uid });
-	}
-	const vendorMap = process.env.MIGRATION_VENDOR_MAP ? JSON.parse(process.env.MIGRATION_VENDOR_MAP) : [];
-	for (const vendor of vendorMap) {
-		const email = String(vendor.email || "").trim().toLowerCase();
-		try {
-			const user = await getFirebaseAuth().getUserByEmail(email);
-			if (String(user.customClaims?.role || "").toLowerCase() !== "bidder") failures.push({ email, error: "vendor_role_mismatch" });
-			const grant = await firestore.collection("profile_access").doc(sha(`${user.uid}\0${vendor.profileId}`)).get();
-			if (!grant.exists || String(grant.data()?.profileId || "") !== String(vendor.profileId)) failures.push({ email, profileId: vendor.profileId, error: "vendor_access_grant_missing" });
-		} catch {
-			failures.push({ email, profileId: vendor.profileId, error: "vendor_auth_user_missing" });
+	if (INCLUDE_FIREBASE_AUTH) {
+		const accounts = await db.collection("account_info").find({}).toArray();
+		for (const account of accounts) {
+			const uid = `owner_${sha(String(account._id)).slice(0, 32)}`;
+			try { await getFirebaseAuth().getUser(uid); } catch { failures.push({ sourceCollection: "account_info", sourceId: String(account._id), error: "auth_user_missing", uid }); }
+			const grant = await firestore.collection("profile_access").doc(sha(`${uid}\0${String(account._id)}`)).get();
+			if (!grant.exists) failures.push({ sourceCollection: "account_info", sourceId: String(account._id), error: "owner_access_grant_missing", uid });
+		}
+		const vendorMap = process.env.MIGRATION_VENDOR_MAP ? JSON.parse(process.env.MIGRATION_VENDOR_MAP) : [];
+		for (const vendor of vendorMap) {
+			const email = String(vendor.email || "").trim().toLowerCase();
+			try {
+				const user = await getFirebaseAuth().getUserByEmail(email);
+				if (String(user.customClaims?.role || "").toLowerCase() !== "bidder") failures.push({ email, error: "vendor_role_mismatch" });
+				const grant = await firestore.collection("profile_access").doc(sha(`${user.uid}\0${vendor.profileId}`)).get();
+				if (!grant.exists || String(grant.data()?.profileId || "") !== String(vendor.profileId)) failures.push({ email, profileId: vendor.profileId, error: "vendor_access_grant_missing" });
+			} catch {
+				failures.push({ email, profileId: vendor.profileId, error: "vendor_auth_user_missing" });
+			}
 		}
 	}
-	const result = { manifests: manifests.size, failures };
+	const result = { scope: INCLUDE_FIREBASE_AUTH ? "data-and-auth" : "data-only", manifests: manifests.size, failures };
 	await writeFile(path.join(outputDir, "verify.json"), JSON.stringify(result, null, 2));
 	console.log(JSON.stringify(result, null, 2));
 	if (failures.length) process.exitCode = 2;
 }
 
 async function importAuth(db) {
+	if (!INCLUDE_FIREBASE_AUTH) throw new Error("Firebase Auth migration is disabled for data-only mode. Set MIGRATION_INCLUDE_AUTH=true only for an explicitly approved Auth migration.");
+	const { default: bcrypt } = await import("bcrypt");
 	const accounts = await db.collection("account_info").find({}).toArray();
 	const personal = await db.collection("personal_info").find({}).toArray();
 	const personalByName = new Map(personal.map((doc) => [String(doc.name || "").toLowerCase(), doc]));

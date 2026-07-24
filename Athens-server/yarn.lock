@@ -261,13 +261,6 @@
     retry-request "^7.0.0"
     teeny-request "^9.0.0"
 
-"@google-cloud/tasks@^6.2.3":
-  version "6.2.3"
-  resolved "https://registry.npmjs.org/@google-cloud/tasks/-/tasks-6.2.3.tgz"
-  integrity sha512-US4162TMwam5QXKmZAzoiHIBpdc5K+eDKxfO2hjBsPM1UxuB8feIZQ8kbrTxgp6mggrnUukfbrXetIEMnWfBvw==
-  dependencies:
-    google-gax "^5.0.0"
-
 "@grpc/grpc-js@^1.12.6":
   version "1.14.4"
   resolved "https://registry.npmjs.org/@grpc/grpc-js/-/grpc-js-1.14.4.tgz"

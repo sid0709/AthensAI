@@ -14,7 +14,12 @@ import { requireAdmin } from "../middleware/requireAdmin.js";
 
 const router = express.Router();
 const legacyAuth = (req, res, next) => {
-	if (process.env.NODE_ENV === "production") return res.status(410).json({ success: false, message: "Legacy password authentication is disabled; use Firebase Auth." });
+	const firebaseRequired = !["0", "false", "no", "off"].includes(
+		String(process.env.FIREBASE_AUTH_REQUIRED ?? "").trim().toLowerCase(),
+	);
+	if (process.env.NODE_ENV === "production" && firebaseRequired) {
+		return res.status(410).json({ success: false, message: "Legacy password authentication is disabled; use Firebase Auth." });
+	}
 	return next();
 };
 

@@ -1,6 +1,6 @@
 # ai-bff
 
-AI kit and BFF for **OpenAI GPT** and **DeepSeek** models. Sole LLM gateway for NextOffer. Every call writes one row to Mongo `ai_api_usage` (tokens, cache hit/miss, duration, success/fail, full API key — never prompt/response text).
+AI kit and BFF for **OpenAI GPT** and **DeepSeek** models. Sole LLM gateway for NextOffer. In the Firestore runtime, every call writes one `ai_api_usage` document with request metrics and outcome metadata.
 
 ## Setup
 

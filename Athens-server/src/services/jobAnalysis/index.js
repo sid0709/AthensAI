@@ -4,6 +4,7 @@ import { attachStaticScoreFields } from '../jobListPipeline.js';
 import { indexJobInRedis, jobSkillTokens } from '../matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
 import { enqueueJobAnalysisTask } from '../cloudTasks.js';
+import { isForegroundBusy } from '../runtimeLoad.js';
 
 const TERMINAL = new Set(['analyzed']);
 const WORKER_INTERVAL_MS = Number(process.env.SKILL_JOB_ANALYSIS_INTERVAL_MS || 5000);
@@ -77,11 +78,15 @@ async function claimQueuedJobs(limit = 2) {
 	if (!jobsCollection) return [];
 
 	const now = new Date().toISOString();
-	const queued = await jobsCollection
+	const candidates = await jobsCollection
 		.find({ 'skillAnalysis.status': 'queued' })
-		.sort({ 'skillAnalysis.queuedAt': 1 })
-		.limit(limit)
+		// Keep the Firestore query on its built-in single-field index. The small
+		// candidate window is ordered locally until the composite index is ready.
+		.limit(Math.max(limit * 20, 100))
 		.toArray();
+	const queued = candidates
+		.sort((left, right) => String(left.skillAnalysis?.queuedAt || '').localeCompare(String(right.skillAnalysis?.queuedAt || '')))
+		.slice(0, limit);
 
 	const claimed = [];
 	for (const job of queued) {
@@ -173,6 +178,7 @@ export function startJobAnalysisWorker() {
 	if (workerTimer) return;
 
 	const tick = async () => {
+		if (isForegroundBusy()) return;
 		try {
 			await runJobAnalysisBatch(BATCH_SIZE);
 		} catch (err) {
@@ -181,7 +187,6 @@ export function startJobAnalysisWorker() {
 	};
 
 	workerTimer = setInterval(tick, WORKER_INTERVAL_MS);
-	void tick();
 	console.log(`[job-analysis] worker started (interval ${WORKER_INTERVAL_MS}ms, batch ${BATCH_SIZE})`);
 }
 

@@ -2127,11 +2127,11 @@ window.addEventListener('focus', () => {
   }
   updateCompletedPill();
 
-  if (applierNameInput && athensSettings?.email) {
-    applierNameInput.value = athensSettings.email;
+  if (applierNameInput && athensSettings?.applierName) {
+    applierNameInput.value = athensSettings.applierName;
   }
-  if (usernameInput && athensSettings?.email && !usernameInput.value) {
-    usernameInput.value = athensSettings.email;
+  if (usernameInput && athensSettings?.applierName && !usernameInput.value) {
+    usernameInput.value = athensSettings.applierName;
   }
 
   const ui = await sendMessage({ type: 'GET_UI_STATE' }).catch(() => null);

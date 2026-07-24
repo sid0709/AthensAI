@@ -9,6 +9,120 @@ import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
 import { computeCoverageScore, composeJobScores } from './coverageScore.js';
 import { countScoresForApplier, getRescoreState } from './matchScoreStore.js';
 
+function isFirestoreRuntime() {
+  return String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() === 'firestore';
+}
+
+const firestoreRecommendationMeta = new Map();
+
+function refreshFirestoreRecommendationMeta(name) {
+  const existing = firestoreRecommendationMeta.get(name);
+  if (existing?.promise) return existing.promise;
+  const promise = Promise.all([
+    loadProfileMatchContext(name),
+    countScoresForApplier(name),
+    getRescoreState(name),
+  ]).then(([profileCtx, rowCount, state]) => {
+    const value = {
+      profileCtx,
+      rowCount,
+      state,
+      expiresAt: Date.now() + 30_000,
+    };
+    firestoreRecommendationMeta.set(name, value);
+    return value;
+  }).catch((error) => {
+    firestoreRecommendationMeta.delete(name);
+    console.warn('[match-score] recommendation metadata warmup failed:', error?.message || error);
+    return null;
+  });
+  firestoreRecommendationMeta.set(name, { promise, expiresAt: 0 });
+  return promise;
+}
+
+async function listFirestoreWarmingPage({ mongoQuery, skip, limit }) {
+  const [docs, total] = await Promise.all([
+    jobsCollection
+      .find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+      .sort({ postedAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .toArray(),
+    jobsCollection.countDocuments(mongoQuery || {}),
+  ]);
+
+  return {
+    docs: docs.map((job) => ({
+      ...job,
+      ...composeJobScores(job, { matchScore: 0, covered: [], missing: [], required: 0 }),
+      recommendationRanked: false,
+    })),
+    total,
+    catalogTotal: total,
+    recommendationFallback: false,
+    recommendationHybrid: false,
+    recommendationMaterialized: true,
+    recommendationWarming: true,
+  };
+}
+
+async function listFromMaterializedScoresFirestore({
+  applierName,
+  mongoQuery,
+  scoreFilters,
+  listBody,
+  skip,
+  limit,
+}) {
+  const profileCtx = await loadProfileMatchContext(applierName);
+  const prefilters = buildScoreRowPrefilters(listBody);
+  const scoreRange = buildScoreRangeClause(scoreFilters);
+  const scoreMatch = { applierName, ...prefilters };
+  if (scoreRange) scoreMatch.score = scoreRange;
+
+  const overscan = Math.min(500, Math.max(limit, limit * 4));
+  const [scoreRows, catalogTotal] = await Promise.all([
+    jobMatchScoresCollection
+      .find(scoreMatch)
+      .sort({ score: -1, postedAt: -1, jobId: -1 })
+      .skip(skip)
+      .limit(overscan)
+      .toArray(),
+    jobsCollection.countDocuments(mongoQuery || {}),
+  ]);
+
+  const jobIds = scoreRows.map((row) => row.jobId).filter(Boolean);
+  const jobs = jobIds.length
+    ? await jobsCollection
+        .find({ $and: [mongoQuery || {}, { _id: { $in: jobIds } }] }, { projection: JOB_LIST_PROJECTION })
+        .toArray()
+    : [];
+  const jobsById = new Map(jobs.map((job) => [String(job._id), job]));
+  let pageDocs = scoreRows
+    .map((row) => jobsById.get(String(row.jobId)))
+    .filter(Boolean)
+    .slice(0, limit)
+    .map((job) => composePageDoc(job, profileCtx));
+
+  if (!scoreRange && pageDocs.length < limit) {
+    const fill = await listFirestoreWarmingPage({ mongoQuery, skip: 0, limit: limit * 2 });
+    const used = new Set(pageDocs.map((job) => String(job._id)));
+    pageDocs = [
+      ...pageDocs,
+      ...fill.docs.filter((job) => !used.has(String(job._id))).slice(0, limit - pageDocs.length),
+    ];
+  }
+
+  return {
+    docs: pageDocs,
+    total: catalogTotal,
+    catalogTotal,
+    recommendationFallback: false,
+    recommendationHybrid: false,
+    recommendationMaterialized: true,
+  };
+}
+
 /**
  * Read path for Best Match over the materialized job_match_scores collection:
  * an index scan on { applierName, score, postedAt } plus ~limit point lookups
@@ -231,6 +345,42 @@ export async function listRecommendedJobs(params) {
 
   if (!isMaterializedRecommendationEnabled() || !jobMatchScoresCollection || !name) {
     return matchJobsForApplier(params);
+  }
+
+  if (isFirestoreRuntime()) {
+    const cachedMeta = firestoreRecommendationMeta.get(name);
+    const readyMeta = cachedMeta?.profileCtx && cachedMeta.expiresAt > Date.now()
+      ? cachedMeta
+      : null;
+    if (!readyMeta) {
+      // Metadata is advisory for the first paint. Warm it asynchronously and
+      // return the already-indexed date page immediately; the next refresh
+      // switches to materialized score order when rows exist.
+      void refreshFirestoreRecommendationMeta(name);
+      const page = await listFirestoreWarmingPage(params);
+      return { ...page, recommendationWarming: true };
+    }
+
+    const hasProfile = Boolean(
+      readyMeta.profileCtx.profileTokens?.length ||
+      readyMeta.profileCtx.profileCompacts?.length ||
+      readyMeta.profileCtx.exactSet?.size,
+    );
+    if (!hasProfile) {
+      const page = await listFirestoreWarmingPage(params);
+      return {
+        ...page,
+        recommendationFallback: true,
+        recommendationReason: 'no_profile_skills',
+        recommendationWarming: false,
+      };
+    }
+    if (readyMeta.rowCount === 0) {
+      const page = await listFirestoreWarmingPage(params);
+      const warming = readyMeta.state && (readyMeta.state.status === 'pending' || readyMeta.state.status === 'running');
+      return warming ? { ...page, recommendationWarming: true } : page;
+    }
+    return listFromMaterializedScoresFirestore({ ...params, applierName: name });
   }
 
   const profileCtx = await loadProfileMatchContext(name);

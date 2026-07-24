@@ -21,7 +21,6 @@
 		"firebase:migrate": "node src/scripts/firebaseMigration.js migrate",
 		"firebase:verify": "node src/scripts/firebaseMigration.js verify",
 		"firebase:auth": "node src/scripts/firebaseMigration.js auth",
-		"firebase:cloud-job": "node src/scripts/cloudRunJob.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
 		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",
 		"reset-skills": "node src/scripts/resetSkills.js",
@@ -33,7 +32,6 @@
 	},
 	"dependencies": {
 		"@google-cloud/kms": "^5.4.0",
-		"@google-cloud/tasks": "^6.2.3",
 		"@nextoffer/shared": "file:../packages/shared",
 		"@socket.io/cluster-adapter": "^0.2.2",
 		"@socket.io/redis-adapter": "^8.3.0",
@@ -54,14 +52,21 @@
 		"mailparser": "^3.9.14",
 		"mammoth": "^1.12.0",
 		"mongodb": "^6.19.0",
+		"node-gyp-build": "^4.8.4",
 		"nodemailer": "^9.0.1",
 		"pdf-parse": "^1.1.4",
+		"peberminta": "^0.10.0",
 		"pizzip": "^3.2.0",
 		"puppeteer": "^25.1.0",
 		"redis": "^4.7.0",
-		"socket.io": "^4.8.1"
+		"socket.io": "^4.8.1",
+		"tlds": "^1.261.0",
+		"uc.micro": "^2.1.0",
+		"uid2": "^1.0.0"
 	},
 	"devDependencies": {
-		"nodemon": "^3.1.14"
+		"nodemon": "^3.1.14",
+		"readdirp": "^3.6.0",
+		"to-regex-range": "^5.0.1"
 	}
 }

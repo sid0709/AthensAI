@@ -34,25 +34,42 @@ set -a
 source "$DEPLOY_ENV"
 set +a
 
-: "${MONGO_URL:?MONGO_URL must be set in $DEPLOY_ENV}"
-: "${MONGO_DB:?MONGO_DB must be set in $DEPLOY_ENV}"
 : "${API_KEYS_ENCRYPTION_KEY:?API_KEYS_ENCRYPTION_KEY must be set in $DEPLOY_ENV}"
-: "${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID must be set in $DEPLOY_ENV}"
-: "${FIREBASE_STORAGE_BUCKET:?FIREBASE_STORAGE_BUCKET must be set in $DEPLOY_ENV}"
-: "${GOOGLE_APPLICATION_CREDENTIALS:?GOOGLE_APPLICATION_CREDENTIALS must be set in $DEPLOY_ENV}"
-: "${FIREBASE_SECRET_HOST_PATH:?FIREBASE_SECRET_HOST_PATH must be set in $DEPLOY_ENV}"
 
+DATABASE_BACKEND="${DATABASE_BACKEND:-mongo}"
 EMBEDDED_MONGO="${EMBEDDED_MONGO:-false}"
+FIREBASE_AUTH_REQUIRED="${FIREBASE_AUTH_REQUIRED:-false}"
+BACKGROUND_WORKERS_MODE="${BACKGROUND_WORKERS_MODE:-local}"
+FIRESTORE_WRITES_ENABLED="${FIRESTORE_WRITES_ENABLED:-false}"
+FIRESTORE_COMPAT_WARN_SCAN="${FIRESTORE_COMPAT_WARN_SCAN:-1000}"
+FIRESTORE_COMPAT_MAX_SCAN="${FIRESTORE_COMPAT_MAX_SCAN:-20000}"
+
+volume_args=()
+if [[ "${DATABASE_BACKEND,,}" == "firestore" ]]; then
+  : "${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID must be set in $DEPLOY_ENV}"
+  : "${FIREBASE_STORAGE_BUCKET:?FIREBASE_STORAGE_BUCKET must be set in $DEPLOY_ENV}"
+  : "${GOOGLE_APPLICATION_CREDENTIALS:?GOOGLE_APPLICATION_CREDENTIALS must be set in $DEPLOY_ENV}"
+  : "${FIREBASE_SECRET_HOST_PATH:?FIREBASE_SECRET_HOST_PATH must be set in $DEPLOY_ENV}"
+  : "${KMS_KEY_NAME:?KMS_KEY_NAME must be set in $DEPLOY_ENV}"
+  if [[ ! -f "$FIREBASE_SECRET_HOST_PATH" ]]; then
+    echo "Missing Firebase secret file: $FIREBASE_SECRET_HOST_PATH" >&2
+    exit 1
+  fi
+  if [[ "${GOOGLE_APPLICATION_CREDENTIALS}" != "/run/secrets/firebase-service-account.json" ]]; then
+    echo "GOOGLE_APPLICATION_CREDENTIALS must be /run/secrets/firebase-service-account.json" >&2
+    exit 1
+  fi
+  volume_args=(-v "${FIREBASE_SECRET_HOST_PATH}:/run/secrets/firebase-service-account.json:ro")
+  EMBEDDED_MONGO=false
+else
+  : "${MONGO_URL:?MONGO_URL must be set in $DEPLOY_ENV when DATABASE_BACKEND=mongo}"
+  : "${MONGO_DB:?MONGO_DB must be set in $DEPLOY_ENV when DATABASE_BACKEND=mongo}"
+fi
 
 if [[ "$TAG_OR_REF" == *:* ]]; then
   IMAGE_REF="$TAG_OR_REF"
 else
   IMAGE_REF="${IMAGE_DEFAULT}:${TAG_OR_REF}"
-fi
-
-if [[ ! -f "$FIREBASE_SECRET_HOST_PATH" ]]; then
-  echo "Missing Firebase secret file: $FIREBASE_SECRET_HOST_PATH" >&2
-  exit 1
 fi
 
 echo "Pulling ${IMAGE_REF} ..."
@@ -77,14 +94,26 @@ docker run -d \
   -p 8979:8979 \
   -p 3920:3920 \
   -v nextoffer-puppeteer:/data/puppeteer \
-  -v "${FIREBASE_SECRET_HOST_PATH}:/run/secrets/firebase-service-account.json:ro" \
+  "${volume_args[@]}" \
+  -e "DATABASE_BACKEND=${DATABASE_BACKEND}" \
   -e "EMBEDDED_MONGO=${EMBEDDED_MONGO}" \
-  -e "MONGO_URL=${MONGO_URL}" \
-  -e "MONGO_DB=${MONGO_DB}" \
+  -e "MONGO_URL=${MONGO_URL:-}" \
+  -e "MONGO_DB=${MONGO_DB:-AthensDB}" \
   -e "API_KEYS_ENCRYPTION_KEY=${API_KEYS_ENCRYPTION_KEY}" \
-  -e "FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}" \
-  -e "FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET}" \
-  -e "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}" \
+  -e "FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}" \
+  -e "FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}" \
+  -e "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}" \
+  -e "KMS_KEY_NAME=${KMS_KEY_NAME:-}" \
+  -e "FIREBASE_AUTH_REQUIRED=${FIREBASE_AUTH_REQUIRED}" \
+  -e "BACKGROUND_WORKERS_MODE=${BACKGROUND_WORKERS_MODE}" \
+  -e "FIRESTORE_WRITES_ENABLED=${FIRESTORE_WRITES_ENABLED}" \
+  -e "FIRESTORE_COMPAT_WARN_SCAN=${FIRESTORE_COMPAT_WARN_SCAN}" \
+  -e "FIRESTORE_COMPAT_MAX_SCAN=${FIRESTORE_COMPAT_MAX_SCAN}" \
+  -e "SEARCH_OUTBOX_INTERVAL_MS=${SEARCH_OUTBOX_INTERVAL_MS:-5000}" \
+  -e "SEARCH_OUTBOX_BATCH_SIZE=${SEARCH_OUTBOX_BATCH_SIZE:-100}" \
+  -e "ALGOLIA_APP_ID=${ALGOLIA_APP_ID:-}" \
+  -e "ALGOLIA_ADMIN_API_KEY=${ALGOLIA_ADMIN_API_KEY:-}" \
+  -e "ALGOLIA_JOBS_INDEX=${ALGOLIA_JOBS_INDEX:-athens_jobs}" \
   -e "PROMETHEUS_URL=${PROMETHEUS_URL}" \
   "$IMAGE_REF"
 
@@ -97,7 +126,9 @@ for ((i = 1; i <= 24; i++)); do
     url.searchParams.set("query", "up{job=\"node\"}");
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     const payload = await response.json();
-    if (!response.ok || payload?.status !== "success" || payload?.data?.result?.[0]?.value?.[1] !== "1") process.exit(1);
+    const results = payload?.data?.result || [];
+    const hasLiveNodeExporter = results.some((series) => series?.value?.[1] === "1");
+    if (!response.ok || payload?.status !== "success" || !hasLiveNodeExporter) process.exit(1);
   ' >/dev/null 2>&1; then
     prometheus_ok=1
     break

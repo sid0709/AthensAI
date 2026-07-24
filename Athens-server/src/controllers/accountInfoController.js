@@ -48,6 +48,9 @@ function tokenIsAdmin(req) {
 }
 
 function canAccessAccount(req, doc) {
+	if (!req.auth && ["0", "false", "no", "off"].includes(
+		String(process.env.FIREBASE_AUTH_REQUIRED ?? "").trim().toLowerCase(),
+	)) return true;
 	if (tokenIsAdmin(req)) return true;
 	const id = String(doc?._id || "");
 	const name = String(doc?.name || "").trim().toLowerCase();
@@ -70,7 +73,7 @@ export const getAccountInfo = async (req, res) => {
 	try {
 		console.log('GET /api/account_info - Fetching all account info');
 		const accountInfo = (await accountInfoCollection.find({}).toArray()).filter((doc) => canAccessAccount(req, doc));
-		const includeSecrets = tokenIsAdmin(req) || String(req.auth?.role || "").toLowerCase() === "owner";
+		const includeSecrets = !req.auth || tokenIsAdmin(req) || String(req.auth?.role || "").toLowerCase() === "owner";
 		const sanitized = await Promise.all(accountInfo.map((doc) => sanitizeAccount(doc, { includeSecrets })));
 		res.status(200).json(sanitized);
 	} catch (error) {
@@ -97,7 +100,7 @@ export const getAccountInfoByName = async (req, res) => {
 			return res.status(404).json({ success: false, message: "Account not found" });
 		}
 		if (!canAccessAccount(req, doc)) return res.status(403).json({ success: false, message: "Profile access denied" });
-		const includeSecrets = tokenIsAdmin(req) || String(req.auth?.role || "").toLowerCase() === "owner";
+		const includeSecrets = !req.auth || tokenIsAdmin(req) || String(req.auth?.role || "").toLowerCase() === "owner";
 		res.status(200).json({ success: true, data: await sanitizeAccount(doc, { includeSecrets }) });
 	} catch (error) {
 		console.error("Error in getAccountInfoByName:", error);

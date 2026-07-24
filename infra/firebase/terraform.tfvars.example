@@ -1,11 +1,9 @@
-project_id       = "drwretail-bm"
-api_domain       = "api.example.com"
-frontend_origin  = "https://app.example.com"
-extension_origins = [
-  "chrome-extension://replace-with-bid-monitor-extension-id",
-  "chrome-extension://replace-with-avalon-extension-id",
-]
-image_tag        = "replace-with-git-commit-sha"
-bootstrap_images = true # set false immediately after the first Cloud Build
-storage_bucket   = "drwretail-bm-migrated"
-firestore_writes_enabled = false
+project_id         = "drwretail-bm"
+compute_region     = "us-east4"
+firestore_location = "nam7"
+storage_bucket     = "drwretail-bm-migrated"
+
+# Optional budget configuration.
+billing_account_id = ""
+project_number     = "50997156169"
+monthly_budget_usd = 500

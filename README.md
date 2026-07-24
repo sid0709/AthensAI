@@ -3,10 +3,11 @@
 Job search, skill matching, and Avalon-powered auto-apply.
 
 ```
-Firebase Hosting (Athens UI) ──REST──► Cloud Run (Athens API)
-Athens / Agents ──Socket.IO /avalon──► Cloud Run (Avalon relay)
-All LLM calls ──► ai-bff ──► OpenAI / DeepSeek
-Data ──► Firestore + Cloud Storage + Algolia + Memorystore
+remotepairnet.net ──► VPS nginx ──► Athens UI + Athens API
+Athens / Agents ──Socket.IO /avalon──► VPS Avalon relay
+All LLM calls ──► VPS ai-bff ──► OpenAI / DeepSeek
+VPS processes ──► Firestore + Cloud Storage + Algolia
+VPS local services ──► Redis + Qdrant + Prometheus/Grafana
 ```
 
 ## Prerequisites
@@ -63,11 +64,11 @@ SKIP_DOCKER=1 npm start
 
 ## Monitoring and public status
 
-Production health is monitored by Google Cloud Monitoring using the load-balancer uptime check, Cloud Run revision metrics, audit logs, and billing alerts declared in [`infra/firebase/`](infra/firebase/). Athens-server still exposes `/metrics`, `/healthz`, `/readyz`, and the curated public status API under `/api/status/*`; Firestore-backed deployments report application services, Firestore, and Cloud Storage without VPS host metrics.
+Production health remains on the VPS Prometheus/Grafana/Alertmanager stack. Athens-server exposes `/metrics`, `/healthz`, `/readyz`, and the curated public status API under `/api/status/*`; Firestore-backed deployments also report Firestore and Cloud Storage readiness.
 
-The Prometheus/Grafana stack in [`monitoring/`](monitoring/) is retained only for the legacy VPS and local Docker environments during migration. It is not part of the Firebase production runtime.
+Google Cloud retains Firestore/Storage/KMS audit logs, backups, and billing alerts declared in [`infra/firebase/`](infra/firebase/), but it does not run the application.
 
-The production Firebase/Cloud Run deployment and Mongo/GridFS cutover procedure is in [`docs/firebase-migration-runbook.md`](docs/firebase-migration-runbook.md). The Docker stack remains the local-development path.
+The production data-only Mongo/GridFS cutover procedure is in [`docs/firebase-migration-runbook.md`](docs/firebase-migration-runbook.md). Firebase Auth, Hosting, Cloud Run, Tasks, Scheduler, and Memorystore are intentionally excluded.
 
 | Service | URL |
 |---------|-----|

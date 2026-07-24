@@ -3,6 +3,7 @@ set -euo pipefail
 
 MONGO_URL="${MONGO_URL:-mongodb://127.0.0.1:27017}"
 EMBEDDED_MONGO="${EMBEDDED_MONGO:-auto}"
+DATABASE_BACKEND="${DATABASE_BACKEND:-mongo}"
 
 should_start_embedded_mongo() {
   if [[ "${EMBEDDED_MONGO}" == "false" || "${EMBEDDED_MONGO}" == "0" ]]; then
@@ -40,7 +41,9 @@ wait_for_port() {
   return 1
 }
 
-if should_start_embedded_mongo; then
+if [[ "${DATABASE_BACKEND,,}" == "firestore" ]]; then
+  echo "[entrypoint] Firestore selected; MongoDB startup and readiness checks are disabled"
+elif should_start_embedded_mongo; then
   echo "[entrypoint] starting embedded MongoDB"
   mkdir -p /data/db /var/log/mongodb
   if ! pgrep -x mongod >/dev/null 2>&1; then
@@ -81,6 +84,7 @@ export PUPPETEER_ARGS="${PUPPETEER_ARGS:---no-sandbox,--disable-setuid-sandbox}"
 export WEB_CONCURRENCY="${WEB_CONCURRENCY:-}"
 # Persist Chrome on the VPS volume so recreating the container does not re-download.
 export PUPPETEER_CACHE_DIR="${PUPPETEER_CACHE_DIR:-/data/puppeteer}"
+export DATABASE_BACKEND
 # Allow install even if the image was built with skip flags.
 unset PUPPETEER_SKIP_DOWNLOAD PUPPETEER_SKIP_CHROME_DOWNLOAD
 

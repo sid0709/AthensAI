@@ -35,9 +35,55 @@ import {
 	clearJobBidStatus,
 	upsertJobBidStatus,
 } from '../services/jobBidStatusService.js';
+import { isForegroundBusy } from '../services/runtimeLoad.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+const JOB_COUNT_CACHE_MS = Number(process.env.JOB_COUNT_CACHE_MS || 5 * 60 * 1000);
+const jobCountCache = new Map();
+const jobCountRefreshes = new Map();
+
+function jobCountCacheKey(body = {}) {
+	return JSON.stringify(Object.fromEntries(Object.entries(body).sort(([left], [right]) => left.localeCompare(right))));
+}
+
+async function calculateJobStatusCounts(body) {
+	const facet = {};
+	for (const tab of STATUS_TABS) {
+		const { query } = await buildJobsListQuery(body, { statusTab: tab });
+		facet[tab] = [{ $match: query }, { $count: 'count' }];
+	}
+	const [result] = await jobsCollection.aggregate([{ $facet: facet }]).toArray();
+	const counts = {};
+	for (const tab of STATUS_TABS) counts[tab] = result?.[tab]?.[0]?.count ?? 0;
+	const externalCounts = await countExternalForStatusTabs(body);
+	counts.all += externalCounts.all;
+	counts.posted += externalCounts.posted;
+	return counts;
+}
+
+function refreshJobStatusCountsWhenIdle(key, body) {
+	if (jobCountRefreshes.has(key)) return;
+	const refresh = new Promise((resolve) => {
+		const attempt = async () => {
+			if (isForegroundBusy()) {
+				setTimeout(attempt, 10_000).unref?.();
+				return;
+			}
+			try {
+				const counts = await calculateJobStatusCounts(body);
+				jobCountCache.set(key, { counts, expiresAt: Date.now() + JOB_COUNT_CACHE_MS });
+			} catch (error) {
+				console.warn('[jobs] deferred status count refresh failed:', error?.message || error);
+			} finally {
+				jobCountRefreshes.delete(key);
+				resolve();
+			}
+		};
+		setTimeout(attempt, 10_000).unref?.();
+	});
+	jobCountRefreshes.set(key, refresh);
+}
 
 const toValidDate = (value) => {
 	if (!value) return null;
@@ -298,28 +344,43 @@ export async function removeJobsForRule(req, res) {
 	}
 }
 
-/** Cheap count-only path — single aggregation with $facet per status tab. */
+/**
+ * Status counts are expensive in Firestore because the legacy per-user status
+ * values live inside an array. Never let that compatibility scan block the job
+ * list: return a fast indexed catalog count and refresh exact tab counts only
+ * after interactive traffic has gone quiet.
+ */
 export async function getJobStatusCounts(req, res) {
 	try {
 		if (!jobsCollection) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
 		}
 
-		const facet = {};
-		for (const tab of STATUS_TABS) {
-			const { query } = await buildJobsListQuery(req.body, { statusTab: tab });
-			facet[tab] = [{ $match: query }, { $count: 'count' }];
+		if (String(process.env.DATABASE_BACKEND || '').toLowerCase() === 'firestore') {
+			const key = jobCountCacheKey(req.body);
+			const cached = jobCountCache.get(key);
+			if (cached) {
+				if (cached.expiresAt <= Date.now()) refreshJobStatusCountsWhenIdle(key, { ...req.body });
+				return res.json({ success: true, counts: cached.counts, cached: true });
+			}
+
+			const [{ query: allQuery }, externalCounts] = await Promise.all([
+				buildJobsListQuery(req.body, { statusTab: 'all' }),
+				countExternalForStatusTabs(req.body),
+			]);
+			const marketTotal = await jobsCollection.countDocuments(allQuery);
+			const all = marketTotal + externalCounts.all;
+			const counts = Object.fromEntries(STATUS_TABS.map((tab) => [tab, 0]));
+			counts.all = all;
+			// Until exact legacy-array counts are warmed, treating the catalog as
+			// posted is preferable to hiding jobs or blocking the first paint.
+			counts.posted = all;
+			jobCountCache.set(key, { counts, expiresAt: 0 });
+			refreshJobStatusCountsWhenIdle(key, { ...req.body });
+			return res.json({ success: true, counts, cached: false, warming: true });
 		}
 
-		const [result] = await jobsCollection.aggregate([{ $facet: facet }]).toArray();
-		const counts = {};
-		for (const tab of STATUS_TABS) {
-			counts[tab] = result?.[tab]?.[0]?.count ?? 0;
-		}
-
-		const externalCounts = await countExternalForStatusTabs(req.body);
-		counts.all += externalCounts.all;
-		counts.posted += externalCounts.posted;
+		const counts = await calculateJobStatusCounts(req.body);
 
 		return res.json({
 			success: true,

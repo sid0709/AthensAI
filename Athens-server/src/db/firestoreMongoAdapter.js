@@ -15,12 +15,82 @@ const UNIQUE_KEYS = {
 	monitor_current_status: ["component"], monitor_daily_rollups: ["date", "component"],
 };
 
+const warnedScans = new Set();
+const NATIVE_PAGINATION_APPLIED = Symbol('firestoreNativePaginationApplied');
+const FIRESTORE_OPERATORS = new Map([
+	["$eq", "=="],
+	["$gt", ">"],
+	["$gte", ">="],
+	["$lt", "<"],
+	["$lte", "<="],
+	["$in", "in"],
+]);
+
 // Some Mongo partial unique indexes have alternative business keys. The first
 // complete key set is also used for deterministic IDs on newly inserted rows;
 // every complete key set gets a reservation document.
 
 function isPlain(value) {
 	return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof ObjectId);
+}
+
+function buildNativeQueryPlan(filter = {}) {
+	const clauses = [];
+	let complete = true;
+	function visit(node) {
+		if (!isPlain(node)) { complete = false; return; }
+		for (const [field, condition] of Object.entries(node)) {
+			if (field === "$and" && Array.isArray(condition)) {
+				condition.forEach(visit);
+				continue;
+			}
+			if (field.startsWith("$") || field === "_id" || condition instanceof RegExp) {
+				complete = false;
+				continue;
+			}
+			if (!isPlain(condition) || condition instanceof Date || condition instanceof ObjectId) {
+				clauses.push({ field, operator: "==", value: encode(condition) });
+				continue;
+			}
+			const entries = Object.entries(condition);
+			if (!entries.length || entries.some(([operator, operand]) => !FIRESTORE_OPERATORS.has(operator) || operand instanceof RegExp)) {
+				complete = false;
+				continue;
+			}
+			for (const [operator, operand] of entries) {
+				if (operator === "$in" && (!Array.isArray(operand) || operand.length === 0 || operand.length > 30 || operand.some((item) => item instanceof RegExp))) {
+					complete = false;
+					continue;
+				}
+				clauses.push({ field, operator: FIRESTORE_OPERATORS.get(operator), value: encode(operand) });
+			}
+		}
+	}
+	visit(filter);
+	return { clauses, complete };
+}
+
+function selectBoundingClause(clauses = []) {
+	const score = (clause) => {
+		if (clause.field === "sourceCatalog") return -100;
+		if (/status$/i.test(clause.field)) return 60;
+		if (/(profileId|applierName|uid|requestId|jobId)$/i.test(clause.field)) return 50;
+		if (typeof clause.value === "boolean") return -10;
+		return 0;
+	};
+	return [...clauses].sort((left, right) => score(right) - score(left))[0];
+}
+
+function conjunctiveDocumentIds(filter = {}) {
+	if (!isPlain(filter)) return null;
+	if (isPlain(filter._id) && Array.isArray(filter._id.$in)) return filter._id.$in.map((id) => String(comparable(id)));
+	if (Array.isArray(filter.$and)) {
+		for (const child of filter.$and) {
+			const ids = conjunctiveDocumentIds(child);
+			if (ids) return ids;
+		}
+	}
+	return null;
 }
 
 function encode(value) {
@@ -36,8 +106,17 @@ function encode(value) {
 	return value;
 }
 
+function decodeFirestoreValue(value) {
+	if (value?.toDate instanceof Function) return value.toDate();
+	if (Array.isArray(value)) return value.map(decodeFirestoreValue);
+	if (value && Object.getPrototypeOf(value) === Object.prototype) {
+		return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, decodeFirestoreValue(child)]));
+	}
+	return value;
+}
+
 function decodeDoc(id, data) {
-	const decoded = { ...data };
+	const decoded = decodeFirestoreValue(data);
 	decoded._id = /^[a-f0-9]{24}$/i.test(id) ? new ObjectId(id) : id;
 	return decoded;
 }
@@ -418,10 +497,16 @@ class Cursor {
 	limit(count) { this.limitCount = count; return this; }
 	project(spec) { this.projection = spec; return this; }
 	async toArray() {
-		let docs = await this.collection._read(this.filter);
+		let docs = await this.collection._readCached(this.filter, {
+			sort: this.sortSpec,
+			skip: this.skipCount,
+			limit: this.limitCount,
+			projection: this.projection,
+		});
+		const nativePaginationApplied = Boolean(docs[NATIVE_PAGINATION_APPLIED]);
 		if (this.sortSpec) docs = sortDocs(docs, this.sortSpec);
-		if (this.skipCount) docs = docs.slice(this.skipCount);
-		if (this.limitCount != null) docs = docs.slice(0, this.limitCount);
+		if (!nativePaginationApplied && this.skipCount) docs = docs.slice(this.skipCount);
+		if (!nativePaginationApplied && this.limitCount != null) docs = docs.slice(0, this.limitCount);
 		if (this.projection) docs = docs.map((doc) => applyProjection(doc, this.projection));
 		return docs;
 	}
@@ -434,29 +519,162 @@ class FirestoreCollection {
 		this.collectionName = name;
 		this.sourceCatalog = name === "job_market" ? "market" : name === "external_scraped_jobs" ? "external" : null;
 		this.ref = db.firestore.collection(this.sourceCatalog ? "jobs" : name);
+		this.countCache = new Map();
+		this.readCache = new Map();
 	}
-	async _read(filter = {}) {
+	_invalidateCaches() {
+		this.countCache.clear();
+		this.readCache.clear();
+	}
+	async _readCached(filter = {}, hints = {}) {
+		const ttl = Math.max(0, Number(process.env.FIRESTORE_READ_CACHE_MS || 5 * 60_000));
+		if (!ttl) return this._read(filter, hints);
+		const key = JSON.stringify({ filter, hints }, (_key, value) => {
+			if (value instanceof RegExp) return { $regex: value.source, $flags: value.flags };
+			if (value instanceof ObjectId) return value.toHexString();
+			return value;
+		});
+		const cached = this.readCache.get(key);
+		if (cached && cached.expiresAt > Date.now()) return cached.promise;
+		const promise = this._read(filter, hints).catch((error) => {
+			this.readCache.delete(key);
+			throw error;
+		});
+		this.readCache.set(key, { promise, expiresAt: Date.now() + ttl });
+		if (this.readCache.size > 200) this.readCache.delete(this.readCache.keys().next().value);
+		return promise;
+	}
+	_filterWithCatalog(filter = {}) {
+		return this.sourceCatalog ? { $and: [{ sourceCatalog: this.sourceCatalog }, filter] } : filter;
+	}
+	_queryFromPlan(plan) {
+		let query = this.ref;
+		for (const clause of plan.clauses) query = query.where(clause.field, clause.operator, clause.value);
+		return query;
+	}
+	async _read(filter = {}, hints = {}) {
 		const id = filter?._id;
-		if (this.sourceCatalog) filter = { $and: [{ sourceCatalog: this.sourceCatalog }, filter] };
+		filter = this._filterWithCatalog(filter);
 		if (id && !isPlain(id)) {
 			const snap = await this.ref.doc(String(comparable(id))).get();
 			const docs = snap.exists ? [decodeDoc(snap.id, snap.data())] : [];
 			return docs.filter((doc) => matches(doc, filter));
 		}
-		let query = this.ref;
-		for (const [field, value] of Object.entries(filter || {})) {
-			if (field.startsWith("$") || isPlain(value) || value instanceof RegExp || Array.isArray(value)) continue;
-			query = query.where(field, "==", encode(value));
-			break;
+		const documentIds = conjunctiveDocumentIds(filter);
+		if (documentIds) {
+			const refs = [...new Set(documentIds)].map((documentId) => this.ref.doc(documentId));
+			if (!refs.length) return [];
+			const snapshots = await this.db.firestore.getAll(...refs);
+			return snapshots
+				.filter((snapshot) => snapshot.exists)
+				.map((snapshot) => decodeDoc(snapshot.id, snapshot.data()))
+				.filter((doc) => matches(doc, filter));
 		}
-		const snapshot = await query.get();
+		const plan = buildNativeQueryPlan(filter);
+		const sortEntries = Object.entries(hints.sort || {});
+		const nativeOrderEntries = sortEntries.filter(([field]) => field !== "_id");
+		const projectionEntries = Object.entries(hints.projection || {});
+		const inclusionProjection = projectionEntries.length > 0 && projectionEntries.every(([field, included]) => field === "_id" || Boolean(included));
+		const selectedFields = inclusionProjection
+			? [...new Set([
+				...projectionEntries.filter(([field, included]) => field !== "_id" && Boolean(included)).map(([field]) => field),
+				...plan.clauses.map((clause) => clause.field),
+				...nativeOrderEntries.map(([field]) => field),
+			])]
+			: [];
+		const inequalityField = plan.clauses.find((clause) => [">", ">=", "<", "<="].includes(clause.operator))?.field;
+		const indexedSortSupported = sortEntries.every(([field, direction]) => field === "_id" || [1, -1].includes(Number(direction))) &&
+			(!inequalityField || !nativeOrderEntries.length || nativeOrderEntries[0][0] === inequalityField);
+
+		// Prefer the exact composite query whenever its index exists. Firestore
+		// returns code 9 while an index is missing/building; only then do we use the
+		// bounded compatibility path below.
+		if (plan.complete && plan.clauses.length > 0 && nativeOrderEntries.length > 0 && indexedSortSupported) {
+			let indexedQuery = this._queryFromPlan(plan);
+			for (const [field, direction] of nativeOrderEntries) indexedQuery = indexedQuery.orderBy(field, Number(direction) < 0 ? "desc" : "asc");
+			if (selectedFields.length) indexedQuery = indexedQuery.select(...selectedFields);
+			if (hints.skip) indexedQuery = indexedQuery.offset(Math.max(0, Number(hints.skip)));
+			if (hints.limit != null) indexedQuery = indexedQuery.limit(Math.max(1, Number(hints.limit)));
+			try {
+				const indexedSnapshot = await indexedQuery.get();
+				const docs = indexedSnapshot.docs.map((doc) => decodeDoc(doc.id, doc.data())).filter((doc) => matches(doc, filter));
+				Object.defineProperty(docs, NATIVE_PAGINATION_APPLIED, { value: true });
+				return docs;
+			} catch (error) {
+				if (Number(error?.code) !== 9) throw error;
+			}
+		}
+
+		// Firestore needs a composite index for most combinations of multiple
+		// filters and ordering. Until those indexes are deployed, use one native
+		// equality filter to bound the read and apply the remaining Mongo-shaped
+		// predicates locally.
+		const queryPlan = plan.complete && plan.clauses.length > 1
+			? { ...plan, clauses: [selectBoundingClause(plan.clauses)] }
+			: plan;
+		let query = this._queryFromPlan(queryPlan);
+		if (selectedFields.length) query = query.select(...selectedFields);
+		const nativeSort = plan.complete &&
+			// Ordering together with any separate filter generally needs a composite
+			// index. Single-field filters stay native and are ordered locally.
+			(!sortEntries.length || plan.clauses.length === 0) &&
+			sortEntries.every(([field, direction]) => field !== "_id" && [1, -1].includes(Number(direction))) &&
+			(!inequalityField || !sortEntries.length || sortEntries[0][0] === inequalityField);
+		if (nativeSort) {
+			for (const [field, direction] of sortEntries) query = query.orderBy(field, Number(direction) < 0 ? "desc" : "asc");
+		}
+		if (plan.complete && nativeSort && hints.limit != null) query = query.limit(Math.max(1, Number(hints.skip || 0) + Number(hints.limit)));
+		const warnAt = Math.max(1, Number(process.env.FIRESTORE_COMPAT_WARN_SCAN || 1000));
+		const maxScan = Math.max(warnAt, Number(process.env.FIRESTORE_COMPAT_MAX_SCAN || 20000));
+		let snapshot;
+		let orderedMatchedCount = null;
+		let orderedTarget = null;
+		const firstSort = sortEntries.find(([field, direction]) => field !== "_id" && [1, -1].includes(Number(direction)));
+		const orderedLocalFilter = this.sourceCatalog && plan.complete && !nativeSort && firstSort && !inequalityField && hints.limit != null && plan.clauses.length > 0;
+		if (orderedLocalFilter) {
+			// Use the built-in single-field sort index to read the newest candidates,
+			// then apply equality filters locally. Grow the window only when filtering
+			// did not produce enough rows for the requested page.
+			orderedTarget = Math.max(1, Number(hints.skip || 0) + Number(hints.limit));
+			let fetchLimit = Math.min(maxScan, Math.max(25, Math.ceil(orderedTarget * 1.2)));
+			for (;;) {
+				const [field, direction] = firstSort;
+				let orderedQuery = this.ref.orderBy(field, Number(direction) < 0 ? "desc" : "asc").limit(fetchLimit);
+				if (selectedFields.length) orderedQuery = orderedQuery.select(...selectedFields);
+				snapshot = await orderedQuery.get();
+				orderedMatchedCount = snapshot.docs.reduce((count, doc) => count + (matches(decodeDoc(doc.id, doc.data()), filter) ? 1 : 0), 0);
+				if (orderedMatchedCount >= orderedTarget || snapshot.size < fetchLimit || fetchLimit >= maxScan) break;
+				fetchLimit = Math.min(maxScan, fetchLimit * 2);
+			}
+		} else {
+			snapshot = await query.get();
+		}
+		const scanKey = `${this.collectionName}:${plan.complete ? "native" : "fallback"}`;
+		if (snapshot.size >= warnAt && !warnedScans.has(scanKey)) {
+			warnedScans.add(scanKey);
+			console.warn(`[firestore-adapter] ${scanKey} read scanned ${snapshot.size} documents; add a native indexed query or reduce the page size`);
+		}
+		if (snapshot.size > maxScan) {
+			const error = new Error(`[firestore-adapter] ${this.collectionName} query scanned ${snapshot.size} documents (limit ${maxScan})`);
+			error.code = "FIRESTORE_COMPAT_SCAN_LIMIT";
+			throw error;
+		}
+		if (orderedLocalFilter && snapshot.size >= maxScan && orderedMatchedCount < orderedTarget) {
+			const error = new Error(`[firestore-adapter] ${this.collectionName} ordered query reached scan limit ${maxScan} before page ${orderedTarget}`);
+			error.code = "FIRESTORE_COMPAT_SCAN_LIMIT";
+			throw error;
+		}
 		return snapshot.docs.map((doc) => decodeDoc(doc.id, doc.data())).filter((doc) => matches(doc, filter));
 	}
 	find(filter = {}, options = {}) { return new Cursor(this, filter, options); }
 	async findOne(filter = {}, options = {}) { return (await this.find(filter, options).sort(options.sort || {}).limit(1).toArray())[0] || null; }
 	async insertOne(doc) {
 		const id = String(comparable(doc._id || deterministicId(this.collectionName, doc) || new ObjectId()));
-		const data = encode({ ...doc, ...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}) }); delete data._id;
+		const data = encode({
+			...doc,
+			...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}),
+			...(this.collectionName === "job_market" ? { extensionV2: String(doc.version || "") === "v2" } : {}),
+		}); delete data._id;
 		assertFirestoreDocumentSize(data, `${this.collectionName}/${id}`);
 		const batch = this.db.firestore.batch();
 		batch.create(this.ref.doc(id), data);
@@ -477,6 +695,7 @@ class FirestoreCollection {
 			if (Number(error?.code) === 6 || String(error?.code) === "ALREADY_EXISTS") throw duplicateKeyError(this.collectionName, reservations[0], error);
 			throw error;
 		}
+		this._invalidateCaches();
 		this._kickOutbox(outboxId);
 		return { acknowledged: true, insertedId: /^[a-f0-9]{24}$/i.test(id) ? new ObjectId(id) : id };
 	}
@@ -503,6 +722,7 @@ class FirestoreCollection {
 				current = found;
 			}
 			const next = applyUpdate(current, update, inserting, options.arrayFilters || []); delete next._id;
+			if (this.collectionName === "job_market") next.extensionV2 = String(next.version || "") === "v2";
 			const encoded = encode(next);
 			assertFirestoreDocumentSize(encoded, `${this.collectionName}/${id}`);
 			const beforeReservations = firestoreUniqueReservations(this.collectionName, current, id);
@@ -535,6 +755,7 @@ class FirestoreCollection {
 			}
 			if (outboxRef) transaction.set(outboxRef, { jobId: id, operation: "upsert", status: "pending", attempts: 0, createdAt: new Date() });
 		});
+		this._invalidateCaches();
 		if (!matched && !inserting) return { acknowledged: true, matchedCount: 0, modifiedCount: 0 };
 		this._kickOutbox(outboxRef?.id);
 		return { acknowledged: true, matchedCount: inserting ? 0 : 1, modifiedCount: 1, ...(inserting ? { upsertedCount: 1, upsertedId: found._id } : {}) };
@@ -550,6 +771,7 @@ class FirestoreCollection {
 	}
 	_kickOutbox(outboxId) {
 		if (!outboxId) return;
+		if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") return;
 		void import("../services/cloudTasks.js")
 			.then(({ enqueueSearchOutboxTask }) => enqueueSearchOutboxTask(outboxId))
 			.catch((error) => console.warn("[search-outbox] task enqueue failed; scheduler will retry:", error?.message || error));
@@ -564,6 +786,7 @@ class FirestoreCollection {
 		}
 		const outboxId = this._outbox(batch, id, "delete");
 		await batch.commit();
+		this._invalidateCaches();
 		this._kickOutbox(outboxId);
 		return { acknowledged: true, deletedCount: 1 };
 	}
@@ -572,11 +795,62 @@ class FirestoreCollection {
 		for (const doc of docs) await this.deleteOne({ _id: doc._id });
 		return { acknowledged: true, deletedCount: docs.length };
 	}
-	async countDocuments(filter = {}) { return (await this._read(filter)).length; }
+	async countDocuments(filter = {}) {
+		if (filter?._id && !isPlain(filter._id)) return (await this._read(filter)).length;
+		const normalized = this._filterWithCatalog(filter);
+		if (conjunctiveDocumentIds(normalized)) return (await this._read(filter)).length;
+		const plan = buildNativeQueryPlan(normalized);
+		if (!plan.complete) return (await this._read(filter)).length;
+		const cacheKey = JSON.stringify(plan.clauses);
+		const cached = this.countCache.get(cacheKey);
+		if (cached && cached.expiresAt > Date.now()) return cached.promise;
+		const load = async () => {
+			try {
+				return (await this._queryFromPlan(plan).count().get()).data().count;
+			} catch (error) {
+				if (Number(error?.code) !== 9) throw error;
+				// In the canonical jobs collection, extensionV2 is written only for
+				// market records. This single-field count is therefore equivalent to
+				// sourceCatalog=market + extensionV2 and avoids a composite-index scan.
+				if (this.collectionName === "job_market") {
+					const extensionClause = plan.clauses.find((clause) => clause.field === "extensionV2" && clause.operator === "==");
+					const onlyCatalogAndExtension = plan.clauses.every((clause) => clause.field === "sourceCatalog" || clause === extensionClause);
+					if (extensionClause && onlyCatalogAndExtension) {
+						return (await this._queryFromPlan({ clauses: [extensionClause] }).count().get()).data().count;
+					}
+				}
+				return (await this._read(filter)).length;
+			}
+		};
+		const promise = load().catch((error) => {
+			this.countCache.delete(cacheKey);
+			throw error;
+		});
+		const ttl = Math.max(1_000, Number(process.env.FIRESTORE_COUNT_CACHE_MS || 5 * 60_000));
+		this.countCache.set(cacheKey, { promise, expiresAt: Date.now() + ttl });
+		return promise;
+	}
 	async estimatedDocumentCount() { return this.countDocuments({}); }
 	async distinct(field, filter = {}) { const values = (await this._read(filter)).flatMap((doc) => valuesAt(doc, field)); return values.filter((value, index) => values.findIndex((item) => equal(item, value)) === index); }
 	aggregate(pipeline) { return { toArray: async () => runPipeline(await this.find({}).toArray(), pipeline, this.db), [Symbol.asyncIterator]: async function* () { for (const item of await this.toArray()) yield item; } }; }
-	async bulkWrite(operations) { let insertedCount = 0, modifiedCount = 0, deletedCount = 0, upsertedCount = 0; for (const op of operations) { if (op.insertOne) { await this.insertOne(op.insertOne.document); insertedCount += 1; } else if (op.updateOne) { const r = await this.updateOne(op.updateOne.filter, op.updateOne.update, op.updateOne); modifiedCount += r.modifiedCount; upsertedCount += r.upsertedCount || 0; } else if (op.deleteOne) { deletedCount += (await this.deleteOne(op.deleteOne.filter)).deletedCount; } else if (op.replaceOne) { const r = await this.replaceOne(op.replaceOne.filter, op.replaceOne.replacement, op.replaceOne); modifiedCount += r.modifiedCount; upsertedCount += r.upsertedCount || 0; } } return { acknowledged: true, insertedCount, modifiedCount, deletedCount, upsertedCount }; }
+	async bulkWrite(operations) {
+		const totals = { acknowledged: true, insertedCount: 0, modifiedCount: 0, deletedCount: 0, upsertedCount: 0 };
+		// A large write fan-out can monopolize the Firestore HTTP/2 connection and
+		// make interactive reads (login, jobs, mail) wait behind background work.
+		const concurrency = Math.max(1, Math.min(50, Number(process.env.FIRESTORE_BULK_CONCURRENCY || 5)));
+		const run = async (op) => {
+			if (op.insertOne) { await this.insertOne(op.insertOne.document); return { insertedCount: 1 }; }
+			if (op.updateOne) { const r = await this.updateOne(op.updateOne.filter, op.updateOne.update, op.updateOne); return { modifiedCount: r.modifiedCount, upsertedCount: r.upsertedCount || 0 }; }
+			if (op.deleteOne) return { deletedCount: (await this.deleteOne(op.deleteOne.filter)).deletedCount };
+			if (op.replaceOne) { const r = await this.replaceOne(op.replaceOne.filter, op.replaceOne.replacement, op.replaceOne); return { modifiedCount: r.modifiedCount, upsertedCount: r.upsertedCount || 0 }; }
+			return {};
+		};
+		for (let offset = 0; offset < operations.length; offset += concurrency) {
+			const results = await Promise.all(operations.slice(offset, offset + concurrency).map(run));
+			for (const result of results) for (const key of ['insertedCount', 'modifiedCount', 'deletedCount', 'upsertedCount']) totals[key] += result[key] || 0;
+		}
+		return totals;
+	}
 	async createIndex() { return "firestore-managed-index"; }
 	async dropIndex() { return true; }
 }
@@ -592,4 +866,4 @@ export function createFirestoreMongoAdapter() {
 	return new FirestoreDbAdapter();
 }
 
-export const firestoreAdapterTest = { matches, applyUpdate, runPipeline, evaluate, applyProjection };
+export const firestoreAdapterTest = { matches, applyUpdate, runPipeline, evaluate, applyProjection, buildNativeQueryPlan, conjunctiveDocumentIds };

@@ -4,10 +4,10 @@ import {
   AVALON_SESSION_KEY,
   AVALON_PROFILE_KEY,
   DEFAULT_SERVER_URL,
+  DEFAULT_ATHENS_API_URL,
   EXTENSION_MESSAGES,
   RELAY_KEEPALIVE_PORT,
 } from '../../utils/constants';
-import { getFirebaseIdToken, signInFirebase, signOutFirebase } from '../../utils/firebase-auth';
 import { relayHttpBase } from '../../utils/endpoint';
 import { saveRelayConfig } from '../../utils/relay';
 
@@ -106,11 +106,7 @@ export default function SidePanel() {
     setSessionsError(null);
     try {
       const url = `${relayHttpBase(serverUrl)}/sessions?profileId=${encodeURIComponent(profileId)}`;
-      const token = await getFirebaseIdToken();
-      const res = await fetch(url, {
-        cache: 'no-store',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Relay returned ${res.status}`);
       const data = (await res.json()) as { ok?: boolean; active?: DiscoverableSession[] };
       const list = Array.isArray(data.active) ? data.active : [];
@@ -240,7 +236,22 @@ export default function SidePanel() {
     setSigninLoading(true);
     setSigninError(null);
     try {
-      const { profileId: id } = await signInFirebase(name, password);
+      const base = DEFAULT_ATHENS_API_URL.replace(/\/$/, '');
+      const res = await fetch(`${base}/auth/signin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, password }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        user?: { _id?: unknown };
+        message?: string;
+      };
+      if (!res.ok || !data?.success || data.user?._id == null) {
+        throw new Error(data?.message || 'Sign in failed');
+      }
+
+      const id = String(data.user._id);
       setProfileId(id);
       await browser.storage.local.set({ [AVALON_PROFILE_KEY]: id });
       setSigninPassword('');
@@ -264,7 +275,6 @@ export default function SidePanel() {
       /* ignore */
     }
     await browser.storage.local.remove([AVALON_PROFILE_KEY]);
-    await signOutFirebase();
     setProfileId('');
     setConnected(false);
     setRegistered(null);
@@ -336,13 +346,12 @@ export default function SidePanel() {
           <div className={`status-card ${signinError ? 'error' : ''}`}>
             <div className="status-label">Sign in (no signup)</div>
 
-            <label htmlFor="signin-name">Email</label>
+            <label htmlFor="signin-name">Athens name</label>
             <input
               id="signin-name"
               value={signinName}
               onChange={(e) => setSigninName(e.target.value)}
-              placeholder="you@company.com"
-              type="email"
+              placeholder="Your Athens login name"
               disabled={signinLoading}
             />
 
