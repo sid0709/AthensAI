@@ -528,15 +528,40 @@ class FirestoreCollection {
 		const sortEntries = Object.entries(hints.sort || {});
 		const inequalityField = plan.clauses.find((clause) => [">", ">=", "<", "<="].includes(clause.operator))?.field;
 		const nativeSort = plan.complete &&
+			// An ordered query with two or more filters generally needs a Firestore
+			// composite index. Until deployment has index-admin permission, keep the
+			// filters native and perform ordering/pagination in the bounded adapter
+			// result instead of making the whole request fail.
+			(!sortEntries.length || plan.clauses.length < 2) &&
 			sortEntries.every(([field, direction]) => field !== "_id" && [1, -1].includes(Number(direction))) &&
 			(!inequalityField || !sortEntries.length || sortEntries[0][0] === inequalityField);
 		if (nativeSort) {
 			for (const [field, direction] of sortEntries) query = query.orderBy(field, Number(direction) < 0 ? "desc" : "asc");
 		}
 		if (plan.complete && nativeSort && hints.limit != null) query = query.limit(Math.max(1, Number(hints.skip || 0) + Number(hints.limit)));
-		const snapshot = await query.get();
 		const warnAt = Math.max(1, Number(process.env.FIRESTORE_COMPAT_WARN_SCAN || 1000));
 		const maxScan = Math.max(warnAt, Number(process.env.FIRESTORE_COMPAT_MAX_SCAN || 20000));
+		let snapshot;
+		let orderedMatchedCount = null;
+		let orderedTarget = null;
+		const firstSort = sortEntries.find(([field, direction]) => field !== "_id" && [1, -1].includes(Number(direction)));
+		const orderedLocalFilter = plan.complete && !nativeSort && firstSort && !inequalityField && hints.limit != null;
+		if (orderedLocalFilter) {
+			// Use the built-in single-field sort index to read the newest candidates,
+			// then apply equality filters locally. Grow the window only when filtering
+			// did not produce enough rows for the requested page.
+			orderedTarget = Math.max(1, Number(hints.skip || 0) + Number(hints.limit));
+			let fetchLimit = Math.min(maxScan, Math.max(100, orderedTarget * 4));
+			for (;;) {
+				const [field, direction] = firstSort;
+				snapshot = await this.ref.orderBy(field, Number(direction) < 0 ? "desc" : "asc").limit(fetchLimit).get();
+				orderedMatchedCount = snapshot.docs.reduce((count, doc) => count + (matches(decodeDoc(doc.id, doc.data()), filter) ? 1 : 0), 0);
+				if (orderedMatchedCount >= orderedTarget || snapshot.size < fetchLimit || fetchLimit >= maxScan) break;
+				fetchLimit = Math.min(maxScan, fetchLimit * 2);
+			}
+		} else {
+			snapshot = await query.get();
+		}
 		const scanKey = `${this.collectionName}:${plan.complete ? "native" : "fallback"}`;
 		if (snapshot.size >= warnAt && !warnedScans.has(scanKey)) {
 			warnedScans.add(scanKey);
@@ -544,6 +569,11 @@ class FirestoreCollection {
 		}
 		if (snapshot.size > maxScan) {
 			const error = new Error(`[firestore-adapter] ${this.collectionName} query scanned ${snapshot.size} documents (limit ${maxScan})`);
+			error.code = "FIRESTORE_COMPAT_SCAN_LIMIT";
+			throw error;
+		}
+		if (orderedLocalFilter && snapshot.size >= maxScan && orderedMatchedCount < orderedTarget) {
+			const error = new Error(`[firestore-adapter] ${this.collectionName} ordered query reached scan limit ${maxScan} before page ${orderedTarget}`);
 			error.code = "FIRESTORE_COMPAT_SCAN_LIMIT";
 			throw error;
 		}

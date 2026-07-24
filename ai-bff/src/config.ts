@@ -1,9 +1,23 @@
 import { config as loadEnv } from 'dotenv';
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { normalizeApiKey } from './api-keys.js';
 import type { AiKitConfig } from './types.js';
 
-loadEnv({ path: resolve(process.cwd(), '.env') });
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const localEnvPath = resolve(moduleDir, '../.env');
+const sharedRuntimeEnvPath = resolve(moduleDir, '../../Athens-server/.env');
+loadEnv({ path: localEnvPath });
+// Athens-server owns the shared local database/runtime selection. Service-local
+// AI keys keep precedence, while Firestore settings fill in missing values.
+loadEnv({ path: sharedRuntimeEnvPath });
+
+const credentialPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+if (credentialPath && !isAbsolute(credentialPath)) {
+  const resolvedCredentialPath = resolve(dirname(sharedRuntimeEnvPath), credentialPath);
+  if (existsSync(resolvedCredentialPath)) process.env.GOOGLE_APPLICATION_CREDENTIALS = resolvedCredentialPath;
+}
 
 function readNumber(value: string | undefined, fallback: number): number {
   if (!value) return fallback;

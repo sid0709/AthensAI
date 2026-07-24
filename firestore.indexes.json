@@ -34,6 +34,23 @@
       ]
     },
     {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "skillAnalysis.status", "order": "ASCENDING" },
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "skillAnalysis.queuedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "match_profile_state",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "vendor_tasks",
       "queryScope": "COLLECTION",
       "fields": [

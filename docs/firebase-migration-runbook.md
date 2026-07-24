@@ -40,6 +40,10 @@ FIREBASE_STORAGE_BUCKET=drwretail-bm-staging-migrated
 GOOGLE_APPLICATION_CREDENTIALS=/absolute/private/path/athens-vps-runtime.json
 KMS_KEY_NAME=projects/drwretail-bm-staging/locations/us-east4/keyRings/athens/cryptoKeys/profile-secrets
 MIGRATION_INCLUDE_AUTH=false
+MIGRATION_CONCURRENCY=16
+MIGRATION_SECRET_ENCRYPTION=kms
+# Optional comma-separated subset for an idempotent targeted rerun:
+# MIGRATION_COLLECTIONS=account_info
 MONGO_SOURCE_URL=mongodb://source-host:27017
 MONGO_SOURCE_DB=AthensDB
 ```
@@ -52,7 +56,7 @@ npm run firebase:migrate
 npm run firebase:verify
 ```
 
-`firebase:audit` does not treat missing or duplicate email addresses as blockers in data-only mode. `firebase:migrate` preserves bcrypt owner and vendor password hashes, ObjectId document IDs, deterministic unique reservations, Storage hashes, and an idempotent manifest. Do not run `firebase:auth`; it is disabled unless `MIGRATION_INCLUDE_AUTH=true` is explicitly set.
+`firebase:audit` does not treat missing or duplicate email addresses as blockers in data-only mode. `firebase:migrate` preserves bcrypt owner and vendor password hashes, ObjectId document IDs, deterministic unique reservations, Storage hashes, and an idempotent manifest. It processes documents in bounded concurrent batches and skips unchanged documents already represented by a matching migration manifest; tune `MIGRATION_CONCURRENCY` carefully for the migration host. `MIGRATION_SECRET_ENCRYPTION=kms` is the production target; `legacy` is an explicit AES-256-GCM fallback using `API_KEYS_ENCRYPTION_KEY`, and the manifest records the mode so a later KMS run rewraps account profiles. Do not run `firebase:auth`; it is disabled unless `MIGRATION_INCLUDE_AUTH=true` is explicitly set.
 
 Deploy the staging VPS image with writes disabled and test legacy owner/vendor login, account settings, job and mail pagination, résumé/template/recording access, rendering, AI BFF, Avalon, Socket.IO, local workers, Redis/Qdrant, monitoring, container restart recovery, and Algolia reconstruction from Firestore.
 

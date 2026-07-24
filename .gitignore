@@ -22,6 +22,7 @@ logs/
 *.log
 npm-debug.log*
 .DS_Store
+Athens-server/migration-output/
 
 # Playwright / agent runtime artifacts
 .playwright-cli/

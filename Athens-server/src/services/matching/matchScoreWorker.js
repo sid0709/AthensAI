@@ -111,10 +111,20 @@ export async function rescoreUser(state) {
 
 async function claimAndRescoreUser() {
   if (!matchProfileStateCollection || !jobsCollection) return false;
+  // Status uses Firestore's built-in single-field index. Order the bounded
+  // pending set locally so this worker can run before the composite index is
+  // deployed, then claim the chosen document conditionally.
+  const pending = await matchProfileStateCollection
+    .find({ status: 'pending' })
+    .limit(100)
+    .toArray();
+  pending.sort((left, right) => String(left.requestedAt || '').localeCompare(String(right.requestedAt || '')));
+  const candidate = pending[0];
+  if (!candidate) return false;
   const state = await matchProfileStateCollection.findOneAndUpdate(
-    { status: 'pending' },
+    { _id: candidate._id, status: 'pending' },
     { $set: { status: 'running', startedAt: new Date().toISOString() } },
-    { sort: { requestedAt: 1 }, returnDocument: 'after' },
+    { returnDocument: 'after' },
   );
   if (!state) return false;
 
@@ -161,12 +171,17 @@ async function loadAllProfileContexts() {
 async function fanOutPendingJobs() {
   if (!jobsCollection) return false;
 
-  const marketJobs = await jobsCollection
+  const candidates = await jobsCollection
     .find({ matchScoreStatus: 'pending' })
     .project(JOB_SCORE_PROJECTION)
-    .sort({ postedAt: -1 })
-    .limit(JOB_BATCH)
+    // Firestore's adapter also constrains this logical collection by source.
+    // Avoid a three-field composite index during local-first validation by
+    // reading a bounded candidate window and ordering it in-process.
+    .limit(Math.max(JOB_BATCH * 5, 500))
     .toArray();
+  const marketJobs = candidates
+    .sort((left, right) => String(right.postedAt || '').localeCompare(String(left.postedAt || '')))
+    .slice(0, JOB_BATCH);
 
   if (!marketJobs.length) return false;
 

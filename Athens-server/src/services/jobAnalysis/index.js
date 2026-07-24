@@ -77,11 +77,15 @@ async function claimQueuedJobs(limit = 2) {
 	if (!jobsCollection) return [];
 
 	const now = new Date().toISOString();
-	const queued = await jobsCollection
+	const candidates = await jobsCollection
 		.find({ 'skillAnalysis.status': 'queued' })
-		.sort({ 'skillAnalysis.queuedAt': 1 })
-		.limit(limit)
+		// Keep the Firestore query on its built-in single-field index. The small
+		// candidate window is ordered locally until the composite index is ready.
+		.limit(Math.max(limit * 20, 100))
 		.toArray();
+	const queued = candidates
+		.sort((left, right) => String(left.skillAnalysis?.queuedAt || '').localeCompare(String(right.skillAnalysis?.queuedAt || '')))
+		.slice(0, limit);
 
 	const claimed = [];
 	for (const job of queued) {
