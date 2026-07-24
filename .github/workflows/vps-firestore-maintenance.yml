@@ -8,6 +8,11 @@ on:
         type: boolean
         required: true
         default: false
+      stop_application:
+        description: Stop the application container so background workers cannot write
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   toggle:
@@ -25,6 +30,7 @@ jobs:
             set -eu
             deploy_env=/opt/nextoffer/deploy.env
             enabled='${{ inputs.writes_enabled }}'
+            stop_application='${{ inputs.stop_application }}'
             test -f "${deploy_env}"
             tmp="$(mktemp)"
             awk -v value="${enabled}" '
@@ -43,6 +49,12 @@ jobs:
               sudo install -m 600 "${tmp}" "${deploy_env}"
             fi
             rm -f "${tmp}"
+            if [ "${stop_application}" = "true" ]; then
+              docker stop nextoffer
+              test "$(docker inspect nextoffer --format '{{.State.Running}}')" = "false"
+              echo "nextoffer stopped for migration"
+              exit 0
+            fi
             /opt/nextoffer/deploy.sh latest
             actual="$(docker inspect nextoffer --format '{{range .Config.Env}}{{println .}}{{end}}' | awk -F= '$1 == "FIRESTORE_WRITES_ENABLED" { print $2 }')"
             test "${actual}" = "${enabled}"
