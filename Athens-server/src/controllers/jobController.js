@@ -36,6 +36,7 @@ import {
 	upsertJobBidStatus,
 } from '../services/jobBidStatusService.js';
 import { isForegroundBusy } from '../services/runtimeLoad.js';
+import { listMaterializedJobStatusPage, readMaterializedJobStatusCounts, syncJobStatusProjection } from '../services/jobStatusProjectionService.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -45,6 +46,31 @@ const jobCountRefreshes = new Map();
 
 function jobCountCacheKey(body = {}) {
 	return JSON.stringify(Object.fromEntries(Object.entries(body).sort(([left], [right]) => left.localeCompare(right))));
+}
+
+const MATERIALIZED_COUNT_FILTERS = new Set([
+	'q', 'search', 'title', 'company', 'location', 'role', 'level', 'jobType', 'remote',
+	'status', 'applied', 'skills', 'requiredSkills', 'aiExtracted', 'extensionV2',
+	'scoreOverallMin', 'scoreOverallMax', 'scoreSkillMin', 'scoreSkillMax',
+	'scoreSalaryMin', 'scoreSalaryMax', 'scoreBidEstMin', 'scoreBidEstMax',
+	'scoreFreshnessMin', 'scoreFreshnessMax',
+]);
+
+function canUseMaterializedCounts(body = {}) {
+	return ![...MATERIALIZED_COUNT_FILTERS].some((key) => {
+		const value = body[key];
+		if (Array.isArray(value)) return value.length > 0;
+		return value !== undefined && value !== null && value !== '' && value !== false;
+	});
+}
+
+async function materializedCountsForRequest(body = {}) {
+	if (!canUseMaterializedCounts(body) || !body.applierName) return null;
+	const account = await accountInfoCollection.findOne({ name: String(body.applierName).trim() }, { projection: { _id: 1 } });
+	if (!account?._id) return null;
+	const stored = await readMaterializedJobStatusCounts(String(account._id));
+	if (!stored) return null;
+	return Object.fromEntries(STATUS_TABS.map((tab) => [tab, Number(stored[tab] || 0)]));
 }
 
 async function calculateJobStatusCounts(body) {
@@ -357,6 +383,8 @@ export async function getJobStatusCounts(req, res) {
 		}
 
 		if (String(process.env.DATABASE_BACKEND || '').toLowerCase() === 'firestore') {
+			const materialized = await materializedCountsForRequest(req.body);
+			if (materialized) return res.json({ success: true, counts: materialized, materialized: true });
 			const key = jobCountCacheKey(req.body);
 			const cached = jobCountCache.get(key);
 			if (cached) {
@@ -396,6 +424,25 @@ export async function getJobs(req, res) {
 	try {
 		if (!jobsCollection) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+
+		const materializedStatusPage = await listMaterializedJobStatusPage(req.body);
+		if (materializedStatusPage) {
+			const recommendedRequested = req.body.sort === 'recommended';
+			return res.json({
+				success: true,
+				data: materializedStatusPage.docs,
+				recommendationFallback: recommendedRequested,
+				recommendationReason: recommendedRequested ? 'status_date_order' : null,
+				recommendationWarming: false,
+				catalogTotal: materializedStatusPage.total,
+				pagination: {
+					total: materializedStatusPage.total,
+					page: materializedStatusPage.page,
+					limit: materializedStatusPage.limit,
+					totalPages: Math.ceil(materializedStatusPage.total / materializedStatusPage.limit),
+				},
+			});
 		}
 
 		const mergedResult = await listMergedJobs(req.body);
@@ -566,6 +613,8 @@ export async function applyToJob(req, res) {
 				{ $set: { "status.$[elem].appliedDate": now } },
 				{ arrayFilters: [{ "elem.applier": applier._id }] },
 			);
+			await syncJobStatusProjection(objectId, applier._id);
+			jobCountCache.clear();
 			const updatedJob = await jobsCollection.findOne({ _id: objectId });
 			return res.json({ success: true, data: updatedJob });
 		}
@@ -576,6 +625,8 @@ export async function applyToJob(req, res) {
 		};
 
 		await jobsCollection.updateOne({ _id: objectId }, { $push: { status: newApplication } });
+		await syncJobStatusProjection(objectId, applier._id);
+		jobCountCache.clear();
 		const updatedJob = await jobsCollection.findOne({ _id: objectId });
 
 		return res.json({ success: true, data: updatedJob });
@@ -632,6 +683,8 @@ export async function updateJobStatus(req, res) {
 		};
 
 		await jobsCollection.updateOne({ _id: objectId }, update, options);
+		await syncJobStatusProjection(objectId, applier._id);
+		jobCountCache.clear();
 		const updatedJob = await jobsCollection.findOne({ _id: objectId });
 
 		return res.json({ success: true, data: updatedJob });
@@ -687,6 +740,8 @@ export async function unapplyFromJob(req, res) {
 		};
 
 		await jobsCollection.updateOne({ _id: objectId }, update);
+		await syncJobStatusProjection(objectId, applier._id);
+		jobCountCache.clear();
 		const updatedJob = await jobsCollection.findOne({ _id: objectId });
 
 		return res.json({ success: true, data: updatedJob });

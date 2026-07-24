@@ -4,19 +4,29 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { BSON, GridFSBucket, MongoClient, ObjectId } from "mongodb";
+import { FieldPath } from "firebase-admin/firestore";
 import { getFirebaseAuth, getFirestoreDb, getStorageBucket } from "../services/firebase/firebaseAdmin.js";
 import { encryptProfileApiKeys, rewrapProfileSecretsWithKms } from "../services/autoBidProfileSecrets.js";
 import { firestoreUniqueReservations } from "../db/firestoreMongoAdapter.js";
 import { applyLegacyCredentialPolicy, includesFirebaseAuth } from "./firebaseMigrationMode.js";
+import {
+	ATHENS_DB_NAME,
+	DAVID_MOLL_ID,
+	EXPECTED_PROJECT_ID,
+	TEMP_ACCOUNT_ID,
+	assertAuthoritativeAthensDb,
+	buildFirebaseInventory,
+	resetFirebaseData,
+} from "./firebaseResetSupport.js";
 
 const mode = process.argv[2] || "audit";
 // Migration input is deliberately separate from the runtime database setting.
 // The canonical source is the restored local dump, never the live VPS URL.
 const sourceUrl = process.env.MONGO_SOURCE_URL || "mongodb://127.0.0.1:27017";
-const sourceDbName = process.env.MONGO_SOURCE_DB || "AIMS_local";
+const sourceDbName = process.env.MONGO_SOURCE_DB || "";
 const outputDir = path.resolve(process.env.MIGRATION_OUTPUT_DIR || "migration-output");
 const MAX_FIRESTORE_BYTES = 900 * 1024;
-const TRANSFORMATION_VERSION = 3;
+const TRANSFORMATION_VERSION = 4;
 const MIGRATION_CONCURRENCY = Math.min(64, Math.max(1, Number.parseInt(process.env.MIGRATION_CONCURRENCY || "16", 10) || 16));
 const SECRET_ENCRYPTION_MODE = String(process.env.MIGRATION_SECRET_ENCRYPTION || "kms").trim().toLowerCase();
 const INCLUDE_FIREBASE_AUTH = includesFirebaseAuth();
@@ -46,6 +56,21 @@ const BUSINESS_KEYS = {
 };
 
 if (!sourceUrl) throw new Error("MONGO_SOURCE_URL is required");
+
+function syntheticTempAccount() {
+	return {
+		_id: new ObjectId(TEMP_ACCOUNT_ID),
+		name: "temp",
+		// Fixed bcrypt output makes reruns byte-for-byte idempotent. The temporary
+		// password is intentionally documented by the approved migration plan.
+		password: "$2b$12$ovyjFwBMmiISUyGuxMNADO5z3JX4goh3tkJXIPyzdSn6plYTXEBkO",
+		vendorAllowed: false,
+		temporaryMigrationAccount: true,
+		migrationStatusOwnerId: TEMP_ACCOUNT_ID,
+		createdAt: new Date("2026-07-24T00:00:00.000Z"),
+		_syntheticMigrationAccount: true,
+	};
+}
 
 function scalar(value) {
 	if (value instanceof ObjectId) return value.toHexString();
@@ -114,7 +139,12 @@ async function hashStorageObject(file) {
 
 async function writeObject({ collection, id, field, bytes, mimeType = "application/octet-stream" }) {
 	const digest = sha(bytes);
-	const objectPath = `migration/${collection}/${id}/${safeField(field)}-${digest.slice(0, 16)}`;
+	const root = collection === "user_resumes"
+		? "user-resumes"
+		: collection === "resume_templates"
+			? "resume-templates"
+			: `data-objects/${safeField(collection)}`;
+	const objectPath = `${root}/${id}/${safeField(field)}-${digest.slice(0, 16)}`;
 	const file = getStorageBucket().file(objectPath);
 	const [exists] = await file.exists();
 	if (exists) {
@@ -202,6 +232,9 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 	if (sourceCollection === "job_market") {
 		doc.sourceCatalog = "market";
 		doc.extensionV2 = String(doc.version || "") === "v2";
+		doc.statusProfileIds = [...new Set((Array.isArray(doc.status) ? doc.status : [])
+			.map((entry) => String(entry?.applier || "").trim())
+			.filter(Boolean))];
 	}
 	if (sourceCollection === "external_scraped_jobs") doc.sourceCatalog = "external";
 	const profileName = String(
@@ -216,12 +249,15 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 		if (INCLUDE_FIREBASE_AUTH) doc.ownerUid ||= `owner_${sha(profileId).slice(0, 32)}`;
 	}
 	if (sourceCollection === "account_info") {
+		const synthetic = Boolean(doc._syntheticMigrationAccount);
+		delete doc._syntheticMigrationAccount;
 		applyLegacyCredentialPolicy(doc, INCLUDE_FIREBASE_AUTH);
 		if (doc.autoBidProfile) {
 			if (SECRET_ENCRYPTION_MODE === "legacy") doc.autoBidProfile = await encryptProfileApiKeys(doc.autoBidProfile);
 			else if (SECRET_ENCRYPTION_MODE === "kms") doc.autoBidProfile = await rewrapProfileSecretsWithKms(doc.autoBidProfile);
 			else throw new Error(`Unsupported MIGRATION_SECRET_ENCRYPTION=${SECRET_ENCRYPTION_MODE}; use kms or legacy`);
 		}
+		if (synthetic) doc.temporaryMigrationAccount = true;
 	}
 	const objects = [];
 	const gridObject = await extractGridFs(db, sourceCollection, sourceId, source);
@@ -233,9 +269,11 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 	}
 	doc = await extractInline(sourceCollection, sourceId, doc, "", objects);
 	await offloadOversizedStrings(sourceCollection, sourceId, doc, objects);
-	if ((sourceCollection === "user_resumes" || sourceCollection === "resume_templates") && doc.contentBase64?.object) {
-		doc.file = doc.contentBase64.object;
-		doc.storage = "gcs";
+	if (sourceCollection === "user_resumes" || sourceCollection === "resume_templates") {
+		if (doc.contentBase64?.object) {
+			doc.file = doc.contentBase64.object;
+			doc.storage = "gcs";
+		}
 		delete doc.contentBase64;
 	}
 	return { sourceCollection, sourceId, destinationCollection, destinationId: sourceId, doc, objects };
@@ -353,9 +391,11 @@ async function migrate(db) {
 	await mkdir(outputDir, { recursive: true });
 	await writeFile(manifestPath, "");
 	const requestedCollections = new Set(String(process.env.MIGRATION_COLLECTIONS || "").split(",").map((name) => name.trim()).filter(Boolean));
+	const skippedCollections = new Set(String(process.env.MIGRATION_SKIP_COLLECTIONS || "").split(",").map((name) => name.trim()).filter(Boolean));
 	const collections = (await db.listCollections().toArray())
 		.filter(({ name }) => !name.endsWith(".chunks") && !name.endsWith(".files") && name !== "migration_manifest")
 		.filter(({ name }) => !requestedCollections.size || requestedCollections.has(name))
+		.filter(({ name }) => !skippedCollections.has(name))
 		// Account profiles may require KMS rewrapping. Leave them until last so a
 		// missing KMS grant cannot block migration of unrelated collections.
 		.sort((left, right) => Number(left.name === "account_info") - Number(right.name === "account_info"));
@@ -379,6 +419,7 @@ async function migrate(db) {
 	};
 	const migrateSource = async (name, source) => {
 		const sourceId = String(source._id);
+		const synthetic = Boolean(source?._syntheticMigrationAccount);
 		const sourceCanonicalHash = documentHash(scalar(source));
 		const manifestId = sha(`${name}\0${sourceId}`);
 		const previous = previousManifests.get(manifestId);
@@ -407,6 +448,7 @@ async function migrate(db) {
 				sourceCanonicalHash,
 				byteCount: firestoreSize(data), canonicalHash: documentHash(data),
 				objects: item.objects,
+				...(synthetic ? { synthetic: true } : {}),
 				...(name === "account_info" ? { secretEncryption: SECRET_ENCRYPTION_MODE } : {}),
 				migratedAt: new Date().toISOString(),
 			},
@@ -438,8 +480,123 @@ async function migrate(db) {
 			}
 		}
 		if (sources.length) await flush(name, sources);
+		if (name === "account_info") await flush(name, [syntheticTempAccount()]);
+	}
+	if (!requestedCollections.size || requestedCollections.has("job_market")) {
+		await rebuildJobStatusProjections(firestore);
 	}
 	console.log(`Migration complete: ${processed} processed (${migrated} migrated, ${skipped} skipped)`);
+}
+
+function statusState(status = {}) {
+	if (status.bidCompletedDate) return "bid-completed";
+	if (status.scheduledDate) return "scheduled";
+	if (status.declinedDate) return "declined";
+	if (status.appliedDate) return "applied";
+	if (status.bidReadyDate) return "bid-ready";
+	return "other";
+}
+
+function statusContribution(status = {}) {
+	const applied = Boolean(status.appliedDate);
+	const scheduled = Boolean(status.scheduledDate);
+	const declined = Boolean(status.declinedDate);
+	const bidCompleted = Boolean(status.bidCompletedDate) && !applied && !scheduled && !declined;
+	const bidReady = Boolean(status.bidReadyDate) && !status.bidCompletedDate && !applied && !scheduled && !declined;
+	return { rawApplied: Number(applied), scheduled: Number(scheduled), declined: Number(declined), "bid-completed": Number(bidCompleted), "bid-ready": Number(bidReady) };
+}
+
+async function rebuildJobStatusProjections(firestore) {
+	await firestore.recursiveDelete(firestore.collection("job_statuses"));
+	await firestore.recursiveDelete(firestore.collection("job_status_counts"));
+	const counts = new Map();
+	let lastId = null;
+	let processed = 0;
+	while (true) {
+		let query = firestore.collection("jobs").orderBy(FieldPath.documentId()).limit(250);
+		if (lastId) query = query.startAfter(lastId);
+		const snapshot = await query.get();
+		if (snapshot.empty) break;
+		const writer = firestore.bulkWriter();
+		for (const jobDoc of snapshot.docs) {
+			const job = jobDoc.data();
+			const seen = new Set();
+			for (const status of Array.isArray(job.status) ? job.status : []) {
+				const profileId = String(status?.applier || "").trim();
+				if (!profileId || seen.has(profileId)) continue;
+				seen.add(profileId);
+				const state = statusState(status);
+				const id = sha(`${profileId}\0${jobDoc.id}`);
+				writer.set(firestore.collection("job_statuses").doc(id), {
+					profileId,
+					jobId: jobDoc.id,
+					state,
+					sourceCatalog: job.sourceCatalog || "market",
+					postedAt: job.postedAt || job.createdAt || null,
+					appliedDate: status.appliedDate || null,
+					scheduledDate: status.scheduledDate || null,
+					declinedDate: status.declinedDate || null,
+					bidReadyDate: status.bidReadyDate || null,
+					bidCompletedDate: status.bidCompletedDate || null,
+				});
+				const row = counts.get(profileId) || { any: 0, rawApplied: 0, scheduled: 0, declined: 0, "bid-ready": 0, "bid-completed": 0, other: 0 };
+				row.any += 1;
+				const contribution = statusContribution(status);
+				for (const [key, amount] of Object.entries(contribution)) row[key] += amount;
+				if (state === "other") row.other += 1;
+				counts.set(profileId, row);
+			}
+		}
+		await writer.close();
+		processed += snapshot.size;
+		lastId = snapshot.docs.at(-1).id;
+	}
+	const total = (await firestore.collection("jobs").count().get()).data().count;
+	const writer = firestore.bulkWriter();
+	for (const [profileId, row] of counts) {
+		const applied = Math.max(0, row.rawApplied - row.scheduled - row.declined - row["bid-completed"]);
+		writer.set(firestore.collection("job_status_counts").doc(profileId), {
+			profileId,
+			all: total,
+			posted: total - row.rawApplied,
+			applied,
+			...row,
+			updatedAt: new Date(),
+		});
+	}
+	await writer.close();
+	console.log(`Rebuilt job status projections from ${processed} jobs for ${counts.size} profiles`);
+}
+
+async function verifyAccounts(db) {
+	const firestore = getFirestoreDb();
+	const snapshot = await firestore.collection("account_info").get();
+	const failures = [];
+	if (snapshot.size !== 35) failures.push({ error: "account_count_mismatch", expected: 35, actual: snapshot.size });
+	const byId = new Map(snapshot.docs.map((doc) => [doc.id, doc.data()]));
+	for (const source of await db.collection("account_info").find({}, { projection: { _id: 1, name: 1, password: 1, vendorPassword: 1 } }).toArray()) {
+		const destination = byId.get(String(source._id));
+		if (!destination) failures.push({ error: "account_missing", id: String(source._id), name: source.name });
+		else if (String(destination.name || "") !== String(source.name || "")) failures.push({ error: "account_name_mismatch", id: String(source._id) });
+		else {
+			if (source.password !== destination.password) failures.push({ error: "owner_password_hash_mismatch", id: String(source._id) });
+			if (source.vendorPassword !== destination.vendorPassword) failures.push({ error: "vendor_password_hash_mismatch", id: String(source._id) });
+			if (source.password && !/^\$2[aby]\$/.test(String(destination.password || ""))) failures.push({ error: "owner_password_not_bcrypt", id: String(source._id) });
+			if (source.vendorPassword && !/^\$2[aby]\$/.test(String(destination.vendorPassword || ""))) failures.push({ error: "vendor_password_not_bcrypt", id: String(source._id) });
+		}
+	}
+	if (byId.get(DAVID_MOLL_ID)?.name !== "David Moll") failures.push({ error: "david_moll_identity_mismatch" });
+	const temp = byId.get(TEMP_ACCOUNT_ID);
+	if (temp?.name !== "temp" || !temp?.temporaryMigrationAccount) failures.push({ error: "temp_account_missing" });
+	else {
+		const { default: bcrypt } = await import("bcrypt");
+		if (!(await bcrypt.compare("12345678", String(temp.password || "")))) failures.push({ error: "temp_password_mismatch" });
+	}
+	const result = { accounts: snapshot.size, failures };
+	await mkdir(outputDir, { recursive: true });
+	await writeFile(path.join(outputDir, "verify-accounts.json"), JSON.stringify(result, null, 2));
+	console.log(JSON.stringify(result, null, 2));
+	if (failures.length) process.exitCode = 2;
 }
 
 async function findSourceById(db, collection, id) {
@@ -458,11 +615,13 @@ async function verify(db) {
 	const manifestSourceCounts = new Map();
 	for (const manifestDoc of manifests.docs) {
 		const manifest = manifestDoc.data();
-		manifestSourceCounts.set(manifest.sourceCollection, (manifestSourceCounts.get(manifest.sourceCollection) || 0) + 1);
+		if (!manifest.synthetic) {
+			manifestSourceCounts.set(manifest.sourceCollection, (manifestSourceCounts.get(manifest.sourceCollection) || 0) + 1);
+		}
 		expectedDestinations.set(manifest.destinationCollection, (expectedDestinations.get(manifest.destinationCollection) || 0) + 1);
-		const source = await findSourceById(db, manifest.sourceCollection, manifest.sourceId);
-		if (!source) failures.push({ ...manifest, error: "source_missing" });
-		else if (manifest.sourceCanonicalHash && documentHash(scalar(source)) !== manifest.sourceCanonicalHash) failures.push({ ...manifest, error: "source_changed_since_migration" });
+		const source = manifest.synthetic ? null : await findSourceById(db, manifest.sourceCollection, manifest.sourceId);
+		if (!source && !manifest.synthetic) failures.push({ ...manifest, error: "source_missing" });
+		else if (!manifest.synthetic && manifest.sourceCanonicalHash && documentHash(scalar(source)) !== manifest.sourceCanonicalHash) failures.push({ ...manifest, error: "source_changed_since_migration" });
 		const snap = await firestore.collection(manifest.destinationCollection).doc(manifest.destinationId).get();
 		if (!snap.exists) { failures.push({ ...manifest, error: "destination_missing" }); continue; }
 		if (firestoreSize(snap.data()) > MAX_FIRESTORE_BYTES) failures.push({ ...manifest, error: "destination_over_900_kib", actualBytes: firestoreSize(snap.data()) });
@@ -603,11 +762,28 @@ const client = new MongoClient(sourceUrl);
 try {
 	await client.connect();
 	const db = client.db(sourceDbName);
-	if (mode === "audit") await audit(db);
+	await assertAuthoritativeAthensDb(db, sourceDbName);
+	if (mode === "inventory") {
+		const result = await buildFirebaseInventory({ firestore: getFirestoreDb(), bucket: getStorageBucket() });
+		await mkdir(outputDir, { recursive: true });
+		await writeFile(path.join(outputDir, "firebase-inventory.json"), JSON.stringify(result, null, 2));
+		console.log(JSON.stringify(result, null, 2));
+	} else if (mode === "reset") {
+		const result = await resetFirebaseData({
+			firestore: getFirestoreDb(),
+			bucket: getStorageBucket(),
+			projectId: process.env.FIREBASE_PROJECT_ID || EXPECTED_PROJECT_ID,
+			confirmation: process.env.FIREBASE_RESET_CONFIRM || "",
+			outputDir,
+			apply: String(process.env.FIREBASE_RESET_APPLY || "").toLowerCase() === "true",
+		});
+		console.log(JSON.stringify(result, null, 2));
+	} else if (mode === "audit") await audit(db);
 	else if (mode === "migrate") await migrate(db);
+	else if (mode === "verify-accounts") await verifyAccounts(db);
 	else if (mode === "verify") await verify(db);
 	else if (mode === "auth") await importAuth(db);
-	else throw new Error(`Unknown mode ${mode}; use audit, migrate, verify, or auth`);
+	else throw new Error(`Unknown mode ${mode}; use inventory, reset, audit, migrate, verify-accounts, verify, or auth`);
 } finally {
 	await client.close();
 }

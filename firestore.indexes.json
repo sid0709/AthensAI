@@ -274,6 +274,42 @@
         { "fieldPath": "runId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "job_statuses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "profileId", "order": "ASCENDING" },
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "DESCENDING" },
+        { "fieldPath": "jobId", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "job_statuses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "profileId", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "DESCENDING" },
+        { "fieldPath": "jobId", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "resume_generations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "applierName", "order": "ASCENDING" },
+        { "fieldPath": "finishedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "user_resumes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerName", "order": "ASCENDING" },
+        { "fieldPath": "source", "order": "ASCENDING" },
+        { "fieldPath": "uploadedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -290,6 +326,46 @@
     {
       "collectionGroup": "mail_messages",
       "fieldPath": "bodyText",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "jobs",
+      "fieldPath": "embedding",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "resume_generations",
+      "fieldPath": "sections",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "resume_generations",
+      "fieldPath": "jobDescription",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "resume_generations",
+      "fieldPath": "artifacts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "user_resumes",
+      "fieldPath": "extractedText",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "user_resumes",
+      "fieldPath": "contentBase64",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "user_resumes",
+      "fieldPath": "artifacts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "resume_templates",
+      "fieldPath": "contentBase64",
       "indexes": []
     }
   ]

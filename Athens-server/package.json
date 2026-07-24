@@ -18,9 +18,16 @@
 		"migrate-passwords": "node src/db/migratePasswords.js",
 		"migrate-api-keys": "node src/db/migrateApiKeys.js",
 		"firebase:audit": "node src/scripts/firebaseMigration.js audit",
+		"firebase:inventory": "node src/scripts/firebaseMigration.js inventory",
+		"firebase:reset": "node src/scripts/firebaseMigration.js reset",
 		"firebase:migrate": "node src/scripts/firebaseMigration.js migrate",
+		"firebase:verify-accounts": "node src/scripts/firebaseMigration.js verify-accounts",
 		"firebase:verify": "node src/scripts/firebaseMigration.js verify",
 		"firebase:auth": "node src/scripts/firebaseMigration.js auth",
+    "firebase:copy-accounts": "node src/scripts/simpleAthensDbCopy.js accounts",
+    "firebase:copy-athensdb": "node src/scripts/simpleAthensDbCopy.js all",
+    "firebase:rebuild-job-statuses": "node src/scripts/simpleAthensDbCopy.js statuses",
+    "firebase:verify-athensdb-copy": "node src/scripts/verifyAthensDbCopy.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
 		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",
 		"reset-skills": "node src/scripts/resetSkills.js",
@@ -28,7 +35,8 @@
 		"cleanup-job-market-fields": "node src/scripts/cleanupJobMarketFields.js",
 		"monitoring:rollup": "node src/scripts/rollupMonitoring.js",
 		"test:monitoring": "node --test src/services/monitoring/*.test.mjs",
-		"test:firestore-adapter": "node --test src/db/firestoreMongoAdapter.test.mjs"
+		"test:firestore-adapter": "node --test src/db/firestoreMongoAdapter.test.mjs",
+		"test:firebase-reset": "node --test src/scripts/firebaseResetSupport.test.mjs src/services/jobStatusProjectionService.test.mjs"
 	},
 	"dependencies": {
 		"@google-cloud/kms": "^5.4.0",

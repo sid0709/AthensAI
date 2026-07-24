@@ -1,5 +1,6 @@
 import { ObjectId } from 'mongodb';
 import { accountInfoCollection, jobsCollection } from '../db/mongo.js';
+import { syncJobStatusProjection } from './jobStatusProjectionService.js';
 
 function toObjectId(value) {
 	if (!value) return null;
@@ -63,6 +64,7 @@ export async function upsertJobBidStatus(
 		if (bidReady) entry.bidReadyDate = now;
 		if (bidCompleted) entry.bidCompletedDate = now;
 		await jobsCollection.updateOne({ _id: objectId }, { $push: { status: entry } });
+		await syncJobStatusProjection(objectId, applierId);
 		return true;
 	}
 
@@ -83,6 +85,7 @@ export async function upsertJobBidStatus(
 		{ $set },
 		{ arrayFilters: [{ 'elem.applier': applierId }] },
 	);
+	await syncJobStatusProjection(objectId, applierId);
 	return true;
 }
 
@@ -130,6 +133,7 @@ export async function clearJobBidStatus(applierName, jobId) {
 			{ _id: objectId },
 			{ $pull: { status: { applier: applierId } } },
 		);
+		await syncJobStatusProjection(objectId, applierId);
 		return true;
 	}
 
@@ -143,6 +147,7 @@ export async function clearJobBidStatus(applierName, jobId) {
 		},
 		{ arrayFilters: [{ 'elem.applier': applierId }] },
 	);
+	await syncJobStatusProjection(objectId, applierId);
 	return true;
 }
 
