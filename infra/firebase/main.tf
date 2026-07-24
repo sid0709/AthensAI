@@ -733,7 +733,6 @@ resource "google_compute_backend_service" "serverless" {
   for_each    = google_compute_region_network_endpoint_group.serverless
   name        = "athens-${replace(each.key, "_", "-")}-backend"
   protocol    = "HTTP"
-  timeout_sec = each.key == "ai_bff" ? 900 : 3600
   backend {
     group = each.value.id
   }
