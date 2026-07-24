@@ -126,7 +126,9 @@ for ((i = 1; i <= 24; i++)); do
     url.searchParams.set("query", "up{job=\"node\"}");
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     const payload = await response.json();
-    if (!response.ok || payload?.status !== "success" || payload?.data?.result?.[0]?.value?.[1] !== "1") process.exit(1);
+    const results = payload?.data?.result || [];
+    const hasLiveNodeExporter = results.some((series) => series?.value?.[1] === "1");
+    if (!response.ok || payload?.status !== "success" || !hasLiveNodeExporter) process.exit(1);
   ' >/dev/null 2>&1; then
     prometheus_ok=1
     break
