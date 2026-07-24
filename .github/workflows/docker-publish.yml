@@ -242,12 +242,14 @@ jobs:
             --role roles/cloudkms.cryptoKeyEncrypterDecrypter \
             --quiet >/dev/null
 
-          install -d -m 700 .runtime-transfer
+          # scp-action archives sources with tar; a dot-prefixed directory is
+          # skipped by its source glob and produces an empty archive.
+          install -d -m 700 runtime-transfer
           gcloud iam service-accounts keys create \
-            .runtime-transfer/firebase-service-account.json \
+            runtime-transfer/firebase-service-account.json \
             --iam-account "${runtime}" \
             --project "${project}"
-          chmod 600 .runtime-transfer/firebase-service-account.json
+          chmod 600 runtime-transfer/firebase-service-account.json
 
       - name: Transfer VPS runtime credential
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
@@ -257,7 +259,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
-          source: .runtime-transfer/firebase-service-account.json
+          source: runtime-transfer/firebase-service-account.json
           target: /tmp/athens-vps-runtime/
           strip_components: 1
 
