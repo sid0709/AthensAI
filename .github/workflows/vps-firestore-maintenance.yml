@@ -1,0 +1,49 @@
+name: VPS Firestore maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      writes_enabled:
+        description: Allow application and worker writes to Firestore
+        type: boolean
+        required: true
+        default: false
+
+jobs:
+  toggle:
+    name: Set Firestore write gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update VPS write gate and restart current image
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script: |
+            set -eu
+            deploy_env=/opt/nextoffer/deploy.env
+            enabled='${{ inputs.writes_enabled }}'
+            test -f "${deploy_env}"
+            tmp="$(mktemp)"
+            awk -v value="${enabled}" '
+              BEGIN { found = 0 }
+              index($0, "FIRESTORE_WRITES_ENABLED=") == 1 {
+                print "FIRESTORE_WRITES_ENABLED=" value
+                found = 1
+                next
+              }
+              { print }
+              END { if (!found) print "FIRESTORE_WRITES_ENABLED=" value }
+            ' "${deploy_env}" > "${tmp}"
+            if [ "$(id -u)" -eq 0 ]; then
+              install -m 600 "${tmp}" "${deploy_env}"
+            else
+              sudo install -m 600 "${tmp}" "${deploy_env}"
+            fi
+            rm -f "${tmp}"
+            /opt/nextoffer/deploy.sh latest
+            actual="$(docker inspect nextoffer --format '{{range .Config.Env}}{{println .}}{{end}}' | awk -F= '$1 == "FIRESTORE_WRITES_ENABLED" { print $2 }')"
+            test "${actual}" = "${enabled}"
+            echo "FIRESTORE_WRITES_ENABLED=${actual}"
