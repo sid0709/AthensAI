@@ -222,6 +222,31 @@ resource "google_service_account" "deployer" {
   display_name = "Athens Cloud Build deployer"
 }
 
+# Phase one of the data-only retirement creates the VPS identity before any
+# unused Cloud Run resources are removed. Never create a key in Terraform.
+resource "google_service_account" "vps_runtime" {
+  account_id   = "athens-vps-runtime"
+  display_name = "Athens VPS data runtime"
+}
+
+resource "google_project_iam_member" "vps_runtime_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.vps_runtime.email}"
+}
+
+resource "google_storage_bucket_iam_member" "vps_runtime_objects" {
+  bucket = google_storage_bucket.objects.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.vps_runtime.email}"
+}
+
+resource "google_kms_crypto_key_iam_member" "vps_runtime_profile_secrets" {
+  crypto_key_id = google_kms_crypto_key.profile_secrets.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${google_service_account.vps_runtime.email}"
+}
+
 # The deployer identity is bootstrapped manually so GitHub Actions can use
 # Workload Identity Federation before Terraform is first applied. Import it on
 # the initial apply, then keep it managed by this configuration.
@@ -353,7 +378,7 @@ resource "google_cloud_run_v2_service" "ai_bff" {
   name                = "ai-bff"
   location            = var.compute_region
   ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
-  deletion_protection = true
+  deletion_protection = false
 
   template {
     service_account                  = google_service_account.runtime["ai-bff"].email
@@ -430,7 +455,7 @@ resource "google_cloud_run_v2_service" "api" {
   name                = "athens-api"
   location            = var.compute_region
   ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
-  deletion_protection = true
+  deletion_protection = false
 
   template {
     service_account                  = google_service_account.runtime["api"].email
@@ -575,7 +600,7 @@ resource "google_cloud_run_v2_service" "relay" {
   name                = "avalon-relay"
   location            = var.compute_region
   ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
-  deletion_protection = true
+  deletion_protection = false
 
   template {
     service_account                  = google_service_account.runtime["avalon-relay"].email
@@ -629,7 +654,7 @@ resource "google_cloud_run_v2_job" "maintenance" {
   }
   name                = "athens-${each.key}"
   location            = var.compute_region
-  deletion_protection = true
+  deletion_protection = false
 
   template {
     template {
