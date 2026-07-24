@@ -25,6 +25,12 @@ terraform apply staging.tfplan
 
 If the staging Firestore database or bucket already exists, import it before applying. Confirm Native Firestore is in `nam7`, PITR is enabled, the daily and weekly backup schedules exist, and public access prevention is enforced on the bucket.
 
+Deploy only the data rules and indexes; do not deploy Hosting or Auth:
+
+```bash
+firebase deploy --project drwretail-bm-staging --only firestore:rules,firestore:indexes,storage
+```
+
 Create a key only for the staging `athens-vps-runtime` identity, install it on the staging migration host with owner-only permissions, and set:
 
 ```dotenv
@@ -75,6 +81,12 @@ terraform apply data-only.tfplan
 ```
 
 The reviewed phase-two plan should remove the Cloud Run services/jobs, load balancer, reserved IP, certificate, serverless NEGs, Memorystore, VPC connector/network, Tasks queues, Scheduler jobs, Artifact Registry, Secret Manager placeholders, old runtime identities, Cloud monitoring checks for the retired API, and the unused deployer. The data resources listed in the safety gates must remain. APIs are removed from Terraform state with `disable_on_destroy=false`, so retiring a resource does not disable shared Google APIs.
+
+After the phase-two apply, deploy the production deny-all client rules and required composite indexes:
+
+```bash
+firebase deploy --project drwretail-bm --only firestore:rules,firestore:indexes,storage
+```
 
 After the plan succeeds and GitHub no longer has any GCP deployment workflow, remove the unused `GCP_PROJECT_ID`, `GCP_SERVICE_ACCOUNT`, and `GCP_WORKLOAD_IDENTITY_PROVIDER` repository secrets and delete the unused GitHub workload-identity pool after one final access-log check.
 
