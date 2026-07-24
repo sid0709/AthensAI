@@ -26,6 +26,18 @@ import { ALL_MAIL_PATH, folderToMailbox } from './folderMapper.js';
 
 const CACHE_STALE_MS = 2 * 60 * 1000; // 2 min before background IMAP refresh
 const FOLDER_COUNT_CACHE_MS = 5 * 60 * 1000; // 5 min before refreshing folder counts
+const PAGE_MEMORY_CACHE_MS = Math.max(5_000, Number(process.env.MAIL_PAGE_MEMORY_CACHE_MS || 30_000));
+const pageMemoryCache = new Map();
+const folderCountMemoryCache = new Map();
+
+function pageCacheKey(applierName, folder, page, pageSize) {
+	return `${String(applierName).trim().toLowerCase()}\0${folder}\0${page}\0${pageSize}`;
+}
+
+function rememberPage(key, result) {
+	pageMemoryCache.set(key, { result, expiresAt: Date.now() + PAGE_MEMORY_CACHE_MS });
+	return result;
+}
 
 /**
  * Read one folder page from MongoDB cache only (instant).
@@ -63,6 +75,10 @@ export async function loadCachedFolderPage(applierName, folder, page, pageSize) 
  *    exist, fall through to synchronous IMAP for the requested page/size.
  */
 export async function loadFolderPage(applierName, folder, page, pageSize, { forceRefresh = false } = {}) {
+	const firestoreRuntime = String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() === 'firestore';
+	const memoryKey = pageCacheKey(applierName, folder, page, pageSize);
+	const memoryEntry = pageMemoryCache.get(memoryKey);
+	if (!forceRefresh && memoryEntry?.expiresAt > Date.now()) return { ...memoryEntry.result, fromCache: true };
 	const state = await getSyncState(applierName);
 	const lastRefreshKey = `folderRefreshedAt_${folder}`;
 	const lastRefreshed = state?.[lastRefreshKey] ? new Date(state[lastRefreshKey]).getTime() : 0;
@@ -84,7 +100,7 @@ export async function loadFolderPage(applierName, folder, page, pageSize, { forc
 	if (!forceRefresh && hasCachedData && cacheIsFresh) {
 		const cached = await loadCachedFolderPage(applierName, folder, page, pageSize);
 		if (!cacheUnderfilled(cached)) {
-			return cached;
+			return rememberPage(memoryKey, cached);
 		}
 		// Fall through to IMAP to fill the requested page
 	}
@@ -95,7 +111,7 @@ export async function loadFolderPage(applierName, folder, page, pageSize, { forc
 		const cached = await loadCachedFolderPage(applierName, folder, page, pageSize);
 		if (!cacheUnderfilled(cached)) {
 			refreshFolderInBackground(applierName, folder, pageSize);
-			return cached;
+			return rememberPage(memoryKey, cached);
 		}
 		// Fall through to IMAP
 	}
@@ -114,28 +130,43 @@ export async function loadFolderPage(applierName, folder, page, pageSize, { forc
 			applierName,
 		);
 
-		if (messages.length) {
-			await upsertMessages(messages);
+		if (firestoreRuntime) {
+			// The live IMAP page is already complete enough to render. Persist it in
+			// the background so Firestore network latency cannot turn a successful
+			// Gmail request into an HTTP timeout.
+			void (async () => {
+				if (messages.length) await upsertMessages(messages);
+				await upsertSyncState(applierName, {
+					[`folderTotal_${folder}`]: total,
+					[lastRefreshKey]: new Date(),
+				});
+			})().catch((error) => console.warn('[mail] background Firestore cache write failed:', error?.message || error));
+			return rememberPage(memoryKey, {
+				ok: true,
+				threads: messages.map((doc) => messageToThread(doc, { includeBody: false })),
+				total,
+				page,
+				pageSize,
+				fromCache: false,
+			});
 		}
 
+		if (messages.length) await upsertMessages(messages);
 		await upsertSyncState(applierName, {
 			[`folderTotal_${folder}`]: total,
 			[lastRefreshKey]: new Date(),
 		});
-
 		const uids = messages.map((m) => m.uid);
-		const cachedDocs = uids.length
-			? await getMessagesByUids(applierName, uids, mailboxPath)
-			: [];
+		const cachedDocs = uids.length ? await getMessagesByUids(applierName, uids, mailboxPath) : [];
 		const enriched = enrichMessagesFromCache(messages, cachedDocs);
 
-		return {
+		return rememberPage(memoryKey, {
 			ok: true,
 			threads: enriched.map((doc) => messageToThread(doc, { includeBody: false })),
 			total,
 			page,
 			pageSize,
-		};
+		});
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		return { ok: false, error: message };
@@ -190,12 +221,18 @@ export async function loadLabelOrSearchPage(applierName, { folder, label, search
  * the cache is older than 5 minutes or force=true. Only then does it hit IMAP.
  */
 export async function getFolderCounts(applierName, { force = false } = {}) {
+	const memoryKey = String(applierName).trim().toLowerCase();
+	const memoryEntry = folderCountMemoryCache.get(memoryKey);
+	if (!force && memoryEntry?.expiresAt > Date.now()) {
+		return { ok: true, counts: memoryEntry.counts, cached: true };
+	}
 	const state = await getSyncState(applierName);
 
 	// Use cached counts when fresh enough
 	if (!force && state?.folderCounts && state?.folderCountsUpdatedAt) {
 		const age = Date.now() - new Date(state.folderCountsUpdatedAt).getTime();
 		if (age < FOLDER_COUNT_CACHE_MS) {
+			folderCountMemoryCache.set(memoryKey, { counts: state.folderCounts, expiresAt: Date.now() + FOLDER_COUNT_CACHE_MS });
 			return { ok: true, counts: state.folderCounts, cached: true };
 		}
 	}
@@ -211,7 +248,9 @@ export async function getFolderCounts(applierName, { force = false } = {}) {
 
 	try {
 		const counts = await fetchFolderCounts(creds.email, creds.password);
-		await upsertSyncState(applierName, { folderCounts: counts, folderCountsUpdatedAt: new Date() });
+		folderCountMemoryCache.set(memoryKey, { counts, expiresAt: Date.now() + FOLDER_COUNT_CACHE_MS });
+		void upsertSyncState(applierName, { folderCounts: counts, folderCountsUpdatedAt: new Date() })
+			.catch((error) => console.warn('[mail] background folder-count cache write failed:', error?.message || error));
 		return { ok: true, counts };
 	} catch (err) {
 		// Fall back to stale cache on IMAP failure

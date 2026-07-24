@@ -13,6 +13,7 @@ import {
   deleteScoresForApplier,
   deleteStaleScores,
 } from './matchScoreStore.js';
+import { isForegroundBusy } from '../runtimeLoad.js';
 
 /**
  * Background worker keeping job_match_scores current (mirrors the
@@ -224,6 +225,7 @@ export function startMatchScoreWorker() {
 
   const tick = async () => {
     if (tickRunning) return; // a full rescore can outlast the interval
+    if (isForegroundBusy()) return;
     tickRunning = true;
     try {
 			await runMatchScoreBatch();
@@ -235,7 +237,6 @@ export function startMatchScoreWorker() {
   };
 
   workerTimer = setInterval(tick, WORKER_INTERVAL_MS);
-  void tick();
   console.log(
     `[match-score] worker started (interval ${WORKER_INTERVAL_MS}ms, job batch ${JOB_BATCH}, min store score ${MIN_STORE_SCORE})`,
   );

@@ -210,7 +210,12 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
         if (cancelled) return;
         if (res?.success && Array.isArray(res.data)) {
           setRawJobs(res.data.map((doc) => mapDocToJob(doc, applier)));
-          setTotal(res.pagination?.total ?? res.data.length);
+          const responseTotal = res.pagination?.total ?? res.data.length;
+          setTotal(responseTotal);
+          // The list response already has the authoritative catalog total.
+          // Surface it immediately instead of leaving the badge at zero while
+          // the optional per-status count request is still warming.
+          setStatusCounts((previous) => ({ ...previous, all: responseTotal }));
           setRecommendationFallback(Boolean(res.recommendationFallback));
           setRecommendationReason(res.recommendationReason ?? null);
           setRecommendationWarming(Boolean(res.recommendationWarming));

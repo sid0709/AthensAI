@@ -24,6 +24,7 @@ import statusRoutes from "./src/routes/statusRoutes.js";
 import statusAdminRoutes from "./src/routes/statusAdminRoutes.js";
 import { metricsMiddleware, renderMetrics } from "./src/services/monitoring/metrics.js";
 import { startMonitoringLoop } from "./src/services/monitoring/monitorLoop.js";
+import { markForegroundActivity } from "./src/services/runtimeLoad.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -83,6 +84,10 @@ function createApp() {
 	app.use(cors({ origin: corsOrigins.includes("*") ? true : corsOrigins, credentials: false }));
 	app.use(requestLogger("api"));
 	app.use(metricsMiddleware);
+	app.use((req, _res, next) => {
+		if (req.path !== "/healthz" && req.path !== "/readyz" && req.path !== "/metrics") markForegroundActivity();
+		next();
+	});
 	app.get("/metrics", (_req, res) => {
 		res.type("text/plain; version=0.0.4").send(renderMetrics("athens-server"));
 	});

@@ -182,6 +182,22 @@ async function initMongo() {
 		llmCallLogCollection = aiApiUsageCollection;
 		vendorTasksCollection = db.collection('vendor_tasks');
 		bidReviewEventsCollection = db.collection('bid_review_events');
+		// Prime the most common first paint immediately. If the UI arrives while
+		// this is still in flight, the adapter coalesces it onto the same promise.
+		void Promise.all([
+			jobsCollection
+				.find({}, { projection: { description: 0, jobDescription: 0 } })
+				.sort({ postedAt: -1, _id: -1 })
+				.limit(25)
+				.toArray(),
+			jobsCollection
+				.find({ extensionV2: false }, { projection: { description: 0, jobDescription: 0 } })
+				.sort({ postedAt: -1, _id: -1 })
+				.limit(25)
+				.toArray(),
+			jobsCollection.countDocuments({ extensionV2: false }),
+			jobsCollection.countDocuments({}),
+		]).catch((error) => console.warn('[firestore] first job page warmup failed:', error?.message || error));
 		console.log('Connected to native Firestore database (default)');
 		return;
 	}

@@ -420,7 +420,12 @@ export async function saveUserLabelDefinitions(applierName, definitions) {
 }
 
 export function messageToThread(doc, { includeBody = true } = {}) {
-	const date = doc.date instanceof Date ? doc.date : new Date(doc.date);
+	const date = doc.date instanceof Date
+		? doc.date
+		: doc.date?.toDate instanceof Function
+			? doc.date.toDate()
+			: new Date(doc.date || 0);
+	const safeDate = Number.isNaN(date.getTime()) ? new Date(0) : date;
 	const customLabels = doc.gmailLabels?.length
 		? extractCustomLabels(doc.gmailLabels)
 		: (doc.labels || []).filter((l) => l !== 'starred' && l !== 'Starred');
@@ -437,8 +442,8 @@ export function messageToThread(doc, { includeBody = true } = {}) {
 		prev: doc.preview || '',
 		body: includeBody ? doc.bodyText || doc.preview || '' : doc.preview || '',
 		bodyHtml: includeBody ? doc.bodyHtml || null : null,
-		time: formatMailTime(date),
-		date: date.toISOString(),
+		time: formatMailTime(safeDate),
+		date: safeDate.toISOString(),
 		unread: !doc.flags?.seen,
 		starred: Boolean(doc.flags?.flagged),
 		tag: customLabels[0] || '',

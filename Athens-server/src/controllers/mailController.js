@@ -17,6 +17,7 @@ import {
 	getMessage,
 	messageToThread,
 	updateMessageFlags,
+	getSyncState,
 	upsertSyncState,
 	getUserLabelDefinitions,
 	saveUserLabelDefinitions,
@@ -41,6 +42,7 @@ import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
 import { isBetaTier } from '../lib/betaTier.js';
 
 const OTP_EMAIL_LIMIT = 10;
+const mailLabelMemoryCache = new Map();
 
 /** Newest-first slice — index 0 is the most recent message. */
 function takeNewestEmails(docs, limit = OTP_EMAIL_LIMIT) {
@@ -83,11 +85,6 @@ export async function getMailThreads(req, res) {
 		const { page, pageSize } = parsePageQuery(req);
 		const cacheOnly = req.query.cacheOnly === 'true' || req.query.cacheOnly === '1';
 		const forceRefresh = req.query.force === 'true' || req.query.force === '1';
-
-		const creds = await resolveMailCredentials(applierName);
-		if (!creds.ok) {
-			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
-		}
 
 		let result;
 		if (cacheOnly) {
@@ -532,14 +529,38 @@ export async function getMailLabels(req, res) {
 	try {
 		const applierName = await requireApplier(req, res);
 		if (!applierName) return;
+		const memoryKey = applierName.trim().toLowerCase();
+		const memoryEntry = mailLabelMemoryCache.get(memoryKey);
+		if (memoryEntry && memoryEntry.expiresAt > Date.now()) {
+			return res.json({ success: true, labels: memoryEntry.labels, cached: true });
+		}
+
+		const state = await getSyncState(applierName);
+		const cachedAt = state?.gmailLabelsUpdatedAt ? new Date(state.gmailLabelsUpdatedAt).getTime() : 0;
+		const cacheMs = Math.max(10_000, Number(process.env.MAIL_LABEL_CACHE_MS || 5 * 60 * 1000));
+		if (Array.isArray(state?.gmailLabels) && Date.now() - cachedAt < cacheMs) {
+			mailLabelMemoryCache.set(memoryKey, { labels: state.gmailLabels, expiresAt: Date.now() + cacheMs });
+			return res.json({ success: true, labels: state.gmailLabels, cached: true });
+		}
 
 		const creds = await resolveMailCredentials(applierName);
 		if (!creds.ok) {
 			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
 		}
 
-		const labels = await fetchGmailLabelList(creds.email, creds.password);
-		return res.json({ success: true, labels });
+		try {
+			const labels = await fetchGmailLabelList(creds.email, creds.password);
+			mailLabelMemoryCache.set(memoryKey, { labels, expiresAt: Date.now() + cacheMs });
+			void upsertSyncState(applierName, { gmailLabels: labels, gmailLabelsUpdatedAt: new Date() })
+				.catch((error) => console.warn('[mail] background label cache write failed:', error?.message || error));
+			return res.json({ success: true, labels, cached: false });
+		} catch (error) {
+			if (Array.isArray(state?.gmailLabels)) {
+				mailLabelMemoryCache.set(memoryKey, { labels: state.gmailLabels, expiresAt: Date.now() + Math.min(cacheMs, 60_000) });
+				return res.json({ success: true, labels: state.gmailLabels, cached: true, stale: true });
+			}
+			throw error;
+		}
 	} catch (err) {
 		console.error('GET /api/mail/labels error', err);
 		return res.status(500).json({ success: false, error: err.message });
