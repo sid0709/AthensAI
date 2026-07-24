@@ -62,8 +62,8 @@ if [[ "${DATABASE_BACKEND,,}" == "firestore" ]]; then
   volume_args=(-v "${FIREBASE_SECRET_HOST_PATH}:/run/secrets/firebase-service-account.json:ro")
   EMBEDDED_MONGO=false
 else
-  : "${MONGO_URL:?MONGO_URL must be set in $DEPLOY_ENV when DATABASE_BACKEND= mongo}"
-  : "${MONGO_DB:?MONGO_DB must be set in $DEPLOY_ENV when DATABASE_BACKEND= mongo}"
+  : "${MONGO_URL:?MONGO_URL must be set in $DEPLOY_ENV when DATABASE_BACKEND=mongo}"
+  : "${MONGO_DB:?MONGO_DB must be set in $DEPLOY_ENV when DATABASE_BACKEND=mongo}"
 fi
 
 if [[ "$TAG_OR_REF" == *:* ]]; then

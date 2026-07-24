@@ -8,7 +8,6 @@ import {
 	DEFAULT_SESSION_ID,
 	SOCKET_EVENTS,
 } from "@avalon/shared";
-import { authenticateSocket, canAccessProfile, authenticateHttp, canAccessHttpProfile } from "./firebaseAuth.js";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { createClient } from "redis";
 
@@ -125,14 +124,13 @@ function envInt(name, fallback) {
  * @param {import('express').Express} app
  */
 export function mountAvalonRelayRoutes(app) {
-	app.get("/avalon/health", authenticateHttp, (req, res) => {
-		const active = listSessions().filter((session) => canAccessHttpProfile(req, session.profileId));
+	app.get("/avalon/health", (_req, res) => {
+		const active = listSessions();
 		res.json({ ok: true, sessions: active.length, active });
 	});
 
-	app.get("/avalon/sessions", authenticateHttp, (req, res) => {
+	app.get("/avalon/sessions", (req, res) => {
 		const profileId = typeof req.query.profileId === "string" ? req.query.profileId : undefined;
-		if (!canAccessHttpProfile(req, profileId)) return res.status(403).json({ ok: false, error: "Profile access denied" });
 		const active = listSessions(profileId);
 		res.json({ ok: true, sessions: active.length, active });
 	});
@@ -168,20 +166,11 @@ export async function initAvalonRelay(httpServer) {
 		console.log("[avalon-relay] Redis Socket.IO adapter connected");
 	}
 
-	io.use(authenticateSocket);
-
 	io.on("connection", (socket) => {
 		let boundSession = null;
 		console.log(`[avalon-relay] connect ${socket.id}`);
 
 		socket.on(SOCKET_EVENTS.REGISTER, (payload, ack) => {
-			const requestedProfile = resolveProfileId(payload?.profileId);
-			if (!canAccessProfile(socket, requestedProfile)) {
-				const denied = { error: "Profile access denied", profileId: requestedProfile };
-				if (typeof ack === "function") ack(denied);
-				socket.emit("relay-error", denied);
-				return;
-			}
 			const session = getOrCreateSession(payload?.profileId, payload?.sessionId);
 
 			if (boundSession && boundSession !== session) {

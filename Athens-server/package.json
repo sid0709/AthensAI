@@ -21,7 +21,6 @@
 		"firebase:migrate": "node src/scripts/firebaseMigration.js migrate",
 		"firebase:verify": "node src/scripts/firebaseMigration.js verify",
 		"firebase:auth": "node src/scripts/firebaseMigration.js auth",
-		"firebase:cloud-job": "node src/scripts/cloudRunJob.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
 		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",
 		"reset-skills": "node src/scripts/resetSkills.js",
@@ -33,7 +32,6 @@
 	},
 	"dependencies": {
 		"@google-cloud/kms": "^5.4.0",
-		"@google-cloud/tasks": "^6.2.3",
 		"@nextoffer/shared": "file:../packages/shared",
 		"@socket.io/cluster-adapter": "^0.2.2",
 		"@socket.io/redis-adapter": "^8.3.0",

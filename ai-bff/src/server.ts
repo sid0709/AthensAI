@@ -6,7 +6,6 @@ import { createAiKit } from './kit.js';
 import { errorMiddleware } from './middleware/error.js';
 import { createRoutes } from './routes/index.js';
 import { metricsMiddleware, renderMetrics } from './metrics.js';
-import { requireFirebaseAuth } from './middleware/firebase-auth.js';
 
 export function createAiBffApp(config = loadConfigFromEnv()) {
   const kit = createAiKit(config);
@@ -23,7 +22,6 @@ export function createAiBffApp(config = loadConfigFromEnv()) {
   app.get('/metrics', (_req, res) => {
     res.type('text/plain; version=0.0.4').send(renderMetrics());
   });
-  app.use(requireFirebaseAuth);
   app.use('/ai-bff', createRoutes(kit));
   app.use(createRoutes(kit));
   app.use(errorMiddleware);
