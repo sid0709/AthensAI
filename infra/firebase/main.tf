@@ -716,7 +716,7 @@ resource "google_compute_region_network_endpoint_group" "serverless" {
     ai_bff = google_cloud_run_v2_service.ai_bff.name
     relay  = google_cloud_run_v2_service.relay.name
   }
-  name                  = "athens-${each.key}-neg"
+  name                  = "athens-${replace(each.key, "_", "-")}-neg"
   network_endpoint_type = "SERVERLESS"
   region                = var.compute_region
   cloud_run {
@@ -726,7 +726,7 @@ resource "google_compute_region_network_endpoint_group" "serverless" {
 
 resource "google_compute_backend_service" "serverless" {
   for_each    = google_compute_region_network_endpoint_group.serverless
-  name        = "athens-${each.key}-backend"
+  name        = "athens-${replace(each.key, "_", "-")}-backend"
   protocol    = "HTTP"
   timeout_sec = each.key == "ai_bff" ? 900 : 3600
   backend {
