@@ -46,6 +46,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     outputs:
       sha_short: ${{ steps.meta.outputs.sha_short }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
@@ -53,6 +54,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate Google Cloud deployment identity
+        if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/50997156169/locations/global/workloadIdentityPools/athensai-github-actions/providers/github-actions
+          service_account: athens-deployer@drwretail-bm.iam.gserviceaccount.com
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -193,8 +201,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: projects/50997156169/locations/global/workloadIdentityPools/athensai-github-actions/providers/github-actions
+          service_account: athens-deployer@drwretail-bm.iam.gserviceaccount.com
 
       - name: Set up Google Cloud CLI for VPS bootstrap
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
