@@ -1,7 +1,10 @@
 import { Server } from 'socket.io';
-import { createAdapter } from '@socket.io/cluster-adapter';
+import { createAdapter as createClusterAdapter } from '@socket.io/cluster-adapter';
+import { createAdapter as createRedisAdapter } from '@socket.io/redis-adapter';
+import { createClient } from 'redis';
 import { setupWorker } from '@socket.io/sticky';
 import { SOCKET_PROTOCOL } from './config/socketProtocol.js';
+import { requireFirebaseSocket } from './middleware/firebaseAuth.js';
 
 let io = null;
 
@@ -23,7 +26,7 @@ function corsConfig() {
  * @param {import('http').Server} httpServer
  * @param {{ clustered?: boolean }} [opts]
  */
-export function initSocket(httpServer, opts = {}) {
+export async function initSocket(httpServer, opts = {}) {
 	io = new Server(httpServer, {
 		cors: corsConfig(),
 		pingInterval: 25_000,
@@ -31,17 +34,30 @@ export function initSocket(httpServer, opts = {}) {
 		maxHttpBufferSize: 1e8,
 		connectionStateRecovery: {
 			maxDisconnectionDuration: 2 * 60 * 1000,
-			skipMiddlewares: true,
+			skipMiddlewares: false,
 		},
 	});
 
 	if (opts.clustered) {
-		io.adapter(createAdapter());
+		io.adapter(createClusterAdapter());
 		setupWorker(io);
+	} else if (String(process.env.REDIS_URL || '').trim()) {
+		const pubClient = createClient({ url: process.env.REDIS_URL.trim() });
+		const subClient = pubClient.duplicate();
+		await Promise.all([pubClient.connect(), subClient.connect()]);
+		io.adapter(createRedisAdapter(pubClient, subClient, { key: "athens-api" }));
+		io.redisClients = [pubClient, subClient];
+		console.log('[socket] Redis adapter connected');
 	}
+
+	io.use(requireFirebaseSocket);
 
 	io.on('connection', (socket) => {
 		console.log('[socket] client connected:', socket.id);
+		const profileIds = socket.data.requestedProfile
+			? [socket.data.requestedProfile]
+			: [...(socket.data.profileAccess?.profileIds || [])];
+		for (const profileId of profileIds) socket.join(`profile:${profileId}`);
 
 		socket.emit('server:hello', {
 			ok: true,
@@ -71,7 +87,8 @@ export function initSocket(httpServer, opts = {}) {
 
 			// Relay extension ↔ frontend checks to other clients.
 			if (payload.tgt && payload.tgt !== SOCKET_PROTOCOL.LOCATION.BACKEND) {
-				socket.broadcast.emit(SOCKET_PROTOCOL.TYPE.CONNECTION, data);
+				const rooms = profileIds.map((profileId) => `profile:${profileId}`);
+				if (rooms.length) socket.to(rooms).emit(SOCKET_PROTOCOL.TYPE.CONNECTION, data);
 			}
 		});
 	});
@@ -87,6 +104,7 @@ export function getIO() {
 
 export async function closeSocket() {
 	if (!io) return;
+	await Promise.all((io.redisClients || []).map((client) => client.quit().catch(() => undefined)));
 	await new Promise((resolve) => {
 		io.close(() => resolve());
 		setTimeout(resolve, 3000);

@@ -85,7 +85,7 @@ async function findAccountForKit(applierNameRaw) {
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, { projection });
   }
-  return acc ? decryptAccountDoc(acc) : null;
+  return acc ? await decryptAccountDoc(acc) : null;
 }
 
 async function resolveIsBeta(applierNameRaw) {

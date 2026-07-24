@@ -63,8 +63,8 @@ export function parseJobSkillsJson(content) {
   return out;
 }
 
-function getProfileForExtraction(account) {
-  const { provider, apiKey, model } = resolveDefaultModel(decryptProfileApiKeys(account?.autoBidProfile || {}));
+async function getProfileForExtraction(account) {
+  const { provider, apiKey, model } = resolveDefaultModel(await decryptProfileApiKeys(account?.autoBidProfile || {}));
   return { providerId: provider, apiKey, model };
 }
 
@@ -84,7 +84,7 @@ export async function resolveExtractionAuth(applierName) {
   if (!account) {
     throw new Error(`Account "${name}" not found — configure an AI API key in Settings → Profile.`);
   }
-  const auth = getProfileForExtraction(account);
+  const auth = await getProfileForExtraction(account);
   if (!auth.apiKey) {
     throw new Error(`No DeepSeek/OpenAI API key configured for "${name}" (Settings → Profile).`);
   }
@@ -185,4 +185,3 @@ export async function extractAndPersistJobByCatalog(job, auth, { signal, catalog
 }
 
 export { descriptionHash };
-

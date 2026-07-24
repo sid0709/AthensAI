@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import { accountInfoCollection } from "../db/mongo.js";
 import { updateAccountInfoById } from "../services/accountInfoStore.js";
 import { findAccountForDelete, wipeAccountData } from "../services/deleteAccountService.js";
+import { getFirebaseAuth } from "../services/firebase/firebaseAdmin.js";
 
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -125,10 +126,11 @@ export async function deleteAccount(req, res) {
 		const password = String(body.password ?? "");
 		const confirmName = String(body.confirmName ?? "").trim();
 
-		if (!name || !password) {
+		const firebaseIdentity = Boolean(req.auth?.uid);
+		if (!name || (!firebaseIdentity && !password)) {
 			return res.status(400).json({
 				success: false,
-				message: "Name and password are required",
+				message: firebaseIdentity ? "Name is required" : "Name and password are required",
 			});
 		}
 		if (!confirmName || confirmName !== name) {
@@ -150,9 +152,18 @@ export async function deleteAccount(req, res) {
 				message: `Type your account name exactly as "${user.name}"`,
 			});
 		}
+		if (firebaseIdentity && req.auth?.admin !== true && String(req.auth?.role || "").toLowerCase() !== "admin") {
+			const allowed = req.profileAccess?.profileIds?.has(String(user._id)) || req.profileAccess?.profileNames?.has(String(user.name).trim().toLowerCase());
+			if (!allowed) return res.status(403).json({ success: false, message: "Profile access denied" });
+		}
 
-		let valid = false;
-		if (!user.password) {
+		let valid = firebaseIdentity;
+		if (firebaseIdentity) {
+			const authAgeSeconds = Math.floor(Date.now() / 1000) - Number(req.auth.auth_time || 0);
+			if (!Number.isFinite(authAgeSeconds) || authAgeSeconds > 300) {
+				return res.status(401).json({ success: false, message: "Sign in again before deleting the account" });
+			}
+		} else if (!user.password) {
 			valid = password === "12345678";
 		} else {
 			valid = await bcrypt.compare(password, user.password);
@@ -162,6 +173,7 @@ export async function deleteAccount(req, res) {
 		}
 
 		const summary = await wipeAccountData({ name: user.name, accountId: user._id });
+		if (firebaseIdentity) await getFirebaseAuth().deleteUser(req.auth.uid);
 		console.log("[auth/delete-account] wiped", user.name, summary);
 
 		return res.json({

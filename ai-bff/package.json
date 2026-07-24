@@ -19,10 +19,12 @@
     "test": "tsx src/kit.test.ts"
   },
   "dependencies": {
+    "@nextoffer/shared": "file:../packages/shared",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
-    "@nextoffer/shared": "file:../packages/shared",
+    "firebase-admin": "^14.2.0",
+    "google-auth-library": "^10.9.1",
     "mongodb": "^6.16.0",
     "openai": "^4.104.0",
     "zod": "^3.25.28"

@@ -12,6 +12,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { TITLE_POLICY_VERSION } from "./resumeCareerTitlePolicy.js";
+import { putBinaryObject, readStoredObject, storageSlug } from "./firebase/objectStore.js";
+import { getStorageBucket } from "./firebase/firebaseAdmin.js";
 
 const REVIEW_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -26,6 +28,14 @@ const DRAFT_ROOT = path.join(REVIEW_ROOT, "by-job");
 export const AGENT_PDF_RENDER_VERSION = 2;
 
 const safe = (s) => String(s || "").replace(/[^\w.\- ]+/g, "_").slice(0, 80);
+
+function useCloudDrafts() {
+  return String(process.env.DATABASE_BACKEND || "").toLowerCase() === "firestore" || process.env.NODE_ENV === "production";
+}
+
+function cloudDraftPrefix(applierName, jobId) {
+  return `agent-resumes/by-job/${storageSlug(applierName)}/${storageSlug(jobId)}`;
+}
 
 async function pathExists(filePath) {
   try {
@@ -107,6 +117,56 @@ export async function writeAgentDraftPdf({
   identityFingerprint,
   skipReviewCopy = false,
 }) {
+  const titleFp = titlePolicyFingerprint ?? config?.titlePolicyFingerprint ?? null;
+  const identityFp = identityFingerprint ?? config?.identityFingerprint ?? null;
+  const meta = {
+    fingerprint: agentPdfRenderFingerprint(config, titleFp, identityFp),
+    templateId: config?.templateId ?? null,
+    renderVersion: AGENT_PDF_RENDER_VERSION,
+    titlePolicyVersion: TITLE_POLICY_VERSION,
+    titlePolicyFingerprint: titleFp,
+    identityFingerprint: identityFp,
+    writtenAt: new Date().toISOString(),
+  };
+
+  if (useCloudDrafts()) {
+    const prefix = cloudDraftPrefix(applierName, jobId);
+    await putBinaryObject({
+      buffer,
+      objectPath: `${prefix}/draft.pdf`,
+      mimeType: "application/pdf",
+      metadata: { applierName, jobId, kind: "agent-resume-draft" },
+    });
+    await putBinaryObject({
+      buffer: Buffer.from(JSON.stringify(meta), "utf8"),
+      objectPath: `${prefix}/draft.meta.json`,
+      mimeType: "application/json",
+      metadata: { applierName, jobId, kind: "agent-resume-draft-meta" },
+    });
+    if (html) {
+      await putBinaryObject({
+        buffer: Buffer.from(html, "utf8"),
+        objectPath: `${prefix}/draft.html`,
+        mimeType: "text/html; charset=utf-8",
+        metadata: { applierName, jobId, kind: "agent-resume-draft-html" },
+      });
+    }
+
+    let reviewPath = "";
+    if (!skipReviewCopy) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const reviewObject = `agent-resumes/reviews/${storageSlug(applierName)}/${stamp}-${storageSlug(jobId)}.pdf`;
+      await putBinaryObject({
+        buffer,
+        objectPath: reviewObject,
+        mimeType: "application/pdf",
+        metadata: { applierName, jobId, kind: "agent-resume-review" },
+      });
+      reviewPath = `gcs://${reviewObject}`;
+    }
+    return { draftPath: `gcs://${prefix}/draft.pdf`, reviewPath };
+  }
+
   const draftPath = agentDraftPdfPath(applierName, jobId);
   const dir = path.dirname(draftPath);
   await mkdir(dir, { recursive: true });
@@ -114,20 +174,10 @@ export async function writeAgentDraftPdf({
   if (html) {
     await writeFile(path.join(dir, "draft.html"), html, "utf8");
   }
-  const titleFp = titlePolicyFingerprint ?? config?.titlePolicyFingerprint ?? null;
-  const identityFp = identityFingerprint ?? config?.identityFingerprint ?? null;
   try {
     await writeFile(
       path.join(dir, "draft.meta.json"),
-      JSON.stringify({
-        fingerprint: agentPdfRenderFingerprint(config, titleFp, identityFp),
-        templateId: config?.templateId ?? null,
-        renderVersion: AGENT_PDF_RENDER_VERSION,
-        titlePolicyVersion: TITLE_POLICY_VERSION,
-        titlePolicyFingerprint: titleFp,
-        identityFingerprint: identityFp,
-        writtenAt: new Date().toISOString(),
-      }),
+      JSON.stringify(meta),
       "utf8",
     );
   } catch {
@@ -166,6 +216,31 @@ export async function readAgentDraftPdf(
   titlePolicyFingerprint,
   identityFingerprint,
 ) {
+  if (useCloudDrafts()) {
+    const prefix = cloudDraftPrefix(applierName, jobId);
+    let buffer;
+    try {
+      buffer = await readStoredObject({ object: { storagePath: `${prefix}/draft.pdf` } });
+    } catch (error) {
+      if (Number(error?.code) === 404) return null;
+      throw error;
+    }
+    if (!buffer?.length) return null;
+    if (config !== undefined) {
+      let meta = null;
+      try {
+        const bytes = await readStoredObject({ object: { storagePath: `${prefix}/draft.meta.json` } });
+        if (bytes) meta = JSON.parse(bytes.toString("utf8"));
+      } catch (error) {
+        if (Number(error?.code) !== 404) throw error;
+      }
+      const titleFp = titlePolicyFingerprint ?? config?.titlePolicyFingerprint;
+      const identityFp = identityFingerprint ?? config?.identityFingerprint;
+      if (!meta?.fingerprint || meta.fingerprint !== agentPdfRenderFingerprint(config, titleFp, identityFp)) return null;
+    }
+    return { buffer, draftPath: `gcs://${prefix}/draft.pdf` };
+  }
+
   const draftPath = agentDraftPdfPath(applierName, jobId);
   if (!(await pathExists(draftPath))) return null;
   const buffer = await readFile(draftPath);
@@ -191,6 +266,10 @@ export async function readAgentDraftPdf(
 
 /** Remove the stable draft PDF (and sibling html/meta) so the next run re-renders. */
 export async function deleteAgentDraftPdf(applierName, jobId) {
+  if (useCloudDrafts()) {
+    await getStorageBucket().deleteFiles({ prefix: `${cloudDraftPrefix(applierName, jobId)}/` });
+    return;
+  }
   const draftPath = agentDraftPdfPath(applierName, jobId);
   const dir = path.dirname(draftPath);
   try {

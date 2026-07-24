@@ -62,3 +62,6 @@ codex/codex-rs/target/
 # Test / coverage
 coverage/
 .nyc_output/
+
+# Terraform provider and module cache (generated locally; never commit)
+**/.terraform/

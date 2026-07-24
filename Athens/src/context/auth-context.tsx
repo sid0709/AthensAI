@@ -1,185 +1,113 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useApi } from "@/api/useApi";
+import { onIdTokenChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { invalidateCachedGet } from "@/api/cached-get";
 import { API_BASE } from "@/lib/api-base";
+import { firebaseAuth, firebaseConfigured } from "@/lib/firebase-client";
 
 export type AuthUser = {
-  _id: unknown;
+  _id: string;
+  uid: string;
+  email?: string | null;
   name: string;
+  profileId?: string | null;
   tier?: string | null;
+  role?: string | null;
   permission?: string | null;
 };
 
+type AuthResult = { success: boolean; message?: string; user?: AuthUser };
 type AuthContextValue = {
   user: AuthUser | null;
   isAuthenticated: boolean;
-  signin: (name: string, password: string) => Promise<{ success: boolean; message?: string; user?: AuthUser }>;
-  signup: (name: string, password: string) => Promise<{ success: boolean; message?: string; user?: AuthUser }>;
+  authReady: boolean;
+  signin: (email: string, password: string) => Promise<AuthResult>;
+  signup: (email: string, password: string) => Promise<AuthResult>;
   signout: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   isAuthenticated: false,
+  authReady: false,
   signin: async () => ({ success: false }),
   signup: async () => ({ success: false }),
   signout: () => {},
 });
 
-const AUTH_USER_KEY = "athens_auth_user";
-const AUTH_EXPIRES_KEY = "athens_auth_expires_at";
-/** Sign out only after this long with no user activity. */
-const AUTH_IDLE_TTL_MS = 24 * 60 * 60 * 1000;
-const AUTH_CHECK_INTERVAL_MS = 30 * 60 * 1000;
-/** How often activity may extend the idle window (avoids constant localStorage writes). */
-const AUTH_TOUCH_THROTTLE_MS = 60 * 1000;
-
-function clearStoredAuth() {
-  localStorage.removeItem(AUTH_USER_KEY);
-  localStorage.removeItem(AUTH_EXPIRES_KEY);
+function authMessage(error: unknown): string {
+  const code = String((error as { code?: string })?.code || "");
+  if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) {
+    return "Email or password is incorrect.";
+  }
+  if (code.includes("too-many-requests")) return "Too many attempts. Wait a moment and try again.";
+  return error instanceof Error ? error.message : "Sign in failed";
 }
 
-function loadValidUser(): AuthUser | null {
-  const storedUser = localStorage.getItem(AUTH_USER_KEY);
-  const storedExpiry = localStorage.getItem(AUTH_EXPIRES_KEY);
-  if (!storedUser || !storedExpiry) {
-    clearStoredAuth();
-    return null;
+async function loadSession(): Promise<AuthUser> {
+  const response = await fetch(`${API_BASE.replace(/\/$/, "")}/auth/session`, { cache: "no-store" });
+  const data = (await response.json().catch(() => ({}))) as { success?: boolean; user?: AuthUser; error?: string };
+  if (!response.ok || !data.success || !data.user) {
+    throw new Error(data.error || "This account has no Athens profile grant.");
   }
-  const expiresAt = Number(storedExpiry);
-  if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
-    clearStoredAuth();
-    return null;
-  }
-  try {
-    return JSON.parse(storedUser) as AuthUser;
-  } catch {
-    clearStoredAuth();
-    return null;
-  }
-}
-
-function persistAuth(user: AuthUser) {
-  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-  localStorage.setItem(AUTH_EXPIRES_KEY, String(Date.now() + AUTH_IDLE_TTL_MS));
-}
-
-/** Slide the idle expiry forward when the user is active. */
-function touchAuth() {
-  if (!localStorage.getItem(AUTH_USER_KEY)) return;
-  localStorage.setItem(AUTH_EXPIRES_KEY, String(Date.now() + AUTH_IDLE_TTL_MS));
+  return data.user;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => loadValidUser());
-  const { post } = useApi(API_BASE);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
-  useEffect(() => {
-    const check = () => {
-      const validUser = loadValidUser();
-      if (!validUser) setUser((prev) => (prev ? null : prev));
-    };
-    check();
-    const id = window.setInterval(check, AUTH_CHECK_INTERVAL_MS);
-    return () => window.clearInterval(id);
+  useEffect(() => onIdTokenChanged(firebaseAuth, async (firebaseUser) => {
+    try {
+      if (!firebaseUser) {
+        setUser(null);
+        return;
+      }
+      setUser(await loadSession());
+      invalidateCachedGet("/account_info");
+    } catch (error) {
+      console.error("Firebase session could not be mapped to an Athens profile", error);
+      setUser(null);
+      await signOut(firebaseAuth);
+    } finally {
+      setAuthReady(true);
+    }
+  }), []);
+
+  const signin = useCallback(async (email: string, password: string): Promise<AuthResult> => {
+    if (!firebaseConfigured) return { success: false, message: "Firebase web configuration is missing." };
+    try {
+      await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
+      const session = await loadSession();
+      setUser(session);
+      invalidateCachedGet("/account_info");
+      return { success: true, user: session };
+    } catch (error) {
+      await signOut(firebaseAuth).catch(() => undefined);
+      return { success: false, message: authMessage(error) };
+    }
   }, []);
 
-  // While signed in, any interaction resets the 1-day idle clock.
-  useEffect(() => {
-    if (!user) return;
-
-    let lastTouch = 0;
-    const onActivity = () => {
-      const now = Date.now();
-      if (now - lastTouch < AUTH_TOUCH_THROTTLE_MS) return;
-      lastTouch = now;
-      touchAuth();
-    };
-
-    const events: Array<keyof WindowEventMap> = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "focus"];
-    for (const event of events) {
-      window.addEventListener(event, onActivity, { passive: true });
-    }
-    document.addEventListener("visibilitychange", onActivity);
-
-    return () => {
-      for (const event of events) {
-        window.removeEventListener(event, onActivity);
-      }
-      document.removeEventListener("visibilitychange", onActivity);
-    };
-  }, [user]);
-
-  const signin = useCallback(
-    async (name: string, password: string) => {
-      try {
-        const res = (await post("/auth/signin", { name, password })) as {
-          success?: boolean;
-          user?: AuthUser;
-          message?: string;
-        };
-        if (res?.success && res.user) {
-          setUser(res.user);
-          persistAuth(res.user);
-          invalidateCachedGet("/account_info");
-          return { success: true as const, user: res.user };
-        }
-        return { success: false as const, message: res?.message || "Sign in failed" };
-      } catch (error: unknown) {
-        const err = error as { data?: { message?: string }; message?: string };
-        const message =
-          err?.data && typeof err.data === "object" && err.data !== null && "message" in err.data
-            ? String((err.data as { message?: string }).message)
-            : err?.message || "Sign in failed";
-        return { success: false as const, message };
-      }
-    },
-    [post],
-  );
-
-  const signup = useCallback(
-    async (name: string, password: string) => {
-      try {
-        const res = (await post("/auth/signup", { name, password })) as {
-          success?: boolean;
-          user?: AuthUser;
-          message?: string;
-        };
-        if (res?.success && res.user) {
-          setUser(res.user);
-          persistAuth(res.user);
-          invalidateCachedGet("/account_info");
-          return { success: true as const, user: res.user };
-        }
-        return { success: false as const, message: res?.message || "Sign up failed" };
-      } catch (error: unknown) {
-        const err = error as { data?: { message?: string }; message?: string };
-        const message =
-          err?.data && typeof err.data === "object" && err.data !== null && "message" in err.data
-            ? String((err.data as { message?: string }).message)
-            : err?.message || "Sign up failed";
-        return { success: false as const, message };
-      }
-    },
-    [post],
-  );
+  // Production accounts are created by the migration/invitation workflow so a
+  // browser cannot create an identity without an explicit profile grant.
+  const signup = useCallback(async (): Promise<AuthResult> => ({
+    success: false,
+    message: "Account creation is invitation-only. Ask an administrator to grant a profile.",
+  }), []);
 
   const signout = useCallback(() => {
     setUser(null);
-    clearStoredAuth();
     invalidateCachedGet("/account_info");
+    void signOut(firebaseAuth);
   }, []);
 
-  const value = useMemo(
-    () => ({
-      user,
-      isAuthenticated: !!user,
-      signin,
-      signup,
-      signout,
-    }),
-    [user, signin, signup, signout],
-  );
+  const value = useMemo(() => ({
+    user,
+    isAuthenticated: Boolean(user),
+    authReady,
+    signin,
+    signup,
+    signout,
+  }), [user, authReady, signin, signup, signout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

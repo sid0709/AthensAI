@@ -5,7 +5,6 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GridFSBucket } from "mongodb";
 import {
 	accountInfoCollection,
 	jobsCollection,
@@ -22,6 +21,7 @@ import {
 	mailUserLabelsCollection,
 	avalonRunsCollection,
 	aiApiUsageCollection,
+	getMongoDb,
 	getVendorTasksCollection,
 	getBidReviewEventsCollection,
 } from "../db/mongo.js";
@@ -31,6 +31,7 @@ import { deleteScoresForApplier } from "./matching/matchScoreStore.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
 import { removeResumeEmbedding } from "./embeddings/embeddingIngest.js";
 import { deleteProfileVector } from "./vectorStore/qdrantClient.js";
+import { deleteStoredObject } from "./firebase/objectStore.js";
 
 const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 /** Matches chromeProfilesController: repo root (parent of Athens-server). */
@@ -59,29 +60,12 @@ function slugifyFirebase(value) {
 	);
 }
 
-async function deleteGridFsIds(db, bucketName, ids) {
-	if (!db || !ids.length) return 0;
-	const bucket = new GridFSBucket(db, { bucketName });
-	let deleted = 0;
-	for (const id of ids) {
-		if (!id) continue;
-		try {
-			await bucket.delete(id);
-			deleted += 1;
-		} catch {
-			/* missing file */
-		}
-	}
-	return deleted;
-}
-
 async function purgeUserResumes(ownerName) {
-	if (!userResumesCollection) return { resumes: 0, gridFs: 0 };
+	if (!userResumesCollection) return { resumes: 0, objects: 0 };
 	const docs = await userResumesCollection.find({ ownerName }).toArray();
-	const gridIds = docs.filter((d) => d.storage === "gridfs" && d.gridFsId).map((d) => d.gridFsId);
-	const db = userResumesCollection.db;
-	const gridFs = await deleteGridFsIds(db, "user_resume_files", gridIds);
+	let objects = 0;
 	for (const doc of docs) {
+		if (await deleteStoredObject(doc, { collection: userResumesCollection, legacyDb: getMongoDb(), legacyBucketName: "user_resume_files" })) objects += 1;
 		void removeResumeEmbedding(String(doc._id)).catch(() => {});
 	}
 	const res = await userResumesCollection.deleteMany({ ownerName });
@@ -90,17 +74,32 @@ async function purgeUserResumes(ownerName) {
 	} catch {
 		/* qdrant optional */
 	}
-	return { resumes: res.deletedCount ?? 0, gridFs };
+	return { resumes: res.deletedCount ?? 0, objects };
 }
 
 async function purgeResumeTemplates(ownerName) {
-	if (!resumeTemplatesCollection) return { templates: 0, gridFs: 0 };
+	if (!resumeTemplatesCollection) return { templates: 0, objects: 0 };
 	const docs = await resumeTemplatesCollection.find({ ownerName }).toArray();
-	const gridIds = docs.filter((d) => d.storage === "gridfs" && d.gridFsId).map((d) => d.gridFsId);
-	const db = resumeTemplatesCollection.db;
-	const gridFs = await deleteGridFsIds(db, "resume_template_files", gridIds);
+	let objects = 0;
+	for (const doc of docs) {
+		if (await deleteStoredObject(doc, { collection: resumeTemplatesCollection, legacyDb: getMongoDb(), legacyBucketName: "resume_template_files" })) objects += 1;
+	}
 	const res = await resumeTemplatesCollection.deleteMany({ ownerName });
-	return { templates: res.deletedCount ?? 0, gridFs };
+	return { templates: res.deletedCount ?? 0, objects };
+}
+
+async function purgeMailMessages(ownerName) {
+	if (!mailMessagesCollection) return { messages: 0, objects: 0 };
+	const docs = await mailMessagesCollection.find({ applierName: ownerName }).toArray();
+	let objects = 0;
+	for (const doc of docs) {
+		const candidates = [doc.bodyObject, doc.bodyText?.object, doc.bodyHtml?.object].filter(Boolean);
+		for (const object of candidates) {
+			if (await deleteStoredObject({ object })) objects += 1;
+		}
+	}
+	const result = await mailMessagesCollection.deleteMany({ applierName: ownerName });
+	return { messages: result.deletedCount ?? 0, objects };
 }
 
 async function purgeVendorAndBids(applierName) {
@@ -184,11 +183,27 @@ async function purgeDiskArtifacts(applierName) {
 
 async function purgeFirebaseRecordings(applierName) {
 	try {
-		const { getStorageBucket } = await import("./firebase/firebaseAdmin.js");
+		const { getFirestoreDb, getStorageBucket } = await import("./firebase/firebaseAdmin.js");
 		const bucket = getStorageBucket();
-		const prefix = `bid-recordings/${slugifyFirebase(applierName)}/`;
-		await bucket.deleteFiles({ prefix });
-		return { ok: true, prefix };
+		const slug = slugifyFirebase(applierName);
+		const prefixes = [
+			`bid-recordings/${slug}/`,
+			`user-resumes/${slug}/`,
+			`resume-templates/${slug}/`,
+			`mail-bodies/${slug}/`,
+			`agent-resumes/by-job/${slug}/`,
+			`agent-resumes/reviews/${slug}/`,
+			`avalon-run-logs/${slug}/`,
+		];
+		for (const prefix of prefixes) await bucket.deleteFiles({ prefix });
+
+		const chunks = await getFirestoreDb().collection("avalon_run_log_chunks").where("applierName", "==", applierName).get();
+		for (let index = 0; index < chunks.docs.length; index += 400) {
+			const batch = getFirestoreDb().batch();
+			for (const doc of chunks.docs.slice(index, index + 400)) batch.delete(doc.ref);
+			await batch.commit();
+		}
+		return { ok: true, prefixes, avalonLogChunks: chunks.size };
 	} catch (err) {
 		return { ok: false, error: err instanceof Error ? err.message : String(err) };
 	}
@@ -211,9 +226,9 @@ export async function wipeAccountData({ name, accountId }) {
 	const summary = {
 		applierName,
 		resumes: 0,
-		resumeGridFs: 0,
+		resumeObjects: 0,
 		templates: 0,
-		templateGridFs: 0,
+		templateObjects: 0,
 		generations: 0,
 		generatorConfig: 0,
 		knowledgeGraphs: 0,
@@ -221,6 +236,7 @@ export async function wipeAccountData({ name, accountId }) {
 		matchScores: 0,
 		matchProfileState: 0,
 		mailMessages: 0,
+		mailObjects: 0,
 		mailSyncState: 0,
 		mailLabels: 0,
 		avalonRuns: 0,
@@ -236,11 +252,11 @@ export async function wipeAccountData({ name, accountId }) {
 
 	const resumes = await purgeUserResumes(applierName);
 	summary.resumes = resumes.resumes;
-	summary.resumeGridFs = resumes.gridFs;
+	summary.resumeObjects = resumes.objects;
 
 	const templates = await purgeResumeTemplates(applierName);
 	summary.templates = templates.templates;
-	summary.templateGridFs = templates.gridFs;
+	summary.templateObjects = templates.objects;
 
 	summary.generations = await deleteManySafe(resumeGenerationsCollection, { applierName });
 	summary.generatorConfig = await deleteManySafe(resumeGeneratorConfigCollection, { applierName });
@@ -251,7 +267,9 @@ export async function wipeAccountData({ name, accountId }) {
 	summary.matchScores = scoreWipe.deleted ?? 0;
 	summary.matchProfileState = await deleteManySafe(matchProfileStateCollection, { applierName });
 
-	summary.mailMessages = await deleteManySafe(mailMessagesCollection, { applierName });
+	const mail = await purgeMailMessages(applierName);
+	summary.mailMessages = mail.messages;
+	summary.mailObjects = mail.objects;
 	summary.mailSyncState = await deleteManySafe(mailSyncStateCollection, { applierName });
 	summary.mailLabels = await deleteManySafe(mailUserLabelsCollection, { applierName });
 

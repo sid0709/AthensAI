@@ -146,7 +146,7 @@ export function serializeTask(doc) {
 function resolveVendorTasks() {
 	const collection = getVendorTasksCollection();
 	if (!collection) {
-		return { collection: null, error: "MongoDB is not connected." };
+		return { collection: null, error: "Database is not connected." };
 	}
 	return { collection, error: null };
 }
@@ -380,7 +380,7 @@ export async function updateVendorTask(req, res) {
 		let doc = null;
 		if (ObjectId.isValid(taskId)) {
 			const result = await collection.findOneAndUpdate(
-				{ _id: new ObjectId(taskId) },
+				{ _id: new ObjectId(taskId), applierName },
 				{ $set: update },
 				{ returnDocument: "after" },
 			);
@@ -388,7 +388,7 @@ export async function updateVendorTask(req, res) {
 			if (doc && !doc._id) doc = null;
 		}
 		if (!doc) {
-			const query = applierName ? { applierName, jobId: taskId } : { jobId: taskId };
+			const query = { applierName, jobId: taskId };
 			const result = await collection.findOneAndUpdate(query, { $set: update }, { returnDocument: "after" });
 			doc = result?.value ?? result;
 			if (doc && !doc._id) doc = null;

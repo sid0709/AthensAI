@@ -43,6 +43,10 @@ import firebaseRoutes from "./src/routes/firebaseRoutes.js";
 import bidResultsRoutes from "./src/routes/bidResultsRoutes.js";
 import jobAnalyzeRoutes from "./src/routes/jobAnalyzeRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
+import { requireFirebaseAuth } from "./src/middleware/firebaseAuth.js";
+import internalTaskRoutes from "./src/routes/internalTaskRoutes.js";
+import { requireWritesEnabled } from "./src/middleware/writeGate.js";
+import { requireRoleScope } from "./src/middleware/roleScope.js";
 import {
 	getAutoBidProfile,
 	upsertAutoBidProfile,
@@ -69,13 +73,13 @@ function resolveWorkerCount() {
 const workerCount = resolveWorkerCount();
 const useCluster = workerCount > 1;
 
-let mongoReady = false;
+let databaseReady = false;
 
 function createApp() {
 	const app = express();
-	// Keep JSON body limit large — AI/resume + Bid Monitor base64 video → Firebase.
-	app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "4096mb" }));
-	app.use(cors({ origin: "*" }));
+	app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || (process.env.NODE_ENV === "production" ? "10mb" : "100mb") }));
+	const corsOrigins = String(process.env.CORS_ORIGIN || "*").split(",").map((value) => value.trim()).filter(Boolean);
+	app.use(cors({ origin: corsOrigins.includes("*") ? true : corsOrigins, credentials: false }));
 	app.use(requestLogger("api"));
 	app.use(metricsMiddleware);
 	app.get("/metrics", (_req, res) => {
@@ -88,19 +92,24 @@ function createApp() {
 			service: "athens-server",
 			pid: process.pid,
 			worker: Boolean(cluster.isWorker),
-			mongoReady,
+			databaseReady,
 		});
 	});
 
 	app.get("/readyz", async (_req, res) => {
-		if (!mongoReady || !getMongoDb()) return res.status(503).json({ ok: false, mongoReady: false });
+		if (!databaseReady || !getMongoDb()) return res.status(503).json({ ok: false, databaseReady: false });
 		try {
 			await getMongoDb().command({ ping: 1 });
-			return res.json({ ok: true, mongoReady: true });
+			return res.json({ ok: true, databaseReady: true });
 		} catch {
-			return res.status(503).json({ ok: false, mongoReady: false, error: "database unavailable" });
+			return res.status(503).json({ ok: false, databaseReady: false, error: "database unavailable" });
 		}
 	});
+	app.use("/internal/tasks", internalTaskRoutes);
+
+	app.use(requireFirebaseAuth);
+	app.use(requireRoleScope);
+	app.use(requireWritesEnabled);
 
 	app.use("/api", openTabsRoutes);
 	app.use("/api", jobRoutes);
@@ -147,20 +156,22 @@ function createApp() {
 
 async function startBackgroundWorkers() {
 	await initMongo();
-	mongoReady = true;
-	startJobAnalysisWorker();
-	startMatchScoreWorker();
+	databaseReady = true;
+	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
+		startJobAnalysisWorker();
+		startMatchScoreWorker();
+	}
 	console.log(`[athens] primary background workers started (pid ${process.pid})`);
 }
 
 async function startHttpWorker({ clustered }) {
 	await initMongo();
-	mongoReady = true;
-	if (!clustered) startMonitoringLoop();
+	databaseReady = true;
+	if (!clustered && process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
 	const app = createApp();
 	const server = http.createServer(app);
-	initSocket(server, { clustered });
+	await initSocket(server, { clustered });
 
 	let shuttingDown = false;
 	async function shutdown(signal) {
@@ -227,7 +238,7 @@ async function startPrimary() {
 	});
 
 	await startBackgroundWorkers();
-	startMonitoringLoop();
+	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
 	let shuttingDown = false;
 	async function shutdown(signal) {
@@ -265,8 +276,10 @@ async function main() {
 	await startHttpWorker({ clustered });
 	if (!clustered) {
 		// Single process also owns background workers (cluster primary runs them instead).
+	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
 		startJobAnalysisWorker();
 		startMatchScoreWorker();
+	}
 	}
 }
 

@@ -10,6 +10,7 @@ import {
 	dropLegacyUniqueApplyLinkIndex,
 } from "../services/jobMarketIndexes.js";
 import { migrateAllExternalScrapedJobsToMarket } from "../services/promoteExternalJobToMarket.js";
+import { createFirestoreMongoAdapter } from "./firestoreMongoAdapter.js";
 
 let mongoClient;
 let mongoDb;
@@ -153,6 +154,37 @@ async function ensureMatchScoreIndexes() {
 }
 
 async function initMongo() {
+	if (String(process.env.DATABASE_BACKEND || "").toLowerCase() === "firestore") {
+		const db = createFirestoreMongoAdapter();
+		mongoDb = db;
+		jobsCollection = db.collection('job_market');
+		companyCategoryCollection = db.collection('company_category');
+		personalInfoCollection = db.collection('personal_info');
+		skillEnrichmentQueueCollection = db.collection('skill_enrichment_queue');
+		skillCooccurrenceCollection = db.collection('skill_cooccurrence');
+		userKnowledgeGraphsCollection = db.collection('user_knowledge_graphs');
+		accountInfoCollection = db.collection('account_info');
+		rulesCollection = db.collection('rules');
+		resumeGeneratorConfigCollection = db.collection('resume_generator_config');
+		resumeGenerationsCollection = db.collection('resume_generations');
+		mailMessagesCollection = db.collection('mail_messages');
+		mailSyncStateCollection = db.collection('mail_sync_state');
+		mailUserLabelsCollection = db.collection('mail_user_labels');
+		userResumesCollection = db.collection('user_resumes');
+		resumeTemplatesCollection = db.collection('resume_templates');
+		avalonRunsCollection = db.collection('avalon_apply_runs');
+		jobMatchScoresCollection = db.collection('job_match_scores');
+		matchProfileStateCollection = db.collection('match_profile_state');
+		userSkillsCollection = db.collection('user_skills');
+		skillDictionaryCollection = db.collection('skill_dictionary');
+		externalScrapedJobsCollection = db.collection('external_scraped_jobs');
+		aiApiUsageCollection = db.collection(AI_API_USAGE_COLLECTION);
+		llmCallLogCollection = aiApiUsageCollection;
+		vendorTasksCollection = db.collection('vendor_tasks');
+		bidReviewEventsCollection = db.collection('bid_review_events');
+		console.log('Connected to native Firestore database (default)');
+		return;
+	}
 	const mongoUrl = process.env.MONGO_URL;
 	if (!mongoUrl) {
 		throw new Error(

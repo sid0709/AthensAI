@@ -7,6 +7,27 @@ import {
 } from "../services/accountInfoStore.js";
 import { decryptAccountDoc } from "../services/autoBidProfileSecrets.js";
 
+export const getAuthSession = async (req, res) => {
+	if (!req.auth) {
+		return res.status(401).json({ success: false, message: "Authentication required" });
+	}
+	const grants = Array.isArray(req.profileAccess?.grants) ? req.profileAccess.grants : [];
+	const primary = grants.find((grant) => grant.primary) || grants[0] || null;
+	return res.json({
+		success: true,
+		user: {
+			_id: req.auth.uid,
+			uid: req.auth.uid,
+			email: req.auth.email || null,
+			name: primary?.profileName || primary?.applierName || req.auth.name || req.auth.email || req.auth.uid,
+			profileId: primary?.profileId || null,
+			role: req.auth.role || "owner",
+			permission: req.auth.admin === true ? "admin" : req.auth.role || "owner",
+		},
+		profiles: grants,
+	});
+};
+
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -22,18 +43,35 @@ async function findAccountByName(name) {
 }
 
 /** Strip secrets before returning account docs to clients. */
-function sanitizeAccount(doc) {
+function tokenIsAdmin(req) {
+	return req.auth?.admin === true || String(req.auth?.role || "").toLowerCase() === "admin";
+}
+
+function canAccessAccount(req, doc) {
+	if (tokenIsAdmin(req)) return true;
+	const id = String(doc?._id || "");
+	const name = String(doc?.name || "").trim().toLowerCase();
+	return req.profileAccess?.profileIds?.has(id) || req.profileAccess?.profileNames?.has(name) || false;
+}
+
+async function sanitizeAccount(doc, { includeSecrets = false } = {}) {
 	if (!doc) return doc;
 	const { password, vendorPassword, ...rest } = doc;
-	return decryptAccountDoc(rest);
+	if (includeSecrets) return decryptAccountDoc(rest);
+	const safe = { ...rest };
+	if (safe.autoBidProfile && typeof safe.autoBidProfile === "object") {
+		safe.autoBidProfile = { ...safe.autoBidProfile };
+		for (const field of ["openaiApiKey", "deepseekApiKey", "gmailPassword", "gmailAppPassword", "defaultPassword"]) delete safe.autoBidProfile[field];
+	}
+	return safe;
 }
 
 export const getAccountInfo = async (req, res) => {
 	try {
 		console.log('GET /api/account_info - Fetching all account info');
-		const accountInfo = await accountInfoCollection.find({}).toArray();
-		// Don't return passwords (owner or vendor-purpose)
-		const sanitized = accountInfo.map((doc) => sanitizeAccount(doc));
+		const accountInfo = (await accountInfoCollection.find({}).toArray()).filter((doc) => canAccessAccount(req, doc));
+		const includeSecrets = tokenIsAdmin(req) || String(req.auth?.role || "").toLowerCase() === "owner";
+		const sanitized = await Promise.all(accountInfo.map((doc) => sanitizeAccount(doc, { includeSecrets })));
 		res.status(200).json(sanitized);
 	} catch (error) {
 		console.error('Error in getAccountInfo:', error);
@@ -58,7 +96,9 @@ export const getAccountInfoByName = async (req, res) => {
 		if (!doc) {
 			return res.status(404).json({ success: false, message: "Account not found" });
 		}
-		res.status(200).json({ success: true, data: sanitizeAccount(doc) });
+		if (!canAccessAccount(req, doc)) return res.status(403).json({ success: false, message: "Profile access denied" });
+		const includeSecrets = tokenIsAdmin(req) || String(req.auth?.role || "").toLowerCase() === "owner";
+		res.status(200).json({ success: true, data: await sanitizeAccount(doc, { includeSecrets }) });
 	} catch (error) {
 		console.error("Error in getAccountInfoByName:", error);
 		res.status(500).json({ success: false, message: error.message });

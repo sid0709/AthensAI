@@ -1,8 +1,10 @@
 import { accountInfoCollection } from '../db/mongo.js';
+import { ObjectId } from 'mongodb';
 import { excludeExtensionV2JobsFilter } from '../config/jobMarketSchema.js';
 import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
+import { searchJobIds } from './search/algoliaJobs.js';
 
 const SCORE_DIMENSIONS = {
 	overall: 'overallScore',
@@ -210,8 +212,14 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 		query.$and.push(excludeExtensionV2JobsFilter());
 	}
 
-	const titleFilter = buildMongoCaseInsensitiveRegexFilter(q);
-	if (titleFilter) query.$and.push({ title: titleFilter });
+	if (String(q || '').trim()) {
+		const algoliaIds = await searchJobIds(q);
+		if (algoliaIds) query.$and.push({ _id: { $in: algoliaIds.map((id) => new ObjectId(id)) } });
+		else {
+			const titleFilter = buildMongoCaseInsensitiveRegexFilter(q);
+			if (titleFilter) query.$and.push({ title: titleFilter });
+		}
+	}
 
 	// Show only jobs whose skills have been AI-extracted.
 	if (aiExtracted === true || aiExtracted === 'true') {

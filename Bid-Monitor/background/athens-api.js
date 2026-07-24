@@ -17,6 +17,7 @@ const AthensApi = (() => {
     return {
       apiUrl: DEFAULT_API_URL,
       applierName: String(settings.applierName || '').trim(),
+      email: String(settings.email || '').trim(),
     };
   }
 
@@ -25,6 +26,7 @@ const AthensApi = (() => {
     const next = {
       apiUrl: DEFAULT_API_URL,
       applierName: String(partial.applierName ?? current.applierName).trim(),
+      email: String(partial.email ?? current.email).trim(),
     };
     await chrome.storage.local.set({ [SETTINGS_KEY]: next });
     return next;
@@ -33,9 +35,12 @@ const AthensApi = (() => {
   async function fetchJson(path, { method = 'GET', body, apiUrl: _apiUrl, timeoutMs } = {}) {
     const base = DEFAULT_API_URL;
     const url = path.startsWith('http') ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+    const idToken = typeof AuthSession !== 'undefined' ? await AuthSession.getIdToken() : '';
+    const headers = body ? { 'Content-Type': 'application/json' } : {};
+    if (idToken) headers.Authorization = `Bearer ${idToken}`;
     const response = await fetch(url, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(timeoutMs ?? QUEUE_TIMEOUT_MS),
     });
@@ -182,8 +187,36 @@ const AthensApi = (() => {
     });
   }
 
+  async function sha256Hex(blob) {
+    const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function putResumable(uploadUrl, blob) {
+    const chunkSize = 8 * 1024 * 1024;
+    let offset = 0;
+    while (offset < blob.size) {
+      const end = Math.min(offset + chunkSize, blob.size);
+      const response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Length': String(end - offset),
+          'Content-Range': `bytes ${offset}-${end - 1}/${blob.size}`,
+        },
+        body: blob.slice(offset, end),
+        signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      });
+      if (response.status !== 308 && !response.ok) {
+        throw new Error(`Storage upload failed (${response.status})`);
+      }
+      offset = end;
+    }
+  }
+
   async function uploadRecording(applierName, payload) {
-    return fetchJson('/bid-recordings/upload', {
+    if (!(payload.blob instanceof Blob) || payload.blob.size === 0) throw new Error('Recording blob is required.');
+    const sha256 = await sha256Hex(payload.blob);
+    const started = await fetchJson('/bid-recordings/uploads', {
       method: 'POST',
       body: {
         applierName,
@@ -193,7 +226,17 @@ const AthensApi = (() => {
         bidderName: payload.bidderName || undefined,
         contentType: payload.contentType || 'video/webm',
         fileName: payload.fileName || undefined,
-        videoBase64: payload.videoBase64,
+        byteCount: payload.blob.size,
+        sha256,
+      },
+      timeoutMs: QUEUE_TIMEOUT_MS,
+    });
+    await putResumable(started.uploadUrl, payload.blob);
+    return fetchJson(`/bid-recordings/uploads/${encodeURIComponent(started.uploadId)}/complete`, {
+      method: 'POST',
+      body: {
+        applyUrl: payload.applyUrl || undefined,
+        bidderName: payload.bidderName || undefined,
         durationSec: payload.durationSec ?? undefined,
         recordedStartAt: payload.recordedStartAt ?? undefined,
         recordedEndAt: payload.recordedEndAt ?? undefined,
@@ -294,6 +337,12 @@ const AthensApi = (() => {
         company: payload.company || undefined,
         title: payload.title || undefined,
         pageUrl: payload.pageUrl || undefined,
+        sessionId: payload.sessionId || undefined,
+        source: payload.source || undefined,
+        fileSize: Number.isFinite(payload.fileSize) ? payload.fileSize : undefined,
+        lastModified: Number.isFinite(payload.lastModified) ? payload.lastModified : undefined,
+        mimeType: payload.mimeType || undefined,
+        auditKey: payload.auditKey || undefined,
       },
       timeoutMs: QUEUE_TIMEOUT_MS,
     });
@@ -317,9 +366,13 @@ const AthensApi = (() => {
     const settings = await getSettings();
     const base = settings.apiUrl.replace(/\/$/, '');
     const url = `${base}/bid-results/resumes.zip`;
+    const idToken = typeof AuthSession !== 'undefined' ? await AuthSession.getIdToken() : '';
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
       body: JSON.stringify({
         applierName,
         jobIds: Array.isArray(jobIds) ? jobIds.map(String).filter(Boolean) : [],
@@ -396,59 +449,15 @@ const AthensApi = (() => {
     });
   }
 
-  /**
-   * Production bidder login against Athens.
-   * Requires vendorAllowed + vendorPassword on the profile.
-   */
-  async function bidderSignIn(name, password, _apiUrl) {
-    const base = DEFAULT_API_URL;
-    try {
-      const response = await fetch(`${base}/auth/bidder-signin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, password }),
-        signal: AbortSignal.timeout(QUEUE_TIMEOUT_MS),
-      });
-      let data = null;
-      try {
-        data = await response.json();
-      } catch {
-        data = null;
-      }
-      if (!response.ok || !data?.success) {
-        return {
-          ok: false,
-          error:
-            data?.message ||
-            data?.error ||
-            (response.status === 0
-              ? 'Cannot reach Athens. Check that Athens-server is running.'
-              : `Sign in failed (${response.status})`),
-          code: data?.code || null,
-        };
-      }
-      return { ok: true, user: data.user || { name } };
-    } catch (err) {
-      return {
-        ok: false,
-        error:
-          err instanceof Error && err.name === 'TimeoutError'
-            ? 'Athens sign-in timed out. Is Athens-server running?'
-            : err instanceof Error
-              ? err.message
-              : String(err),
-        code: 'NETWORK',
-      };
-    }
-  }
-
   async function checkAthensHealth() {
     const settings = await getSettings();
     const base = settings.apiUrl.replace(/\/$/, '');
     // Lightweight ping — do NOT use /bid-results (slow, large payload → false "down").
     try {
+      const idToken = typeof AuthSession !== 'undefined' ? await AuthSession.getIdToken() : '';
       const response = await fetch(`${base}/agents/health`, {
         method: 'GET',
+        headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
         signal: AbortSignal.timeout(5000),
       });
       return {
@@ -486,7 +495,11 @@ const AthensApi = (() => {
 
   async function fetchResumePdf(applierName, jobId) {
     const url = await getResumePdfUrl(applierName, jobId);
-    const response = await fetch(url, { signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS) });
+    const idToken = typeof AuthSession !== 'undefined' ? await AuthSession.getIdToken() : '';
+    const response = await fetch(url, {
+      headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+    });
     if (!response.ok) {
       let message = `Draft PDF unavailable (${response.status})`;
       try {
@@ -524,7 +537,6 @@ const AthensApi = (() => {
     ANALYZE_TIMEOUT_MS,
     getSettings,
     saveSettings,
-    bidderSignIn,
     fetchBidReadyPools,
     fetchRejectedBids,
     markBidFixed,

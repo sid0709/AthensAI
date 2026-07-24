@@ -5,6 +5,9 @@ import { Toaster } from "./app/components/ui/sonner";
 import { AppRoutes } from "./app/router/AppRoutes";
 import { AuthProvider } from "./context/auth-context";
 import "./styles/index.css";
+import { installAuthenticatedFetch } from "./lib/authenticated-fetch";
+
+installAuthenticatedFetch();
 
 createRoot(document.getElementById("root")!).render(
   <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>

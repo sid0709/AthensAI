@@ -1,10 +1,9 @@
-import { ObjectId, GridFSBucket } from "mongodb";
-import { userResumesCollection, userKnowledgeGraphsCollection } from "../db/mongo.js";
+import { ObjectId } from "mongodb";
+import { getMongoDb, userResumesCollection, userKnowledgeGraphsCollection } from "../db/mongo.js";
 import { rebuildProfileGraph } from "./userKnowledgeGraph/index.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
 import { removeResumeEmbedding } from "./embeddings/embeddingIngest.js";
-
-const INLINE_MAX_BYTES = 8 * 1024 * 1024; // 8MB
+import { deleteStoredObject, putBinaryObject, readStoredObject, storageSlug } from "./firebase/objectStore.js";
 
 const ALLOWED_MIME = new Set([
   "application/pdf",
@@ -65,59 +64,27 @@ async function extractText(buffer, mimeType, fileName) {
   return "";
 }
 
-function getGridFsBucket() {
-  if (!userResumesCollection) return null;
-  const db = userResumesCollection.db;
-  return new GridFSBucket(db, { bucketName: "user_resume_files" });
-}
-
-async function storeContent(buffer) {
-  if (buffer.length <= INLINE_MAX_BYTES) {
-    return { storage: "inline", contentBase64: buffer.toString("base64"), gridFsId: null };
-  }
-  const bucket = getGridFsBucket();
-  if (!bucket) throw new Error("GridFS not available");
-  const gridFsId = new ObjectId();
-  await new Promise((resolve, reject) => {
-    const stream = bucket.openUploadStreamWithId(gridFsId, `resume-${gridFsId}`);
-    stream.on("error", reject);
-    stream.on("finish", resolve);
-    stream.end(buffer);
+export async function storeUserResumeContent({ resumeId, ownerName, fileName, mimeType, buffer }) {
+  const stored = await putBinaryObject({
+    buffer,
+    objectPath: `user-resumes/${storageSlug(ownerName)}/${String(resumeId)}/content`,
+    mimeType,
+    metadata: { ownerName, resumeId: String(resumeId), originalFileName: fileName },
   });
-  return { storage: "gridfs", contentBase64: null, gridFsId };
+  return {
+    storage: stored.storage,
+    file: stored.file,
+    contentBase64: stored.contentBase64,
+    sizeBytes: buffer.length,
+  };
 }
 
 async function readContent(doc) {
-  if (doc.storage === "gridfs" && doc.gridFsId) {
-    const bucket = getGridFsBucket();
-    if (!bucket) throw new Error("GridFS not available");
-    const chunks = [];
-    await new Promise((resolve, reject) => {
-      bucket
-        .openDownloadStream(doc.gridFsId)
-        .on("data", (chunk) => chunks.push(chunk))
-        .on("error", reject)
-        .on("end", resolve);
-    });
-    return Buffer.concat(chunks);
-  }
-  if (doc.contentBase64) {
-    return Buffer.from(doc.contentBase64, "base64");
-  }
-  return null;
+  return readStoredObject(doc, { collection: userResumesCollection, legacyDb: getMongoDb(), legacyBucketName: "user_resume_files" });
 }
 
 async function deleteStoredContent(doc) {
-  if (doc.storage === "gridfs" && doc.gridFsId) {
-    const bucket = getGridFsBucket();
-    if (bucket) {
-      try {
-        await bucket.delete(doc.gridFsId);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  return deleteStoredObject(doc, { collection: userResumesCollection, legacyDb: getMongoDb(), legacyBucketName: "user_resume_files" });
 }
 
 function parseOwnerId(raw) {
@@ -197,22 +164,24 @@ export async function createUserResume(payload) {
   }
 
   const extractedText = await extractText(buffer, mimeType, fileName);
-  const stored = await storeContent(buffer);
+  const _id = new ObjectId();
+  const stored = await storeUserResumeContent({ resumeId: _id, ownerName, fileName, mimeType, buffer });
   const now = new Date().toISOString();
 
   const existingCount = await userResumesCollection.countDocuments({ ownerName });
   const isPrimary = existingCount === 0;
 
   const doc = {
+    _id,
     ownerId,
     ownerName,
     techStack,
     fileName,
     mimeType,
-    sizeBytes: buffer.length,
+    sizeBytes: stored.sizeBytes,
     storage: stored.storage,
+    file: stored.file,
     contentBase64: stored.contentBase64,
-    gridFsId: stored.gridFsId,
     extractedText,
     isPrimary,
     uploadedAt: now,

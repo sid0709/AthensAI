@@ -210,7 +210,7 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
     };
   }
 
-  const acc = decryptAccountDoc(await findAccount(ownerName));
+  const acc = await decryptAccountDoc(await findAccount(ownerName));
   if (!acc) throw new Error("Account not found");
 
   const profile = acc.autoBidProfile || {};

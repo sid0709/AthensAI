@@ -8,19 +8,26 @@ import {
 	signin,
 	bidderSignin,
 	setVendorPassword,
+	getAuthSession,
 } from "../controllers/accountInfoController.js";
+import { requireAdmin } from "../middleware/requireAdmin.js";
 
 const router = express.Router();
+const legacyAuth = (req, res, next) => {
+	if (process.env.NODE_ENV === "production") return res.status(410).json({ success: false, message: "Legacy password authentication is disabled; use Firebase Auth." });
+	return next();
+};
 
 router.get("/account_info", getAccountInfo);
 router.get("/account_info/by/:name", getAccountInfoByName);
-router.post("/account_info", addAccountInfo);
-router.delete("/account_info/:name", removeAccountInfo);
+router.post("/account_info", requireAdmin, addAccountInfo);
+router.delete("/account_info/:name", requireAdmin, removeAccountInfo);
 
 // Auth routes
-router.post("/auth/signup", signup);
-router.post("/auth/signin", signin);
-router.post("/auth/bidder-signin", bidderSignin);
-router.post("/auth/vendor-password", setVendorPassword);
+router.get("/auth/session", getAuthSession);
+router.post("/auth/signup", legacyAuth, signup);
+router.post("/auth/signin", legacyAuth, signin);
+router.post("/auth/bidder-signin", legacyAuth, bidderSignin);
+router.post("/auth/vendor-password", legacyAuth, setVendorPassword);
 
 export default router;

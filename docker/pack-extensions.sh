@@ -16,6 +16,7 @@ fi
 WXT_AVALON_RELAY_URL="${WXT_AVALON_RELAY_URL:-${PUBLIC_ORIGIN%/}}"
 WXT_API_URL="${WXT_API_URL:-${PUBLIC_ORIGIN%/}/api}"
 ATHENS_API_URL="${ATHENS_API_URL:-${PUBLIC_ORIGIN%/}/api}"
+FIREBASE_WEB_API_KEY="${FIREBASE_WEB_API_KEY:-}"
 
 ENCODE_PY="${ROOT}/docker/encode-endpoint.py"
 # Bake opaque tokens into Avalon so the zip has no plaintext VPS host.
@@ -38,6 +39,7 @@ cd "${ROOT}/project-avalon"
 npm exec -w @avalon/extension -- wxt prepare
 WXT_AVALON_RELAY_URL="${WXT_AVALON_RELAY_ENC}" \
 WXT_API_URL="${WXT_API_ENC}" \
+WXT_FIREBASE_WEB_API_KEY="${FIREBASE_WEB_API_KEY}" \
   npm run zip -w @avalon/extension
 
 AVALON_VERSION="$(python3 -c "import json; print(json.load(open('${ROOT}/project-avalon/packages/extension/package.json'))['version'])")"

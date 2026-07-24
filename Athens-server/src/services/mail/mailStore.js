@@ -3,7 +3,57 @@ import {
 	mailSyncStateCollection,
 	mailUserLabelsCollection,
 } from '../../db/mongo.js';
+import { createHash } from 'node:crypto';
 import { ALL_MAIL_PATH, extractCustomLabels } from './folderMapper.js';
+import { deleteStoredObject, putBinaryObject, readStoredObject, storageSlug } from '../firebase/objectStore.js';
+
+const MAIL_INLINE_BODY_BYTES = 350 * 1024;
+
+function mailBodyPath(applierName, uid, mailbox) {
+	const key = createHash('sha256').update(`${mailbox}\0${Number(uid)}`).digest('hex').slice(0, 32);
+	return `mail-bodies/${storageSlug(applierName)}/${key}/body.json`;
+}
+
+async function externalizeMailBody(applierName, uid, mailbox, patch) {
+	const body = {
+		bodyText: typeof patch.bodyText === 'string' ? patch.bodyText : '',
+		bodyHtml: typeof patch.bodyHtml === 'string' ? patch.bodyHtml : null,
+	};
+	const bytes = Buffer.from(JSON.stringify(body), 'utf8');
+	if (bytes.length <= MAIL_INLINE_BODY_BYTES) return { ...patch, bodyObject: null, bodyExternalized: false };
+
+	const stored = await putBinaryObject({
+		buffer: bytes,
+		objectPath: mailBodyPath(applierName, uid, mailbox),
+		mimeType: 'application/json',
+		metadata: { applierName, uid: Number(uid), mailbox, kind: 'mail-body' },
+	});
+	if (stored.storage !== 'gcs') return patch;
+	return {
+		...patch,
+		bodyText: body.bodyText.slice(0, 32 * 1024),
+		bodyHtml: null,
+		bodyObject: stored.file,
+		bodyExternalized: stored.storage === 'gcs',
+	};
+}
+
+async function hydrateMailBody(doc) {
+	if (!doc) return doc;
+	if (doc.bodyObject?.storagePath) {
+		const bytes = await readStoredObject(doc);
+		if (!bytes) return doc;
+		const body = JSON.parse(bytes.toString('utf8'));
+		return { ...doc, ...body };
+	}
+	const hydrated = { ...doc };
+	for (const field of ['bodyText', 'bodyHtml']) {
+		if (!doc[field]?.object?.storagePath) continue;
+		const bytes = await readStoredObject({ object: doc[field].object });
+		hydrated[field] = bytes?.toString(doc[field].encoding === 'base64' ? 'base64' : 'utf8') ?? null;
+	}
+	return hydrated;
+}
 
 function getInitialSyncSize() {
 	return Number.parseInt(process.env.MAIL_INITIAL_SYNC_SIZE || '250', 10) || 250;
@@ -83,7 +133,11 @@ export async function canSync(applierName, force = false) {
 
 export async function upsertMessages(messages) {
 	if (!mailMessagesCollection || !messages.length) return { upserted: 0 };
-	const ops = messages.map((msg) => {
+	const prepared = await Promise.all(messages.map(async (msg) => {
+		if (!msg.hasBody) return msg;
+		return { ...msg, ...(await externalizeMailBody(msg.applierName, msg.uid, msg.mailbox || ALL_MAIL_PATH, msg)) };
+	}));
+	const ops = prepared.map((msg) => {
 		const mailbox = msg.mailbox || ALL_MAIL_PATH;
 		const setFields = { ...msg, mailbox, syncedAt: new Date() };
 		// Preserve cached bodies when refreshing envelopes/flags only
@@ -125,11 +179,12 @@ export async function updateMessageFlags(applierName, uid, patch, mailbox = ALL_
 
 export async function updateMessageBody(applierName, uid, bodyPatch, mailbox = ALL_MAIL_PATH) {
 	if (!mailMessagesCollection) return null;
-	return mailMessagesCollection.findOneAndUpdate(
+	const storedPatch = await externalizeMailBody(applierName, uid, mailbox, bodyPatch);
+	const updated = await mailMessagesCollection.findOneAndUpdate(
 		messageFilter(applierName, uid, mailbox),
 		{
 			$set: {
-				...bodyPatch,
+				...storedPatch,
 				mailbox,
 				hasBody: true,
 				syncedAt: new Date(),
@@ -137,6 +192,7 @@ export async function updateMessageBody(applierName, uid, bodyPatch, mailbox = A
 		},
 		{ returnDocument: 'after' },
 	);
+	return hydrateMailBody(updated);
 }
 
 /** Cache plain text for AI/search without claiming a full HTML body is loaded. */
@@ -148,6 +204,9 @@ export async function updateMessagePlainText(applierName, uid, { bodyText, previ
 	};
 	if (typeof bodyText === 'string') $set.bodyText = bodyText;
 	if (typeof preview === 'string') $set.preview = preview;
+	if (Buffer.byteLength(String(bodyText || ''), 'utf8') > MAIL_INLINE_BODY_BYTES) {
+		Object.assign($set, await externalizeMailBody(applierName, uid, mailbox, { bodyText, bodyHtml: null }));
+	}
 	return mailMessagesCollection.findOneAndUpdate(
 		messageFilter(applierName, uid, mailbox),
 		{ $set },
@@ -157,6 +216,8 @@ export async function updateMessagePlainText(applierName, uid, { bodyText, previ
 
 export async function clearMessageBody(applierName, uid, mailbox = ALL_MAIL_PATH) {
 	if (!mailMessagesCollection) return null;
+	const existing = await mailMessagesCollection.findOne(messageFilter(applierName, uid, mailbox));
+	if (existing?.bodyObject) await deleteStoredObject(existing);
 	return mailMessagesCollection.findOneAndUpdate(
 		messageFilter(applierName, uid, mailbox),
 		{
@@ -164,6 +225,8 @@ export async function clearMessageBody(applierName, uid, mailbox = ALL_MAIL_PATH
 				hasBody: false,
 				bodyText: '',
 				bodyHtml: null,
+				bodyObject: null,
+				bodyExternalized: false,
 				syncedAt: new Date(),
 			},
 		},
@@ -183,7 +246,7 @@ export async function getMessage(applierName, uid, mailbox) {
 				$or: [{ mailbox: { $exists: false } }, { mailbox: null }, { mailbox: '' }],
 			});
 		}
-		return doc;
+		return hydrateMailBody(doc);
 	}
 	// Legacy fallback: prefer INBOX over All Mail when ambiguous
 	const docs = await mailMessagesCollection
@@ -193,7 +256,7 @@ export async function getMessage(applierName, uid, mailbox) {
 		.toArray();
 	if (docs.length === 1) return docs[0];
 	const inbox = docs.find((d) => d.mailbox === 'INBOX');
-	return inbox || docs[0] || null;
+	return hydrateMailBody(inbox || docs[0] || null);
 }
 
 export async function listMessages(
@@ -252,17 +315,19 @@ export async function getCachedMessageCount(applierName, uids, mailbox = ALL_MAI
 /** Load cached body flags (and content) for a page of IMAP envelopes. */
 export async function getMessagesByUids(applierName, uids, mailbox = ALL_MAIL_PATH) {
 	if (!mailMessagesCollection || !uids.length) return [];
-	return mailMessagesCollection
+	const docs = await mailMessagesCollection
 		.find({ applierName, mailbox, uid: { $in: uids } })
 		.project({
 			uid: 1,
 			hasBody: 1,
 			bodyHtml: 1,
 			bodyText: 1,
+			bodyObject: 1,
 			preview: 1,
 			messageId: 1,
 		})
 		.toArray();
+	return Promise.all(docs.map(hydrateMailBody));
 }
 
 export function enrichMessagesFromCache(messages, cachedDocs) {

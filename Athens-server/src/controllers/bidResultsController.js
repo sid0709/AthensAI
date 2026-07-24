@@ -9,16 +9,20 @@ import { deriveBidUiStatus, REVIEW_STATUSES } from "../lib/bidResultStatus.js";
 import {
 	buildCanonicalResumeFileName,
 	isResumeNameMismatch,
-	profileNameToFileBase,
 	resumeBasename,
 } from "../lib/canonicalResumeName.js";
 import { matchUploadToRecommended } from "../lib/resumeCatalogCompress.js";
+import { resolveResumeOriginalName } from "../lib/resumeAudit.js";
 import {
 	getJobBidReadyDate,
 	listBidQueueJobs,
 	upsertJobBidStatus,
 } from "../services/jobBidStatusService.js";
-import { uploadBidRecordingObject } from "../services/firebase/bidRecordingUpload.js";
+import {
+	uploadBidRecordingObject,
+	beginBidRecordingResumableUpload,
+	completeBidRecordingResumableUpload,
+} from "../services/firebase/bidRecordingUpload.js";
 import {
 	appendBidReviewEvent,
 	listBidReviewEvents,
@@ -835,11 +839,149 @@ export async function startBidResult(req, res) {
 	}
 }
 
+function optionalDate(value) {
+	if (!value) return null;
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function persistBidRecordingMetadata({
+	applierName,
+	jobId,
+	sessionId,
+	applyUrl,
+	bidderName,
+	durationSec,
+	recordedStartAt,
+	recordedEndAt,
+	markCompleted,
+	uploaded,
+}) {
+	const collection = getVendorTasksCollection();
+	const existing = collection ? await collection.findOne({ applierName, jobId: String(jobId) }) : null;
+	const now = new Date();
+	const fields = {
+		bidderName: bidderName || undefined,
+		bidSessionId: sessionId,
+		recordingPath: uploaded.storagePath,
+		recordingContentType: uploaded.contentType,
+		recordingSize: uploaded.sizeBytes,
+		recordingSha256: uploaded.sha256 || undefined,
+		recordingGeneration: uploaded.generation || undefined,
+		recordingDurationSec: durationSec,
+		recordingStartedAt: optionalDate(recordedStartAt) || undefined,
+		recordingEndedAt: optionalDate(recordedEndAt) || undefined,
+	};
+	if (applyUrl) fields.applyUrl = applyUrl;
+	if (markCompleted) {
+		fields.status = "done";
+		fields.completedAt = now;
+		fields.bidderInProcess = false;
+		fields.reviewStatus = "submitted";
+		fields.biddingDurationSec = computeBiddingDurationSec(existing, now);
+	} else {
+		fields.bidderInProcess = true;
+		fields.status = "pending";
+	}
+	const readyAt = await getJobBidReadyDate(applierName, jobId);
+	if (readyAt) fields.bidReadyDate = readyAt;
+	const doc = await upsertVendorTaskRecording(applierName, jobId, fields);
+	if (markCompleted) {
+		await upsertJobBidStatus(applierName, jobId, { bidCompleted: true });
+		await appendBidReviewEvent({
+			taskId: doc?._id ? String(doc._id) : null,
+			jobId,
+			applierName,
+			eventType: "submit",
+			fromStatus: "in_process",
+			toStatus: "submitted",
+			actorType: "vendor",
+			actorName: bidderName,
+			meta: { biddingDurationSec: fields.biddingDurationSec ?? null },
+		});
+	} else {
+		await upsertJobBidStatus(applierName, jobId, { bidReady: true });
+	}
+	const task = await withStableBidReadyDate(serializeTask(doc), applierName);
+	return { task, result: mapTaskToBidResult(task) };
+}
+
+/** POST /bid-recordings/uploads — create an authenticated GCS resumable session. */
+export async function beginBidRecordingUpload(req, res) {
+	try {
+		const applierName = String(req.body?.applierName || "").trim();
+		const jobId = String(req.body?.jobId || "").trim();
+		const sessionId = String(req.body?.sessionId || "").trim() || `sess-${Date.now()}`;
+		if (!applierName || !jobId) return res.status(400).json({ success: false, error: "applierName and jobId are required." });
+		const upload = await beginBidRecordingResumableUpload({
+			applierName,
+			jobId,
+			sessionId,
+			contentType: String(req.body?.contentType || "video/webm"),
+			fileName: String(req.body?.fileName || "session.webm"),
+			expectedBytes: req.body?.byteCount,
+			expectedSha256: req.body?.sha256,
+			uid: req.auth?.uid,
+		});
+		return res.status(201).json({ success: true, ...upload });
+	} catch (err) {
+		return res.status(400).json({ success: false, error: err.message || "Could not start upload." });
+	}
+}
+
+/** POST /bid-recordings/uploads/:uploadId/complete — validate and persist metadata. */
+export async function completeBidRecordingUpload(req, res) {
+	try {
+		const completed = await completeBidRecordingResumableUpload({
+			uploadId: req.params.uploadId,
+			uid: req.auth?.uid,
+		});
+		const durationSec = Number.isFinite(Number(req.body?.durationSec)) ? Math.max(0, Math.round(Number(req.body.durationSec))) : null;
+		const persisted = await persistBidRecordingMetadata({
+			applierName: completed.applierName,
+			jobId: completed.jobId,
+			sessionId: completed.sessionId,
+			applyUrl: String(req.body?.applyUrl || "").trim() || null,
+			bidderName: String(req.body?.bidderName || "").trim() || null,
+			durationSec,
+			recordedStartAt: req.body?.recordedStartAt,
+			recordedEndAt: req.body?.recordedEndAt,
+			markCompleted: Boolean(req.body?.markCompleted),
+			uploaded: {
+				storagePath: completed.storagePath,
+				contentType: completed.contentType,
+				sizeBytes: completed.actualBytes,
+				sha256: completed.actualSha256,
+				generation: completed.generation,
+			},
+		});
+		return res.json({
+			success: true,
+			recording: {
+				storagePath: completed.storagePath,
+				contentType: completed.contentType,
+				sizeBytes: completed.actualBytes,
+				sha256: completed.actualSha256,
+				generation: completed.generation,
+				sessionId: completed.sessionId,
+			},
+			...persisted,
+		});
+	} catch (err) {
+		console.error("[bid-recordings] resumable completion failed", err);
+		return res.status(400).json({ success: false, error: err.message || "Could not complete upload." });
+	}
+}
+
 /**
+ * Legacy base64 endpoint. Disabled in production after direct uploads ship.
  * POST /bid-recordings/upload
  */
 export async function uploadBidRecording(req, res) {
 	try {
+		if (process.env.NODE_ENV === "production" && process.env.ALLOW_LEGACY_BASE64_UPLOAD !== "true") {
+			return res.status(410).json({ success: false, error: "Use the resumable recording upload API." });
+		}
 		const applierName = String(req.body?.applierName ?? "").trim();
 		const jobId = String(req.body?.jobId ?? "").trim();
 		const sessionId = String(req.body?.sessionId ?? "").trim() || `sess-${Date.now()}`;
@@ -1136,14 +1278,15 @@ export async function skipBidResult(req, res) {
 /**
  * POST /bid-results/resume-audit
  * Persist hooked original vs canonical expected name (P2).
- * body: { applierName, jobId, originalName, expectedName?, cleanedName?, renamed?, pageUrl? }
+ * body: { applierName, jobId, originalName, expectedName?, cleanedName?, renamed?,
+ *   pageUrl?, sessionId?, source?, fileSize?, lastModified?, mimeType?, auditKey? }
  */
 export async function saveResumeAudit(req, res) {
 	try {
 		const applierName = String(req.body?.applierName ?? "").trim();
 		const jobId = String(req.body?.jobId ?? "").trim();
-		const originalName = resumeBasename(req.body?.originalName);
-		if (!applierName || !jobId || !originalName) {
+		const incomingOriginalName = resumeBasename(req.body?.originalName);
+		if (!applierName || !jobId || !incomingOriginalName) {
 			return res.status(400).json({
 				success: false,
 				error: "applierName, jobId, and originalName are required.",
@@ -1157,28 +1300,55 @@ export async function saveResumeAudit(req, res) {
 
 		const company = companyDisplayName(existing?.company || req.body?.company);
 		const title = String(existing?.title || req.body?.title || "Untitled role");
-		const extMatch = originalName.match(/\.[^.]+$/);
+		const extMatch = incomingOriginalName.match(/\.[^.]+$/);
 		const ext = extMatch ? extMatch[0] : ".pdf";
+		const auditSessionId = String(req.body?.sessionId ?? "").trim().slice(0, 200);
+		const auditSource = String(req.body?.source ?? "").trim().slice(0, 80);
+		const auditMimeType = String(req.body?.mimeType ?? "").trim().slice(0, 200);
+		const rawFileSize = Number(req.body?.fileSize);
+		const fileSize = Number.isFinite(rawFileSize) && rawFileSize >= 0 ? rawFileSize : null;
+		const rawLastModified = Number(req.body?.lastModified);
+		const lastModified =
+			Number.isFinite(rawLastModified) && rawLastModified >= 0 ? rawLastModified : null;
 
 		const expectedName =
 			resumeBasename(req.body?.expectedName) ||
 			buildCanonicalResumeFileName(company, title, applierName, jobId, ext);
 
-		const profileBase = profileNameToFileBase(applierName);
 		const cleanedName =
 			resumeBasename(req.body?.cleanedName) ||
-			(profileBase ? `${profileBase}${ext}` : originalName);
+			expectedName ||
+			incomingOriginalName;
+		const originalName = resolveResumeOriginalName({
+			existingOriginalName: existing?.resumeOriginalName,
+			existingExpectedName: existing?.resumeExpectedName,
+			existingCleanedName: existing?.resumeCleanedName,
+			existingSessionId: existing?.resumeAuditSessionId,
+			incomingOriginalName,
+			incomingExpectedName: expectedName,
+			incomingCleanedName: cleanedName,
+			incomingSessionId: auditSessionId,
+		});
 
-		const renamed =
-			typeof req.body?.renamed === "boolean"
-				? req.body.renamed
-				: cleanedName !== originalName;
+		const renamed = cleanedName !== originalName;
 		const mismatch = isResumeNameMismatch(originalName, expectedName);
 		const recommendedStack =
 			typeof existing?.recommendedResumeStack === "string"
 				? existing.recommendedResumeStack
 				: null;
 		const resumeStackMatch = matchUploadToRecommended(originalName, recommendedStack);
+		const suppliedAuditKey = String(req.body?.auditKey ?? "").trim().slice(0, 1000);
+		// Rebuild the key from the protected original name. If an ATS echoed the
+		// canonical filename as "original", its client key must not create a
+		// second audit after resolveResumeOriginalName restores the real name.
+		const auditKey = [
+			auditSessionId,
+			originalName,
+			cleanedName,
+			fileSize ?? 0,
+			auditMimeType,
+		].join("|");
+		const duplicateAudit = Boolean(auditKey && existing?.resumeAuditKey === auditKey);
 
 		const doc = await upsertVendorTaskRecording(applierName, jobId, {
 			resumeOriginalName: originalName,
@@ -1187,11 +1357,19 @@ export async function saveResumeAudit(req, res) {
 			resumeRenamed: renamed,
 			resumeMismatch: mismatch,
 			resumeStackMatch,
+			resumeAuditSessionId: auditSessionId || undefined,
+			resumeAuditSource: auditSource || undefined,
+			resumeAuditFileSize: fileSize ?? undefined,
+			resumeAuditLastModified: lastModified ?? undefined,
+			resumeAuditMimeType: auditMimeType || undefined,
+			resumeAuditKey: auditKey,
+			resumeAuditClientKey: suppliedAuditKey || undefined,
+			resumeAuditRecordedAt: new Date(),
 			title: existing?.title || title,
 			company: existing?.company || company,
 		});
 
-		if (mismatch) {
+		if (mismatch && !duplicateAudit) {
 			await appendBidReviewEvent({
 				taskId: doc?._id ? String(doc._id) : null,
 				jobId,
@@ -1209,6 +1387,12 @@ export async function saveResumeAudit(req, res) {
 					resumeStackMatch,
 					recommendedResumeStack: recommendedStack,
 					pageUrl: typeof req.body?.pageUrl === "string" ? req.body.pageUrl : null,
+					sessionId: auditSessionId || null,
+					source: auditSource || null,
+					fileSize,
+					lastModified,
+					mimeType: auditMimeType || null,
+					auditKey,
 				},
 			});
 		}
@@ -1222,6 +1406,13 @@ export async function saveResumeAudit(req, res) {
 				cleanedName,
 				renamed,
 				mismatch,
+				sessionId: auditSessionId || null,
+				source: auditSource || null,
+				fileSize,
+				lastModified,
+				mimeType: auditMimeType || null,
+				auditKey,
+				duplicate: duplicateAudit,
 			},
 			result: mapTaskToBidResult(task),
 			task,
@@ -1309,7 +1500,7 @@ export async function getBidResultAiUsage(req, res) {
 		const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
 
 		const rows = await llmCallLogCollection
-			.find({ jobId: String(jobId) })
+			.find({ jobId: String(jobId), applierName })
 			.sort({ createdAt: -1 })
 			.limit(limit)
 			.toArray();

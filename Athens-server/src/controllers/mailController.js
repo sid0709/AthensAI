@@ -318,7 +318,7 @@ export async function getVerificationCode(req, res) {
 		);
 
 		const acc = await findAccountByApplierName(applierName);
-		const ai = await aiExtractVerification(emails, decryptProfileApiKeys(acc?.autoBidProfile || {}), {
+		const ai = await aiExtractVerification(emails, await decryptProfileApiKeys(acc?.autoBidProfile || {}), {
 			companyName,
 			jobTitle,
 			applierName,
@@ -699,7 +699,7 @@ export async function postMailAiLabel(req, res) {
 		}
 
 		const acc = await findAccountByApplierName(applierName);
-		const profile = decryptProfileApiKeys(acc?.autoBidProfile || {});
+		const profile = await decryptProfileApiKeys(acc?.autoBidProfile || {});
 		const storedDefinitions = await getUserLabelDefinitions(
 			applierName,
 			acc?.autoBidProfile?.mailLabelDefinitions,
@@ -756,7 +756,7 @@ export async function postMailAiWrite(req, res) {
 			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
 		}
 
-		const profile = decryptProfileApiKeys(acc.autoBidProfile || {});
+		const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
 		const mode =
 			req.body?.mode === 'fine-tune'
 				? 'fine-tune'

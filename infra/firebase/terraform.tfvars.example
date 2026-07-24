@@ -1,0 +1,11 @@
+project_id       = "drwretail-bm"
+api_domain       = "api.example.com"
+frontend_origin  = "https://app.example.com"
+extension_origins = [
+  "chrome-extension://replace-with-bid-monitor-extension-id",
+  "chrome-extension://replace-with-avalon-extension-id",
+]
+image_tag        = "replace-with-git-commit-sha"
+bootstrap_images = true # set false immediately after the first Cloud Build
+storage_bucket   = "drwretail-bm-migrated"
+firestore_writes_enabled = false

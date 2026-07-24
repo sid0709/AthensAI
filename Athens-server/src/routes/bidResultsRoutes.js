@@ -14,6 +14,8 @@ import {
 	saveResumeAudit,
 	downloadBidResumesZip,
 	uploadBidRecording,
+	beginBidRecordingUpload,
+	completeBidRecordingUpload,
 } from "../controllers/bidResultsController.js";
 
 const router = express.Router();
@@ -34,5 +36,7 @@ router.post("/bid-results/skip", skipBidResult);
 router.post("/bid-results/flags", saveBidResultFlags);
 router.post("/bid-results/resume-audit", saveResumeAudit);
 router.post("/bid-recordings/upload", uploadBidRecording);
+router.post("/bid-recordings/uploads", beginBidRecordingUpload);
+router.post("/bid-recordings/uploads/:uploadId/complete", completeBidRecordingUpload);
 
 export default router;

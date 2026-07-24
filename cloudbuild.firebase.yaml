@@ -1,0 +1,83 @@
+steps:
+  - id: build-api
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=docker/cloud-run/Dockerfile.api
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA
+      - .
+  - id: build-ai-bff
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=docker/cloud-run/Dockerfile.ai-bff
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/ai-bff:$COMMIT_SHA
+      - .
+  - id: build-avalon-relay
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=docker/cloud-run/Dockerfile.avalon-relay
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/avalon-relay:$COMMIT_SHA
+      - .
+  - id: build-frontend
+    name: node:22-bookworm
+    entrypoint: bash
+    env:
+      - VITE_API_URL=https://${_API_DOMAIN}/api
+      - VITE_AI_BFF_URL=https://${_API_DOMAIN}/ai-bff
+      - VITE_AVALON_SERVER=https://${_API_DOMAIN}
+      - VITE_FIREBASE_API_KEY=${_FIREBASE_WEB_API_KEY}
+      - VITE_FIREBASE_AUTH_DOMAIN=$PROJECT_ID.firebaseapp.com
+      - VITE_FIREBASE_PROJECT_ID=$PROJECT_ID
+      - VITE_FIREBASE_STORAGE_BUCKET=${_FIREBASE_STORAGE_BUCKET}
+      - VITE_FIREBASE_APP_ID=${_FIREBASE_APP_ID}
+    args:
+      - -ceu
+      - |
+        apt-get update
+        apt-get install -y --no-install-recommends python3 rsync zip
+        npm ci --prefix Athens
+        npm run build --prefix Athens
+        npm ci --prefix project-avalon --ignore-scripts
+        PUBLIC_ORIGIN="https://${_API_DOMAIN}" FIREBASE_WEB_API_KEY="${_FIREBASE_WEB_API_KEY}" bash docker/pack-extensions.sh
+  - id: push-images
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        docker push ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA
+        docker push ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/ai-bff:$COMMIT_SHA
+        docker push ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/avalon-relay:$COMMIT_SHA
+  - id: deploy-cloud-run
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        gcloud run services update athens-api --region=${_REGION} --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA
+        gcloud run services update ai-bff --region=${_REGION} --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/ai-bff:$COMMIT_SHA
+        gcloud run services update avalon-relay --region=${_REGION} --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/avalon-relay:$COMMIT_SHA
+        gcloud run jobs update athens-search-rebuild --region=${_REGION} --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA
+        gcloud run jobs update athens-job-analysis-backfill --region=${_REGION} --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA
+        gcloud run jobs update athens-match-score-backfill --region=${_REGION} --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA
+  - id: deploy-firebase
+    name: node:22-bookworm
+    entrypoint: bash
+    args:
+      - -ceu
+      - npx --yes firebase-tools@15.24.0 deploy --project=$PROJECT_ID --only=hosting,firestore:rules,firestore:indexes,storage
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/ai-bff:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/avalon-relay:$COMMIT_SHA
+substitutions:
+  _REGION: us-east4
+  _API_DOMAIN: api.example.com
+  _FIREBASE_WEB_API_KEY: replace-me
+  _FIREBASE_STORAGE_BUCKET: drwretail-bm-migrated
+  _FIREBASE_APP_ID: replace-me
+options:
+  logging: CLOUD_LOGGING_ONLY
+serviceAccount: projects/$PROJECT_ID/serviceAccounts/athens-deployer@$PROJECT_ID.iam.gserviceaccount.com

@@ -1,6 +1,6 @@
 import { ObjectId } from "mongodb";
 import { userResumesCollection, accountInfoCollection, resumeGenerationsCollection } from "../db/mongo.js";
-import { deleteUserResume } from "./userResumeService.js";
+import { deleteUserResume, storeUserResumeContent } from "./userResumeService.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import {
   buildUserGraphFromResume,
@@ -66,16 +66,39 @@ export async function syncGeneratedResumeAfterRun({
   const fingerprint = cleanString(titlePolicyFingerprint) || null;
   const policyVersion = titlePolicyVersion ?? null;
   const syncedAt = cleanString(identitySyncedAt) || now;
+  let targetResume = null;
+  if (generationId && resumeGenerationsCollection) {
+    targetResume = await userResumesCollection.findOne({
+      ownerName,
+      generationId: String(generationId),
+    });
+  }
+  if (!targetResume && parentJobId) {
+    targetResume = await userResumesCollection.findOne({
+      ownerName,
+      generateParentJobId: parentJobId,
+      source: "generated",
+    });
+  }
+
+  const resumeId = targetResume?._id || new ObjectId();
+  const stored = await storeUserResumeContent({
+    resumeId,
+    ownerName,
+    fileName,
+    mimeType: "text/plain",
+    buffer,
+  });
   const doc = {
     ownerId,
     ownerName,
     techStack: stackLabel,
     fileName,
     mimeType: "text/plain",
-    sizeBytes: buffer.length,
-    storage: "inline",
-    contentBase64: buffer.toString("base64"),
-    gridFsId: null,
+    sizeBytes: stored.sizeBytes,
+    storage: stored.storage,
+    file: stored.file,
+    contentBase64: stored.contentBase64,
     extractedText,
     source: "generated",
     generationId: generationId ? String(generationId) : null,
@@ -95,80 +118,22 @@ export async function syncGeneratedResumeAfterRun({
     updatedAt: now,
   };
 
-  let resumeId;
-  if (generationId && resumeGenerationsCollection) {
-    const existing = await userResumesCollection.findOne({
-      ownerName,
-      generationId: String(generationId),
-    });
-    if (existing) {
-      await userResumesCollection.updateOne(
-        { _id: existing._id },
-        {
-          $set: {
-            techStack: stackLabel,
-            fileName,
-            extractedText,
-            skillProfile: profile,
-            analyzed,
-            analyzedAt: analyzed ? now : null,
-            analysisError: skillAnalysisError ?? null,
-            templateId: templateId ?? null,
-            generateParentJobId: parentJobId ?? existing.generateParentJobId ?? null,
-            titlePolicyFingerprint: fingerprint ?? existing.titlePolicyFingerprint ?? null,
-            titlePolicyVersion: policyVersion ?? existing.titlePolicyVersion ?? null,
-            isBeta: Boolean(isBeta),
-            identitySyncedAt: syncedAt,
-            identityRefreshedAt: now,
-            updatedAt: now,
-            contentBase64: doc.contentBase64,
-            sizeBytes: doc.sizeBytes,
-          },
+  if (targetResume) {
+    await userResumesCollection.updateOne(
+      { _id: resumeId },
+      {
+        $set: {
+          ...doc,
+          generateParentJobId: parentJobId ?? targetResume.generateParentJobId ?? null,
+          generationId: generationId ? String(generationId) : targetResume.generationId,
+          titlePolicyFingerprint: fingerprint ?? targetResume.titlePolicyFingerprint ?? null,
+          titlePolicyVersion: policyVersion ?? targetResume.titlePolicyVersion ?? null,
         },
-      );
-      resumeId = existing._id;
-    }
-  }
-
-  if (parentJobId && userResumesCollection) {
-    const prior = await userResumesCollection.findOne({
-      ownerName,
-      generateParentJobId: parentJobId,
-      source: "generated",
-      ...(resumeId ? { _id: { $ne: resumeId } } : {}),
-    });
-    if (prior) {
-      await userResumesCollection.updateOne(
-        { _id: prior._id },
-        {
-          $set: {
-            techStack: stackLabel,
-            fileName,
-            extractedText,
-            skillProfile: profile,
-            analyzed,
-            analyzedAt: analyzed ? now : null,
-            analysisError: skillAnalysisError ?? null,
-            templateId: templateId ?? null,
-            generationId: generationId ? String(generationId) : prior.generationId,
-            titlePolicyFingerprint: fingerprint ?? prior.titlePolicyFingerprint ?? null,
-            titlePolicyVersion: policyVersion ?? prior.titlePolicyVersion ?? null,
-            isBeta: Boolean(isBeta),
-            identitySyncedAt: syncedAt,
-            identityRefreshedAt: now,
-            updatedAt: now,
-            contentBase64: doc.contentBase64,
-            sizeBytes: doc.sizeBytes,
-          },
-        },
-      );
-      resumeId = prior._id;
-    }
-  }
-
-  if (!resumeId) {
-    const result = await userResumesCollection.insertOne(doc);
-    resumeId = result.insertedId;
+        $unset: { gridFsId: "" },
+      },
+    );
+  } else {
+    await userResumesCollection.insertOne({ _id: resumeId, ...doc });
   }
 
   const resumeIdStr = String(resumeId);

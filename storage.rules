@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Large objects use short-lived resumable upload sessions issued by the
+    // authenticated API. Browser SDK access remains closed by default.
+    match /{object=**} {
+      allow read, write: if false;
+    }
+  }
+}

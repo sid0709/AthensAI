@@ -3,10 +3,10 @@
 Job search, skill matching, and Avalon-powered auto-apply.
 
 ```
-Athens (UI) ──REST──► Athens-server (jobs, matching, resumes, Avalon relay)
-Athens / Agents ──Socket.IO /avalon──► Athens-server
+Firebase Hosting (Athens UI) ──REST──► Cloud Run (Athens API)
+Athens / Agents ──Socket.IO /avalon──► Cloud Run (Avalon relay)
 All LLM calls ──► ai-bff ──► OpenAI / DeepSeek
-Matching ──► Redis skill index + MongoDB
+Data ──► Firestore + Cloud Storage + Algolia + Memorystore
 ```
 
 ## Prerequisites
@@ -63,9 +63,11 @@ SKIP_DOCKER=1 npm start
 
 ## Monitoring and public status
 
-The production monitoring stack lives in [`monitoring/`](monitoring/). It runs Prometheus, Grafana, Alertmanager, node-exporter, cAdvisor, and blackbox-exporter as a separate Docker Compose project. Follow [`monitoring/README.md`](monitoring/README.md) for the one-time VPS setup, then open the public status page at `/status`.
+Production health is monitored by Google Cloud Monitoring using the load-balancer uptime check, Cloud Run revision metrics, audit logs, and billing alerts declared in [`infra/firebase/`](infra/firebase/). Athens-server still exposes `/metrics`, `/healthz`, `/readyz`, and the curated public status API under `/api/status/*`; Firestore-backed deployments report application services, Firestore, and Cloud Storage without VPS host metrics.
 
-Athens-server exposes `/metrics`, `/healthz`, `/readyz`, and the curated public status API under `/api/status/*`. Detailed host and container labels remain private in Grafana; the public page exposes service availability, safe aggregate CPU/memory/disk charts, and historical uptime. Live chart data is available from `/api/status/live` for the fixed 15-minute, 1-hour, 6-hour, and 24-hour ranges.
+The Prometheus/Grafana stack in [`monitoring/`](monitoring/) is retained only for the legacy VPS and local Docker environments during migration. It is not part of the Firebase production runtime.
+
+The production Firebase/Cloud Run deployment and Mongo/GridFS cutover procedure is in [`docs/firebase-migration-runbook.md`](docs/firebase-migration-runbook.md). The Docker stack remains the local-development path.
 
 | Service | URL |
 |---------|-----|

@@ -1,0 +1,19 @@
+steps:
+  - id: build-api
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "--file=docker/cloud-run/Dockerfile.api", "--tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA", "."]
+  - id: build-ai-bff
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "--file=docker/cloud-run/Dockerfile.ai-bff", "--tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/ai-bff:$COMMIT_SHA", "."]
+  - id: build-avalon-relay
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "--file=docker/cloud-run/Dockerfile.avalon-relay", "--tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/avalon-relay:$COMMIT_SHA", "."]
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/athens-api:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/ai-bff:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/athens/avalon-relay:$COMMIT_SHA
+substitutions:
+  _REGION: us-east4
+options:
+  logging: CLOUD_LOGGING_ONLY
+serviceAccount: projects/$PROJECT_ID/serviceAccounts/athens-deployer@$PROJECT_ID.iam.gserviceaccount.com

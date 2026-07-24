@@ -1887,7 +1887,7 @@ loginForm.addEventListener('submit', async (event) => {
   const applierName = applierNameInput?.value?.trim() || '';
   const password = passwordInput?.value || '';
   if (!password) {
-    showLoginError('Vendor access password is required.');
+    showLoginError('Password is required.');
     return;
   }
 
@@ -2127,11 +2127,11 @@ window.addEventListener('focus', () => {
   }
   updateCompletedPill();
 
-  if (applierNameInput && athensSettings?.applierName) {
-    applierNameInput.value = athensSettings.applierName;
+  if (applierNameInput && athensSettings?.email) {
+    applierNameInput.value = athensSettings.email;
   }
-  if (usernameInput && athensSettings?.applierName && !usernameInput.value) {
-    usernameInput.value = athensSettings.applierName;
+  if (usernameInput && athensSettings?.email && !usernameInput.value) {
+    usernameInput.value = athensSettings.email;
   }
 
   const ui = await sendMessage({ type: 'GET_UI_STATE' }).catch(() => null);

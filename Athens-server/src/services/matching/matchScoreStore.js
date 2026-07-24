@@ -4,6 +4,7 @@ import {
   matchProfileStateCollection,
   jobsCollection,
 } from '../../db/mongo.js';
+import { enqueueMatchScoreTask } from '../cloudTasks.js';
 import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
 import { computeCoverageScore } from './coverageScore.js';
 
@@ -115,7 +116,7 @@ export async function countScoresForApplier(applierName, extraFilter = {}) {
 export async function requestUserRescore(applierName) {
   const name = String(applierName || '').trim();
   if (!name || !matchProfileStateCollection) return null;
-  return matchProfileStateCollection.findOneAndUpdate(
+  const state = await matchProfileStateCollection.findOneAndUpdate(
     { applierName: name },
     {
       $inc: { profileVersion: 1 },
@@ -123,6 +124,8 @@ export async function requestUserRescore(applierName) {
     },
     { upsert: true, returnDocument: 'after' },
   );
+  await enqueueMatchScoreTask(`${name}-${state?.profileVersion || Date.now()}`);
+  return state;
 }
 
 export async function getRescoreState(applierName) {
@@ -144,5 +147,6 @@ export async function markJobsPendingScore(jobIds) {
     { _id: { $in: ids } },
     { $set: { matchScoreStatus: 'pending' } },
   );
+  await enqueueMatchScoreTask(`jobs-${Date.now()}`);
   return { updated: res.modifiedCount };
 }

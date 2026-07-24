@@ -1,0 +1,12 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Product data is served through authenticated Cloud Run APIs. Keeping
+    // direct client access closed prevents a browser from bypassing service
+    // authorization and business invariants.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

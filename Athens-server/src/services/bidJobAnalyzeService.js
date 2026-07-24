@@ -12,12 +12,15 @@ import { decryptAccountDoc, loadDecryptedAutoBidProfile } from "./autoBidProfile
 
 const FLAG_KEYWORDS = {
 	remote:
-		/\b(in[\s-]?person|on[\s-]?site|hybrid|relocat\w*|travel|in[\s-]?office|on[\s-]?campus|office)\b/i,
+		/\b(in[\s-]?person|on[\s-]?site|hybrid|in[\s-]?office|office[\s-]?based|on[\s-]?campus)\b|\b(?:must|required\s+to)\s+relocate\b|\brelocation\s+(?:is\s+)?required\b/i,
 	clearance:
 		/\b(clearance|fingerprint\w*|polygraph|security[\s-]?clearance|background\s+(?:check|investigation)|secret|ts\/sci)\b/i,
 };
 
-const REMOTE_POSITIVE = /\b(remote|work\s+from\s+home|wfh|fully\s+remote|100%\s+remote)\b/i;
+const REMOTE_POSITIVE =
+	/\b(remote(?:ly)?|work\s+from\s+home|work\s+from\s+anywhere|wfh|telecommut\w*|home[\s-]?based)\b/i;
+const REMOTE_DENIAL =
+	/\b(?:not|never)\s+(?:a\s+|fully\s+)?remote(?:ly)?\b|\bnot\s+eligible\s+for\s+remote\b|\bno\s+remote\b|\bremote\s+(?:work\s+)?(?:is\s+)?not\s+(?:available|offered|allowed|permitted|eligible)\b|\bcannot\s+(?:be|work|be\s+performed)\s+remote(?:ly)?\b/i;
 const CLEARANCE_NEGATIVE =
 	/\b(no\s+(?:security\s+)?clearance|clearance\s+not\s+required|does\s+not\s+require\s+(?:a\s+)?clearance)\b/i;
 
@@ -180,24 +183,37 @@ ${fields}
 }
 
 Rules:
-- "red" = disqualifier (onsite/hybrid/relocation for remote; clearance required for clearance-free applicants).
+- Remote is intentionally permissive: return remote "green" when remote work is listed as any available location, arrangement, exception, or option, even if hybrid/onsite locations are also listed.
+- Store/customer visits, travel, office-related business language, a headquarters location, or optional office access do not by themselves make a role non-remote.
+- Return remote "red" only when the posting clearly requires every candidate to work onsite/hybrid, relocate, or regularly report to a physical location AND offers no remote path.
+- If remote policy is missing, vague, conflicting, or merely uncertain, return remote "green". Resolve mixed remote + hybrid/onsite choices as "green".
+- Clearance "red" means clearance is required for clearance-free applicants; otherwise clearance is "green".
 - "green" = constraint satisfied.
 - explanation: one short sentence.`;
 }
 
-function heuristicFlags(text, neededFlags) {
+function hasRemoteAllowance(text) {
+	const body = String(text || "");
+	if (!REMOTE_POSITIVE.test(body)) return false;
+	const withoutDenials = body.replace(new RegExp(REMOTE_DENIAL.source, "gi"), " ");
+	return REMOTE_POSITIVE.test(withoutDenials);
+}
+
+export function heuristicFlags(text, neededFlags) {
 	const body = String(text || "");
 	const result = {};
 	const flags = Array.isArray(neededFlags) ? neededFlags : ["remote", "clearance"];
 
 	if (flags.includes("remote")) {
 		const matched = extractFlagSentences(body, ["remote"]);
-		const hasPositive = REMOTE_POSITIVE.test(body);
+		const hasPositive = hasRemoteAllowance(body);
+		const hasExplicitDenial = REMOTE_DENIAL.test(body) && !hasPositive;
 		const hasOnsite = FLAG_KEYWORDS.remote.test(body) && !hasPositive;
-		if (hasOnsite && matched.length) {
+		if (hasExplicitDenial || hasOnsite) {
 			result.remote = {
 				status: "red",
-				explanation: matched[0] || "Onsite / hybrid / relocation language found.",
+				explanation:
+					matched[0] || "The posting explicitly rules out remote work or requires onsite work.",
 			};
 		} else if (hasPositive) {
 			result.remote = {
@@ -261,7 +277,7 @@ async function loadAccountCatalog(applierNameRaw) {
 			proj,
 		);
 	}
-	acc = decryptAccountDoc(acc);
+	acc = await decryptAccountDoc(acc);
 	const catalog =
 		acc?.resumeAnalysisCatalog &&
 		typeof acc.resumeAnalysisCatalog === "object" &&
@@ -442,6 +458,14 @@ export async function analyzeJobFlags({
 		for (const flag of flags) {
 			const verdict = normalizeVerdict(parsed[flag]);
 			if (verdict) result[flag] = verdict;
+		}
+		// The remote screen is deliberately generous. Do not let an LLM choose a
+		// hybrid city over an explicitly available remote location/arrangement.
+		if (flags.includes("remote") && hasRemoteAllowance(jdBody)) {
+			result.remote = {
+				status: "green",
+				explanation: "Remote work is explicitly listed as an available option.",
+			};
 		}
 		if (!result.remote && !result.clearance) {
 			return { result: heuristicFlags(jdBody, flags), usage: null, mode: "heuristic" };

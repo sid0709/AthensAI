@@ -13,6 +13,7 @@ import {
   llmAdmissionPool,
   llmPriorityFromFeature,
 } from '../../utils/concurrency.js';
+import { getServiceAuthHeaders } from '../googleServiceAuth.js';
 
 const log = createLogger('athens');
 
@@ -277,7 +278,8 @@ export async function chatCompletion({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
+            ...(await getServiceAuthHeaders(AI_BASE)),
+            'x-provider-api-key': apiKey,
             'x-request-id': reqId,
             ...(runId ? { 'x-run-id': runId } : {}),
             ...(applierName ? { 'x-applier-name': applierName } : {}),
@@ -369,7 +371,11 @@ export async function verifyKey({ provider, apiKey }) {
       `${AI_BASE}/v1/chat/completions`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(await getServiceAuthHeaders(AI_BASE)),
+          'x-provider-api-key': apiKey,
+        },
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content: 'ping' }],
@@ -413,7 +419,12 @@ export async function listModels({ provider, apiKey, force = false }) {
 
   const response = await fetchRetry(
     `${AI_BASE}/v1/models`,
-    { headers: { Authorization: `Bearer ${apiKey}` } },
+    {
+      headers: {
+        ...(await getServiceAuthHeaders(AI_BASE)),
+        'x-provider-api-key': apiKey,
+      },
+    },
     { timeoutMs: 20000, retries: 2 },
   );
   const data = await response.json().catch(() => ({}));

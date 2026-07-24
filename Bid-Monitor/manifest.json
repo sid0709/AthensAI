@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bid Monitor",
-  "version": "2.18.12",
+  "version": "2.18.14",
   "description": "Athens Bid Ready video bidding — Apply, Analyze, Submit/Skip, Rejected queue + Mark fixed, résumé mismatch.",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:* http://localhost:* https: http:;"
@@ -40,21 +40,16 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/inject-hook.js"],
+      "js": ["content/resume-file-tracking.js", "content/page-hook.js"],
       "run_at": "document_start",
-      "all_frames": true
+      "all_frames": true,
+      "world": "MAIN"
     },
     {
       "matches": ["<all_urls>"],
       "js": ["content/content.js"],
       "run_at": "document_idle",
       "all_frames": true
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["content/page-hook.js"],
-      "matches": ["<all_urls>"]
     }
   ],
   "icons": {

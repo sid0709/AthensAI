@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "drwretail-bm",
+    "staging": "drwretail-bm-staging",
+    "production": "drwretail-bm"
+  }
+}

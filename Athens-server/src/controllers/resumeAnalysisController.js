@@ -57,7 +57,7 @@ export async function analyzeResumeMatch(req, res) {
       return res.status(400).json({ success: false, error: "jobDescription is required" });
     }
 
-    const acc = decryptAccountDoc(await findAccount(applierName));
+    const acc = await decryptAccountDoc(await findAccount(applierName));
     if (!acc) {
       return res.status(404).json({ success: false, error: "Account not found" });
     }

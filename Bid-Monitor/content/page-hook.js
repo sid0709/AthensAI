@@ -1,44 +1,42 @@
 (function () {
   if (window.__bidMonitorPageHook) return;
+  const ResumeFileTracking = globalThis.BidResumeFileTracking;
+  if (!ResumeFileTracking?.createTracker) {
+    console.warn('Bid Monitor: resume filename tracker is unavailable');
+    return;
+  }
   window.__bidMonitorPageHook = true;
 
   let resumeSetFolder = '';
   let expectedResumeName = '';
+  let activeSessionId = '';
+  let trackingSessionKey = '';
   let isRecording = false;
   const BID_ORIGINAL_NAME_PROP = '__bidOriginalName';
+  const fileTracker = ResumeFileTracking.createTracker();
 
   window.addEventListener('bid-monitor-session', (event) => {
     const detail = event.detail || {};
-    resumeSetFolder = String(detail.resumeSetFolder || '').trim();
-    expectedResumeName = String(detail.expectedResumeName || '').trim();
-    isRecording = !!detail.isRecording;
+    const nextFolder = String(detail.resumeSetFolder || '').trim();
+    const nextExpectedName = String(detail.expectedResumeName || '').trim();
+    const nextSessionId = String(detail.sessionId || '').trim();
+    const nextIsRecording = !!detail.isRecording;
+    const nextTrackingKey = nextIsRecording
+      ? nextSessionId || `${nextExpectedName}|${nextFolder}`
+      : '';
+
+    if (nextTrackingKey !== trackingSessionKey) {
+      fileTracker.reset(nextTrackingKey);
+      trackingSessionKey = nextTrackingKey;
+    }
+
+    resumeSetFolder = nextFolder;
+    expectedResumeName = nextExpectedName;
+    activeSessionId = nextSessionId;
+    isRecording = nextIsRecording;
   });
 
-  function getExtension(fileName) {
-    const dot = fileName.lastIndexOf('.');
-    return dot >= 0 ? fileName.slice(dot) : '';
-  }
-
-  function sanitizeForFileName(value) {
-    return String(value || '')
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .replace(/_+/g, '_')
-      .slice(0, 60);
-  }
-
-  function buildSubmittedFileName(originalName, folder) {
-    const ext = getExtension(originalName) || '.pdf';
-    const safe = sanitizeForFileName(folder);
-    if (!safe) return originalName;
-    return `${safe}${ext}`;
-  }
-
-  function resumeBasename(name) {
-    const s = String(name || '').trim();
-    if (!s) return '';
-    const parts = s.replace(/\\/g, '/').split('/');
-    return parts[parts.length - 1] || '';
-  }
+  const { buildSubmittedFileName, resumeBasename } = ResumeFileTracking;
 
   function isFileValue(value) {
     if (!value || typeof value !== 'object') return false;
@@ -71,7 +69,9 @@
   }
 
   function renameFile(file, newName, originalName) {
-    if (file.name === newName && !originalName) return file;
+    if (file.name === newName) {
+      return stampOriginalName(file, originalName || getStampedOriginal(file) || file.name);
+    }
     const next = new File([file], newName, {
       type: file.type || 'application/octet-stream',
       lastModified: file.lastModified ?? Date.now(),
@@ -80,14 +80,31 @@
   }
 
   function shouldRename() {
-    return isRecording && resumeSetFolder.length > 0;
+    return isRecording && (expectedResumeName.length > 0 || resumeSetFolder.length > 0);
   }
 
-  function maybeRenameFile(file) {
-    if (!shouldRename() || !isFileValue(file)) return file;
-    const original = getStampedOriginal(file) || file.name;
-    const newName = buildSubmittedFileName(original, resumeSetFolder);
-    return renameFile(file, newName, original);
+  function prepareFile(file) {
+    if (!shouldRename() || !isFileValue(file)) return { file, originalName: file?.name || '' };
+    const provisionalName = buildSubmittedFileName(
+      file.name,
+      expectedResumeName,
+      resumeSetFolder,
+    );
+    const originalName = fileTracker.resolveOriginal(
+      file,
+      provisionalName,
+      getStampedOriginal(file),
+    );
+    const submittedName = buildSubmittedFileName(
+      originalName,
+      expectedResumeName,
+      resumeSetFolder,
+    );
+    return {
+      file: renameFile(file, submittedName, originalName),
+      originalName,
+      submittedName,
+    };
   }
 
   function replaceInputFiles(input, files) {
@@ -116,14 +133,16 @@
     window.dispatchEvent(new CustomEvent('bid-monitor-toast', { detail: { message } }));
   }
 
-  function emitAuditForFile(file, source) {
-    const originalName = resumeBasename(getStampedOriginal(file) || file.name);
+  function emitAuditForFile(file, source, resolvedOriginalName, submittedName) {
+    const originalName = resumeBasename(
+      resolvedOriginalName || getStampedOriginal(file) || file.name,
+    );
     const cleanedName = resumeBasename(file.name);
-    const expected = resumeBasename(expectedResumeName);
+    const expected = resumeBasename(submittedName || cleanedName);
     const renamed = cleanedName !== originalName;
     const mismatch = Boolean(expected && originalName && originalName !== expected);
-
-    notifyResumeSelected({
+    const payload = {
+      sessionId: activeSessionId || null,
       originalFileName: originalName,
       originalName,
       submittedFileName: cleanedName,
@@ -138,7 +157,11 @@
       pageUrl: location.href,
       pageTitle: document.title,
       source,
-    });
+    };
+    payload.auditKey = fileTracker.buildAuditKey(payload);
+    if (!fileTracker.shouldEmit(payload)) return;
+
+    notifyResumeSelected(payload);
 
     if (mismatch) {
       notifyToast(`Résumé name mismatch: got “${originalName}”, expected “${expected}”`);
@@ -152,9 +175,14 @@
     const originalFiles = Array.from(fileList);
     const renamedFiles = [];
     for (const file of originalFiles) {
-      const renamed = maybeRenameFile(file);
-      renamedFiles.push(renamed);
-      emitAuditForFile(renamed, source);
+      const prepared = prepareFile(file);
+      renamedFiles.push(prepared.file);
+      emitAuditForFile(
+        prepared.file,
+        source,
+        prepared.originalName,
+        prepared.submittedName,
+      );
     }
     return renamedFiles;
   }
@@ -164,11 +192,6 @@
       const input = event.target;
       if (!shouldRename() || !(input instanceof HTMLInputElement) || input.type !== 'file') return;
       if (!input.files?.length) return;
-
-      const originalFiles = Array.from(input.files);
-      const dedupeKey = `${input.id}|${input.name}|${originalFiles.map((f) => `${f.name}:${f.size}`).join(',')}`;
-      if (handleFileInputEvent.lastKey === dedupeKey) return;
-      handleFileInputEvent.lastKey = dedupeKey;
 
       const renamedFiles = processFiles(input.files, 'file-input');
       if (renamedFiles) replaceInputFiles(input, renamedFiles);
@@ -210,6 +233,21 @@
     }
   }
 
+  function handleSubmitEvent(event) {
+    try {
+      if (!shouldRename()) return;
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      for (const input of form.querySelectorAll('input[type="file"]')) {
+        if (!input.files?.length) continue;
+        const renamedFiles = processFiles(input.files, 'form-submit');
+        if (renamedFiles) replaceInputFiles(input, renamedFiles);
+      }
+    } catch (err) {
+      console.warn('Bid Monitor: submit-time resume audit failed', err);
+    }
+  }
+
   function patchFormData() {
     if (typeof FormData === 'undefined' || FormData.prototype.__bidMonitorPatched) return;
     const originalAppend = FormData.prototype.append;
@@ -218,9 +256,14 @@
     function wrap(method) {
       return function (name, value, fileName) {
         if (shouldRename() && isFileValue(value)) {
-          const renamed = maybeRenameFile(value);
-          emitAuditForFile(renamed, 'formdata');
-          return method.call(this, name, renamed, renamed.name);
+          const prepared = prepareFile(value);
+          emitAuditForFile(
+            prepared.file,
+            'formdata',
+            prepared.originalName,
+            prepared.submittedName,
+          );
+          return method.call(this, name, prepared.file, prepared.file.name);
         }
         // 3-arg FormData.append/set requires param 2 to be a Blob.
         if (arguments.length >= 3 && value instanceof Blob) {
@@ -255,6 +298,7 @@
   document.addEventListener('change', handleFileInputEvent, true);
   document.addEventListener('input', handleFileInputEvent, true);
   document.addEventListener('drop', handleDropEvent, true);
+  document.addEventListener('submit', handleSubmitEvent, true);
   patchFormData();
   patchFetch();
 })();

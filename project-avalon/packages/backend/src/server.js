@@ -18,8 +18,14 @@ import { mountAvalonRelayRoutes, initAvalonRelay } from "./avalonRelay.js";
 const port = Number.parseInt(String(process.env.AVALON_PORT || process.env.PORT || "3847"), 10) || 3847;
 const host = process.env.HOST !== undefined && process.env.HOST !== "" ? process.env.HOST : "0.0.0.0";
 
+function corsOrigins() {
+	const raw = String(process.env.AVALON_CORS_ORIGIN || process.env.CORS_ORIGIN || "*").trim();
+	if (!raw || raw === "*" || raw.split(",").some((value) => value.trim() === "*")) return true;
+	return raw.split(",").map((value) => value.trim()).filter(Boolean);
+}
+
 const app = express();
-app.use(cors({ origin: "*" }));
+app.use(cors({ origin: corsOrigins() }));
 app.use(express.json({ limit: "10mb" }));
 
 mountAvalonRelayRoutes(app);
@@ -37,11 +43,11 @@ app.use((req, res) => {
 });
 
 const server = http.createServer(app);
-const io = initAvalonRelay(server);
+const io = await initAvalonRelay(server);
 
 let shuttingDown = false;
 
-function shutdown(signal) {
+async function shutdown(signal) {
 	if (shuttingDown) return;
 	shuttingDown = true;
 	console.log(`[avalon-relay] ${signal} — graceful shutdown`);
@@ -54,6 +60,7 @@ function shutdown(signal) {
 
 	try {
 		io.close();
+		await Promise.all((io.redisClients || []).map((client) => client.quit().catch(() => undefined)));
 	} catch {
 		/* ignore */
 	}
@@ -69,8 +76,8 @@ function shutdown(signal) {
 	});
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
 
 server.listen(port, host, () => {
 	console.log(`[avalon-relay] listening on http://${host}:${port}`);

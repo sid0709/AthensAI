@@ -195,6 +195,12 @@ async function fanOutPendingJobs() {
   return true;
 }
 
+export async function runMatchScoreBatch() {
+	const rescored = await claimAndRescoreUser();
+	const fannedOut = rescored ? false : await fanOutPendingJobs();
+	return { processed: Boolean(rescored || fannedOut), rescored, fannedOut };
+}
+
 let workerTimer = null;
 let tickRunning = false;
 
@@ -205,8 +211,7 @@ export function startMatchScoreWorker() {
     if (tickRunning) return; // a full rescore can outlast the interval
     tickRunning = true;
     try {
-      const didRescore = await claimAndRescoreUser();
-      if (!didRescore) await fanOutPendingJobs();
+			await runMatchScoreBatch();
     } catch (err) {
       console.error('[match-score] worker tick error', err.message);
     } finally {

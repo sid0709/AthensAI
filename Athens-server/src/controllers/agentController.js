@@ -7,7 +7,7 @@ import { createAsyncHandler } from "../utils/http.js";
 import { findAccountByApplierName } from "../services/mail/credentials.js";
 import { resolveDefaultModel } from "../services/llm/llmService.js";
 import { decryptProfileApiKeys } from "../services/autoBidProfileSecrets.js";
-import { decryptSecret } from "@nextoffer/shared/secretCrypto";
+import { getServiceAuthHeaders } from "../services/googleServiceAuth.js";
 
 const AI_BFF_URL = (process.env.AI_BFF_URL || "http://127.0.0.1:3920").replace(/\/$/, "");
 
@@ -44,13 +44,13 @@ async function resolveOpenAiKey(profileId) {
     { _id: new ObjectId(profileId) },
     { projection: { "autoBidProfile.openaiApiKey": 1 } },
   );
-  return decryptSecret(doc?.autoBidProfile?.openaiApiKey ?? '').trim() || envKey || null;
+  return String((await decryptProfileApiKeys(doc?.autoBidProfile || {}))?.openaiApiKey || '').trim() || envKey || null;
 }
 
 export const getAgentHealth = createAsyncHandler(async (_req, res) => {
   res.json({
     ok: true,
-    mongoDb: process.env.MONGO_DB || "AthensDB",
+    database: String(process.env.DATABASE_BACKEND || "mongodb").toLowerCase(),
   });
 });
 
@@ -153,7 +153,7 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
     return res.status(404).json({ error: `No account named "${applierName}".` });
   }
 
-  const profile = decryptProfileApiKeys(acc.autoBidProfile || {});
+  const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
   const { model: profileModel } = resolveDefaultModel(profile);
   const model = String(req.body?.model || "").trim() || profileModel;
 
@@ -176,6 +176,7 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...(await getServiceAuthHeaders(AI_BFF_URL)),
       "x-request-id": requestId,
       ...(runId ? { "x-run-id": String(runId) } : {}),
       "x-applier-name": applierName,

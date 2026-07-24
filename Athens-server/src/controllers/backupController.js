@@ -6,6 +6,11 @@ import { streamFullMongoBackupZip } from "../services/mongoBackupService.js";
  */
 export async function downloadMongoBackup(req, res) {
 	try {
+		if (String(process.env.DATABASE_BACKEND || "").toLowerCase() === "firestore") {
+			return res.status(410).json({
+				error: "Mongo export is disabled after cutover. Use the managed Firestore backup schedules and restore drill.",
+			});
+		}
 		// Full dumps can take several minutes on large databases.
 		req.setTimeout(0);
 		res.setTimeout(0);

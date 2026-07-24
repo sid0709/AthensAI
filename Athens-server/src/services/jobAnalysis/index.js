@@ -3,6 +3,7 @@ import { jobsCollection } from '../../db/mongo.js';
 import { attachStaticScoreFields } from '../jobListPipeline.js';
 import { indexJobInRedis, jobSkillTokens } from '../matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
+import { enqueueJobAnalysisTask } from '../cloudTasks.js';
 
 const TERMINAL = new Set(['analyzed']);
 const WORKER_INTERVAL_MS = Number(process.env.SKILL_JOB_ANALYSIS_INTERVAL_MS || 5000);
@@ -43,6 +44,7 @@ export async function queueJobAnalysis(jobId, applierName) {
 			},
 		},
 	);
+	await enqueueJobAnalysisTask(String(objectId));
 
 	return { status: 'queued', jobId: String(objectId), queuedAt: now };
 }

@@ -9,15 +9,21 @@
  *
  * Nothing here is vendor/site specific; it just records what the pipeline did.
  */
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { avalonRunsCollection } from "../db/mongo.js";
+import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
+import { putBinaryObject, readStoredObject, storageSlug } from "./firebase/objectStore.js";
 
 const LOG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".local", "logs", "avalon");
 
 const clean = (v) => String(v ?? "").trim();
+
+function useCloudLogs() {
+  return String(process.env.DATABASE_BACKEND || "").toLowerCase() === "firestore" || process.env.NODE_ENV === "production";
+}
 
 /** YYYY-MM-DD from an ISO-ish timestamp (or now). */
 function dayFolder(ts) {
@@ -68,22 +74,50 @@ export async function recordApplyRun(payload = {}) {
   const now = new Date();
   const startedAt = payload.meta?.startedAt || now.toISOString();
 
-  // --- Sink 1: local JSONL file (append every event).
-  const file = await logFilePath(runId, startedAt);
+  const lines = [];
   if (payload.meta) {
-    await appendJsonl(file, { at: now.toISOString(), kind: "meta", ...payload.meta, runId });
+    lines.push({ at: now.toISOString(), kind: "meta", ...payload.meta, runId });
   }
   for (const ev of events) {
-    await appendJsonl(file, { runId, ...ev });
+    lines.push({ runId, ...ev });
   }
   if (payload.status || payload.finished) {
-    await appendJsonl(file, {
+    lines.push({
       at: now.toISOString(),
       kind: "status",
       status: payload.status,
       finished: Boolean(payload.finished),
       runId,
     });
+  }
+
+  let file;
+  if (useCloudLogs()) {
+    const jsonl = Buffer.from(lines.map((line) => JSON.stringify(line)).join("\n") + (lines.length ? "\n" : ""), "utf8");
+    if (jsonl.length) {
+      const digest = createHash("sha256").update(jsonl).digest("hex");
+      const objectPath = `avalon-run-logs/${storageSlug(payload.applierName)}/${storageSlug(runId)}/${now.toISOString().replace(/[:.]/g, "-")}-${digest.slice(0, 16)}.jsonl`;
+      const stored = await putBinaryObject({
+        buffer: jsonl,
+        objectPath,
+        mimeType: "application/x-ndjson",
+        metadata: { applierName: clean(payload.applierName), runId, kind: "avalon-run-log" },
+      });
+      file = `gcs://${objectPath}`;
+      const chunkId = createHash("sha256").update(`${runId}\0${digest}`).digest("hex");
+      await getFirestoreDb().collection("avalon_run_log_chunks").doc(chunkId).set({
+        runId,
+        applierName: clean(payload.applierName) || null,
+        object: stored.file,
+        createdAt: now,
+        eventCount: events.length,
+      }, { merge: false });
+    } else {
+      file = `gcs://avalon-run-logs/${storageSlug(payload.applierName)}/${storageSlug(runId)}/`;
+    }
+  } else {
+    file = await logFilePath(runId, startedAt);
+    for (const line of lines) await appendJsonl(file, line);
   }
 
   // --- Sink 2: MongoDB rollup (best-effort).
@@ -101,13 +135,15 @@ export async function recordApplyRun(payload = {}) {
       if (payload.status) set.status = payload.status;
       if (payload.finished) set.finishedAt = now;
 
+      const update = {
+        $setOnInsert: setOnInsert,
+        $set: set,
+      };
+      if (events.length && !useCloudLogs()) update.$push = { events: { $each: events } };
+      if (useCloudLogs()) update.$set.logStoragePrefix = `avalon-run-logs/${storageSlug(payload.applierName)}/${storageSlug(runId)}/`;
       await avalonRunsCollection.updateOne(
         { runId },
-        {
-          $setOnInsert: setOnInsert,
-          $set: set,
-          ...(events.length ? { $push: { events: { $each: events } } } : {}),
-        },
+        update,
         { upsert: true },
       );
     }
@@ -134,5 +170,20 @@ export async function listApplyRuns({ applierName, limit = 50 } = {}) {
 /** Fetch a single run with its full event array. */
 export async function getApplyRun(runId) {
   if (!avalonRunsCollection) return null;
-  return avalonRunsCollection.findOne({ runId: clean(runId) });
+  const normalized = clean(runId);
+  const run = await avalonRunsCollection.findOne({ runId: normalized });
+  if (!run || !useCloudLogs()) return run;
+  const chunks = await getFirestoreDb().collection("avalon_run_log_chunks").where("runId", "==", normalized).orderBy("createdAt", "asc").get();
+  const events = [];
+  for (const chunk of chunks.docs) {
+    const data = chunk.data();
+    if (!data.object?.storagePath) continue;
+    const bytes = await readStoredObject({ object: data.object });
+    for (const line of bytes.toString("utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      if (!event.kind || !["meta", "status"].includes(event.kind)) events.push(event);
+    }
+  }
+  return { ...run, events };
 }

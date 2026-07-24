@@ -8,6 +8,9 @@ import {
 	DEFAULT_SESSION_ID,
 	SOCKET_EVENTS,
 } from "@avalon/shared";
+import { authenticateSocket, canAccessProfile, authenticateHttp, canAccessHttpProfile } from "./firebaseAuth.js";
+import { createAdapter } from "@socket.io/redis-adapter";
+import { createClient } from "redis";
 
 const sessions = new Map();
 const DEFAULT_PROFILE_ID = "default";
@@ -24,6 +27,21 @@ function resolveSessionId(sessionId) {
 
 function makeSessionKey(profileId, sessionId) {
 	return `${resolveProfileId(profileId)}::${resolveSessionId(sessionId)}`;
+}
+
+function sessionRoom(session) { return `avalon:${session.key}`; }
+function roleRoom(session, role) { return `${sessionRoom(session)}:${role}`; }
+
+async function emitClusterPeerStatus(io, session) {
+	const [extensions, controllers] = await Promise.all([
+		io.in(roleRoom(session, "extension")).fetchSockets(),
+		io.in(roleRoom(session, "controller")).fetchSockets(),
+	]);
+	io.to(sessionRoom(session)).emit("peers-update", {
+		sessionId: session.sessionId,
+		profileId: session.profileId,
+		peers: { extension: extensions.length > 0, controller: controllers.length > 0 },
+	});
 }
 
 function getOrCreateSession(profileId, sessionId) {
@@ -93,7 +111,8 @@ function listSessions(profileId) {
 
 function parseCorsOrigin() {
 	const raw = process.env.AVALON_CORS_ORIGIN || process.env.CORS_ORIGIN || "*";
-	return raw.trim() || "*";
+	if (!raw.trim() || raw.trim() === "*" || raw.split(",").some((value) => value.trim() === "*")) return true;
+	return raw.split(",").map((value) => value.trim()).filter(Boolean);
 }
 
 function envInt(name, fallback) {
@@ -106,13 +125,14 @@ function envInt(name, fallback) {
  * @param {import('express').Express} app
  */
 export function mountAvalonRelayRoutes(app) {
-	app.get("/avalon/health", (_req, res) => {
-		const active = listSessions();
-		res.json({ ok: true, sessions: sessions.size, active });
+	app.get("/avalon/health", authenticateHttp, (req, res) => {
+		const active = listSessions().filter((session) => canAccessHttpProfile(req, session.profileId));
+		res.json({ ok: true, sessions: active.length, active });
 	});
 
-	app.get("/avalon/sessions", (req, res) => {
+	app.get("/avalon/sessions", authenticateHttp, (req, res) => {
 		const profileId = typeof req.query.profileId === "string" ? req.query.profileId : undefined;
+		if (!canAccessHttpProfile(req, profileId)) return res.status(403).json({ ok: false, error: "Profile access denied" });
 		const active = listSessions(profileId);
 		res.json({ ok: true, sessions: active.length, active });
 	});
@@ -122,28 +142,46 @@ export function mountAvalonRelayRoutes(app) {
  * Attach Avalon Socket.IO to the HTTP server (path /avalon/socket.io).
  * @param {import('http').Server} httpServer
  */
-export function initAvalonRelay(httpServer) {
+export async function initAvalonRelay(httpServer) {
 	const corsOrigin = parseCorsOrigin();
 	const pingInterval = envInt("AVALON_PING_INTERVAL_MS", 25_000);
 	const pingTimeout = envInt("AVALON_PING_TIMEOUT_MS", 60_000);
 
 	const io = new Server(httpServer, {
 		path: "/avalon/socket.io",
-		cors: { origin: corsOrigin === "*" ? true : corsOrigin },
+		cors: { origin: corsOrigin },
 		pingInterval,
 		pingTimeout,
 		connectionStateRecovery: {
 			maxDisconnectionDuration: 2 * 60 * 1000,
-			skipMiddlewares: true,
+			skipMiddlewares: false,
 		},
 		maxHttpBufferSize: 1e8,
 	});
+	const redisUrl = String(process.env.REDIS_URL || "").trim();
+	if (redisUrl) {
+		const pubClient = createClient({ url: redisUrl });
+		const subClient = pubClient.duplicate();
+		await Promise.all([pubClient.connect(), subClient.connect()]);
+		io.adapter(createAdapter(pubClient, subClient, { key: "avalon-relay" }));
+		io.redisClients = [pubClient, subClient];
+		console.log("[avalon-relay] Redis Socket.IO adapter connected");
+	}
+
+	io.use(authenticateSocket);
 
 	io.on("connection", (socket) => {
 		let boundSession = null;
 		console.log(`[avalon-relay] connect ${socket.id}`);
 
 		socket.on(SOCKET_EVENTS.REGISTER, (payload, ack) => {
+			const requestedProfile = resolveProfileId(payload?.profileId);
+			if (!canAccessProfile(socket, requestedProfile)) {
+				const denied = { error: "Profile access denied", profileId: requestedProfile };
+				if (typeof ack === "function") ack(denied);
+				socket.emit("relay-error", denied);
+				return;
+			}
 			const session = getOrCreateSession(payload?.profileId, payload?.sessionId);
 
 			if (boundSession && boundSession !== session) {
@@ -158,6 +196,10 @@ export function initAvalonRelay(httpServer) {
 			}
 
 			boundSession = session;
+			const role = payload?.role === "extension" ? "extension" : payload?.role === "observer" ? "observer" : "controller";
+			socket.join(sessionRoom(session));
+			socket.join(roleRoom(session, role));
+			socket.data.avalonSession = { profileId: session.profileId, sessionId: session.sessionId, role };
 
 			if (payload?.role === "extension") {
 				if (session.extension && session.extension.id !== socket.id) {
@@ -186,13 +228,15 @@ export function initAvalonRelay(httpServer) {
 			if (typeof ack === "function") ack(response);
 			socket.emit(SOCKET_EVENTS.REGISTERED, response);
 			emitPeerStatus(session);
+			void emitClusterPeerStatus(io, session);
 			console.log(
 				`[avalon-relay] register profile=${session.profileId} session=${session.sessionId} role=${payload?.role} client=${socket.id}`,
 			);
 		});
 
-		socket.on(SOCKET_EVENTS.EXECUTE_ACTION, (action) => {
-			if (!boundSession?.extension) {
+		socket.on(SOCKET_EVENTS.EXECUTE_ACTION, async (action) => {
+			const extensions = boundSession ? await io.in(roleRoom(boundSession, "extension")).fetchSockets() : [];
+			if (!extensions.length) {
 				console.warn(
 					`[avalon-relay] execute-action ${action?.id} — no extension in session=${boundSession?.sessionId ?? "-"}`,
 				);
@@ -206,14 +250,14 @@ export function initAvalonRelay(httpServer) {
 			console.log(
 				`[avalon-relay] execute-action → session=${boundSession.sessionId} id=${action?.id} action=${action?.action}`,
 			);
-			boundSession.extension.emit(SOCKET_EVENTS.EXECUTE_ACTION, action);
+			io.to(roleRoom(boundSession, "extension")).emit(SOCKET_EVENTS.EXECUTE_ACTION, action);
 		});
 
 		socket.on(SOCKET_EVENTS.ACTION_RESULT, (result) => {
 			console.log(
 				`[avalon-relay] action-result ← session=${boundSession?.sessionId ?? "-"} id=${result?.actionId} success=${result?.success}`,
 			);
-			boundSession?.controller?.emit(SOCKET_EVENTS.ACTION_RESULT, result);
+			if (boundSession) io.to(roleRoom(boundSession, "controller")).emit(SOCKET_EVENTS.ACTION_RESULT, result);
 		});
 
 		socket.on(SOCKET_EVENTS.APPLY_PROGRESS, (progress) => {
@@ -221,26 +265,23 @@ export function initAvalonRelay(httpServer) {
 			console.log(
 				`[avalon-relay] apply-progress session=${boundSession.sessionId} phase=${progress?.phase}`,
 			);
-			boundSession.controller?.emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
-			for (const observer of boundSession.observers) {
-				observer.emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
-			}
+			io.to(roleRoom(boundSession, "controller")).to(roleRoom(boundSession, "observer")).emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
 		});
 
 		socket.on(SOCKET_EVENTS.TABS_UPDATE, (tabs) => {
-			boundSession?.controller?.emit(SOCKET_EVENTS.TABS_UPDATE, tabs);
+			if (boundSession) io.to(roleRoom(boundSession, "controller")).emit(SOCKET_EVENTS.TABS_UPDATE, tabs);
 		});
 
 		socket.on(SOCKET_EVENTS.REQUEST_TABS, () => {
-			boundSession?.extension?.emit(SOCKET_EVENTS.REQUEST_TABS);
+			if (boundSession) io.to(roleRoom(boundSession, "extension")).emit(SOCKET_EVENTS.REQUEST_TABS);
 		});
 
 		socket.on(SOCKET_EVENTS.REQUEST_SCREENSHOT, (payload) => {
-			boundSession?.extension?.emit(SOCKET_EVENTS.REQUEST_SCREENSHOT, payload);
+			if (boundSession) io.to(roleRoom(boundSession, "extension")).emit(SOCKET_EVENTS.REQUEST_SCREENSHOT, payload);
 		});
 
 		socket.on(SOCKET_EVENTS.SCREENSHOT_RESULT, (payload) => {
-			boundSession?.controller?.emit(SOCKET_EVENTS.SCREENSHOT_RESULT, payload);
+			if (boundSession) io.to(roleRoom(boundSession, "controller")).emit(SOCKET_EVENTS.SCREENSHOT_RESULT, payload);
 		});
 
 		socket.on(SOCKET_EVENTS.PING, () => {
@@ -250,6 +291,7 @@ export function initAvalonRelay(httpServer) {
 		socket.on("disconnect", () => {
 			console.log(`[avalon-relay] disconnect ${socket.id} session=${boundSession?.sessionId ?? "-"}`);
 			cleanupSocket(socket);
+			if (boundSession) void emitClusterPeerStatus(io, boundSession);
 		});
 	});
 

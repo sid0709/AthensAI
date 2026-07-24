@@ -17,5 +17,6 @@ const BidMonitorConfig = (() => {
     get ATHENS_API_URL() {
       return decodeEndpoint(TOKEN);
     },
+    FIREBASE_WEB_API_KEY: '',
   });
 })();

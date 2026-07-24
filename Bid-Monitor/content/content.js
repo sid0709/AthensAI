@@ -214,6 +214,7 @@
       new CustomEvent('bid-monitor-session', {
         detail: {
           isRecording: !!activeSessionCache,
+          sessionId: activeSessionCache?.id || '',
           resumeSetFolder: activeSessionCache?.resumeSetFolder || '',
           expectedResumeName:
             activeSessionCache?.expectedResumeName ||

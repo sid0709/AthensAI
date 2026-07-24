@@ -24,6 +24,15 @@ export function isAdminPermission(permission) {
  */
 export async function requireAdmin(req, res, next) {
 	try {
+		if (req.auth) {
+			const tokenRole = String(req.auth.role || "").trim().toLowerCase();
+			if (req.auth.admin === true || tokenRole === "admin") {
+				req.adminAccount = { uid: req.auth.uid, email: req.auth.email || null };
+				return next();
+			}
+			return res.status(403).json({ error: "Admin permission required" });
+		}
+
 		if (!accountInfoCollection) {
 			return res.status(503).json({ error: "Database not ready" });
 		}

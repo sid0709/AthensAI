@@ -10,6 +10,7 @@ ENCODE_PY="${ROOT}/../docker/encode-endpoint.py"
 # Capture CI / pack overrides before .env can clobber them.
 PRESET_API_URL="${ATHENS_API_URL:-}"
 PRESET_ORIGIN="${PUBLIC_ORIGIN:-}"
+PRESET_FIREBASE_KEY="${FIREBASE_WEB_API_KEY:-}"
 
 if [[ -f "${ROOT}/.env" ]]; then
   set -a
@@ -25,6 +26,7 @@ elif [[ -n "${PRESET_ORIGIN}" ]]; then
 fi
 
 ATHENS_API_URL="${ATHENS_API_URL:-http://127.0.0.1:8979/api}"
+FIREBASE_WEB_API_KEY="${PRESET_FIREBASE_KEY:-${FIREBASE_WEB_API_KEY:-}}"
 
 if [[ ! "${ATHENS_API_URL}" =~ ^https?:// ]]; then
   echo "error: ATHENS_API_URL must be an http(s) URL, got: ${ATHENS_API_URL}" >&2
@@ -37,6 +39,7 @@ import base64
 import runpy
 
 url = """${ATHENS_API_URL}""".strip().rstrip("/")
+firebase_key = """${FIREBASE_WEB_API_KEY}""".strip()
 if not url.endswith("/api"):
     url = url + "/api"
 
@@ -62,6 +65,7 @@ const BidMonitorConfig = (() => {{
     get ATHENS_API_URL() {{
       return decodeEndpoint(TOKEN);
     }},
+    FIREBASE_WEB_API_KEY: {firebase_key!r},
   }});
 }})();
 '''

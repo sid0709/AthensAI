@@ -284,9 +284,9 @@ export const getAiUsageMonitor = createAsyncHandler(async (req, res) => {
   /** @type {Map<string, { provider: string, masked: string, fingerprint: string, users: string[], calls: number, costUsd: number, totalTokens: number }>} */
   const keyIndex = new Map();
 
-  const users = accounts
-    .map((raw) => {
-      const doc = decryptAccountDoc(raw);
+  const users = (await Promise.all(accounts
+    .map(async (raw) => {
+      const doc = await decryptAccountDoc(raw);
       const name = String(doc?.name || "").trim();
       if (!name) return null;
       const profile = doc.autoBidProfile || {};
@@ -334,7 +334,7 @@ export const getAiUsageMonitor = createAsyncHandler(async (req, res) => {
         keys: keys.map(({ fingerprint: _fp, ...rest }) => rest),
         usage,
       };
-    })
+    })))
     .filter(Boolean)
     .sort((a, b) => (b.usage.costUsd || 0) - (a.usage.costUsd || 0) || a.name.localeCompare(b.name));
 

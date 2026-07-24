@@ -10,8 +10,11 @@
   },
   "dependencies": {
     "@avalon/shared": "file:../shared",
+    "@socket.io/redis-adapter": "^8.3.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "firebase-admin": "^14.2.0",
+    "redis": "^4.7.1",
     "socket.io": "^4.8.1"
   },
   "engines": {

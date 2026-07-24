@@ -8,7 +8,7 @@ import {
 } from '../../config/graphAndVectorConfig.js';
 import { accountInfoCollection } from '../../db/mongo.js';
 import { getProvider } from '../llm/llmService.js';
-import { decryptSecret } from '@nextoffer/shared/secretCrypto';
+import { decryptProfileApiKeys } from '../autoBidProfileSecrets.js';
 
 /** Ollama model — top MTEB English retrieval model in the Ollama library. */
 export const DEFAULT_OLLAMA_EMBED_MODEL = 'mxbai-embed-large';
@@ -74,7 +74,7 @@ export async function loadOpenaiApiKey(applierName) {
 		);
 	}
 
-	return decryptSecret(acc?.autoBidProfile?.openaiApiKey ?? '').trim() || '';
+	return String((await decryptProfileApiKeys(acc?.autoBidProfile || {}))?.openaiApiKey || '').trim();
 }
 
 async function callOllamaEmbeddings({ model, input }) {

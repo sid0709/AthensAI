@@ -121,9 +121,12 @@ function applyBearerApiKeys(
   req: import('express').Request,
   body: import('../types.js').ChatRequest,
 ): import('../types.js').ChatRequest {
+  const providerHeader = req.headers['x-provider-api-key'];
   const auth = req.headers.authorization;
   const bearer =
-    typeof auth === 'string' && /^Bearer\s+/i.test(auth)
+    typeof providerHeader === 'string' && providerHeader.trim()
+      ? providerHeader.trim()
+      : typeof auth === 'string' && /^Bearer\s+/i.test(auth) && auth.split('.').length !== 3
       ? auth.replace(/^Bearer\s+/i, '').trim()
       : '';
   if (!bearer) return body;

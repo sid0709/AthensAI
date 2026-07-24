@@ -1,10 +1,10 @@
-import { ObjectId, GridFSBucket } from "mongodb";
-import { resumeTemplatesCollection } from "../db/mongo.js";
+import { ObjectId } from "mongodb";
+import { getMongoDb, resumeTemplatesCollection } from "../db/mongo.js";
 import { parseTemplateDocx } from "./parseTemplateDocx.js";
 import { fillTemplateDocx } from "./fillTemplateDocx.js";
 import { renderDocxPreviewImages } from "./renderDocxPreviewImages.js";
+import { deleteStoredObject, putBinaryObject, readStoredObject, storageSlug } from "./firebase/objectStore.js";
 
-const INLINE_MAX_BYTES = 8 * 1024 * 1024;
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 function cleanString(v) {
@@ -26,57 +26,12 @@ function toManifest(doc) {
   };
 }
 
-function getGridFsBucket() {
-  if (!resumeTemplatesCollection) return null;
-  const db = resumeTemplatesCollection.db;
-  return new GridFSBucket(db, { bucketName: "resume_template_files" });
-}
-
-async function storeContent(buffer) {
-  if (buffer.length <= INLINE_MAX_BYTES) {
-    return { storage: "inline", contentBase64: buffer.toString("base64"), gridFsId: null };
-  }
-  const bucket = getGridFsBucket();
-  if (!bucket) throw new Error("GridFS not available");
-  const gridFsId = new ObjectId();
-  await new Promise((resolve, reject) => {
-    const stream = bucket.openUploadStreamWithId(gridFsId, `template-${gridFsId}`);
-    stream.on("error", reject);
-    stream.on("finish", resolve);
-    stream.end(buffer);
-  });
-  return { storage: "gridfs", contentBase64: null, gridFsId };
-}
-
 async function readContent(doc) {
-  if (doc.storage === "gridfs" && doc.gridFsId) {
-    const bucket = getGridFsBucket();
-    if (!bucket) throw new Error("GridFS not available");
-    const chunks = [];
-    await new Promise((resolve, reject) => {
-      bucket
-        .openDownloadStream(doc.gridFsId)
-        .on("data", (chunk) => chunks.push(chunk))
-        .on("error", reject)
-        .on("end", resolve);
-    });
-    return Buffer.concat(chunks);
-  }
-  if (doc.contentBase64) return Buffer.from(doc.contentBase64, "base64");
-  return null;
+  return readStoredObject(doc, { collection: resumeTemplatesCollection, legacyDb: getMongoDb(), legacyBucketName: "resume_template_files" });
 }
 
 async function deleteStoredContent(doc) {
-  if (doc.storage === "gridfs" && doc.gridFsId) {
-    const bucket = getGridFsBucket();
-    if (bucket) {
-      try {
-        await bucket.delete(doc.gridFsId);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  return deleteStoredObject(doc, { collection: resumeTemplatesCollection, legacyDb: getMongoDb(), legacyBucketName: "resume_template_files" });
 }
 
 export async function listResumeTemplates(ownerName) {
@@ -119,19 +74,26 @@ export async function createResumeTemplate(payload) {
   if (!buffer.length) throw new Error("Empty file content");
 
   const parsed = parseTemplateDocx(buffer, identity);
-  const stored = await storeContent(buffer);
+  const _id = new ObjectId();
+  const stored = await putBinaryObject({
+    buffer,
+    objectPath: `resume-templates/${storageSlug(ownerName)}/${String(_id)}/content`,
+    mimeType: DOCX_MIME,
+    metadata: { ownerName, templateId: String(_id), originalFileName: fileName },
+  });
   const now = new Date().toISOString();
   const baseName = fileName.replace(/\.docx$/i, "");
 
   const doc = {
+    _id,
     ownerName,
     name: cleanString(payload.name) || baseName,
     fileName,
     mimeType: DOCX_MIME,
     sizeBytes: buffer.length,
     storage: stored.storage,
+    file: stored.file,
     contentBase64: stored.contentBase64,
-    gridFsId: stored.gridFsId,
     slotCount: parsed.slotCount,
     sectionsFound: parsed.sectionsFound,
     slots: parsed.slots,

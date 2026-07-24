@@ -38,6 +38,7 @@ import {
   TITLE_POLICY_VERSION,
 } from "./resumeCareerTitlePolicy.js";
 import { createLimiter } from "../utils/concurrency.js";
+import { storeUserResumeContent } from "./userResumeService.js";
 
 const cleanString = (v) => String(v ?? "").trim();
 
@@ -93,29 +94,50 @@ async function findAccountDoc(applierName) {
 async function setProfileResumeUpdatedAt(applierName, resumeUpdatedAt) {
   const acc = await findAccountDoc(applierName);
   if (!acc?._id || !accountInfoCollection) return;
-  const existing = decryptProfileApiKeys(acc.autoBidProfile || {});
-  const next = encryptProfileApiKeys({
+  const existing = await decryptProfileApiKeys(acc.autoBidProfile || {});
+  const next = await encryptProfileApiKeys({
     ...existing,
     resumeUpdatedAt,
   });
   await accountInfoCollection.updateOne({ _id: acc._id }, { $set: { autoBidProfile: next } });
 }
 
-async function updateLibraryResumeText({ generationId, ownerName, extractedText, identitySyncedAt }) {
-  if (!userResumesCollection || !generationId) return false;
+async function updateLibraryResumeText({ generationId, resumeId, ownerName, extractedText, identitySyncedAt }) {
+  if (!userResumesCollection || (!generationId && !resumeId)) return false;
+  let filter;
+  if (resumeId) {
+    try {
+      filter = { _id: new ObjectId(String(resumeId)), ownerName };
+    } catch {
+      return false;
+    }
+  } else {
+    filter = { ownerName, generationId: String(generationId), source: "generated" };
+  }
+  const existing = await userResumesCollection.findOne(filter);
+  if (!existing) return false;
   const now = new Date().toISOString();
   const buffer = Buffer.from(extractedText || "Generated resume", "utf8");
+  const stored = await storeUserResumeContent({
+    resumeId: existing._id,
+    ownerName,
+    fileName: existing.fileName || "generated-resume.txt",
+    mimeType: existing.mimeType || "text/plain",
+    buffer,
+  });
   const patch = {
     extractedText,
-    contentBase64: buffer.toString("base64"),
-    sizeBytes: buffer.length,
+    contentBase64: stored.contentBase64,
+    storage: stored.storage,
+    file: stored.file,
+    sizeBytes: stored.sizeBytes,
     updatedAt: now,
     identitySyncedAt,
     identityRefreshedAt: now,
   };
   const byGen = await userResumesCollection.updateOne(
-    { ownerName, generationId: String(generationId), source: "generated" },
-    { $set: patch },
+    { _id: existing._id },
+    { $set: patch, $unset: { gridFsId: "" } },
   );
   return byGen.matchedCount > 0;
 }
@@ -273,32 +295,20 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
           );
 
           const generationId = String(gen._id);
-          await updateLibraryResumeText({
+          const libraryUpdated = await updateLibraryResumeText({
             generationId,
             ownerName: name,
             extractedText,
             identitySyncedAt: profileUpdatedAt,
           });
 
-          if (gen.libraryResumeId && userResumesCollection) {
-            try {
-              const buffer = Buffer.from(extractedText || "Generated resume", "utf8");
-              await userResumesCollection.updateOne(
-                { _id: new ObjectId(String(gen.libraryResumeId)) },
-                {
-                  $set: {
-                    extractedText,
-                    contentBase64: buffer.toString("base64"),
-                    sizeBytes: buffer.length,
-                    updatedAt: now.toISOString(),
-                    identitySyncedAt: profileUpdatedAt,
-                    identityRefreshedAt: now.toISOString(),
-                  },
-                },
-              );
-            } catch {
-              /* invalid id */
-            }
+          if (!libraryUpdated && gen.libraryResumeId && userResumesCollection) {
+            await updateLibraryResumeText({
+              resumeId: gen.libraryResumeId,
+              ownerName: name,
+              extractedText,
+              identitySyncedAt: profileUpdatedAt,
+            });
           }
 
           if (jobId) {

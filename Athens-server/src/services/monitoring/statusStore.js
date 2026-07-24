@@ -2,7 +2,7 @@ import { getMongoDb } from '../../db/mongo.js';
 
 export const STATUS_SOURCE = 'production';
 
-const COMPONENTS = [
+const LEGACY_COMPONENTS = [
 	{ id: 'athens-web', name: 'Athens web application' },
 	{ id: 'athens-api', name: 'Athens API' },
 	{ id: 'ai-bff', name: 'AI services' },
@@ -12,8 +12,22 @@ const COMPONENTS = [
 	{ id: 'public-api', name: 'Public API request path' },
 ];
 
+const FIREBASE_COMPONENTS = [
+	{ id: 'athens-web', name: 'Athens web application' },
+	{ id: 'athens-api', name: 'Athens API' },
+	{ id: 'ai-bff', name: 'AI services' },
+	{ id: 'avalon-relay', name: 'Avalon relay' },
+	{ id: 'firestore', name: 'Cloud Firestore' },
+	{ id: 'storage', name: 'Cloud Storage' },
+	{ id: 'public-api', name: 'Public API request path' },
+];
+
+function components() {
+	return String(process.env.DATABASE_BACKEND || '').toLowerCase() === 'firestore' ? FIREBASE_COMPONENTS : LEGACY_COMPONENTS;
+}
+
 function collection(name) { return getMongoDb()?.collection(name) || null; }
-export function getComponentDefinitions() { return COMPONENTS; }
+export function getComponentDefinitions() { return components(); }
 
 export function markStaleComponent(component, now = Date.now(), staleAfterMs = Number(process.env.MONITOR_STALE_AFTER_MS || 120000)) {
 	const checkedAt = component?.lastCheckedAt ? new Date(component.lastCheckedAt).getTime() : 0;
@@ -35,7 +49,7 @@ export async function readCurrentStatus() {
 		uptimePercent: 1,
 	} }).sort({ component: 1 }).toArray() : [];
 	const byId = new Map(docs.map((doc) => [doc.component, doc]));
-	return COMPONENTS.map((component) => markStaleComponent(byId.get(component.id)) || {
+	return components().map((component) => markStaleComponent(byId.get(component.id)) || {
 		component: component.id, name: component.name, status: 'unknown', message: 'No monitoring sample is available yet.',
 		lastCheckedAt: null, lastSuccessAt: null, latencyMs: null, uptimePercent: null,
 	});
@@ -70,6 +84,7 @@ function toPercent(value) {
 }
 
 export async function readLiveMetrics(minutes = 60) {
+	if (String(process.env.DATABASE_BACKEND || '').toLowerCase() === 'firestore') return [];
 	const samples = collection('monitor_samples');
 	if (!samples) return [];
 	const from = new Date(Date.now() - minutes * 60 * 1000);
@@ -103,7 +118,7 @@ export function buildTodayTimelines(grouped, now = new Date(), bucketMinutes = 1
 		`${item._id.component}:${new Date(item._id.timestamp).getTime()}`,
 		item,
 	]));
-	const components = COMPONENTS.map((component) => ({
+	const components = getComponentDefinitions().map((component) => ({
 		component: component.id,
 		name: component.name,
 		segments: Array.from({ length: slotCount }, (_, index) => {

@@ -328,7 +328,7 @@ export async function getAutoBidProfile(req, res) {
 				profile: buildAutoBidProfileResponse({}),
 			});
 		}
-		const p = decryptProfileApiKeys(acc.autoBidProfile || {});
+		const p = await decryptProfileApiKeys(acc.autoBidProfile || {});
 		return res.json({
 			success: true,
 			accountExists: true,
@@ -355,10 +355,10 @@ export async function upsertAutoBidProfile(req, res) {
 				error: `No account named "${name}". Add it under Applier accounts in the sidebar (or POST /api/account_info) before saving the profile.`,
 			});
 		}
-		const existing = decryptProfileApiKeys(acc.autoBidProfile || {});
+		const existing = await decryptProfileApiKeys(acc.autoBidProfile || {});
 		const normalized = normalizeAutoBidProfile(body);
 		// Preserve server-managed resume sync watermark across profile saves.
-		const autoBidProfile = encryptProfileApiKeys({
+		const autoBidProfile = await encryptProfileApiKeys({
 			...normalized,
 			resumeUpdatedAt: existing.resumeUpdatedAt || null,
 		});
@@ -374,7 +374,7 @@ export async function upsertAutoBidProfile(req, res) {
 		}
 		return res.json({
 			success: true,
-			profile: decryptProfileApiKeys(autoBidProfile),
+			profile: await decryptProfileApiKeys(autoBidProfile),
 			vendorAllowed,
 			cloudMirror: getCloudMirrorStatus(),
 		});
@@ -403,7 +403,7 @@ export async function setDefaultModel(req, res) {
 		const acc = await findAccountByApplierName(name);
 		if (!acc) return res.status(404).json({ success: false, error: `No account named "${name}".` });
 
-		const profile = decryptProfileApiKeys(acc.autoBidProfile || {});
+		const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
 		const apiKey = String(profile?.[getProvider(provider).keyField] || "").trim();
 		if (!apiKey) {
 			return res.json({ success: false, valid: false, error: `No ${getProvider(provider).label} API key saved. Add it and save your profile first.` });
