@@ -361,7 +361,9 @@ resource "google_cloud_run_v2_service" "ai_bff" {
     max_instance_request_concurrency = 20
     scaling {
       min_instance_count = 1
-      max_instance_count = 20
+      # Keep the initial rollout within the new project's regional CPU quota.
+      # Raise this only after the quota increase has been approved.
+      max_instance_count = 2
     }
     containers {
       image = local.images.ai_bff
@@ -436,7 +438,8 @@ resource "google_cloud_run_v2_service" "api" {
     max_instance_request_concurrency = 20
     scaling {
       min_instance_count = var.min_api_instances
-      max_instance_count = 20
+      # Two 4-vCPU API instances fit the initial us-east4 project quota.
+      max_instance_count = 2
     }
     vpc_access {
       connector = google_vpc_access_connector.serverless.id
@@ -580,7 +583,9 @@ resource "google_cloud_run_v2_service" "relay" {
     max_instance_request_concurrency = 1000
     scaling {
       min_instance_count = 1
-      max_instance_count = 10
+      # WebSocket connections reconnect across instances; start conservatively
+      # until the Cloud Run quota increase is in place.
+      max_instance_count = 2
     }
     vpc_access {
       connector = google_vpc_access_connector.serverless.id
