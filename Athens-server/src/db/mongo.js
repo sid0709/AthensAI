@@ -148,6 +148,10 @@ async function ensureMatchScoreIndexes() {
 	}
 	if (skillDictionaryCollection) {
 		await skillDictionaryCollection.createIndex({ nameCanonical: 1 }, { unique: true });
+		await skillDictionaryCollection.createIndex(
+			{ skillId: 1 },
+			{ unique: true, partialFilterExpression: { skillId: { $type: 'number' } } },
+		);
 		await skillDictionaryCollection.createIndex({ tokens: 1 });
 		await skillDictionaryCollection.createIndex({ jobCount: -1 });
 	}

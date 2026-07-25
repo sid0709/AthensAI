@@ -2,6 +2,10 @@ import { skillDictionaryCollection } from '../../db/mongo.js';
 import { toCanonical } from '@nextoffer/shared/skill-normalize';
 import { skillTokens } from '@nextoffer/shared/skill-tokens';
 import { USER_SKILL_CATEGORIES } from '../../config/graphAndVectorConfig.js';
+import { stableSkillId } from '../matching/canonicalSkillVectors.js';
+import {
+  publishCanonicalSkillDictionaryChange,
+} from '../matching/canonicalSkillDictionary.js';
 
 /**
  * Global, deduped dictionary of every skill seen in a job description.
@@ -42,6 +46,7 @@ export async function recordJobSkills(aiSkills = []) {
   if (!skillDictionaryCollection || !aiSkills.length) return;
   const now = new Date().toISOString();
   const ops = [];
+  const changedEntries = [];
   const seen = new Set();
   for (const s of aiSkills) {
     const name = String(s?.name || '').trim();
@@ -51,11 +56,12 @@ export async function recordJobSkills(aiSkills = []) {
     seen.add(canonical);
     const category = USER_SKILL_CATEGORIES.includes(s?.category) ? s.category : 'hard';
     const requirement = Math.min(5, Math.max(1, Number(s?.requirement) || 1));
+    changedEntries.push({ name, nameCanonical: canonical, skillId: stableSkillId(canonical) });
     ops.push({
       updateOne: {
         filter: { nameCanonical: canonical },
         update: {
-          $setOnInsert: { nameCanonical: canonical, name, createdAt: now },
+          $setOnInsert: { nameCanonical: canonical, name, skillId: stableSkillId(canonical), createdAt: now },
           $set: { lastSeenAt: now },
           $inc: {
             jobCount: 1,
@@ -68,7 +74,12 @@ export async function recordJobSkills(aiSkills = []) {
       },
     });
   }
-  if (ops.length) await skillDictionaryCollection.bulkWrite(ops, { ordered: false });
+  if (ops.length) {
+    const result = await skillDictionaryCollection.bulkWrite(ops, { ordered: false });
+    if (Number(result?.upsertedCount) > 0) {
+      await publishCanonicalSkillDictionaryChange(changedEntries);
+    }
+  }
 }
 
 /**
@@ -112,5 +123,6 @@ export async function countCoveredSkills(skillName) {
 export async function clearDictionary() {
   if (!skillDictionaryCollection) return { deleted: 0 };
   const res = await skillDictionaryCollection.deleteMany({});
+  await publishCanonicalSkillDictionaryChange();
   return { deleted: res.deletedCount };
 }

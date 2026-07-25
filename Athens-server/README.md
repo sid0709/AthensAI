@@ -24,6 +24,43 @@ Backend for **Athens** (NextOffer job search, resume analysis, skill graph, and 
 
 ## Job recommendation (overview)
 
+### Query-time sparse ranking (v2)
+
+The scalable path is opt-in with `RECOMMENDATION_QUERY_TIME_MODE=on`. It stores one
+canonical weighted sparse vector per job in the `jobs_active` Qdrant alias,
+retrieves a bounded candidate set for the current user's manual skills, and
+exact-reranks those candidates with the existing coverage scorer. Redis caches
+only active query results using profile, dictionary, and catalog revisions; it
+does not materialize user-job score rows.
+
+Initial migration:
+
+```bash
+npm run infra:up --prefix ..
+npm run backfill-query-ranking
+# Rebuild only job payloads/vectors after a card schema change:
+npm run backfill-query-ranking -- --skip-dictionary
+npm run test:query-ranking
+# Sample the new path while users still receive legacy results.
+RECOMMENDATION_QUERY_TIME_MODE=shadow
+# Run an exhaustive accuracy check for representative 100/250/500-skill profiles.
+npm run validate-query-ranking -- --applier="Profile name"
+# Against the 1M-job performance dataset, repeat for 100, 250, and 500 skills.
+npm run benchmark-query-ranking -- --applier="Profile name" --expected-skills=100
+# Enable only after recall@100 and NDCG@100 pass the rollout thresholds.
+RECOMMENDATION_QUERY_TIME_MODE=on
+```
+
+New and re-extracted jobs are dual-written to the v2 index. When the flag is
+enabled, the legacy full-catalog score worker is disabled; Qdrant/Redis failures
+return a newest-first result marked with `rankingStatus: fallback` and are never
+reported as fresh v2 rankings.
+
+Keep the legacy score rows and the ability to switch the mode back to `off` for
+seven days after cutover; remove them only after the shadow and live metrics stay healthy.
+
+### Legacy recommendation path
+
 Each applier can have **multiple analyzed resumes** (e.g. Frontend vs Backend). Each resume gets its own embedding in Qdrant.
 
 When Job Search uses **Best match** (`sort=recommended`):

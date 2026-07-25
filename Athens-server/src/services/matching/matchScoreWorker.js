@@ -14,6 +14,7 @@ import {
   deleteStaleScores,
 } from './matchScoreStore.js';
 import { isForegroundBusy } from '../runtimeLoad.js';
+import { isQueryTimeRankingEnabled } from '../../config/graphAndVectorConfig.js';
 
 /**
  * Background worker keeping job_match_scores current (mirrors the
@@ -212,6 +213,7 @@ async function fanOutPendingJobs() {
 }
 
 export async function runMatchScoreBatch() {
+	if (isQueryTimeRankingEnabled()) return { processed: false, disabled: 'query_time_ranking' };
 	const rescored = await claimAndRescoreUser();
 	const fannedOut = rescored ? false : await fanOutPendingJobs();
 	return { processed: Boolean(rescored || fannedOut), rescored, fannedOut };

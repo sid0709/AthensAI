@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
@@ -29,7 +29,12 @@ type MatchSkillsResponse = {
   profileTokens?: string[];
   profileCompacts?: string[];
   boostCompacts?: string[];
+  tokenWeights?: Record<string, number>;
+  compactWeights?: { c: string; w: number }[];
+  categoryWeights?: Record<string, number>;
   error?: string;
+  profileVersion?: number;
+  dictionaryVersion?: string;
 };
 
 type AddSkillResponse = MatchSkillsResponse & {
@@ -44,10 +49,13 @@ function contextFromResponse(res: MatchSkillsResponse): ProfileMatchContext {
   return buildClientMatchContext(
     res.profileTokens ?? [],
     res.profileCompacts ?? res.boostCompacts ?? [],
+    res.tokenWeights ?? {},
+    res.compactWeights ?? [],
+    res.categoryWeights ?? {},
   );
 }
 
-export function useProfileMatchSkills(enabled = true) {
+function useProfileMatchSkillsState(enabled = true) {
   const { post, get, del } = useApi(API_BASE);
   const { applier } = useApplier();
   const [skills, setSkills] = useState<UserSkill[]>([]);
@@ -56,6 +64,17 @@ export function useProfileMatchSkills(enabled = true) {
   const [matchContext, setMatchContext] = useState<ProfileMatchContext | null>(null);
   const [loading, setLoading] = useState(false);
   const [boostingSkill, setBoostingSkill] = useState<string | null>(null);
+  const [profileVersion, setProfileVersion] = useState(0);
+  const [dictionaryVersion, setDictionaryVersion] = useState<string | null>(null);
+
+  const applyProfileResponse = useCallback((res: MatchSkillsResponse) => {
+    setSkills(res.skills ?? []);
+    setBoostSkills(res.boostSkills ?? []);
+    setExactSkills(res.exactSkills ?? []);
+    setMatchContext(contextFromResponse(res));
+    if (typeof res.profileVersion === "number") setProfileVersion(res.profileVersion);
+    if (typeof res.dictionaryVersion === "string") setDictionaryVersion(res.dictionaryVersion);
+  }, []);
 
   const reload = useCallback(async () => {
     const name = applier?.name?.trim();
@@ -66,15 +85,12 @@ export function useProfileMatchSkills(enabled = true) {
         `/personal/profile-match-skills?applierName=${encodeURIComponent(name)}`,
       )) as MatchSkillsResponse;
       if (res?.success) {
-        setSkills(res.skills ?? []);
-        setBoostSkills(res.boostSkills ?? []);
-        setExactSkills(res.exactSkills ?? []);
-        setMatchContext(contextFromResponse(res));
+        applyProfileResponse(res);
       }
     } finally {
       setLoading(false);
     }
-  }, [applier?.name, enabled, get]);
+  }, [applier?.name, applyProfileResponse, enabled, get]);
 
   useEffect(() => {
     void reload();
@@ -101,10 +117,8 @@ export function useProfileMatchSkills(enabled = true) {
 
         if (!res?.success) return null;
 
-        setSkills(res.skills ?? []);
-        setBoostSkills(res.boostSkills ?? []);
+        applyProfileResponse(res);
         const ctx = contextFromResponse(res);
-        setMatchContext(ctx);
 
         if (res.skillHighlights?.length) {
           const skillScore = res.scoreSkill ?? 0;
@@ -132,7 +146,7 @@ export function useProfileMatchSkills(enabled = true) {
         setBoostingSkill(null);
       }
     },
-    [applier?.name, post],
+    [applier?.name, applyProfileResponse, post],
   );
 
   const addSkill = useCallback(
@@ -150,16 +164,13 @@ export function useProfileMatchSkills(enabled = true) {
           level,
         })) as AddSkillResponse;
         if (!res?.success) return false;
-        setSkills(res.skills ?? []);
-        setBoostSkills(res.boostSkills ?? []);
-        setExactSkills(res.exactSkills ?? []);
-        setMatchContext(contextFromResponse(res));
+        applyProfileResponse(res);
         return res.added !== false;
       } finally {
         setBoostingSkill(null);
       }
     },
-    [applier?.name, post],
+    [applier?.name, applyProfileResponse, post],
   );
 
   const removeSkill = useCallback(
@@ -175,16 +186,13 @@ export function useProfileMatchSkills(enabled = true) {
           skill: label,
         })) as MatchSkillsResponse & { removed?: boolean };
         if (!res?.success) return false;
-        setSkills(res.skills ?? []);
-        setBoostSkills(res.boostSkills ?? []);
-        setExactSkills(res.exactSkills ?? []);
-        setMatchContext(contextFromResponse(res));
+        applyProfileResponse(res);
         return res.removed !== false;
       } finally {
         setBoostingSkill(null);
       }
     },
-    [applier?.name, del],
+    [applier?.name, applyProfileResponse, del],
   );
 
   return {
@@ -192,6 +200,8 @@ export function useProfileMatchSkills(enabled = true) {
     boostSkills,
     exactSkills,
     matchContext,
+    profileVersion,
+    dictionaryVersion,
     loading,
     boostingSkill,
     reload,
@@ -199,4 +209,18 @@ export function useProfileMatchSkills(enabled = true) {
     addSkill,
     removeSkill,
   };
+}
+
+type ProfileMatchSkillsValue = ReturnType<typeof useProfileMatchSkillsState>;
+const ProfileMatchSkillsContext = createContext<ProfileMatchSkillsValue | null>(null);
+
+export function ProfileMatchSkillsProvider({ children }: { children: ReactNode }) {
+  const value = useProfileMatchSkillsState(true);
+  return createElement(ProfileMatchSkillsContext.Provider, { value }, children);
+}
+
+export function useProfileMatchSkills(_enabled = true) {
+  const value = useContext(ProfileMatchSkillsContext);
+  if (!value) throw new Error("useProfileMatchSkills must be used inside ProfileMatchSkillsProvider");
+  return value;
 }

@@ -1,0 +1,35 @@
+name: nextoffer-local
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --save
+      - "60"
+      - "1000"
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.5
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+volumes:
+  redis_data:
+  qdrant_storage:

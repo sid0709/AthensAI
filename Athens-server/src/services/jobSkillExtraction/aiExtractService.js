@@ -7,6 +7,7 @@ import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../matching
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
 import { USER_SKILL_CATEGORIES } from '../../config/graphAndVectorConfig.js';
 import { recordJobSkills } from '../skillDictionary/skillDictionaryStore.js';
+import { indexOneJobRanking } from '../matching/jobRankingIndex.js';
 import { decryptProfileApiKeys } from '../autoBidProfileSecrets.js';
 
 const MAX_CHARS = Number(process.env.JOB_SKILL_EXTRACT_MAX_CHARS || 8000);
@@ -149,6 +150,13 @@ export async function extractAndPersistJob(job, auth, { signal } = {}) {
 
   await indexJobInRedis(jobId, skillsNormalized, tokens).catch(() => {});
   await recordJobSkills(aiSkills).catch(() => {});
+  await indexOneJobRanking({
+    ...job,
+    aiSkills,
+    skills: displaySkills,
+    skillsNormalized,
+    skillTokens: tokens,
+  }).catch(() => {});
 
   return { jobId, skillCount: aiSkills.length, usage };
 }

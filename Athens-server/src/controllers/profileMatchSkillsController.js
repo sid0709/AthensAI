@@ -10,18 +10,23 @@ import {
   USER_SKILL_CATEGORIES,
   USER_SKILL_LEVEL_MIN,
   USER_SKILL_LEVEL_MAX,
+  getSkillCategoryWeights,
 } from '../config/graphAndVectorConfig.js';
+import { getRescoreState } from '../services/matching/matchScoreStore.js';
+import { loadCanonicalSkillDictionary } from '../services/matching/canonicalSkillDictionary.js';
 
 /**
  * Manual user skill management (name + category + level). These skills are the
- * sole input to weighted match scoring; every mutation queues a background
- * rescore of the user's materialized job scores.
+ * sole input to weighted match scoring. Query-time mode only bumps the profile
+ * version; legacy mode queues a materialized full-catalog rescore.
  */
 
 async function contextPayload(applierName) {
-  const [skills, ctx] = await Promise.all([
+  const [skills, ctx, state, dictionary] = await Promise.all([
     listUserSkills(applierName),
     loadProfileMatchContext(applierName),
+    getRescoreState(applierName),
+    loadCanonicalSkillDictionary(),
   ]);
   return {
     skills,
@@ -34,7 +39,12 @@ async function contextPayload(applierName) {
     profileCompacts: ctx.profileCompacts || [],
     boostCompacts: ctx.profileCompacts || [],
     profileTokens: ctx.profileTokens || [],
+    tokenWeights: ctx.tokenWeights || {},
+    compactWeights: ctx.compactWeights || [],
+    categoryWeights: getSkillCategoryWeights(),
     ctx,
+    profileVersion: state?.profileVersion ?? 0,
+    dictionaryVersion: dictionary.version,
   };
 }
 

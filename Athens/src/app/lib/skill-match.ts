@@ -53,6 +53,9 @@ export function skillTokens(skill: string): string[] {
 export type ProfileMatchContext = {
   profileTokens: string[];
   profileCompacts: string[];
+  tokenWeights?: Record<string, number>;
+  compactWeights?: { c: string; w: number }[];
+  categoryWeights?: Record<string, number>;
 };
 
 export function buildProfileCompacts(skills: string[] = []): string[] {
@@ -70,8 +73,28 @@ export function buildProfileCompacts(skills: string[] = []): string[] {
 export function buildClientMatchContext(
   profileTokens: string[] = [],
   profileCompacts: string[] = [],
+  tokenWeights: Record<string, number> = {},
+  compactWeights: { c: string; w: number }[] = [],
+  categoryWeights: Record<string, number> = {},
 ): ProfileMatchContext {
-  return { profileTokens, profileCompacts };
+  return { profileTokens, profileCompacts, tokenWeights, compactWeights, categoryWeights };
+}
+
+function matchProficiency(jobSkill: string, ctx: ProfileMatchContext): number {
+  let best = 0;
+  for (const token of skillTokens(jobSkill)) {
+    best = Math.max(best, Number(ctx.tokenWeights?.[token]) || 0);
+  }
+  const jobCompact = compactSkillText(jobSkill);
+  if (jobCompact) {
+    for (const { c, w } of ctx.compactWeights ?? []) {
+      if (!c || c.length < SHIM_MIN_LEN || w <= best) continue;
+      if (jobCompact.includes(c) || (jobCompact.length >= SHIM_MIN_LEN && c.includes(jobCompact))) {
+        best = w;
+      }
+    }
+  }
+  return best;
 }
 
 export function jobSkillMatchesProfile(jobSkill: string, ctx: ProfileMatchContext): boolean {
@@ -110,14 +133,30 @@ export function computeSkillHighlights(
 }
 
 export function rescoreJobWithContext(job: Job, ctx: ProfileMatchContext): Job {
-  const skillNames =
-    job.skills.length > 0
-      ? job.skills
-      : (job.aiSkills?.map((s) => s.name).filter(Boolean) ?? []);
-  const highlights = computeSkillHighlights(skillNames, ctx);
-  const covered = highlights.filter((h) => h.matched).length;
+  const weighted = Boolean(Object.keys(ctx.tokenWeights ?? {}).length || ctx.compactWeights?.length);
+  const rawSkillRows = job.aiSkills?.length
+    ? job.aiSkills
+    : job.skills.map((name) => ({ name, category: "hard", requirement: 1 }));
+  const seenSkills = new Set<string>();
+  const skillRows = rawSkillRows.filter(({ name }) => {
+    const key = String(name).trim().toLowerCase();
+    if (!key || seenSkills.has(key)) return false;
+    seenSkills.add(key);
+    return true;
+  });
+  let denominator = 0;
+  let numerator = 0;
+  const highlights = skillRows.map(({ name, category, requirement }) => {
+    const proficiency = weighted ? matchProficiency(name, ctx) : Number(jobSkillMatchesProfile(name, ctx));
+    const categoryWeight = Number(ctx.categoryWeights?.[category] ?? ctx.categoryWeights?.hard ?? 1);
+    const contribution = Math.max(1, Number(requirement) || 1) * categoryWeight;
+    denominator += contribution;
+    numerator += contribution * proficiency;
+    return { name, matched: proficiency > 0 };
+  });
+  const covered = highlights.filter((highlight) => highlight.matched).length;
   const required = highlights.length;
-  const skill = required ? Math.round((covered / required) * 100) : job.scores.skill;
+  const skill = denominator ? Math.round((numerator / denominator) * 100) : job.scores.skill;
   const vector = job.scores.vector;
   const overall =
     vector != null && vector > 0

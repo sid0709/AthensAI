@@ -5,6 +5,8 @@ import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
 import { searchJobIds } from './search/algoliaJobs.js';
+import { getRedis, isRedisReady } from '../db/redis.js';
+import { createHash } from 'node:crypto';
 
 const SCORE_DIMENSIONS = {
 	overall: 'overallScore',
@@ -146,8 +148,13 @@ function finalizeQuery(query) {
 	return query;
 }
 
-const APPLIER_CACHE_TTL_MS = 5 * 60 * 1000;
+const APPLIER_CACHE_TTL_MS = 60 * 60 * 1000;
 const applierCache = new Map();
+
+function applierCacheKey(name) {
+	const digest = createHash('sha256').update(String(name)).digest('hex').slice(0, 20);
+	return `jobs:applier-context:${digest}`;
+}
 
 /** Resolve applier Mongo id + beta tier (cached briefly). */
 async function resolveApplierContext(applierName) {
@@ -159,11 +166,34 @@ async function resolveApplierContext(applierName) {
 	if (cached && cached.expiresAt > Date.now()) {
 		return { id: cached.id, isBeta: cached.isBeta };
 	}
+	if (isRedisReady()) {
+		const raw = await getRedis().get(applierCacheKey(name));
+		if (raw) {
+			try {
+				const stored = JSON.parse(raw);
+				const id = /^[a-f0-9]{24}$/i.test(String(stored.id || ''))
+					? new ObjectId(String(stored.id))
+					: stored.id || null;
+				const value = { id, isBeta: Boolean(stored.isBeta) };
+				applierCache.set(name, { ...value, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
+				return value;
+			} catch {
+				/* refresh from the authoritative account document */
+			}
+		}
+	}
 
 	const applierDoc = await accountInfoCollection.findOne({ name });
 	const id = applierDoc?._id || null;
 	const isBeta = Boolean(id) && isBetaTier(applierDoc?.tier);
 	applierCache.set(name, { id, isBeta, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
+	if (isRedisReady()) {
+		await getRedis().setEx(
+			applierCacheKey(name),
+			Math.ceil(APPLIER_CACHE_TTL_MS / 1000),
+			JSON.stringify({ id: id ? String(id) : null, isBeta }),
+		);
+	}
 	return { id, isBeta };
 }
 

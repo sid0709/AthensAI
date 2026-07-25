@@ -1,6 +1,11 @@
 import { jobsCollection, jobMatchScoresCollection, externalScrapedJobsCollection } from '../../db/mongo.js';
 import { JobSourceTitles } from '../../config/jobSources.js';
-import { isMaterializedRecommendationEnabled } from '../../config/graphAndVectorConfig.js';
+import {
+  getQueryTimeRankingMode,
+  getQueryTimeShadowSampleRate,
+  isMaterializedRecommendationEnabled,
+  isQueryTimeRankingEnabled,
+} from '../../config/graphAndVectorConfig.js';
 import { JOB_LIST_PROJECTION } from '../jobListQuery.js';
 import { normalizeExternalScrapedJob } from '../externalScrapedJobsListQuery.js';
 import { loadProfileMatchContext } from './profileSkills.js';
@@ -8,12 +13,60 @@ import { matchJobsForApplier } from './matchingService.js';
 import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
 import { computeCoverageScore, composeJobScores } from './coverageScore.js';
 import { countScoresForApplier, getRescoreState } from './matchScoreStore.js';
+import {
+  listDateRankedRankingFallback,
+  listQueryTimeRankedJobs,
+} from './jobRankingService.js';
+import { ndcgAtK, recallAtK } from './rankingEvaluation.js';
+import { incrementCounter, setGauge } from '../monitoring/metrics.js';
 
 function isFirestoreRuntime() {
   return String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() === 'firestore';
 }
 
 const firestoreRecommendationMeta = new Map();
+
+function resultJobId(job) {
+  return String(job?._id || job?.id || job?.jobId || '');
+}
+
+function resultRelevance(job) {
+  return Number(job?.scoreOverall ?? job?.matchScore ?? job?._score) || 0;
+}
+
+function maybeRunRankingShadowValidation(params) {
+  if (getQueryTimeRankingMode() !== 'shadow') return;
+  if ((Number(params.skip) || 0) !== 0) return;
+  if (params.scoreFilters && Object.keys(params.scoreFilters).length) return;
+  if (Math.random() >= getQueryTimeShadowSampleRate()) return;
+  const validationParams = { ...params, skip: 0, limit: Math.max(100, Number(params.limit) || 0) };
+  void Promise.all([
+    listQueryTimeRankedJobs({
+      ...validationParams,
+      listBody: validationParams.listBody || {},
+      includeExternal: false,
+      validationMode: true,
+    }),
+    matchJobsForApplier(validationParams),
+  ]).then(([shadow, legacy]) => {
+    if (!shadow || !legacy?.docs?.length) return;
+    const idealRows = legacy.docs.map((job) => ({
+      id: resultJobId(job),
+      relevance: resultRelevance(job),
+    }));
+    const relevantIds = idealRows.filter((row) => row.relevance > 0).map((row) => row.id);
+    const recall = recallAtK(shadow._candidateJobIds || [], relevantIds, 100);
+    const ndcg = ndcgAtK(shadow.docs.map(resultJobId), idealRows, 100);
+    setGauge('athens_job_ranking_shadow_recall_at_100', {}, recall);
+    setGauge('athens_job_ranking_shadow_ndcg_at_100', {}, ndcg);
+    incrementCounter('athens_job_ranking_shadow_samples_total', {
+      result: recall >= 0.99 && ndcg >= 0.99 ? 'pass' : 'fail',
+    });
+  }).catch((error) => {
+    incrementCounter('athens_job_ranking_shadow_samples_total', { result: 'error' });
+    console.warn('[ranking] shadow validation failed:', error?.message || error);
+  });
+}
 
 function refreshFirestoreRecommendationMeta(name) {
   const existing = firestoreRecommendationMeta.get(name);
@@ -342,6 +395,24 @@ async function listFromMaterializedScores({
 export async function listRecommendedJobs(params) {
   const { applierName } = params;
   const name = String(applierName || '').trim();
+  maybeRunRankingShadowValidation({ ...params, applierName: name });
+
+  const queryTime = await listQueryTimeRankedJobs({
+    ...params,
+    applierName: name,
+    listBody: params.listBody || {},
+    includeExternal: false,
+  }).catch((error) => {
+    console.warn('[ranking] query-time read failed; using legacy path:', error?.message || error);
+    if (!isQueryTimeRankingEnabled()) return null;
+    return listDateRankedRankingFallback({
+      mongoQuery: params.mongoQuery,
+      skip: params.skip,
+      limit: params.limit,
+      includeExternal: false,
+    });
+  });
+  if (queryTime) return queryTime;
 
   if (!isMaterializedRecommendationEnabled() || !jobMatchScoresCollection || !name) {
     return matchJobsForApplier(params);
@@ -409,6 +480,7 @@ export async function listRecommendedJobs(params) {
  */
 export async function listMergedRecommendedJobs({
   applierName,
+  profileId,
   marketQuery,
   externalQuery,
   scoreFilters,
@@ -417,6 +489,28 @@ export async function listMergedRecommendedJobs({
   limit,
 }) {
   const name = String(applierName || '').trim();
+  const queryTime = await listQueryTimeRankedJobs({
+    applierName: name,
+    profileId,
+    listBody,
+    mongoQuery: marketQuery,
+    scoreFilters,
+    skip,
+    limit,
+    includeExternal: true,
+    externalQuery,
+  }).catch((error) => {
+    console.warn('[ranking] merged query-time read failed; using legacy path:', error?.message || error);
+    if (!isQueryTimeRankingEnabled()) return null;
+    return listDateRankedRankingFallback({
+      mongoQuery: marketQuery,
+      externalQuery,
+      skip,
+      limit,
+      includeExternal: true,
+    });
+  });
+  if (queryTime) return queryTime;
   if (!isMaterializedRecommendationEnabled() || !jobMatchScoresCollection || !name) {
     const marketResult = await matchJobsForApplier({
       applierName: name,

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { ObjectId } from "mongodb";
+import { FieldPath } from "firebase-admin/firestore";
 import { getFirestoreDb } from "../services/firebase/firebaseAdmin.js";
 import { assertFirestoreDocumentSize } from "../services/firebase/objectStore.js";
 
@@ -667,6 +668,39 @@ class FirestoreCollection {
 		return snapshot.docs.map((doc) => decodeDoc(doc.id, doc.data())).filter((doc) => matches(doc, filter));
 	}
 	find(filter = {}, options = {}) { return new Cursor(this, filter, options); }
+	async *findPaged(filter = {}, options = {}) {
+		const pageSize = Math.max(25, Math.min(2_000, Number(options.pageSize || 500)));
+		const effectiveFilter = this._filterWithCatalog(filter);
+		const plan = buildNativeQueryPlan(effectiveFilter);
+		const projection = options.projection || null;
+		const projectionEntries = Object.entries(projection || {});
+		const inclusionProjection = projectionEntries.length > 0
+			&& projectionEntries.every(([field, included]) => field === "_id" || Boolean(included));
+		const selectedFields = inclusionProjection
+			? [...new Set([
+				...projectionEntries
+					.filter(([field, included]) => field !== "_id" && Boolean(included))
+					.map(([field]) => field),
+				...plan.clauses.map((clause) => clause.field),
+			])]
+			: [];
+		let lastDocument = null;
+		for (;;) {
+			let query = plan.complete ? this._queryFromPlan(plan) : this.ref;
+			query = query.orderBy(FieldPath.documentId());
+			if (selectedFields.length) query = query.select(...selectedFields);
+			if (lastDocument) query = query.startAfter(lastDocument);
+			const snapshot = await query.limit(pageSize).get();
+			if (snapshot.empty) break;
+			for (const document of snapshot.docs) {
+				const decoded = decodeDoc(document.id, document.data());
+				if (!matches(decoded, effectiveFilter)) continue;
+				yield projection ? applyProjection(decoded, projection) : decoded;
+			}
+			lastDocument = snapshot.docs[snapshot.docs.length - 1];
+			if (snapshot.size < pageSize) break;
+		}
+	}
 	async findOne(filter = {}, options = {}) { return (await this.find(filter, options).sort(options.sort || {}).limit(1).toArray())[0] || null; }
 	async insertOne(doc) {
 		const id = String(comparable(doc._id || deterministicId(this.collectionName, doc) || new ObjectId()));

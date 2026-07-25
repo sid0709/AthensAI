@@ -30,6 +30,7 @@ import { normalizeExternalScrapedJob } from '../services/externalScrapedJobsList
 import { listMergedJobs, countExternalForStatusTabs } from '../services/mergedJobsListService.js';
 import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../services/matching/skillIndex.js';
 import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
+import { indexOneJobRanking, removeJobsFromRanking } from '../services/matching/jobRankingIndex.js';
 import { buildJobSkillRadar } from '../services/jobSkillRadarService.js';
 import {
 	clearJobBidStatus,
@@ -290,6 +291,7 @@ export async function createJob(req, res) {
 
 		if (result?.insertedId) {
 			void indexJobInRedis(String(result.insertedId), job.skillsNormalized, job.skillTokens).catch(() => {});
+			void indexOneJobRanking({ ...job, _id: result.insertedId }).catch(() => {});
 		}
 
 		return res.status(201).json({
@@ -363,6 +365,7 @@ export async function removeJobsForRule(req, res) {
 		const doomed = await jobsCollection.find(query, { projection: { _id: 1 } }).toArray();
 		const result = await jobsCollection.deleteMany(query);
 		void deleteScoresForJobs(doomed.map((d) => d._id)).catch(() => {});
+		void removeJobsFromRanking(doomed.map((d) => d._id)).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
 	} catch (err) {
 		console.error(`DELETE /api/jobs/rule/${req.params.name} error`, err);
@@ -425,13 +428,19 @@ export async function getJobs(req, res) {
 		if (!jobsCollection) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
 		}
+		// Status tabs are refreshed by the dedicated /jobs/list/counts request.
+		// Never hold job cards behind a separate Firestore count read.
+		const statusCounts = null;
 
-		const materializedStatusPage = await listMaterializedJobStatusPage(req.body);
+		const materializedStatusPage = req.body.sort === 'recommended'
+			? null
+			: await listMaterializedJobStatusPage(req.body);
 		if (materializedStatusPage) {
 			const recommendedRequested = req.body.sort === 'recommended';
 			return res.json({
 				success: true,
 				data: materializedStatusPage.docs,
+				statusCounts,
 				recommendationFallback: recommendedRequested,
 				recommendationReason: recommendedRequested ? 'status_date_order' : null,
 				recommendationWarming: false,
@@ -451,10 +460,15 @@ export async function getJobs(req, res) {
 			return res.json({
 				success: true,
 				data: docs,
+				statusCounts,
 				recommendationFallback,
 				recommendationReason,
 				recommendationWarming,
 				catalogTotal,
+				rankingVersion: mergedResult.rankingVersion ?? null,
+				rankingStatus: mergedResult.rankingStatus ?? (recommendationFallback ? 'fallback' : 'legacy'),
+				catalogRevision: mergedResult.catalogRevision ?? null,
+				personalizedThroughRank: mergedResult.personalizedThroughRank ?? null,
 				pagination: {
 					total,
 					page: pageNum,
@@ -473,7 +487,7 @@ export async function getJobs(req, res) {
 			countsOnly,
 		} = req.body;
 
-		const { query, scoreFilters } = await buildJobsListQuery(req.body);
+		const { query, applierId, scoreFilters } = await buildJobsListQuery(req.body);
 
 		const pageNum = Math.max(1, parseInt(page, 10) || 1);
 		const limitNum = Math.max(1, Math.min(5000, parseInt(limit, 10) || 10));
@@ -502,11 +516,16 @@ export async function getJobs(req, res) {
 		let recommendationReason = null;
 		let recommendationWarming = false;
 		let catalogTotal = null;
+		let rankingVersion = null;
+		let rankingStatus = null;
+		let catalogRevision = null;
+		let personalizedThroughRank = null;
 		const useRecommendation = sort === 'recommended' && applierName;
 
 		if (useRecommendation) {
 			const result = await listRecommendedJobs({
 				applierName,
+				profileId: applierId ? String(applierId) : null,
 				mongoQuery: query,
 				scoreFilters,
 				listBody: req.body,
@@ -518,9 +537,14 @@ export async function getJobs(req, res) {
 				total = result.total;
 				catalogTotal = result.catalogTotal ?? total;
 				recommendationWarming = Boolean(result.recommendationWarming);
+				rankingVersion = result.rankingVersion ?? null;
+				rankingStatus = result.rankingStatus ?? (recommendationWarming ? 'warming' : 'legacy');
+				catalogRevision = result.catalogRevision ?? null;
+				personalizedThroughRank = result.personalizedThroughRank ?? null;
 			} else {
 				recommendationFallback = true;
-				recommendationReason = result.reason || 'unknown';
+				recommendationReason = result.recommendationReason || result.reason || 'unknown';
+				rankingStatus = result.rankingStatus ?? 'fallback';
 				const sortOption = { postedAt: -1, _id: -1 };
 				[docs, total] = await Promise.all([
 					jobsCollection
@@ -531,6 +555,7 @@ export async function getJobs(req, res) {
 						.toArray(),
 					jobsCollection.countDocuments(query),
 				]);
+				catalogTotal = result.catalogTotal ?? total;
 			}
 		} else {
 			const sortOption = {};
@@ -561,10 +586,15 @@ export async function getJobs(req, res) {
 		return res.json({
 			success: true,
 			data: docs,
+			statusCounts,
 			recommendationFallback,
 			recommendationReason,
 			recommendationWarming,
 			catalogTotal,
+			rankingVersion,
+			rankingStatus: rankingStatus ?? (recommendationFallback ? 'fallback' : null),
+			catalogRevision,
+			personalizedThroughRank,
 			pagination: {
 				total,
 				page: pageNum,
@@ -710,6 +740,7 @@ export async function removeJobs(req, res) {
 
 		const result = await jobsCollection.deleteMany({ _id: { $in: objectIds } });
 		void deleteScoresForJobs(objectIds).catch(() => {});
+		void removeJobsFromRanking(objectIds).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
 	} catch (err) {
 		console.error('POST /api/jobs/remove error', err);
@@ -837,6 +868,7 @@ export async function updateJobBidStatus(req, res) {
 		} else {
 			await upsertJobBidStatus(applierName, id, { bidReady: true, bidCompleted: true });
 		}
+		jobCountCache.clear();
 
 		const updatedJob = await jobsCollection.findOne(
 			{ _id: objectId },

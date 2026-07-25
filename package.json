@@ -19,6 +19,9 @@
   "scripts": {
     "prestart": "node scripts/prestart.mjs",
     "start": "node scripts/dev-start.mjs",
+    "infra:up": "docker compose up -d --wait redis qdrant",
+    "infra:down": "docker compose down",
+    "infra:status": "docker compose ps",
     "install:all": "npm install && npm install --prefix Athens && npm run build -w ai-bff",
     "backfill-job-skills": "npm run backfill-job-skills -w Athens-server",
     "build:ai": "npm run build -w ai-bff",

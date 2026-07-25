@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import {
 	JOB_VECTORS_COLLECTION,
+	JOB_RANKINGS_COLLECTION,
+	JOB_RANKINGS_ALIAS,
 	RESUME_VECTORS_COLLECTION,
 	getVectorDimensions,
 } from './collections.js';
@@ -10,6 +12,7 @@ import {
 } from '../../config/graphAndVectorConfig.js';
 
 let collectionsReady = false;
+let rankingCollectionReady = false;
 
 export function isQdrantConfigured() {
 	return Boolean(getQdrantUrl());
@@ -65,6 +68,47 @@ async function ensureCollection(name) {
 	return true;
 }
 
+async function ensureRankingCollection(collectionName = JOB_RANKINGS_COLLECTION, { ensureAlias = true } = {}) {
+	if (!isQdrantConfigured()) return false;
+	const list = await qdrantFetch('/collections');
+	const exists = list?.result?.collections?.some((c) => c.name === collectionName);
+	if (!exists) {
+		try {
+			await qdrantFetch(`/collections/${encodeURIComponent(collectionName)}`, {
+				method: 'PUT',
+				body: {
+					vectors: {
+						semantic_dense: { size: getVectorDimensions(), distance: 'Cosine' },
+					},
+					sparse_vectors: {
+						skills_sparse: { index: { on_disk: false } },
+					},
+				},
+			});
+		} catch (error) {
+			if (!String(error?.message || error).includes('already exists')) throw error;
+		}
+	}
+
+	if (ensureAlias) {
+		const aliases = await qdrantFetch('/aliases');
+		const active = aliases?.result?.aliases?.find((alias) => alias.alias_name === JOB_RANKINGS_ALIAS);
+		if (!active) {
+			try {
+				await qdrantFetch('/collections/aliases', {
+					method: 'POST',
+					body: { actions: [{ create_alias: { collection_name: collectionName, alias_name: JOB_RANKINGS_ALIAS } }] },
+				});
+			} catch (error) {
+				const refreshed = await qdrantFetch('/aliases');
+				const created = refreshed?.result?.aliases?.some((alias) => alias.alias_name === JOB_RANKINGS_ALIAS);
+				if (!created) throw error;
+			}
+		}
+	}
+	return true;
+}
+
 export async function initQdrantCollections() {
 	if (!isQdrantConfigured()) {
 		console.warn('[qdrant] QDRANT_URL not set — vector recommendations disabled');
@@ -87,6 +131,67 @@ export async function initQdrantCollections() {
 	}
 }
 
+const RANKING_PAYLOAD_INDEXES = [
+	{ field_name: 'active', field_schema: 'bool' },
+	{ field_name: 'catalog', field_schema: 'keyword' },
+	{ field_name: 'source', field_schema: 'keyword' },
+	{ field_name: 'postedAt', field_schema: 'datetime' },
+	{ field_name: 'workMode', field_schema: 'keyword' },
+	{ field_name: 'seniority', field_schema: 'keyword' },
+	{ field_name: 'titleRoles', field_schema: 'keyword' },
+	{ field_name: 'extensionV2', field_schema: 'bool' },
+	{ field_name: 'title', field_schema: 'text' },
+	{ field_name: 'companyName', field_schema: 'text' },
+	{ field_name: 'location', field_schema: 'text' },
+	{ field_name: 'companyTags', field_schema: 'keyword' },
+	{ field_name: 'aiExtracted', field_schema: 'bool' },
+];
+
+export async function initJobRankingCollection({
+	collectionName = JOB_RANKINGS_COLLECTION,
+	ensureAlias = true,
+} = {}) {
+	if (!isQdrantConfigured()) return false;
+	try {
+		await ensureRankingCollection(collectionName, { ensureAlias });
+		const collection = await qdrantFetch(`/collections/${encodeURIComponent(collectionName)}`);
+		const payloadSchema = collection?.result?.payload_schema || {};
+		const missingIndexes = RANKING_PAYLOAD_INDEXES.filter((index) => !payloadSchema[index.field_name]);
+		for (const index of missingIndexes) {
+			try {
+				await qdrantFetch(`/collections/${encodeURIComponent(collectionName)}/index?wait=true`, {
+					method: 'PUT',
+					body: index,
+				});
+			} catch (error) {
+				if (!String(error?.message || error).includes('already exists')) throw error;
+			}
+		}
+		rankingCollectionReady = true;
+		return true;
+	} catch (error) {
+		rankingCollectionReady = false;
+		console.warn('[qdrant] query-time ranking index unavailable:', error?.message || error);
+		return false;
+	}
+}
+
+export async function activateJobRankingCollection(collectionName = JOB_RANKINGS_COLLECTION) {
+	if (!isQdrantConfigured()) throw new Error('QDRANT_URL not set');
+	const aliases = await qdrantFetch('/aliases');
+	const active = aliases?.result?.aliases?.find((alias) => alias.alias_name === JOB_RANKINGS_ALIAS);
+	if (active?.collection_name === collectionName) return false;
+	const actions = [];
+	if (active) actions.push({ delete_alias: { alias_name: JOB_RANKINGS_ALIAS } });
+	actions.push({ create_alias: { collection_name: collectionName, alias_name: JOB_RANKINGS_ALIAS } });
+	await qdrantFetch('/collections/aliases', { method: 'POST', body: { actions } });
+	return true;
+}
+
+export function isJobRankingReady() {
+	return rankingCollectionReady && isQdrantConfigured();
+}
+
 /** Payload indexes for pre-filtering job vectors (source, postedAt). */
 async function ensureJobPayloadIndexes() {
 	if (!isQdrantConfigured()) return;
@@ -94,7 +199,9 @@ async function ensureJobPayloadIndexes() {
 		{ field_name: 'source', field_schema: 'keyword' },
 		{ field_name: 'postedAt', field_schema: 'keyword' },
 	];
-	for (const index of indexes) {
+	const collection = await qdrantFetch(`/collections/${encodeURIComponent(JOB_VECTORS_COLLECTION)}`);
+	const payloadSchema = collection?.result?.payload_schema || {};
+	for (const index of indexes.filter((candidate) => !payloadSchema[candidate.field_name])) {
 		try {
 			await qdrantFetch(
 				`/collections/${encodeURIComponent(JOB_VECTORS_COLLECTION)}/index`,
@@ -141,6 +248,140 @@ export async function upsertJobVector(jobId, vector, payload = {}) {
 		},
 	});
 	return true;
+}
+
+export async function getJobVectors(jobIds = []) {
+	if (!isQdrantReady() || !jobIds.length) return new Map();
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(JOB_VECTORS_COLLECTION)}/points`, {
+		method: 'POST',
+		body: {
+			ids: jobIds.map(toPointId),
+			with_payload: true,
+			with_vector: true,
+		},
+	});
+	return new Map((data?.result || []).flatMap((point) => {
+		const jobId = point.payload?.jobId;
+		return jobId && Array.isArray(point.vector) ? [[String(jobId), point.vector]] : [];
+	}));
+}
+
+export async function upsertJobRankingPoints(points = [], {
+	wait = false,
+	collectionName = JOB_RANKINGS_ALIAS,
+} = {}) {
+	if (!isJobRankingReady() || !points.length) return false;
+	// Qdrant upsert replaces all named vectors on an existing point. Preserve a
+	// previously generated dense vector when a later skill/payload update only
+	// supplies the sparse vector.
+	const pointIds = points.map((point) => toPointId(point.jobId));
+	const existing = await qdrantFetch(`/collections/${encodeURIComponent(collectionName)}/points`, {
+		method: 'POST',
+		body: {
+			ids: pointIds,
+			with_payload: false,
+			with_vector: ['semantic_dense'],
+		},
+	});
+	const denseByPointId = new Map(
+		(existing?.result || []).map((point) => [String(point.id), point.vector?.semantic_dense]),
+	);
+	await qdrantFetch(`/collections/${encodeURIComponent(collectionName)}/points?wait=${wait ? 'true' : 'false'}`, {
+		method: 'PUT',
+		body: {
+			points: points.map((point) => {
+				const id = toPointId(point.jobId);
+				const semanticDense = Array.isArray(point.semanticDense) && point.semanticDense.length
+					? point.semanticDense
+					: denseByPointId.get(id);
+				return {
+				id,
+				vector: {
+					skills_sparse: point.skillsSparse,
+					...(Array.isArray(semanticDense) && semanticDense.length
+						? { semantic_dense: semanticDense }
+						: {}),
+				},
+				payload: { ...point.payload, jobId: String(point.jobId) },
+			};
+			}),
+		},
+	});
+	return true;
+}
+
+export async function queryJobRankingSparse(vector, { filter, limit = 2000, offset = 0 } = {}) {
+	if (!isJobRankingReady() || !vector?.indices?.length) return [];
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(JOB_RANKINGS_ALIAS)}/points/query`, {
+		method: 'POST',
+		body: {
+			query: vector,
+			using: 'skills_sparse',
+			filter,
+			limit,
+			offset,
+			with_payload: { include: ['jobId', 'catalog', 'postedAt', 'rankSkills'] },
+			with_vector: false,
+		},
+	});
+	return (data?.result?.points || []).map((hit) => ({
+		jobId: hit.payload?.jobId || null,
+		score: Number(hit.score) || 0,
+		payload: hit.payload || {},
+	}));
+}
+
+export async function queryJobRankingDense(vector, { filter, limit = 500 } = {}) {
+	if (!isJobRankingReady() || !Array.isArray(vector) || !vector.length || limit <= 0) return [];
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(JOB_RANKINGS_ALIAS)}/points/query`, {
+		method: 'POST',
+		body: {
+			query: vector,
+			using: 'semantic_dense',
+			filter,
+			limit,
+			with_payload: { include: ['jobId', 'catalog', 'postedAt', 'rankSkills'] },
+			with_vector: false,
+		},
+	});
+	return (data?.result?.points || []).map((hit) => ({
+		jobId: hit.payload?.jobId || null,
+		score: Number(hit.score) || 0,
+		payload: hit.payload || {},
+	}));
+}
+
+export async function getJobRankingPoints(jobIds = [], { payloadInclude = null } = {}) {
+	if (!isJobRankingReady() || !jobIds.length) return [];
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(JOB_RANKINGS_ALIAS)}/points`, {
+		method: 'POST',
+		body: {
+			ids: jobIds.map(toPointId),
+			with_payload: Array.isArray(payloadInclude) && payloadInclude.length
+				? { include: payloadInclude }
+				: true,
+			with_vector: false,
+		},
+	});
+	return (data?.result || []).map((point) => point.payload || {});
+}
+
+export async function deleteJobRankingPoints(jobIds = [], { wait = false } = {}) {
+	if (!isJobRankingReady() || !jobIds.length) return false;
+	await qdrantFetch(`/collections/${encodeURIComponent(JOB_RANKINGS_ALIAS)}/points/delete?wait=${wait ? 'true' : 'false'}`, {
+		method: 'POST',
+		body: { points: jobIds.map(toPointId) },
+	});
+	return true;
+}
+
+export async function countJobRankingPoints(filter, { collectionName = JOB_RANKINGS_ALIAS } = {}) {
+	if (!isJobRankingReady()) return 0;
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(collectionName)}/points/count`, {
+		method: 'POST',
+		body: { filter, exact: true },
+	});
+	return data?.result?.count ?? 0;
 }
 
 export async function upsertResumeVector(resumeId, vector, payload = {}) {

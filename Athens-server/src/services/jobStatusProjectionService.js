@@ -4,8 +4,12 @@ import { accountInfoCollection, jobsCollection } from "../db/mongo.js";
 import { JobSourceTitles } from "../config/jobSources.js";
 import { JOB_LIST_PROJECTION } from "./jobListQuery.js";
 import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
+import { bumpStatusRevision } from "./matching/rankingCache.js";
+import { getRedis, isRedisReady } from "../db/redis.js";
 
 const COUNTER_FIELDS = ["rawApplied", "applied", "scheduled", "declined", "bid-ready", "bid-completed"];
+const STATUS_CACHE_TTL_SEC = 60 * 60;
+const STATUS_CACHE_EMPTY = '-';
 
 function enabled() {
   return String(process.env.DATABASE_BACKEND || "").trim().toLowerCase() === "firestore";
@@ -41,6 +45,25 @@ export function statesOf(statusOrStatuses = []) {
 
 function projectionId(profileId, jobId) {
   return createHash("sha256").update(`${profileId}\0${jobId}`).digest("hex");
+}
+
+function statusCacheKey(profileId, jobId) {
+  return `ranking:v2:job-status:${String(profileId)}:${String(jobId)}`;
+}
+
+function statusCountsCacheKey(profileId) {
+  return `ranking:v2:job-status-counts:${String(profileId)}`;
+}
+
+function projectedStatusRow(profileId, row = {}) {
+  return {
+    applier: String(profileId),
+    appliedDate: row.appliedDate || undefined,
+    scheduledDate: row.scheduledDate || undefined,
+    declinedDate: row.declinedDate || undefined,
+    bidReadyDate: row.bidReadyDate || undefined,
+    bidCompletedDate: row.bidCompletedDate || undefined,
+  };
 }
 
 function emptyCounts(profileId, all) {
@@ -112,10 +135,11 @@ export async function listMaterializedJobStatusPage(body = {}) {
 }
 
 export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {
-  if (!enabled() || !jobsCollection) return false;
   const jobId = String(jobIdRaw || "");
   const profileId = String(profileIdRaw || "");
   if (!jobId || !profileId) return false;
+  await bumpStatusRevision(profileId);
+  if (!enabled() || !jobsCollection) return true;
   let objectId;
   try { objectId = new ObjectId(jobId); } catch { objectId = jobId; }
   const job = await jobsCollection.findOne({ _id: objectId }, { projection: { status: 1, postedAt: 1, sourceCatalog: 1 } });
@@ -172,12 +196,92 @@ export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {
   });
 
 	if (statuses.length) await jobsCollection.updateOne({ _id: objectId }, { $addToSet: { statusProfileIds: profileId } });
-  else await jobsCollection.updateOne({ _id: objectId }, { $pull: { statusProfileIds: profileId } });
+	else await jobsCollection.updateOne({ _id: objectId }, { $pull: { statusProfileIds: profileId } });
+  if (isRedisReady()) {
+    await getRedis().del(statusCountsCacheKey(profileId));
+    const value = statuses.length
+      ? JSON.stringify(projectedStatusRow(profileId, statuses.reduce((merged, row) => ({ ...merged, ...row }), {})))
+      : STATUS_CACHE_EMPTY;
+    await getRedis().setEx(statusCacheKey(profileId, jobId), STATUS_CACHE_TTL_SEC, value);
+  }
   return true;
 }
 
 export async function readMaterializedJobStatusCounts(profileId) {
   if (!enabled() || !profileId) return null;
+  if (isRedisReady()) {
+    const cached = await getRedis().get(statusCountsCacheKey(profileId));
+    if (cached) {
+      try { return JSON.parse(cached); } catch { /* reload */ }
+    }
+  }
   const snapshot = await getFirestoreDb().collection("job_status_counts").doc(String(profileId)).get();
-  return snapshot.exists ? snapshot.data() : null;
+  const counts = snapshot.exists ? snapshot.data() : null;
+  if (counts && isRedisReady()) {
+    await getRedis().setEx(statusCountsCacheKey(profileId), STATUS_CACHE_TTL_SEC, JSON.stringify(counts));
+  }
+  return counts;
+}
+
+export async function readProjectedJobStatuses(profileId, jobIds = []) {
+  if (!enabled() || !profileId || !jobIds.length) return new Map();
+  const ids = [...new Set(jobIds.map(String))];
+  const values = isRedisReady()
+    ? await getRedis().mGet(ids.map((jobId) => statusCacheKey(profileId, jobId)))
+    : ids.map(() => null);
+  const statuses = new Map();
+  const missingIds = [];
+  values.forEach((value, index) => {
+    if (value == null) {
+      missingIds.push(ids[index]);
+      return;
+    }
+    if (value === STATUS_CACHE_EMPTY) return;
+    try {
+      statuses.set(ids[index], [JSON.parse(value)]);
+    } catch {
+      missingIds.push(ids[index]);
+    }
+  });
+  if (!missingIds.length) return statuses;
+  const counts = await readMaterializedJobStatusCounts(profileId);
+  const stateIds = new Set(
+    Object.values(counts?.jobIdsByState || {})
+      .flatMap((stateJobIds) => Array.isArray(stateJobIds) ? stateJobIds : [])
+      .map(String),
+  );
+  const exactMissingIds = counts?.jobIdsByState
+    ? missingIds.filter((jobId) => stateIds.has(jobId))
+    : missingIds;
+  const knownEmptyIds = counts?.jobIdsByState
+    ? missingIds.filter((jobId) => !stateIds.has(jobId))
+    : [];
+  const firestore = getFirestoreDb();
+  const refs = exactMissingIds.map((jobId) => firestore
+    .collection('job_statuses')
+    .doc(projectionId(String(profileId), String(jobId))));
+  const snapshots = refs.length ? await firestore.getAll(...refs) : [];
+  const cacheWrites = [];
+  for (let index = 0; index < snapshots.length; index += 1) {
+    const snapshot = snapshots[index];
+    const jobId = exactMissingIds[index];
+    const row = snapshot.exists ? projectedStatusRow(profileId, snapshot.data()) : null;
+    if (row) statuses.set(jobId, [row]);
+    if (isRedisReady()) {
+      cacheWrites.push(getRedis().setEx(
+        statusCacheKey(profileId, jobId),
+        STATUS_CACHE_TTL_SEC,
+        row ? JSON.stringify(row) : STATUS_CACHE_EMPTY,
+      ));
+    }
+  }
+  if (isRedisReady()) {
+    cacheWrites.push(...knownEmptyIds.map((jobId) => getRedis().setEx(
+      statusCacheKey(profileId, jobId),
+      STATUS_CACHE_TTL_SEC,
+      STATUS_CACHE_EMPTY,
+    )));
+  }
+  if (cacheWrites.length) await Promise.all(cacheWrites);
+  return statuses;
 }

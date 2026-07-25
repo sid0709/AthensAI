@@ -22,10 +22,19 @@ import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { isExternalJob } from "../../types/job";
+import { ProfileMatchSkillsProvider, useProfileMatchSkills } from "./hooks/useProfileMatchSkills";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 500];
 
 export function JobSearchPage() {
+  return (
+    <ProfileMatchSkillsProvider>
+      <JobSearchPageContent />
+    </ProfileMatchSkillsProvider>
+  );
+}
+
+function JobSearchPageContent() {
   const jobNav = useJobSearchNavigationOptional();
   const { applier } = useApplier();
   const isBeta = isBetaTier(applier?.tier);
@@ -43,9 +52,10 @@ export function JobSearchPage() {
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const { profileVersion, matchContext } = useProfileMatchSkills();
 
-  const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts } =
-    useJobsList(filters, removedIds);
+  const { jobs, total, loading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts, rescoreVisibleJobs } =
+    useJobsList(filters, removedIds, profileVersion);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
   const {
     applyToJob,
@@ -79,6 +89,10 @@ export function JobSearchPage() {
   useEffect(() => {
     clearSelection();
   }, [filters, page, clearSelection]);
+
+  useEffect(() => {
+    if (matchContext) rescoreVisibleJobs(matchContext);
+  }, [matchContext, profileVersion, rescoreVisibleJobs]);
 
   // Role filter is beta-only — clear when switching to a non-beta profile.
   useEffect(() => {
@@ -252,7 +266,7 @@ export function JobSearchPage() {
         busy={exportBusy}
       />
 
-      {loading || refreshing ? (
+      {loading ? (
         <JobListSkeleton
           count={Math.min(pageSize, 8)}
           layout={showGrid ? "grid" : "list"}
