@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildJobRankingPayload, buildJobRankingPoint } from './jobRankingIndex.js';
-import { buildJobRankingFilter } from './jobRankingService.js';
+import { buildJobRankingPayload, buildJobRankingPoint, filterDateTailCandidates } from './jobRankingIndex.js';
+import { buildJobRankingFilter, queryExcludesExtensionV2Jobs } from './jobRankingService.js';
 
 test('ranking payload carries indexed global filter fields', () => {
   const payload = buildJobRankingPayload({
@@ -39,4 +39,31 @@ test('retrieval filter includes industry, extraction, and non-beta clauses', () 
   assert.ok(filter.must.some((clause) => clause.key === 'companyTags'));
   assert.ok(filter.must.some((clause) => clause.key === 'aiExtracted'));
   assert.ok(filter.must.some((clause) => clause.key === 'extensionV2'));
+});
+
+test('ranking payload marks both v2 provenance shapes as beta-only', () => {
+  assert.equal(buildJobRankingPayload({ version: 'v2' }).extensionV2, true);
+  assert.equal(buildJobRankingPayload({ extensionV2: true }).extensionV2, true);
+  assert.equal(buildJobRankingPayload({ version: 'v1' }).extensionV2, false);
+});
+
+test('non-beta date tail fails closed for v2 and missing ranking payloads', () => {
+  const candidates = [
+    { jobId: 'public', catalog: 'market' },
+    { jobId: 'v2', catalog: 'market' },
+    { jobId: 'missing', catalog: 'market' },
+  ];
+  const payloads = [
+    { jobId: 'public', extensionV2: false },
+    { jobId: 'v2', extensionV2: true },
+  ];
+  assert.deepEqual(filterDateTailCandidates(candidates, payloads, { excludeExtensionV2: true }), [candidates[0]]);
+  assert.deepEqual(filterDateTailCandidates(candidates, payloads), candidates);
+});
+
+test('v2 exclusion is detected in Firestore and MongoDB query shapes', () => {
+  assert.equal(queryExcludesExtensionV2Jobs({ extensionV2: false }), true);
+  assert.equal(queryExcludesExtensionV2Jobs({ $and: [{ version: { $ne: 'v2' } }] }), true);
+  assert.equal(queryExcludesExtensionV2Jobs({ $and: [{ extensionV2: { $ne: true } }] }), true);
+  assert.equal(queryExcludesExtensionV2Jobs({}), false);
 });

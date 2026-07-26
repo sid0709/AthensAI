@@ -31,6 +31,7 @@
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
 		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",
 		"backfill-query-ranking": "node src/scripts/backfillQueryRanking.js",
+		"rebuild-public-date-tail": "node src/scripts/rebuildPublicDateTail.js",
 		"validate-query-ranking": "node src/scripts/validateQueryRanking.js",
 		"benchmark-query-ranking": "node src/scripts/benchmarkQueryRanking.js",
 		"test:query-ranking": "node --test src/services/matching/canonicalSkillVectors.test.mjs src/services/matching/exactRerank.test.mjs src/services/matching/jobRankingIndex.test.mjs src/services/matching/rankingEvaluation.test.mjs",

@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stateOf, statesOf, statusContribution } from "./jobStatusProjectionService.js";
+import {
+  canUseMaterializedStatusPageForTier,
+  stateOf,
+  statesOf,
+  statusContribution,
+} from "./jobStatusProjectionService.js";
 
 test("status projection gives completed and scheduled states precedence", () => {
   assert.equal(stateOf({ appliedDate: "a", scheduledDate: "s" }), "scheduled");
@@ -25,5 +30,11 @@ test("duplicate status rows count each tab once per job and profile", () => {
   assert.deepEqual(statusContribution(statuses), {
     rawApplied: 1, applied: 1, scheduled: 1, declined: 0, "bid-ready": 0, "bid-completed": 0,
   });
-  assert.deepEqual(statesOf(statuses), ["scheduled", "applied"]);
+	assert.deepEqual(statesOf(statuses), ["scheduled", "applied"]);
+});
+
+test("global materialized status pages are beta-only", () => {
+	assert.equal(canUseMaterializedStatusPageForTier("beta"), true);
+	assert.equal(canUseMaterializedStatusPageForTier("jobseeker"), false);
+	assert.equal(canUseMaterializedStatusPageForTier(null), false);
 });

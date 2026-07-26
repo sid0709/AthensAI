@@ -366,6 +366,30 @@ export async function getJobRankingPoints(jobIds = [], { payloadInclude = null }
 	return (data?.result || []).map((point) => point.payload || {});
 }
 
+export async function scrollJobRankingPayloads({
+	offset = null,
+	limit = 1_000,
+	payloadInclude = ['jobId', 'catalog', 'postedAt', 'extensionV2'],
+} = {}) {
+	if (!isJobRankingReady()) return { payloads: [], nextOffset: null };
+	const body = {
+		limit: Math.max(1, Math.min(10_000, Number(limit) || 1_000)),
+		with_payload: Array.isArray(payloadInclude) && payloadInclude.length
+			? { include: payloadInclude }
+			: true,
+		with_vector: false,
+	};
+	if (offset !== null && offset !== undefined) body.offset = offset;
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(JOB_RANKINGS_ALIAS)}/points/scroll`, {
+		method: 'POST',
+		body,
+	});
+	return {
+		payloads: (data?.result?.points || []).map((point) => point.payload || {}),
+		nextOffset: data?.result?.next_page_offset ?? null,
+	};
+}
+
 export async function deleteJobRankingPoints(jobIds = [], { wait = false } = {}) {
 	if (!isJobRankingReady() || !jobIds.length) return false;
 	await qdrantFetch(`/collections/${encodeURIComponent(JOB_RANKINGS_ALIAS)}/points/delete?wait=${wait ? 'true' : 'false'}`, {

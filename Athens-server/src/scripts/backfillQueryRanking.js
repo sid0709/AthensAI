@@ -21,7 +21,11 @@ import {
   loadCanonicalSkillDictionary,
   publishCanonicalSkillDictionaryChange,
 } from '../services/matching/canonicalSkillDictionary.js';
-import { indexJobRankingBatch } from '../services/matching/jobRankingIndex.js';
+import {
+  indexJobRankingBatch,
+  markPublicDateTailReady,
+  preparePublicDateTailRebuild,
+} from '../services/matching/jobRankingIndex.js';
 
 const BATCH_SIZE = Math.max(25, Number(process.env.RANKING_BACKFILL_BATCH || 200));
 const SKIP_DICTIONARY = process.argv.includes('--skip-dictionary');
@@ -128,6 +132,7 @@ async function main() {
   const dictionary = SKIP_DICTIONARY
     ? { skipped: true }
     : await backfillDictionaryIds();
+  await preparePublicDateTailRebuild();
   const market = await backfillCollection(jobsCollection, 'market');
   const external = await backfillCollection(externalScrapedJobsCollection, 'external');
   const indexed = await countJobRankingPoints(undefined, { collectionName: JOB_RANKINGS_COLLECTION });
@@ -136,6 +141,7 @@ async function main() {
     throw new Error(`Qdrant document count mismatch: expected ${expected}, found ${indexed}`);
   }
   await activateJobRankingCollection(JOB_RANKINGS_COLLECTION);
+  await markPublicDateTailReady();
   console.log('[ranking-backfill] complete', { dictionary, market, external, indexed });
 }
 

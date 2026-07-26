@@ -15,6 +15,7 @@ import {
 	JOB_MARKET_EXTENSION_VERSION_V2,
 	JOB_MARKET_MODEL_VERSION,
 	excludeExtensionV2JobsFilter,
+	isExtensionV2Job,
 	stripScraperOnlyJobFields,
 } from '../config/jobMarketSchema.js';
 import { isBetaTier } from '../lib/betaTier.js';
@@ -38,6 +39,7 @@ import {
 } from '../services/jobBidStatusService.js';
 import { isForegroundBusy } from '../services/runtimeLoad.js';
 import { listMaterializedJobStatusPage, readMaterializedJobStatusCounts, syncJobStatusProjection } from '../services/jobStatusProjectionService.js';
+import { findDuplicateByContent, findDuplicateByUrl } from '../services/jobDuplicateLookup.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -67,8 +69,14 @@ function canUseMaterializedCounts(body = {}) {
 
 async function materializedCountsForRequest(body = {}) {
 	if (!canUseMaterializedCounts(body) || !body.applierName) return null;
-	const account = await accountInfoCollection.findOne({ name: String(body.applierName).trim() }, { projection: { _id: 1 } });
+	const account = await accountInfoCollection.findOne(
+		{ name: String(body.applierName).trim() },
+		{ projection: { _id: 1, tier: 1 } },
+	);
 	if (!account?._id) return null;
+	// Global materialized counts include beta-only extension-v2 jobs. Use the
+	// authoritative tier-filtered count path for non-beta users.
+	if (!isBetaTier(account.tier)) return null;
 	const stored = await readMaterializedJobStatusCounts(String(account._id));
 	if (!stored) return null;
 	return Object.fromEntries(STATUS_TABS.map((tab) => [tab, Number(stored[tab] || 0)]));
@@ -199,13 +207,7 @@ export async function createJob(req, res) {
 			),
 		];
 		if (urlCandidates.length) {
-			const existingByUrl = await jobsCollection.findOne(
-				{
-					...duplicateScope,
-					$or: [{ applyLink: { $in: urlCandidates } }, { url: { $in: urlCandidates } }],
-				},
-				{ sort: { postedAt: -1, _createdAt: -1 } },
-			);
+			const existingByUrl = await findDuplicateByUrl(jobsCollection, urlCandidates, duplicateScope);
 			if (existingByUrl && isWithinDuplicateWindow(existingByUrl, postedAt)) {
 				return res.status(200).json({
 					success: false,
@@ -218,15 +220,12 @@ export async function createJob(req, res) {
 		const companyName = typeof job.company?.name === 'string' ? job.company.name.trim() : '';
 		const description = typeof job.description === 'string' ? job.description.trim() : '';
 		if (companyName && description) {
-			const existingByContent = await jobsCollection.findOne(
-				{
-					...duplicateScope,
-					'company.name': companyName,
-					title,
-					description,
-				},
-				{ sort: { postedAt: -1, _createdAt: -1 } },
-			);
+			const existingByContent = await findDuplicateByContent(jobsCollection, {
+				duplicateScope,
+				title,
+				companyName,
+				description,
+			});
 			if (existingByContent && isWithinDuplicateWindow(existingByContent, postedAt)) {
 				return res.status(200).json({
 					success: false,
@@ -911,7 +910,7 @@ export async function getJobById(req, res) {
 			{ projection: JOB_DETAIL_PROJECTION },
 		);
 		if (doc) {
-			if (doc.version === JOB_MARKET_EXTENSION_VERSION_V2) {
+			if (isExtensionV2Job(doc)) {
 				const applierName = String(req.query.applierName || '').trim();
 				let canView = false;
 				if (applierName && accountInfoCollection) {

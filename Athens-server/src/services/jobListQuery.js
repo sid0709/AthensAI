@@ -197,6 +197,20 @@ async function resolveApplierContext(applierName) {
 	return { id, isBeta };
 }
 
+/** Clear local and Redis tier/id context after an account mutation. */
+export async function invalidateApplierContextCache(applierName) {
+	const name = String(applierName || '').trim();
+	if (!name) return false;
+	applierCache.delete(name);
+	if (!isRedisReady()) return true;
+	try {
+		await getRedis().del(applierCacheKey(name));
+	} catch (error) {
+		console.warn('[jobs] failed to invalidate applier context cache:', error?.message || error);
+	}
+	return true;
+}
+
 const SCORE_FILTER_KEYS = new Set([
 	'scoreOverallMin', 'scoreOverallMax',
 	'scoreSkillMin', 'scoreSkillMax',

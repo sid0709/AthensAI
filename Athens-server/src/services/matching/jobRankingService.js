@@ -98,15 +98,18 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
     must.push(matchKeyword('aiExtracted', true));
   }
 
-  // Non-beta queries contain the canonical Firestore extensionV2=false clause.
-  const serializedQuery = JSON.stringify(mongoQuery || {});
-  if (
-    serializedQuery.includes('"extensionV2":false') ||
-    serializedQuery.includes('"version":{"$ne":"v2"}')
-  ) {
+  // Non-beta queries contain the canonical Firestore or MongoDB exclusion.
+  if (queryExcludesExtensionV2Jobs(mongoQuery)) {
     must.push(matchKeyword('extensionV2', false));
   }
   return { must };
+}
+
+export function queryExcludesExtensionV2Jobs(mongoQuery = null) {
+  const serializedQuery = JSON.stringify(mongoQuery || {});
+  return serializedQuery.includes('"extensionV2":false') ||
+    serializedQuery.includes('"extensionV2":{"$ne":true}') ||
+    serializedQuery.includes('"version":{"$ne":"v2"}');
 }
 
 function postedMillis(job) {
@@ -411,7 +414,13 @@ export async function listQueryTimeRankedJobs({
         ).then((account) => getStatusRevision(account?._id)) || '0')
       : '0',
   ]);
-  const filterHash = rankingFilterHash(listBody);
+  // Tier visibility is not a client filter, but it must be part of the cache
+  // identity so a beta ranking can never be reused after a tier change.
+  const excludesExtensionV2 = queryExcludesExtensionV2Jobs(mongoQuery);
+  const filterHash = rankingFilterHash({
+    ...listBody,
+    _extensionV2Visibility: excludesExtensionV2 ? 'public' : 'beta',
+  });
   const cacheKey = rankingCacheKey({
     applierName,
     profileVersion,
@@ -535,6 +544,7 @@ export async function listQueryTimeRankedJobs({
       offset: tailOffset,
       limit: limit - pageEntries.length,
       includeExternal,
+      excludeExtensionV2: excludesExtensionV2,
       excludedJobIds: new Set(cached.entries.map((entry) => entry.jobId)),
     });
     pageEntries = [...pageEntries, ...tail];

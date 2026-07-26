@@ -1,4 +1,5 @@
 import { accountInfoCollection, accountInfoCloudCollection, isCloudMirrorConfigured } from "../db/mongo.js";
+import { invalidateApplierContextCache } from "./jobListQuery.js";
 
 function cloudEnabled() {
 	return Boolean(accountInfoCloudCollection);
@@ -44,6 +45,7 @@ async function findCloudAccountByName(nameRaw, projection = { _id: 1, name: 1 })
 /** Insert into local `account_info`, then mirror to cloud. */
 export async function insertAccountInfo(doc) {
 	const result = await accountInfoCollection.insertOne(doc);
+	await invalidateApplierContextCache(doc?.name);
 	await mirrorCloud("insertOne", async () => {
 		const existing = await findCloudAccountByName(doc.name);
 		if (existing) {
@@ -58,6 +60,7 @@ export async function insertAccountInfo(doc) {
 /** Delete by applier name on local, then cloud (case-insensitive name match). */
 export async function deleteAccountInfoByName(name) {
 	const result = await accountInfoCollection.deleteOne({ name });
+	await invalidateApplierContextCache(name);
 	if (result.deletedCount > 0) {
 		await mirrorCloud("deleteOne", async () => {
 			const cloudAcc = await findCloudAccountByName(name, { _id: 1 });
@@ -74,6 +77,10 @@ export async function deleteAccountInfoByName(name) {
  */
 export async function updateAccountInfoById(accountId, accountName, update) {
 	const result = await accountInfoCollection.updateOne({ _id: accountId }, update);
+	await Promise.all([
+		invalidateApplierContextCache(accountName),
+		invalidateApplierContextCache(update?.$set?.name),
+	]);
 	if (result.matchedCount > 0 && accountName) {
 		await mirrorCloud("updateOne", async () => {
 			const cloudAcc = await findCloudAccountByName(accountName, { _id: 1, name: 1 });

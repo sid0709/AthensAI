@@ -22,11 +22,17 @@ export default function useApi(baseUrl = import.meta.env.VITE_API_URL) {
 	const request = useCallback(async (path, options = {}) => {
 		setLoading(true);
 		setError(null);
+		let timeoutId = null;
 		try {
 			const url = buildUrl(path);
-			const { headers: optHeaders, body, ...rest } = options;
+			const { headers: optHeaders, body, timeoutMs, signal, ...rest } = options;
+			const timeoutController = timeoutMs && !signal ? new AbortController() : null;
+			if (timeoutController) {
+				timeoutId = setTimeout(() => timeoutController.abort(), Math.max(1, Number(timeoutMs)));
+			}
 			const res = await fetch(url, {
 				...rest,
+				signal: signal || timeoutController?.signal,
 				headers: {
 					'Content-Type': 'application/json',
 					// Lets Athens-server stamp job_market.version = "v2" even if body is stripped.
@@ -50,14 +56,19 @@ export default function useApi(baseUrl = import.meta.env.VITE_API_URL) {
 			setLoading(false);
 			return data;
 		} catch (err) {
-			setError(err);
+			const failure = err?.name === 'AbortError' && options.timeoutMs
+				? new Error(`Backend request timed out after ${Math.round(Number(options.timeoutMs) / 1000)} seconds`)
+				: err;
+			setError(failure);
 			setLoading(false);
-			throw err;
+			throw failure;
+		} finally {
+			if (timeoutId) clearTimeout(timeoutId);
 		}
 	}, [buildUrl]);
 
 	const get = useCallback((path) => request(path, { method: 'GET' }), [request]);
-	const post = useCallback((path, body) => request(path, { method: 'POST', body }), [request]);
+	const post = useCallback((path, body, options = {}) => request(path, { ...options, method: 'POST', body }), [request]);
 
 	return { loading, error, get, post, request, baseUrl: resolvedBaseUrl };
 }

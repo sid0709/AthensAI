@@ -388,8 +388,16 @@ export function useJobsList(
   }, [applierReady, countsBody, post]);
 
   const rescoreVisibleJobs = useCallback((context: ProfileMatchContext) => {
-    setRawJobs((previous) => previous.map((job) => rescoreJobWithContext(job, context)));
-  }, []);
+    setRawJobs((previous) => {
+      const rescored = previous.map((job) => rescoreJobWithContext(job, context));
+      if (debouncedFilters.sort !== "matchScore") return rescored;
+      return rescored.sort((left, right) =>
+        right.scores.overall - left.scores.overall ||
+        right.postedAt.localeCompare(left.postedAt) ||
+        left.id.localeCompare(right.id),
+      );
+    });
+  }, [debouncedFilters.sort]);
 
   return {
     jobs,

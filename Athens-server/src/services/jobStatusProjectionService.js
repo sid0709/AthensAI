@@ -6,6 +6,7 @@ import { JOB_LIST_PROJECTION } from "./jobListQuery.js";
 import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
 import { bumpStatusRevision } from "./matching/rankingCache.js";
 import { getRedis, isRedisReady } from "../db/redis.js";
+import { isBetaTier } from "../lib/betaTier.js";
 
 const COUNTER_FIELDS = ["rawApplied", "applied", "scheduled", "declined", "bid-ready", "bid-completed"];
 const STATUS_CACHE_TTL_SEC = 60 * 60;
@@ -105,8 +106,14 @@ export async function listMaterializedJobStatusPage(body = {}) {
 	if (!enabled() || !jobsCollection || !accountInfoCollection || !body.applierName) return null;
 	const state = stateFromBody(body);
 	if (!state || hasUnsupportedStatusPageFilters(body)) return null;
-	const account = await accountInfoCollection.findOne({ name: String(body.applierName).trim() }, { projection: { _id: 1 } });
+	const account = await accountInfoCollection.findOne(
+		{ name: String(body.applierName).trim() },
+		{ projection: { _id: 1, tier: 1 } },
+	);
 	if (!account?._id) return null;
+	// This global projection contains beta-only jobs, so non-beta users take the
+	// normal tier-filtered database path.
+	if (!canUseMaterializedStatusPageForTier(account.tier)) return null;
 	const counts = await readMaterializedJobStatusCounts(String(account._id));
 	const sourceIds = counts?.jobIdsByState?.[state];
 	if (!Array.isArray(sourceIds)) return null;
@@ -132,6 +139,10 @@ export async function listMaterializedJobStatusPage(body = {}) {
 		limit,
 		state,
 	};
+}
+
+export function canUseMaterializedStatusPageForTier(tier) {
+	return isBetaTier(tier);
 }
 
 export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {

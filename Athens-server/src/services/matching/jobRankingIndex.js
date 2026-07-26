@@ -1,11 +1,18 @@
 import { getRedis, isRedisReady } from '../../db/redis.js';
-import { JOB_MARKET_EXTENSION_VERSION_V2 } from '../../config/jobMarketSchema.js';
+import { isExtensionV2Job } from '../../config/jobMarketSchema.js';
 import { buildJobSkillSparseVector } from './canonicalSkillVectors.js';
-import { upsertJobRankingPoints } from '../vectorStore/qdrantClient.js';
-import { deleteJobRankingPoints } from '../vectorStore/qdrantClient.js';
+import {
+  deleteJobRankingPoints,
+  getJobRankingPoints,
+  isJobRankingReady,
+  scrollJobRankingPayloads,
+  upsertJobRankingPoints,
+} from '../vectorStore/qdrantClient.js';
 
 const CATALOG_REVISION_KEY = 'ranking:v2:catalog-revision';
 const DATE_TAIL_KEY = 'ranking:v2:date-tail';
+const PUBLIC_DATE_TAIL_KEY = 'ranking:v2:date-tail:public';
+const PUBLIC_DATE_TAIL_READY_KEY = 'ranking:v2:date-tail:public-ready';
 const NO_SKILL_SPARSE_INDEX = 0;
 let localCatalogRevision = '0';
 
@@ -96,7 +103,7 @@ export function buildJobRankingPayload(job, { catalog = 'market' } = {}) {
     titleRoles: stringArray(job?.titleScanned),
     source: text(job?.source) || 'Other',
     postedAt,
-    extensionV2: String(job?.version || '') === JOB_MARKET_EXTENSION_VERSION_V2 || job?.extensionV2 === true,
+    extensionV2: isExtensionV2Job(job),
     aiExtracted: Array.isArray(job?.aiSkills) && job.aiSkills.length > 0,
     aiSkills,
     rankSkills: compactRankingSkills(aiSkills),
@@ -140,7 +147,18 @@ export async function indexJobRankingBatch(jobs, {
       score: Date.parse(point.payload.postedAt) || 0,
       value: `${point.payload.catalog}:${point.jobId}`,
     }));
+    const publicMembers = points
+      .filter((point) => point.payload.extensionV2 !== true)
+      .map((point) => ({
+        score: Date.parse(point.payload.postedAt) || 0,
+        value: `${point.payload.catalog}:${point.jobId}`,
+      }));
+    const betaOnlyMembers = points
+      .filter((point) => point.payload.extensionV2 === true)
+      .map((point) => `${point.payload.catalog}:${point.jobId}`);
     if (members.length) await getRedis().zAdd(DATE_TAIL_KEY, members);
+    if (publicMembers.length) await getRedis().zAdd(PUBLIC_DATE_TAIL_KEY, publicMembers);
+    if (betaOnlyMembers.length) await getRedis().zRem(PUBLIC_DATE_TAIL_KEY, betaOnlyMembers);
   }
   const catalogRevision = await bumpCatalogRevision();
   return { indexed: points.length, catalogRevision };
@@ -150,6 +168,7 @@ export async function readDateTailPage({
   offset = 0,
   limit = 25,
   includeExternal = false,
+  excludeExtensionV2 = false,
   excludedJobIds = new Set(),
 } = {}) {
   if (!isRedisReady()) return [];
@@ -157,15 +176,34 @@ export async function readDateTailPage({
   let accepted = 0;
   let cursor = 0;
   const chunkSize = 500;
+  const publicTailReady = excludeExtensionV2
+    ? Boolean(await getRedis().exists(PUBLIC_DATE_TAIL_READY_KEY))
+    : false;
+  const dateTailKey = publicTailReady ? PUBLIC_DATE_TAIL_KEY : DATE_TAIL_KEY;
   while (out.length < limit) {
-    const values = await getRedis().zRange(DATE_TAIL_KEY, cursor, cursor + chunkSize - 1, { REV: true });
+    const values = await getRedis().zRange(dateTailKey, cursor, cursor + chunkSize - 1, { REV: true });
     if (!values.length) break;
     cursor += values.length;
+    const candidates = [];
     for (const value of values) {
       const split = value.indexOf(':');
       const catalog = split > 0 ? value.slice(0, split) : 'market';
       const jobId = split > 0 ? value.slice(split + 1) : value;
       if ((!includeExternal && catalog === 'external') || excludedJobIds.has(jobId)) continue;
+      candidates.push({ jobId, catalog });
+    }
+    const visibilityPayloads = excludeExtensionV2 && !publicTailReady && candidates.length
+      ? await getJobRankingPoints(
+          candidates.map((candidate) => candidate.jobId),
+          { payloadInclude: ['jobId', 'extensionV2'] },
+        ).catch(() => [])
+      : [];
+    const visibleCandidates = filterDateTailCandidates(
+      candidates,
+      visibilityPayloads,
+      { excludeExtensionV2: excludeExtensionV2 && !publicTailReady },
+    );
+    for (const { jobId, catalog } of visibleCandidates) {
       if (accepted++ < offset) continue;
       out.push({
         jobId,
@@ -182,6 +220,20 @@ export async function readDateTailPage({
   return out;
 }
 
+/**
+ * Missing Qdrant payloads are hidden for non-beta users. This fails closed and
+ * lets the caller fall back to the authoritative database rather than leak v2.
+ */
+export function filterDateTailCandidates(candidates, payloads, { excludeExtensionV2 = false } = {}) {
+  if (!excludeExtensionV2) return candidates;
+  const publicIds = new Set(
+    payloads
+      .filter((payload) => payload?.jobId && payload.extensionV2 !== true)
+      .map((payload) => String(payload.jobId)),
+  );
+  return candidates.filter((candidate) => publicIds.has(String(candidate.jobId)));
+}
+
 export async function indexOneJobRanking(job, options = {}) {
   return indexJobRankingBatch([job], { ...options, wait: true });
 }
@@ -192,10 +244,49 @@ export async function removeJobsFromRanking(jobIds = []) {
   await deleteJobRankingPoints(ids, { wait: true }).catch(() => false);
   if (isRedisReady()) {
     const members = ids.flatMap((id) => [`market:${id}`, `external:${id}`]);
-    await getRedis().zRem(DATE_TAIL_KEY, members);
+    await Promise.all([
+      getRedis().zRem(DATE_TAIL_KEY, members),
+      getRedis().zRem(PUBLIC_DATE_TAIL_KEY, members),
+    ]);
   }
   await bumpCatalogRevision();
   return { removed: ids.length };
+}
+
+export async function preparePublicDateTailRebuild() {
+  if (!isRedisReady()) return false;
+  await getRedis().del([PUBLIC_DATE_TAIL_READY_KEY, PUBLIC_DATE_TAIL_KEY]);
+  return true;
+}
+
+export async function markPublicDateTailReady() {
+  if (!isRedisReady()) return false;
+  await getRedis().set(PUBLIC_DATE_TAIL_READY_KEY, '1');
+  return true;
+}
+
+export async function rebuildPublicDateTailFromRankingIndex({ batchSize = 2_000 } = {}) {
+  if (!isRedisReady()) throw new Error('Redis is required to rebuild the public date tail');
+  if (!isJobRankingReady()) throw new Error('Qdrant ranking index is not ready');
+  await preparePublicDateTailRebuild();
+  let offset = null;
+  let scanned = 0;
+  let indexed = 0;
+  do {
+    const page = await scrollJobRankingPayloads({ offset, limit: batchSize });
+    const members = page.payloads
+      .filter((payload) => payload?.jobId && payload.extensionV2 !== true)
+      .map((payload) => ({
+        score: Date.parse(payload.postedAt) || 0,
+        value: `${payload.catalog || 'market'}:${payload.jobId}`,
+      }));
+    if (members.length) await getRedis().zAdd(PUBLIC_DATE_TAIL_KEY, members);
+    scanned += page.payloads.length;
+    indexed += members.length;
+    offset = page.nextOffset;
+  } while (offset !== null && offset !== undefined);
+  await markPublicDateTailReady();
+  return { scanned, indexed };
 }
 
 export async function getCatalogRevision() {
