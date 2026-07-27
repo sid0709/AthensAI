@@ -250,7 +250,7 @@ echo "Waiting for the complete monitoring signal"
 monitoring_ok=0
 for ((i = 1; i <= 36; i++)); do
   if docker exec "$CONTAINER_NAME" node --input-type=module -e '
-    const requiredComponents = ["athens-web", "athens-api", "ai-bff", "avalon-relay", "firestore", "storage", "redis", "qdrant", "vps", "public-api"];
+    const requiredComponents = ["athens-web", "athens-api", "ai-bff", "avalon-relay", "redis", "qdrant", "vps", "public-api"];
     const response = await fetch("http://127.0.0.1:8979/api/status/current", { signal: AbortSignal.timeout(5000) });
     const payload = await response.json();
     const byId = new Map((payload.components || []).map((item) => [item.component, item]));
@@ -269,18 +269,18 @@ if [[ "$monitoring_ok" -ne 1 ]]; then
   exit 1
 fi
 
-echo "Verifying Prometheus targets and v2 Firestore snapshot"
+echo "Verifying VPS-local Prometheus targets and v2 Firestore snapshot"
 targets_ok=0
 for ((i = 1; i <= 24; i++)); do
   if docker exec "$CONTAINER_NAME" node --input-type=module -e '
     const base = process.env.PROMETHEUS_URL.replace(/\/+$/, "");
     const url = new URL("/api/v1/query", `${base}/`);
-    url.searchParams.set("query", "up{job=~\"athens-server|redis|qdrant|google-cloud|node\"}");
+    url.searchParams.set("query", "up{job=~\"athens-server|redis|qdrant|node\"}");
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     const payload = await response.json();
     const rows = payload?.data?.result || [];
     const jobs = new Map(rows.map((row) => [row.metric?.job, row.value?.[1]]));
-    for (const job of ["athens-server", "redis", "qdrant", "google-cloud", "node"]) {
+    for (const job of ["athens-server", "redis", "qdrant", "node"]) {
       if (jobs.get(job) !== "1") process.exit(1);
     }
     const { getFirestoreDb } = await import("./Athens-server/src/services/firebase/firebaseAdmin.js");

@@ -1,6 +1,5 @@
 import { setGauge, setHealthMetric, setHealthStateMetrics } from './metrics.js';
 import { prepareStatusResults, recordChecks, rollupDay } from './statusStore.js';
-import { getFirestoreDb, getStorageBucket } from '../firebase/firebaseAdmin.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { getQdrantApiKey, getQdrantUrl } from '../../config/graphAndVectorConfig.js';
 import { readPrometheusVpsMetrics } from './prometheusClient.js';
@@ -48,31 +47,6 @@ async function checkHttp(check) {
 		};
 	} catch (error) {
 		return failed(check, started, error, 'Health check could not reach the service.');
-	}
-}
-
-async function checkFirestore() {
-	const check = { component: 'firestore', name: 'Cloud Firestore', failureStatus: 'major_outage' };
-	const started = performance.now();
-	try {
-		await getFirestoreDb().collection('monitor_status_v2').doc('production').get();
-		return { ...check, ok: true, latencyMs: Math.round(performance.now() - started), status: 'operational', message: 'Operating normally.' };
-	} catch (error) {
-		return failed(check, started, error, 'Firestore health check failed.');
-	}
-}
-
-async function checkStorage() {
-	const check = { component: 'storage', name: 'Cloud Storage', failureStatus: 'partial_outage' };
-	const started = performance.now();
-	try {
-		// The runtime identity is object-scoped and intentionally lacks bucket
-		// administration permissions. A read of a non-existent sentinel still
-		// verifies the object API and credentials without writing any data.
-		await getStorageBucket().file('__athens_monitoring_probe__').exists();
-		return { ...check, ok: true, latencyMs: Math.round(performance.now() - started), status: 'operational', message: 'Operating normally.' };
-	} catch (error) {
-		return failed(check, started, error, 'Cloud Storage health check failed.');
 	}
 }
 
@@ -145,8 +119,6 @@ export async function runMonitoringCycle() {
 	const checkedAt = new Date();
 	const rawResults = await Promise.all([
 		...httpChecks.map(checkHttp),
-		checkFirestore(),
-		checkStorage(),
 		checkRedis(),
 		checkQdrant(),
 		checkVps(),
@@ -154,8 +126,8 @@ export async function runMonitoringCycle() {
 	const results = prepareStatusResults(rawResults, previousResults);
 	previousResults = new Map(results.map((result) => [result.component, result]));
 
-	// Prometheus is updated before Firestore persistence. A Firestore write
-	// outage therefore remains visible in current status and internal alerts.
+	// Prometheus collects only VPS-local signals. The existing application
+	// Firebase identity persists the compact result snapshot for public fallback.
 	for (const result of results) emitResultMetrics(result, checkedAt);
 	setGauge('athens_monitor_cycle_timestamp_seconds', {}, checkedAt.getTime() / 1000);
 

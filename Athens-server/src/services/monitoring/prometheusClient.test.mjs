@@ -36,14 +36,14 @@ function fakeRange(sampleCount) {
 			ok: true,
 			json: async () => ({
 				status: 'success',
-				data: { resultType: 'matrix', result: [{ metric: { component: 'firestore' }, values: Array.from({ length: sampleCount }, (_, index) => [index, String(value)]) }] },
+				data: { resultType: 'matrix', result: [{ metric: { component: 'vps' }, values: Array.from({ length: sampleCount }, (_, index) => [index, String(value)]) }] },
 			}),
 		};
 	};
 }
 
 test('daily rollups require at least 95 percent Prometheus coverage', async () => {
-	const definitions = [{ id: 'firestore', name: 'Cloud Firestore' }];
+	const definitions = [{ id: 'vps', name: 'VPS infrastructure' }];
 	const complete = await readPrometheusDailyRollup(definitions, '2026-07-26', { fetchImpl: fakeRange(2736) });
 	const incomplete = await readPrometheusDailyRollup(definitions, '2026-07-26', { fetchImpl: fakeRange(2735) });
 	assert.equal(complete.complete, true);
@@ -55,6 +55,9 @@ test('public dependency queries exclude inventory totals and user identifiers', 
 	const serialized = JSON.stringify(DEPENDENCY_QUERIES);
 	for (const forbidden of ['redis_db_keys', 'collections_vector_total', 'document_count', 'object_count', 'collection_name', 'key_name']) {
 		assert.equal(serialized.includes(forbidden), false);
+	}
+	for (const cloudMetric of ['stackdriver', 'firestore', 'storage', 'google-cloud']) {
+		assert.equal(serialized.includes(cloudMetric), false);
 	}
 });
 

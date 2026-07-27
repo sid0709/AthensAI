@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       bootstrap_firebase_runtime:
-        description: Install Firebase runtime and read-only monitoring credentials
+        description: Install or rotate the existing Firebase runtime credential
         type: boolean
         required: false
         default: false
@@ -84,7 +84,6 @@ jobs:
       - name: Validate deployment and monitoring configuration
         env:
           GRAFANA_ADMIN_PASSWORD: ci-validation-only
-          GCP_MONITORING_CREDENTIALS_PATH: /tmp/monitoring-reader.json
         run: |
           bash -n docker/entrypoint.sh docker/deploy-remote.sh
           docker compose -f docker/ranking-compose.yml config >/dev/null
@@ -247,7 +246,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Create least-privilege VPS and monitoring credentials
+      - name: Create or rotate the Firebase VPS runtime credential
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
         shell: bash
         run: |
@@ -255,8 +254,6 @@ jobs:
           project=drwretail-bm
           runtime=athens-vps-runtime@drwretail-bm.iam.gserviceaccount.com
           runtime_name="${runtime%@*}"
-          monitoring=athens-monitoring-reader@drwretail-bm.iam.gserviceaccount.com
-          monitoring_name="${monitoring%@*}"
           bucket=drwretail-bm.firebasestorage.app
 
           # IAM service-account creation is eventually consistent. A successful
@@ -304,21 +301,9 @@ jobs:
               --project "${project}" \
               --display-name "Athens VPS data runtime"
           fi
-          if ! gcloud iam service-accounts describe "${monitoring}" --project "${project}" >/dev/null 2>&1; then
-            gcloud iam service-accounts create "${monitoring_name}" \
-              --project "${project}" \
-              --display-name "Athens monitoring metrics reader"
-          fi
 
           wait_for_service_account "${runtime}"
-          wait_for_service_account "${monitoring}"
 
-          retry_gcloud "Grant monitoring viewer role" \
-            gcloud projects add-iam-policy-binding "${project}" \
-            --member "serviceAccount:${monitoring}" \
-            --role roles/monitoring.viewer \
-            --condition=None \
-            --quiet
           for role in roles/datastore.user roles/serviceusage.serviceUsageConsumer; do
             retry_gcloud "Grant ${role} to the VPS runtime" \
               gcloud projects add-iam-policy-binding "${project}" \
@@ -349,13 +334,8 @@ jobs:
             --iam-account "${runtime}" \
             --project "${project}"
           chmod 600 runtime-transfer/firebase-service-account.json
-          gcloud iam service-accounts keys create \
-            runtime-transfer/monitoring-reader.json \
-            --iam-account "${monitoring}" \
-            --project "${project}"
-          chmod 600 runtime-transfer/monitoring-reader.json
 
-      - name: Transfer VPS and monitoring credentials
+      - name: Transfer Firebase runtime credential
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
         shell: bash
         env:
@@ -374,7 +354,7 @@ jobs:
           ssh "${ssh_opts[@]}" "${VPS_USER}@${VPS_HOST}" \
             'install -d -m 700 /tmp/athens-vps-runtime'
           scp -i "${key_file}" -P "${VPS_SSH_PORT}" -o StrictHostKeyChecking=accept-new \
-            runtime-transfer/firebase-service-account.json runtime-transfer/monitoring-reader.json \
+            runtime-transfer/firebase-service-account.json \
             "${VPS_USER}@${VPS_HOST}:/tmp/athens-vps-runtime/"
 
       - name: Install Firestore VPS configuration
@@ -393,15 +373,11 @@ jobs:
             deploy_env=/opt/nextoffer/deploy.env
             secret_dir=/opt/nextoffer/secrets
             incoming=/tmp/athens-vps-runtime/firebase-service-account.json
-            monitoring_incoming=/tmp/athens-vps-runtime/monitoring-reader.json
             installed=${secret_dir}/firebase-service-account.json
             test -f "${deploy_env}"
             test -f "${incoming}"
-            test -f "${monitoring_incoming}"
             as_root install -d -m 700 "${secret_dir}"
             as_root install -m 600 "${incoming}" "${installed}"
-            as_root install -d -m 711 /opt/athens-monitoring/secrets
-            as_root install -o 65534 -g 65534 -m 400 "${monitoring_incoming}" /opt/athens-monitoring/secrets/monitoring-reader.json
             rm -rf /tmp/athens-vps-runtime
             as_root cp "${deploy_env}" "${deploy_env}.pre-firestore"
 
@@ -542,7 +518,6 @@ jobs:
               /opt/athens-monitoring/data/prometheus \
               /opt/athens-monitoring/data/grafana \
               /opt/athens-monitoring/data/alertmanager
-            as_root install -d -m 711 /opt/athens-monitoring/secrets
             echo "Monitoring directories are ready"
             if [ "$(id -u)" -eq 0 ]; then
               chown 65534:65534 /opt/athens-monitoring/data/prometheus /opt/athens-monitoring/data/alertmanager
@@ -555,38 +530,19 @@ jobs:
               exit 1
             fi
             echo "Monitoring data ownership is ready"
-            monitoring_credential=/opt/athens-monitoring/secrets/monitoring-reader.json
-            if [ ! -f "${monitoring_credential}" ]; then
-              echo "Missing read-only Google monitoring credential. Re-run the workflow with bootstrap_firebase_runtime enabled." >&2
-              exit 1
-            fi
-            if ! command -v python3 >/dev/null 2>&1; then
-              if command -v apt-get >/dev/null 2>&1; then
-                as_root apt-get update
-                as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y python3
-              elif command -v dnf >/dev/null 2>&1; then
-                as_root dnf install -y python3
-              else
-                echo "Python 3 is required to install the Grafana monitoring credential." >&2
-                exit 1
-              fi
-            fi
+            # Google Cloud Monitoring is no longer part of this stack. Remove
+            # a legacy reader key if an earlier deployment left one behind.
+            as_root rm -f /opt/athens-monitoring/secrets/monitoring-reader.json
             grafana_password="${GRAFANA_ADMIN_PASSWORD:-}"
             if [ -z "$grafana_password" ] && [ -f /opt/athens-monitoring/.env ]; then
               grafana_password="$(awk -F= '$1 == "GRAFANA_ADMIN_PASSWORD" {print substr($0, index($0, "=") + 1)}' /opt/athens-monitoring/.env)"
             fi
             grafana_password="${grafana_password:-$(openssl rand -hex 24)}"
             alertmanager_config_file=alertmanager.yml
-            gcp_project_id="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_id"])' "${monitoring_credential}")"
-            gcp_client_email="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["client_email"])' "${monitoring_credential}")"
-            gcp_private_key="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["private_key"], end="")' "${monitoring_credential}")"
             umask 077
             monitoring_env_tmp="$(mktemp)"
-            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\nALERTMANAGER_CONFIG_FILE=%s\nGCP_PROJECT_ID=%s\nGCP_MONITORING_CREDENTIALS_PATH=%s\nGCP_MONITORING_CLIENT_EMAIL=%s\n' \
-              "$grafana_password" "$alertmanager_config_file" "$gcp_project_id" "$monitoring_credential" "$gcp_client_email" > "$monitoring_env_tmp"
-            printf "GCP_MONITORING_PRIVATE_KEY='" >> "$monitoring_env_tmp"
-            printf '%s' "$gcp_private_key" >> "$monitoring_env_tmp"
-            printf "'\n" >> "$monitoring_env_tmp"
+            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\nALERTMANAGER_CONFIG_FILE=%s\n' \
+              "$grafana_password" "$alertmanager_config_file" > "$monitoring_env_tmp"
             as_root install -o "$(id -u)" -g "$(id -g)" -m 600 \
               "$monitoring_env_tmp" /opt/athens-monitoring/.env
             rm -f "$monitoring_env_tmp"
@@ -605,10 +561,6 @@ jobs:
             export GRAFANA_ADMIN_PASSWORD="$grafana_password"
             export GRAFANA_ROOT_URL=http://127.0.0.1:3000
             export ALERTMANAGER_CONFIG_FILE="$alertmanager_config_file"
-            export GCP_PROJECT_ID="$gcp_project_id"
-            export GCP_MONITORING_CREDENTIALS_PATH="$monitoring_credential"
-            export GCP_MONITORING_CLIENT_EMAIL="$gcp_client_email"
-            export GCP_MONITORING_PRIVATE_KEY="$gcp_private_key"
             echo "Using ${compose_cmd} for Athens monitoring"
             echo "Validating monitoring Compose configuration"
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml config >/dev/null

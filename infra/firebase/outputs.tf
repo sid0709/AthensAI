@@ -13,7 +13,3 @@ output "kms_profile_key" {
 output "vps_runtime_service_account" {
   value = google_service_account.vps_runtime.email
 }
-
-output "monitoring_reader_service_account" {
-  value = google_service_account.monitoring_reader.email
-}

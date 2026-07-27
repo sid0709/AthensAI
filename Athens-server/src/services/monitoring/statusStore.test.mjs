@@ -81,19 +81,19 @@ test('critical state and recovery both require confirmation', () => {
 	assert.equal(recovery.status, 'major_outage');
 });
 
-test('Firebase-era component definitions include every current dependency and no MongoDB', () => {
+test('component definitions contain VPS-local checks without cloud database metrics', () => {
 	const definitions = getComponentDefinitions();
 	const ids = definitions.map((item) => item.id);
-	for (const expected of ['firestore', 'storage', 'redis', 'qdrant', 'vps']) assert.ok(ids.includes(expected));
+	for (const expected of ['athens-web', 'athens-api', 'redis', 'qdrant', 'vps']) assert.ok(ids.includes(expected));
 	assert.equal(ids.includes('mongodb'), false);
-	assert.equal(definitions.find((item) => item.id === 'firestore').failureStatus, 'major_outage');
-	assert.equal(definitions.find((item) => item.id === 'storage').failureStatus, 'partial_outage');
+	assert.equal(ids.includes('firestore'), false);
+	assert.equal(ids.includes('storage'), false);
 	assert.equal(definitions.find((item) => item.id === 'redis').failureStatus, 'degraded');
 });
 
 test('prepared results preserve impact severity after confirmation', () => {
-	const previous = new Map([['firestore', { status: 'major_outage', rawStatus: 'major_outage', statusStreak: 4 }]]);
-	const [result] = prepareStatusResults([{ component: 'firestore', name: 'Cloud Firestore', ok: false, status: 'major_outage', message: 'Failed.' }], previous);
+	const previous = new Map([['vps', { status: 'major_outage', rawStatus: 'major_outage', statusStreak: 4 }]]);
+	const [result] = prepareStatusResults([{ component: 'vps', name: 'VPS infrastructure', ok: false, status: 'major_outage', message: 'Failed.' }], previous);
 	assert.equal(result.status, 'major_outage');
 	assert.equal(result.statusStreak, 5);
 });
@@ -127,7 +127,7 @@ function fakeFirestore() {
 
 test('status persistence writes one v2 snapshot and never raw sample documents', async () => {
 	const db = fakeFirestore();
-	await recordChecks([{ component: 'firestore', name: 'Cloud Firestore', ok: true, status: 'operational', rawStatus: 'operational', statusStreak: 1, message: 'Operating normally.', latencyMs: 12 }], { db, now: new Date('2026-07-27T12:00:00Z') });
+	await recordChecks([{ component: 'vps', name: 'VPS infrastructure', ok: true, status: 'operational', rawStatus: 'operational', statusStreak: 1, message: 'Operating normally.', latencyMs: 12 }], { db, now: new Date('2026-07-27T12:00:00Z') });
 	const current = db.documents.get(`${STATUS_V2_COLLECTIONS.current}/production`);
 	assert.equal(current.version, 2);
 	assert.equal(current.components.length, 1);
@@ -137,17 +137,17 @@ test('status persistence writes one v2 snapshot and never raw sample documents',
 test('current status falls back to the compact Firestore snapshot when Prometheus is unavailable', async () => {
 	const db = fakeFirestore();
 	const now = new Date();
-	await recordChecks([{ component: 'firestore', name: 'Cloud Firestore', ok: true, status: 'operational', rawStatus: 'operational', statusStreak: 1, message: 'Operating normally.', latencyMs: 9 }], { db, now });
+	await recordChecks([{ component: 'vps', name: 'VPS infrastructure', ok: true, status: 'operational', rawStatus: 'operational', statusStreak: 1, message: 'Operating normally.', latencyMs: 9 }], { db, now });
 	const components = await readCurrentStatus({ db, prometheusOptions: { fetchImpl: async () => { throw new Error('Prometheus unavailable'); } } });
-	const firestore = components.find((item) => item.component === 'firestore');
-	assert.equal(firestore.status, 'operational');
-	assert.equal(firestore.latencyMs, 9);
-	assert.equal(Object.hasOwn(firestore, 'metrics'), false);
+	const vps = components.find((item) => item.component === 'vps');
+	assert.equal(vps.status, 'operational');
+	assert.equal(vps.latencyMs, 9);
+	assert.equal(Object.hasOwn(vps, 'metrics'), false);
 });
 
 test('confirmed failures create v2 incidents without touching legacy collections', async () => {
 	const db = fakeFirestore();
-	await recordChecks([{ component: 'firestore', name: 'Cloud Firestore', ok: false, status: 'major_outage', rawStatus: 'major_outage', statusStreak: 4, message: 'Unavailable.' }], { db, now: new Date('2026-07-27T12:00:00Z') });
+	await recordChecks([{ component: 'vps', name: 'VPS infrastructure', ok: false, status: 'major_outage', rawStatus: 'major_outage', statusStreak: 4, message: 'Unavailable.' }], { db, now: new Date('2026-07-27T12:00:00Z') });
 	assert.equal([...db.documents.keys()].some((key) => key.startsWith(`${STATUS_V2_COLLECTIONS.incidents}/`)), true);
 	assert.equal([...db.documents.keys()].some((key) => key.startsWith('monitor_incidents/')), false);
 });

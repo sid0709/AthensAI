@@ -44,12 +44,6 @@ scrape_configs:
     static_configs:
       - targets: ["qdrant:6333"]
 
-  - job_name: google-cloud
-    scrape_interval: 60s
-    scrape_timeout: 30s
-    static_configs:
-      - targets: ["stackdriver-exporter:9255"]
-
   - job_name: public-http
     metrics_path: /probe
     params:
