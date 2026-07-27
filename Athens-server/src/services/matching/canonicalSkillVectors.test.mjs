@@ -42,6 +42,22 @@ test('user sparse vectors expand asymmetric skill families from the dictionary',
   assert.ok(vector.indices.includes(stableSkillId('react native')));
 });
 
+test('one explicit .NET skill expands related dictionary entries at ranking time', () => {
+  const netCore = { name: '.NET Core', nameCanonical: 'net core', skillId: stableSkillId('.NET Core') };
+  const networking = { name: 'Networking', nameCanonical: 'networking', skillId: stableSkillId('Networking') };
+  const vector = buildUserSkillSparseVector(
+    [{ name: '.NET', level: 5 }],
+    [netCore, networking],
+    new Map([
+      ['net', [netCore]],
+      ['networking', [networking]],
+    ]),
+  );
+  assert.ok(vector.indices.includes(stableSkillId('.NET')));
+  assert.ok(vector.indices.includes(netCore.skillId));
+  assert.ok(!vector.indices.includes(networking.skillId));
+});
+
 test('token-indexed alias expansion avoids scanning unrelated dictionary skills', () => {
 	const reactNative = { name: 'React Native', nameCanonical: 'react native', skillId: stableSkillId('react native') };
 	const unrelated = { name: 'COBOL', nameCanonical: 'cobol', skillId: stableSkillId('cobol') };

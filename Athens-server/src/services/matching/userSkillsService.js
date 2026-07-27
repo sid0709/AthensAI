@@ -6,7 +6,10 @@ import {
   USER_SKILL_LEVEL_MAX,
   computeUserSkillWeight,
 } from '../../config/graphAndVectorConfig.js';
-import { invalidateProfileSkillCache } from './profileSkills.js';
+import {
+  getProfileSkillCacheRevision,
+  invalidateProfileSkillCache,
+} from './profileSkills.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 
 /**
@@ -26,6 +29,7 @@ function skillDocsCacheKey(applierName) {
 }
 
 async function clearSkillDocsCache(applierName) {
+  skillDocLoads.delete(String(applierName || '').trim());
   if (isRedisReady()) await getRedis().del(skillDocsCacheKey(applierName));
 }
 
@@ -77,7 +81,8 @@ export async function upsertUserSkill(applierName, { name, category, level } = {
   await userSkillsCollection.updateOne(
     { applierName: owner, nameCanonical: canonical },
     {
-      $set: { name: label, category: cat, level: lv, updatedAt: now },
+      $set: { name: label, category: cat, level: lv, source: 'manual', updatedAt: now },
+      $unset: { migratedFrom: '' },
       $setOnInsert: { applierName: owner, nameCanonical: canonical, createdAt: now },
     },
     { upsert: true },
@@ -85,6 +90,7 @@ export async function upsertUserSkill(applierName, { name, category, level } = {
 
   await clearSkillDocsCache(owner);
   await invalidateProfileSkillCache(owner);
+  await clearSkillDocsCache(owner);
   return { skills: await listUserSkills(owner) };
 }
 
@@ -103,6 +109,7 @@ export async function removeUserSkill(applierName, skillName) {
   if (res.deletedCount > 0) {
     await clearSkillDocsCache(owner);
     await invalidateProfileSkillCache(owner);
+    await clearSkillDocsCache(owner);
   }
   return { removed: res.deletedCount > 0, skills: await listUserSkills(owner) };
 }
@@ -114,9 +121,10 @@ export async function loadUserSkillDocs(applierName) {
   const existing = skillDocLoads.get(name);
   if (existing) return existing;
   const load = (async () => {
+    const loadRevision = await getProfileSkillCacheRevision(name);
     if (isRedisReady()) {
       const cached = await getRedis().get(skillDocsCacheKey(name));
-      if (cached) {
+      if (cached && loadRevision === await getProfileSkillCacheRevision(name)) {
         try {
           const docs = JSON.parse(cached);
           await getRedis().expire(skillDocsCacheKey(name), SKILL_DOCS_CACHE_TTL_SEC);
@@ -127,7 +135,7 @@ export async function loadUserSkillDocs(applierName) {
     const docs = await userSkillsCollection
       .find({ applierName: name }, { projection: { name: 1, category: 1, level: 1 } })
       .toArray();
-    if (isRedisReady()) {
+    if (isRedisReady() && loadRevision === await getProfileSkillCacheRevision(name)) {
       await getRedis().setEx(skillDocsCacheKey(name), SKILL_DOCS_CACHE_TTL_SEC, JSON.stringify(docs));
     }
     return docs;

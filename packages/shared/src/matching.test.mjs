@@ -108,6 +108,14 @@ test('React profile activates the React word family', () => {
   assert.ok(jobSkillMatchesProfile('React.js', ctx)); // via >=5 compact shim
 });
 
+test('.NET profile activates related .NET skills without matching networking', () => {
+  const ctx = profileCtx(['.NET']);
+  assert.ok(jobSkillMatchesProfile('.NET Core', ctx));
+  assert.ok(jobSkillMatchesProfile('.NET Certificate', ctx));
+  assert.ok(jobSkillMatchesProfile('.NET Memory Profiler', ctx));
+  assert.equal(jobSkillMatchesProfile('Networking', ctx), false);
+});
+
 test('jobSkillMatchWeight returns best matching weight via word tokens', () => {
   const ctx = {
     tokenWeights: { react: 1.0, mentoring: 0.38, aws: 0.85, c: 0.9 },
