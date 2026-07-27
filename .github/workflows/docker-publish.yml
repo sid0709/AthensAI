@@ -259,6 +259,46 @@ jobs:
           monitoring_name="${monitoring%@*}"
           bucket=drwretail-bm.firebasestorage.app
 
+          # IAM service-account creation is eventually consistent. A successful
+          # create can still be invisible to the policy APIs for several seconds.
+          wait_for_service_account() {
+            local account="$1"
+            local attempt
+            for attempt in $(seq 1 20); do
+              if gcloud iam service-accounts describe "${account}" --project "${project}" >/dev/null 2>&1; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 20 ]; then
+                echo "Timed out waiting for service account ${account} to propagate." >&2
+                return 1
+              fi
+              echo "Waiting for ${account} to propagate (${attempt}/20)…"
+              sleep 3
+            done
+          }
+
+          # IAM policy writes can race propagation (and occasionally a concurrent
+          # policy update). Retry only this bootstrap work with bounded backoff.
+          retry_gcloud() {
+            local label="$1"
+            shift
+            local attempt output delay
+            for attempt in $(seq 1 8); do
+              if output="$("$@" 2>&1)"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 8 ]; then
+                echo "${label} failed after ${attempt} attempts:" >&2
+                echo "${output}" >&2
+                return 1
+              fi
+              delay=$((attempt * 2))
+              if [ "${delay}" -gt 10 ]; then delay=10; fi
+              echo "${label} is not ready (${attempt}/8); retrying in ${delay}s…"
+              sleep "${delay}"
+            done
+          }
+
           if ! gcloud iam service-accounts describe "${runtime}" --project "${project}" >/dev/null 2>&1; then
             gcloud iam service-accounts create "${runtime_name}" \
               --project "${project}" \
@@ -269,29 +309,37 @@ jobs:
               --project "${project}" \
               --display-name "Athens monitoring metrics reader"
           fi
-          gcloud projects add-iam-policy-binding "${project}" \
+
+          wait_for_service_account "${runtime}"
+          wait_for_service_account "${monitoring}"
+
+          retry_gcloud "Grant monitoring viewer role" \
+            gcloud projects add-iam-policy-binding "${project}" \
             --member "serviceAccount:${monitoring}" \
             --role roles/monitoring.viewer \
             --condition=None \
-            --quiet >/dev/null
+            --quiet
           for role in roles/datastore.user roles/serviceusage.serviceUsageConsumer; do
-            gcloud projects add-iam-policy-binding "${project}" \
+            retry_gcloud "Grant ${role} to the VPS runtime" \
+              gcloud projects add-iam-policy-binding "${project}" \
               --member "serviceAccount:${runtime}" \
               --role "${role}" \
               --condition=None \
-              --quiet >/dev/null
+              --quiet
           done
-          gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
+          retry_gcloud "Grant storage access to the VPS runtime" \
+            gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
             --member "serviceAccount:${runtime}" \
             --role roles/storage.objectUser \
-            --quiet >/dev/null
-          gcloud kms keys add-iam-policy-binding profile-secrets \
+            --quiet
+          retry_gcloud "Grant KMS access to the VPS runtime" \
+            gcloud kms keys add-iam-policy-binding profile-secrets \
             --project "${project}" \
             --location us-east4 \
             --keyring athens \
             --member "serviceAccount:${runtime}" \
             --role roles/cloudkms.cryptoKeyEncrypterDecrypter \
-            --quiet >/dev/null
+            --quiet
 
           # scp-action archives sources with tar; a dot-prefixed directory is
           # skipped by its source glob and produces an empty archive.
