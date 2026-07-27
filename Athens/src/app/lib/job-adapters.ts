@@ -125,6 +125,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
   return {
     id: backendId,
     backendId,
+		companyId: String(doc.companyId || `legacy:${backendId}`),
     title,
     company: String(company.name || doc.companyName || "Unknown"),
     companyUrl,
@@ -195,6 +196,7 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
 
 export const SORT_TO_API: Record<string, string> = {
   newest: "postedAt_desc",
+  oldest: "postedAt_asc",
   matchScore: "recommended",
   title: "title_asc",
 };

@@ -1,12 +1,12 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { initMongo, jobsCollection, closeMongo } from '../db/mongo.js';
+import { initDataStore, jobsCollection, closeDataStore } from '../db/dataStore.js';
 import { initQdrantCollections, deleteJobVectorsCollection, isQdrantConfigured } from '../services/vectorStore/qdrantClient.js';
 import { JOB_VECTORS_COLLECTION } from '../services/vectorStore/collections.js';
 
 async function main() {
-	await initMongo();
+	await initDataStore();
 
 	if (!jobsCollection) {
 		console.error('Database not ready');
@@ -34,11 +34,11 @@ async function main() {
 	);
 
 	console.log(
-		`[reset-job-embeddings] Mongo jobs embedding unset: ${result.modifiedCount} `
+		`[reset-job-embeddings] Firestore jobs embedding unset: ${result.modifiedCount} `
 		+ `(matched ${result.matchedCount}), qdrantCleared=${qdrantCleared}`,
 	);
 
-	await closeMongo?.();
+	await closeDataStore?.();
 	process.exit(0);
 }
 

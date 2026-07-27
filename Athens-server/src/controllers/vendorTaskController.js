@@ -1,8 +1,8 @@
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import {
 	getVendorTasksCollection,
 	jobsCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { detectJobSource } from "../lib/jobSource.js";
 import {
 	clearJobBidStatus,
@@ -18,11 +18,11 @@ function normalizeUrlKey(url) {
 	return normalizeApplyUrlKey(url);
 }
 
-function toObjectId(value) {
+function toDocumentId(value) {
 	if (!value) return null;
-	if (value instanceof ObjectId) return value;
+	if (value instanceof DocumentId) return value;
 	try {
-		return new ObjectId(String(value));
+		return new DocumentId(String(value));
 	} catch {
 		return null;
 	}
@@ -378,9 +378,9 @@ export async function updateVendorTask(req, res) {
 		};
 
 		let doc = null;
-		if (ObjectId.isValid(taskId)) {
+		if (DocumentId.isValid(taskId)) {
 			const result = await collection.findOneAndUpdate(
-				{ _id: new ObjectId(taskId), applierName },
+				{ _id: new DocumentId(taskId), applierName },
 				{ $set: update },
 				{ returnDocument: "after" },
 			);
@@ -440,14 +440,14 @@ export async function deleteVendorTask(req, res) {
 		}
 
 		let doc = null;
-		if (ObjectId.isValid(taskId)) {
-			doc = await collection.findOne({ _id: new ObjectId(taskId) });
+		if (DocumentId.isValid(taskId)) {
+			doc = await collection.findOne({ _id: new DocumentId(taskId) });
 		}
 		if (!doc) {
 			doc = await collection.findOne({ jobId: taskId });
 		}
 
-		const jobId = doc?.jobId ? String(doc.jobId) : ObjectId.isValid(taskId) ? null : taskId;
+		const jobId = doc?.jobId ? String(doc.jobId) : DocumentId.isValid(taskId) ? null : taskId;
 		const applierName = doc?.applierName ? String(doc.applierName) : String(req.query.applierName ?? "").trim();
 
 		if (doc?._id) {
@@ -574,8 +574,8 @@ export async function getVendorTasksAnalytics(req, res) {
 		if (jobsCollection && tasks.some((t) => t.jobId)) {
 			const ids = tasks
 				.map((t) => t.jobId)
-				.filter((id) => ObjectId.isValid(id))
-				.map((id) => new ObjectId(id));
+				.filter((id) => DocumentId.isValid(id))
+				.map((id) => new DocumentId(id));
 			if (ids.length) {
 				const account = accountInfoCollection
 					? await accountInfoCollection.findOne(

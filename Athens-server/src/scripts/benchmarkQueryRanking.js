@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { performance } from 'node:perf_hooks';
-import { accountInfoCollection, initMongo, closeMongo } from '../db/mongo.js';
+import { accountInfoCollection, initDataStore, closeDataStore } from '../db/dataStore.js';
 import { initRedis, closeRedis } from '../db/redis.js';
 import { initJobRankingCollection, countJobRankingPoints } from '../services/vectorStore/qdrantClient.js';
 import { JobSourceTitles } from '../config/jobSources.js';
@@ -33,7 +33,7 @@ async function timedRanking(applierName, profileId, nonce, includeExternal) {
       jobSources: JobSourceTitles.join(','),
       _benchmarkNonce: nonce,
     },
-    mongoQuery: {},
+    dataQuery: {},
     scoreFilters: {},
     skip: 0,
     limit: 25,
@@ -53,7 +53,7 @@ async function main() {
   const cachedRuns = Math.max(1, Number(argument('cached-runs', '30')) || 30);
   const includeExternal = argument('include-external', 'false') === 'true';
 
-  await initMongo();
+  await initDataStore();
   await initRedis();
   if (!await initJobRankingCollection()) throw new Error('Qdrant ranking collection is unavailable');
   await Promise.all([loadCanonicalSkillDictionary(), warmRankingPool()]);
@@ -116,5 +116,5 @@ main()
   .finally(async () => {
     await shutdownRankingPool();
     await closeRedis();
-    await closeMongo();
+    await closeDataStore();
   });

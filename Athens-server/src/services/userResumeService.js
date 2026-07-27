@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import { getMongoDb, userResumesCollection, userKnowledgeGraphsCollection } from "../db/mongo.js";
+import { DocumentId } from "@nextoffer/shared/document-id";
+import { userResumesCollection, userKnowledgeGraphsCollection } from "../db/dataStore.js";
 import { rebuildProfileGraph } from "./userKnowledgeGraph/index.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
 import { removeResumeEmbedding } from "./embeddings/embeddingIngest.js";
@@ -80,17 +80,17 @@ export async function storeUserResumeContent({ resumeId, ownerName, fileName, mi
 }
 
 async function readContent(doc) {
-  return readStoredObject(doc, { collection: userResumesCollection, legacyDb: getMongoDb(), legacyBucketName: "user_resume_files" });
+  return readStoredObject(doc);
 }
 
 async function deleteStoredContent(doc) {
-  return deleteStoredObject(doc, { collection: userResumesCollection, legacyDb: getMongoDb(), legacyBucketName: "user_resume_files" });
+  return deleteStoredObject(doc);
 }
 
 function parseOwnerId(raw) {
   if (!raw) return null;
   try {
-    return new ObjectId(String(raw));
+    return new DocumentId(String(raw));
   } catch {
     return null;
   }
@@ -121,14 +121,14 @@ export async function getUserResume(id, ownerName) {
   const name = cleanString(ownerName);
   if (!name) throw new Error("ownerName is required");
 
-  let objectId;
+  let documentId;
   try {
-    objectId = new ObjectId(id);
+    documentId = new DocumentId(id);
   } catch {
     throw new Error("Invalid resume id");
   }
 
-  const doc = await userResumesCollection.findOne({ _id: objectId, ownerName: name });
+  const doc = await userResumesCollection.findOne({ _id: documentId, ownerName: name });
   if (!doc) return null;
 
   const buffer = await readContent(doc);
@@ -164,7 +164,7 @@ export async function createUserResume(payload) {
   }
 
   const extractedText = await extractText(buffer, mimeType, fileName);
-  const _id = new ObjectId();
+  const _id = new DocumentId();
   const stored = await storeUserResumeContent({ resumeId: _id, ownerName, fileName, mimeType, buffer });
   const now = new Date().toISOString();
 
@@ -214,19 +214,19 @@ export async function setPrimaryUserResume(id, ownerName) {
   const name = cleanString(ownerName);
   if (!name) throw new Error("ownerName is required");
 
-  let objectId;
+  let documentId;
   try {
-    objectId = new ObjectId(id);
+    documentId = new DocumentId(id);
   } catch {
     throw new Error("Invalid resume id");
   }
 
-  const doc = await userResumesCollection.findOne({ _id: objectId, ownerName: name });
+  const doc = await userResumesCollection.findOne({ _id: documentId, ownerName: name });
   if (!doc) throw new Error("Resume not found");
 
   const now = new Date().toISOString();
   await userResumesCollection.updateMany({ ownerName: name }, { $set: { isPrimary: false, updatedAt: now } });
-  await userResumesCollection.updateOne({ _id: objectId }, { $set: { isPrimary: true, updatedAt: now } });
+  await userResumesCollection.updateOne({ _id: documentId }, { $set: { isPrimary: true, updatedAt: now } });
 
   return toSummary({ ...doc, isPrimary: true, updatedAt: now });
 }
@@ -236,24 +236,24 @@ export async function deleteUserResume(id, ownerName) {
   const name = cleanString(ownerName);
   if (!name) throw new Error("ownerName is required");
 
-  let objectId;
+  let documentId;
   try {
-    objectId = new ObjectId(id);
+    documentId = new DocumentId(id);
   } catch {
     throw new Error("Invalid resume id");
   }
 
-  const doc = await userResumesCollection.findOne({ _id: objectId, ownerName: name });
+  const doc = await userResumesCollection.findOne({ _id: documentId, ownerName: name });
   if (!doc) throw new Error("Resume not found");
 
   await deleteStoredContent(doc);
-  await userResumesCollection.deleteOne({ _id: objectId });
+  await userResumesCollection.deleteOne({ _id: documentId });
   invalidateRecommendationCache(name);
 
   if (userKnowledgeGraphsCollection) {
     await userKnowledgeGraphsCollection.deleteOne({
       applierName: name,
-      resumeId: String(objectId),
+      resumeId: String(documentId),
     });
     await rebuildProfileGraph(name);
   }
@@ -265,7 +265,7 @@ export async function deleteUserResume(id, ownerName) {
     }
   }
 
-  return { deleted: true, id: String(objectId) };
+  return { deleted: true, id: String(documentId) };
 }
 
 export async function clearUserResumeAnalysis(id, ownerName) {
@@ -273,19 +273,19 @@ export async function clearUserResumeAnalysis(id, ownerName) {
   const name = cleanString(ownerName);
   if (!name) throw new Error("ownerName is required");
 
-  let objectId;
+  let documentId;
   try {
-    objectId = new ObjectId(id);
+    documentId = new DocumentId(id);
   } catch {
     throw new Error("Invalid resume id");
   }
 
-  const doc = await userResumesCollection.findOne({ _id: objectId, ownerName: name });
+  const doc = await userResumesCollection.findOne({ _id: documentId, ownerName: name });
   if (!doc) throw new Error("Resume not found");
 
   const now = new Date().toISOString();
   await userResumesCollection.updateOne(
-    { _id: objectId },
+    { _id: documentId },
     {
       $set: {
         analyzed: false,
@@ -301,12 +301,12 @@ export async function clearUserResumeAnalysis(id, ownerName) {
   if (userKnowledgeGraphsCollection) {
     await userKnowledgeGraphsCollection.deleteOne({
       applierName: name,
-      resumeId: String(objectId),
+      resumeId: String(documentId),
     });
     await rebuildProfileGraph(name);
   }
 
-  void removeResumeEmbedding(String(objectId)).catch(() => {});
+  void removeResumeEmbedding(String(documentId)).catch(() => {});
   invalidateRecommendationCache(name);
 
   return toSummary({

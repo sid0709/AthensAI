@@ -21,10 +21,9 @@ import {
 	mailUserLabelsCollection,
 	avalonRunsCollection,
 	aiApiUsageCollection,
-	getMongoDb,
 	getVendorTasksCollection,
 	getBidReviewEventsCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { deleteAccountInfoByName } from "./accountInfoStore.js";
 import { clearJobBidStatus, listBidQueueJobs } from "./jobBidStatusService.js";
 import { deleteScoresForApplier } from "./matching/matchScoreStore.js";
@@ -65,7 +64,7 @@ async function purgeUserResumes(ownerName) {
 	const docs = await userResumesCollection.find({ ownerName }).toArray();
 	let objects = 0;
 	for (const doc of docs) {
-		if (await deleteStoredObject(doc, { collection: userResumesCollection, legacyDb: getMongoDb(), legacyBucketName: "user_resume_files" })) objects += 1;
+		if (await deleteStoredObject(doc)) objects += 1;
 		void removeResumeEmbedding(String(doc._id)).catch(() => {});
 	}
 	const res = await userResumesCollection.deleteMany({ ownerName });
@@ -82,7 +81,7 @@ async function purgeResumeTemplates(ownerName) {
 	const docs = await resumeTemplatesCollection.find({ ownerName }).toArray();
 	let objects = 0;
 	for (const doc of docs) {
-		if (await deleteStoredObject(doc, { collection: resumeTemplatesCollection, legacyDb: getMongoDb(), legacyBucketName: "resume_template_files" })) objects += 1;
+		if (await deleteStoredObject(doc)) objects += 1;
 	}
 	const res = await resumeTemplatesCollection.deleteMany({ ownerName });
 	return { templates: res.deletedCount ?? 0, objects };
@@ -216,8 +215,8 @@ async function deleteManySafe(collection, filter) {
 }
 
 /**
- * Wipe everything owned by this applier, then delete the account_info row (local + cloud).
- * @param {{ name: string, accountId: import("mongodb").ObjectId }} opts
+ * Wipe everything owned by this applier, then delete the account record.
+ * @param {{ name: string, accountId: import("@nextoffer/shared/document-id").DocumentId }} opts
  */
 export async function wipeAccountData({ name, accountId }) {
 	const applierName = cleanName(name);

@@ -1,5 +1,5 @@
 import bcrypt from "bcrypt";
-import { accountInfoCollection } from "../db/mongo.js";
+import { accountInfoCollection } from "../db/dataStore.js";
 import {
 	deleteAccountInfoByName,
 	insertAccountInfo,

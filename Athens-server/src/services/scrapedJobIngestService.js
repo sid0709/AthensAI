@@ -1,9 +1,18 @@
-import { externalScrapedJobsCollection } from "../db/mongo.js";
+import {
+	externalScrapedJobsCollection,
+	jobIdentityRegistryCollection,
+	jobsCollection,
+} from "../db/dataStore.js";
 import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
 import {
 	externalSourceFieldsFromLink,
-	promoteExternalJobToMarket,
+	promoteExternalJobToMarket as promoteExternalJobToMarketDefault,
 } from "./promoteExternalJobToMarket.js";
+import { findDuplicateByUrl } from "./jobDuplicateLookup.js";
+import {
+	claimJobIdentity,
+	releaseJobIdentityClaim,
+} from "./jobIdentityDedupe.js";
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -61,7 +70,12 @@ export function validateScrapedJobInput(raw) {
 	};
 }
 
-export async function ingestScrapedJob(job) {
+export async function ingestScrapedJob(job, {
+	externalCollection = externalScrapedJobsCollection,
+	marketCollection = jobsCollection,
+	identityRegistry = jobIdentityRegistryCollection,
+	promoteExternalJobToMarket = promoteExternalJobToMarketDefault,
+} = {}) {
 	const now = new Date();
 	const sourceFields = externalSourceFieldsFromLink(job.jobLink);
 	const doc = {
@@ -74,20 +88,56 @@ export async function ingestScrapedJob(job) {
 		createdAt: now,
 		updatedAt: now,
 	};
+	let identityClaim = null;
+	let insertedExternalId = null;
 
 	try {
-		const result = await externalScrapedJobsCollection.insertOne(doc);
-		const inserted = { ...doc, _id: result.insertedId };
+		const existingByUrl = await findDuplicateByUrl(marketCollection, [job.jobLink]);
+		if (existingByUrl) {
+			return {
+				created: false,
+				duplicate: true,
+				reason: "Duplicate job URL already exists",
+				jobID: job.jobID,
+				jobLink: job.jobLink,
+			};
+		}
 
-		let marketId = null;
-		try {
-			const promote = await promoteExternalJobToMarket(inserted);
-			marketId = promote.marketId ?? null;
-		} catch (promoteErr) {
-			console.error(
-				`[expose/jobs] promote to job_market failed for ${job.jobID}:`,
-				promoteErr?.message || promoteErr,
-			);
+		identityClaim = await claimJobIdentity(identityRegistry, {
+			companyName: job.companyName,
+			title: job.jobTitle,
+			acceptedAt: now,
+			source: "exposed-api",
+		});
+		if (identityClaim.duplicate) {
+			return {
+				created: false,
+				duplicate: true,
+				reason: "Duplicate job with this company and title was added within the last 30 days",
+				jobID: job.jobID,
+				jobLink: job.jobLink,
+			};
+		}
+
+		const result = await externalCollection.insertOne(doc);
+		insertedExternalId = result.insertedId;
+		const inserted = { ...doc, _id: result.insertedId };
+		const promote = await promoteExternalJobToMarket(inserted, {
+			identityClaim,
+			marketCollection,
+			externalCollection,
+			identityRegistry,
+		});
+		if (!promote.promoted) {
+			await externalCollection.deleteOne({ _id: result.insertedId });
+			insertedExternalId = null;
+			return {
+				created: false,
+				duplicate: true,
+				reason: promote.reason || "Duplicate job already exists",
+				jobID: job.jobID,
+				jobLink: job.jobLink,
+			};
 		}
 
 		return {
@@ -96,11 +146,25 @@ export async function ingestScrapedJob(job) {
 			jobID: job.jobID,
 			jobLink: job.jobLink,
 			source: sourceFields.source,
-			...(marketId ? { marketId } : {}),
+			...(promote.marketId ? { marketId: promote.marketId } : {}),
 		};
 	} catch (err) {
+		if (identityClaim?.claimed) {
+			await releaseJobIdentityClaim(identityRegistry, identityClaim).catch(() => {});
+		}
+		if (insertedExternalId) {
+			await externalCollection.deleteOne({ _id: insertedExternalId }).catch((cleanupError) => {
+				console.warn('[expose/jobs] failed to clean up unpromoted external row:', cleanupError?.message || cleanupError);
+			});
+		}
 		if (err?.code === 11000) {
-			return { created: false, duplicate: true, jobID: job.jobID, jobLink: job.jobLink };
+			return {
+				created: false,
+				duplicate: true,
+				reason: "Duplicate external job ID or URL already exists",
+				jobID: job.jobID,
+				jobLink: job.jobLink,
+			};
 		}
 		throw err;
 	}
@@ -116,10 +180,10 @@ export async function scrapedJobExistsByJobId(jobID) {
 	return Boolean(doc);
 }
 
-export async function ingestScrapedJobs(jobs) {
+export async function ingestScrapedJobs(jobs, options = {}) {
 	const results = [];
 	for (const job of jobs) {
-		results.push(await ingestScrapedJob(job));
+		results.push(await ingestScrapedJob(job, options));
 	}
 	return results;
 }

@@ -2,7 +2,7 @@ import {
   jobsCollection,
   accountInfoCollection,
   matchProfileStateCollection,
-} from '../../db/mongo.js';
+} from '../../db/dataStore.js';
 import { loadProfileMatchContext, clearProfileSkillCache } from './profileSkills.js';
 import {
   MIN_STORE_SCORE,

@@ -16,6 +16,7 @@ build/
 
 # Local CI bootstrap artifacts (deploy keys — never commit)
 .ci/
+monitoring/secrets/
 
 # Logs & runtime
 logs/

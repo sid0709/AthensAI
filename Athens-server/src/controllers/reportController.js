@@ -1,4 +1,4 @@
-import { jobsCollection, accountInfoCollection } from "../db/mongo.js";
+import { jobsCollection, accountInfoCollection } from "../db/dataStore.js";
 
 /**
  * Job source comes from the denormalized, indexed `source` field (set at

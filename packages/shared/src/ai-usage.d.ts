@@ -75,10 +75,10 @@ declare module '@nextoffer/shared/ai-usage' {
     path?: string;
   }): Omit<CallLogEntry, 'createdAt'>;
 
-  export function ensureCallLogIndexes(collection: import('mongodb').Collection): Promise<void>;
+  export function ensureCallLogIndexes(collection: { createIndex: (...args: unknown[]) => Promise<unknown> }): Promise<void>;
 
   export function createCallLogRecorder(
-    collection: import('mongodb').Collection | null | undefined,
+    collection: { insertOne: (document: unknown) => Promise<unknown> } | null | undefined,
   ): (entry: Omit<CallLogEntry, 'createdAt'>) => Promise<CallLogEntry | null>;
 
   export function parseCorrelationHeaders(req: {

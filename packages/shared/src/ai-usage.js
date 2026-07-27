@@ -114,7 +114,7 @@ export function buildCallLogEntry({
 
 /**
  * Create indexes for llm_call_log (idempotent).
- * @param {import('mongodb').Collection} collection
+ * @param {{ createIndex: Function }} collection
  */
 export async function ensureCallLogIndexes(collection) {
 	await collection.createIndex({ createdAt: -1 });
@@ -126,7 +126,7 @@ export async function ensureCallLogIndexes(collection) {
 }
 
 /**
- * @param {import('mongodb').Collection | null | undefined} collection
+ * @param {{ insertOne: Function } | null | undefined} collection
  */
 export function createCallLogRecorder(collection) {
 	return async function recordCallLog(entry) {

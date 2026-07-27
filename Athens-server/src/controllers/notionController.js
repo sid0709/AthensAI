@@ -1,4 +1,4 @@
-import { accountInfoCollection } from "../db/mongo.js";
+import { accountInfoCollection } from "../db/dataStore.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import { updateAccountInfoById } from "../services/accountInfoStore.js";
 import { decryptAccountSecret, encryptAccountSecret } from "../services/autoBidProfileSecrets.js";

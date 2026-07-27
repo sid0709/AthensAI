@@ -1,4 +1,4 @@
-import { accountInfoCollection } from "../db/mongo.js";
+import { accountInfoCollection } from "../db/dataStore.js";
 import { chatCompletion, resolveDefaultModel } from "../services/llm/llmService.js";
 import { JOB_ANALYSIS_PROMPT } from "../config/jobAnalysisPrompt.js";
 import { rankResumes, rankUploadedResumes } from "../services/resumeMatchService.js";

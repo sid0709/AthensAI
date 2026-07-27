@@ -3,8 +3,12 @@
  * Batches many titles per LLM call and runs multiple batches in parallel.
  */
 import { randomUUID } from 'crypto';
-import { jobsCollection, accountInfoCollection } from '../../db/mongo.js';
+import { TITLE_SCAN_ROLES } from '../../config/jobTitleScanRoles.js';
+import { jobsCollection } from '../../db/dataStore.js';
+import { getRedis, isRedisReady } from '../../db/redis.js';
+import { getFirestoreDb } from '../firebase/firebaseAdmin.js';
 import { formatCostUsd } from '../llm/llmService.js';
+import { findAccountByApplierName } from '../mail/credentials.js';
 import {
 	TITLE_SCAN_BATCH_SIZE,
 	classifyAndPersistTitleBatch,
@@ -20,6 +24,12 @@ const CLAIM_PROJECTION = { title: 1, postedAt: 1, status: 1 };
 let activeSession = null;
 let cancelRequested = false;
 const inflight = new Set();
+const pendingCountCache = new Map();
+const PENDING_COUNT_CACHE_MS = Math.max(
+	5_000,
+	Number(process.env.JOB_TITLE_PENDING_COUNT_CACHE_MS || 30_000),
+);
+const PENDING_COUNT_CACHE_SEC = Math.max(5, Math.ceil(PENDING_COUNT_CACHE_MS / 1_000));
 
 function unscannedMatch() {
 	return {
@@ -49,21 +59,120 @@ function newJobsMatch(applierId) {
 	};
 }
 
-function pendingQuery(applierId) {
+export function pendingTitleAnalysisQuery(applierId) {
 	return { $and: [unscannedMatch(), newJobsMatch(applierId)] };
+}
+
+function titleIsUnprocessed(job) {
+	return job?.titleScanned == null || String(job.titleScanned).trim() === '';
+}
+
+async function countUnprocessedStatusJobs(applierId) {
+	if (!applierId) return 0;
+	const db = getFirestoreDb();
+	const statusSnapshot = await db.collection('job_statuses')
+		.where('profileId', '==', String(applierId))
+		.select('jobId')
+		.get();
+	const jobIds = [...new Set(statusSnapshot.docs
+		.map((snapshot) => String(snapshot.data()?.jobId || ''))
+		.filter(Boolean))];
+	if (!jobIds.length) return 0;
+	let count = 0;
+	for (let offset = 0; offset < jobIds.length; offset += 400) {
+		const refs = jobIds
+			.slice(offset, offset + 400)
+			.map((jobId) => db.collection('jobs').doc(String(jobId)));
+		const snapshots = await db.getAll(...refs, {
+			fieldMask: ['sourceCatalog', 'titleScanned', 'titleScanStatus'],
+		});
+		count += snapshots.filter((snapshot) => {
+			if (!snapshot.exists) return false;
+			const job = snapshot.data();
+			return job?.sourceCatalog === 'market'
+				&& job?.titleScanStatus !== 'scanning'
+				&& titleIsUnprocessed(job);
+		}).length;
+	}
+	return count;
+}
+
+async function countPendingTitleAnalysisNative(applierId) {
+	const market = getFirestoreDb().collection('jobs').where('sourceCatalog', '==', 'market');
+	const [totalSnapshot, processedSnapshot, scanningSnapshot, excluded] = await Promise.all([
+		market.count().get(),
+		market.where('titleScanned', 'in', TITLE_SCAN_ROLES).count().get(),
+		market.where('titleScanStatus', '==', 'scanning').count().get(),
+		countUnprocessedStatusJobs(applierId),
+	]);
+	const total = totalSnapshot.data().count;
+	const processed = processedSnapshot.data().count;
+	const scanning = scanningSnapshot.data().count;
+	return Math.max(0, total - processed - scanning - excluded);
+}
+
+export async function countPendingTitleAnalysis(applierId, { force = false } = {}) {
+	if (!jobsCollection) return null;
+	const key = String(applierId || 'unassigned');
+	const cached = pendingCountCache.get(key);
+	if (!force && cached?.expiresAt > Date.now()) return cached.promise;
+	const redisKey = `jobs:analysis:title-pending:v1:${key}`;
+	if (!force && isRedisReady()) {
+		const stored = await getRedis().get(redisKey).catch(() => null);
+		const count = stored == null ? NaN : Number(stored);
+		if (Number.isFinite(count) && count >= 0) {
+			const promise = Promise.resolve(count);
+			pendingCountCache.set(key, {
+				promise,
+				expiresAt: Date.now() + PENDING_COUNT_CACHE_MS,
+			});
+			return promise;
+		}
+	}
+	const promise = countPendingTitleAnalysisNative(applierId)
+		.catch((error) => {
+			if (Number(error?.code) === 9) {
+				// Keep the badge available while a declared aggregate index is building.
+				return jobsCollection
+					.find(pendingTitleAnalysisQuery(applierId), { projection: { _id: 1 } })
+					.toArray()
+					.then((jobs) => jobs.length);
+			}
+			pendingCountCache.delete(key);
+			throw error;
+		})
+		.then((count) => {
+			if (isRedisReady()) {
+				void getRedis().setEx(redisKey, PENDING_COUNT_CACHE_SEC, String(count)).catch(() => undefined);
+			}
+			return count;
+		});
+	pendingCountCache.set(key, {
+		promise,
+		expiresAt: Date.now() + PENDING_COUNT_CACHE_MS,
+	});
+	return promise;
+}
+
+function invalidatePendingTitleAnalysisCount(applierId) {
+	const key = String(applierId || 'unassigned');
+	pendingCountCache.delete(key);
+	if (isRedisReady()) {
+		void getRedis().del(`jobs:analysis:title-pending:v1:${key}`).catch(() => undefined);
+	}
 }
 
 async function resolveApplierId(applierName) {
 	const name = String(applierName || '').trim();
-	if (!name || !accountInfoCollection) return null;
-	const doc = await accountInfoCollection.findOne({ name }, { projection: { _id: 1 } });
+	if (!name) return null;
+	const doc = await findAccountByApplierName(name);
 	return doc?._id || null;
 }
 
 async function claimBatch(applierId, n) {
 	if (!jobsCollection || n <= 0) return [];
 	const jobs = await jobsCollection
-		.find(pendingQuery(applierId))
+		.find(pendingTitleAnalysisQuery(applierId))
 		.project(CLAIM_PROJECTION)
 		.sort({ postedAt: -1 })
 		.limit(n)
@@ -173,6 +282,7 @@ async function runSession(session) {
 		session.finishedAt = new Date().toISOString();
 		session.status = cancelRequested ? 'cancelled' : 'completed';
 		session.remaining = cancelRequested ? null : 0;
+		invalidatePendingTitleAnalysisCount(session.applierId);
 		console.log(
 			`[job-title-scan] ${session.status} — ${session.classified} classified, ${session.failed} failed · ` +
 				`${session.inputTokens + session.outputTokens} tokens · ${formatCostUsd(session.costUsd)}`,
@@ -208,10 +318,13 @@ export function getTitleScanStatus() {
 export async function getTitleScanSessionStatus(applierName) {
 	const status = getTitleScanStatus();
 	const sameApplier = activeSession?.applierName === String(applierName || '').trim();
-	const pending = sameApplier
-		? activeSession?.remaining ?? null
-		: null;
-	return { pending, pendingKnown: pending != null, ...status };
+	if (sameApplier && activeSession?.running) {
+		const pending = activeSession.remaining ?? null;
+		return { ...status, pending, pendingKnown: pending != null };
+	}
+	const applierId = await resolveApplierId(applierName);
+	const pending = await countPendingTitleAnalysis(applierId);
+	return { ...status, pending, pendingKnown: pending != null };
 }
 
 export async function startTitleScanSession({ applierName, limit = null } = {}) {
@@ -249,6 +362,7 @@ export async function startTitleScanSession({ applierName, limit = null } = {}) 
 		startedAt: new Date().toISOString(),
 		finishedAt: null,
 	};
+	invalidatePendingTitleAnalysisCount(applierId);
 
 	void runSession(activeSession).catch((err) => {
 		console.error('[job-title-scan] session error', err);

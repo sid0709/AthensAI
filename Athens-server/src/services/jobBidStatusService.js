@@ -1,13 +1,13 @@
-import { ObjectId } from 'mongodb';
-import { accountInfoCollection, jobsCollection } from '../db/mongo.js';
+import { DocumentId } from '@nextoffer/shared/document-id';
+import { accountInfoCollection, jobsCollection } from '../db/dataStore.js';
 import { mutateJobStatus } from './jobStatusProjectionService.js';
 import { mergeJobStatusRows } from '@nextoffer/shared/job-status';
 
-function toObjectId(value) {
+function toDocumentId(value) {
 	if (!value) return null;
-	if (value instanceof ObjectId) return value;
+	if (value instanceof DocumentId) return value;
 	try {
-		return new ObjectId(String(value));
+		return new DocumentId(String(value));
 	} catch {
 		return null;
 	}
@@ -58,11 +58,11 @@ export async function upsertJobBidStatus(
 /** Original bid-ready timestamp for stable Bid Management dayKey folders. */
 export async function getJobBidReadyDate(applierName, jobId) {
 	if (!jobsCollection || !applierName || !jobId) return null;
-	const objectId = toObjectId(jobId);
+	const documentId = toDocumentId(jobId);
 	const applierId = await resolveApplierId(applierName);
-	if (!objectId || !applierId) return null;
+	if (!documentId || !applierId) return null;
 	const job = await jobsCollection.findOne(
-		{ _id: objectId, 'status.applier': applierId },
+		{ _id: documentId, 'status.applier': applierId },
 		{ projection: { status: 1 } },
 	);
 	const entry = findStatusEntry(job, applierId);

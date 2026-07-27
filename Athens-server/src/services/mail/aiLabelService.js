@@ -2,7 +2,7 @@
  * Fast AI classification of inbox emails into custom Gmail labels.
  *
  * The pipeline deliberately batches each remote boundary:
- *  1. Mongo reads are grouped by mailbox.
+ *  1. Firestore reads are grouped by mailbox.
  *  2. Lightweight snippets are fetched in grouped partial-body IMAP commands.
  *  3. Only uncertain first-pass results fetch longer body text.
  *  4. AI batches and grouped Gmail writes overlap through bounded limiters.
@@ -334,9 +334,6 @@ async function prepareMetadataMessage(item, cachedDoc, options) {
 	let doc = cachedDoc;
 	if (!doc) doc = await getMessage(applierName, item.uid, mailbox);
 	if (!doc) doc = await getMessage(applierName, item.uid, inboxMailbox);
-	if (!doc && String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() !== 'firestore') {
-		doc = await getMessage(applierName, item.uid);
-	}
 	if (!doc) {
 		doc = await fetchEnvelopeForUid(
 			credentials.email,

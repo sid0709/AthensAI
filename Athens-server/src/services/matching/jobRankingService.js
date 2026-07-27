@@ -1,4 +1,4 @@
-import { ObjectId } from 'mongodb';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import { excludeExtensionV2JobsFilter } from '../../config/jobMarketSchema.js';
 import { JobSourceTitles } from '../../config/jobSources.js';
 import {
@@ -8,7 +8,7 @@ import {
   isQueryTimeRankingEnabled,
 } from '../../config/graphAndVectorConfig.js';
 import { isRedisReady } from '../../db/redis.js';
-import { accountInfoCollection, jobsCollection, externalScrapedJobsCollection } from '../../db/mongo.js';
+import { accountInfoCollection, jobsCollection, externalScrapedJobsCollection } from '../../db/dataStore.js';
 import { JOB_LIST_PROJECTION } from '../jobListQuery.js';
 import { normalizeExternalScrapedJob } from '../externalScrapedJobsListQuery.js';
 import {
@@ -64,7 +64,7 @@ function matchText(key, value) {
   return { key, match: { text: String(value).trim() } };
 }
 
-export function buildJobRankingFilter(listBody = {}, { includeExternal = false, mongoQuery = null } = {}) {
+export function buildJobRankingFilter(listBody = {}, { includeExternal = false, dataQuery = null } = {}) {
   const must = [
     matchKeyword('active', true),
     matchKeyword('catalog', includeExternal ? ['market', 'external'] : 'market'),
@@ -88,6 +88,7 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
     must.push({ key: 'postedAt', range });
   }
   if (listBody['details.remote']) must.push(matchKeyword('workMode', listBody['details.remote']));
+	if (listBody['details.time']) must.push(matchKeyword('employmentType', listBody['details.time']));
   if (listBody['details.seniority']) {
     must.push(matchKeyword('seniority', String(listBody['details.seniority']).split(',').map((v) => v.trim()).filter(Boolean)));
   }
@@ -102,18 +103,18 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
     must.push(matchKeyword('aiExtracted', true));
   }
 
-  // Non-beta queries contain the canonical Firestore or MongoDB exclusion.
-  if (queryExcludesExtensionV2Jobs(mongoQuery)) {
+  // Non-beta queries contain the canonical Firestore exclusion.
+  if (queryExcludesExtensionV2Jobs(dataQuery)) {
     must.push(matchKeyword('extensionV2', false));
   }
-	const mustNot = queryExcludesExtensionV2Jobs(mongoQuery)
+	const mustNot = queryExcludesExtensionV2Jobs(dataQuery)
 		? [matchKeyword('version', 'v2')]
 		: [];
 	return { must, ...(mustNot.length ? { must_not: mustNot } : {}) };
 }
 
-export function queryExcludesExtensionV2Jobs(mongoQuery = null) {
-  const serializedQuery = JSON.stringify(mongoQuery || {});
+export function queryExcludesExtensionV2Jobs(dataQuery = null) {
+  const serializedQuery = JSON.stringify(dataQuery || {});
   return serializedQuery.includes('"extensionV2":false') ||
     serializedQuery.includes('"extensionV2":{"$ne":true}') ||
     serializedQuery.includes('"version":{"$ne":"v2"}');
@@ -126,7 +127,7 @@ function postedMillis(job) {
 }
 
 export async function listDateRankedRankingFallback({
-  mongoQuery,
+  dataQuery,
   externalQuery,
   skip,
   limit,
@@ -139,25 +140,25 @@ export async function listDateRankedRankingFallback({
     // Emergency degraded mode: avoid a full Firestore sort + count when the
     // ranking infrastructure is offline. Return a bounded page immediately;
     // normal exact pagination resumes as soon as Redis/Qdrant reconnect.
-    docs = await jobsCollection.find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+    docs = await jobsCollection.find(dataQuery || {}, { projection: JOB_LIST_PROJECTION })
       .skip(skip).limit(limit).toArray();
     total = skip + docs.length + (docs.length === limit ? 1 : 0);
   } else if (!includeExternal) {
     [docs, total] = await Promise.all([
-      jobsCollection.find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+      jobsCollection.find(dataQuery || {}, { projection: JOB_LIST_PROJECTION })
         .sort({ postedAt: -1, _id: -1 }).skip(skip).limit(limit).toArray(),
-      jobsCollection.countDocuments(mongoQuery || {}),
+      jobsCollection.countDocuments(dataQuery || {}),
     ]);
   } else {
     const take = skip + limit;
     const [marketDocs, externalDocs, marketTotal, externalTotal] = await Promise.all([
-      jobsCollection.find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+      jobsCollection.find(dataQuery || {}, { projection: JOB_LIST_PROJECTION })
         .sort({ postedAt: -1, _id: -1 }).limit(take).toArray(),
       externalScrapedJobsCollection
         ? externalScrapedJobsCollection.find(externalQuery || {})
             .sort({ postedAt: -1, createdAt: -1, _id: -1 }).limit(take).toArray()
         : [],
-      jobsCollection.countDocuments(mongoQuery || {}),
+      jobsCollection.countDocuments(dataQuery || {}),
       externalScrapedJobsCollection
         ? externalScrapedJobsCollection.countDocuments(externalQuery || {})
         : 0,
@@ -277,9 +278,9 @@ function fuseCandidates(sparseHits, denseHits) {
   return [...byId.values()].sort((a, b) => b.fusionScore - a.fusionScore);
 }
 
-function toObjectIds(ids) {
+function toDocumentIds(ids) {
   return ids.map((id) => {
-    try { return new ObjectId(String(id)); } catch { return String(id); }
+    try { return new DocumentId(String(id)); } catch { return String(id); }
   }).filter(Boolean);
 }
 
@@ -306,7 +307,7 @@ async function hydratePage(entries, profileCtx, {
 			const acceptedDocs = await jobsCollection.find({
 				$and: [
 					excludeExtensionV2JobsFilter(),
-					{ _id: { $in: toObjectIds(suspiciousIds) } },
+					{ _id: { $in: toDocumentIds(suspiciousIds) } },
 				],
 			}, { projection: { _id: 1 } }).toArray();
 			const suspicious = new Set(suspiciousIds);
@@ -338,10 +339,10 @@ async function hydratePage(entries, profileCtx, {
   }
   const [marketDocs, externalDocs, projectedStatuses] = await Promise.all([
     missingMarketIds.length
-      ? jobsCollection.find({ _id: { $in: toObjectIds(missingMarketIds) } }, { projection: JOB_LIST_PROJECTION }).toArray()
+      ? jobsCollection.find({ _id: { $in: toDocumentIds(missingMarketIds) } }, { projection: JOB_LIST_PROJECTION }).toArray()
       : [],
     missingExternalIds.length && externalScrapedJobsCollection
-      ? externalScrapedJobsCollection.find({ _id: { $in: toObjectIds(missingExternalIds) } }).toArray()
+      ? externalScrapedJobsCollection.find({ _id: { $in: toDocumentIds(missingExternalIds) } }).toArray()
       : [],
     skipStatuses ? new Map() : readProjectedJobStatuses(resolvedProfileId, marketIds),
   ]);
@@ -383,13 +384,13 @@ async function filterEntriesByAuthoritativeQueries(entries, {
   const [marketDocs, externalDocs] = await Promise.all([
     marketIds.length
       ? jobsCollection.find(
-          { $and: [marketQuery || {}, { _id: { $in: toObjectIds(marketIds) } }] },
+          { $and: [marketQuery || {}, { _id: { $in: toDocumentIds(marketIds) } }] },
           { projection: { _id: 1 } },
         ).toArray()
       : [],
     includeExternal && externalIds.length && externalScrapedJobsCollection
       ? externalScrapedJobsCollection.find(
-          { $and: [externalQuery || {}, { _id: { $in: toObjectIds(externalIds) } }] },
+          { $and: [externalQuery || {}, { _id: { $in: toDocumentIds(externalIds) } }] },
           { projection: { _id: 1 } },
         ).toArray()
       : [],
@@ -429,8 +430,8 @@ async function countPersonalStatusJobs({ listBody, profileId, rankingFilter }) {
   return (await readMaterializedJobStatusIds(profileId, state)).length;
 }
 
-async function directStatusRanking({ mongoQuery, profileCtx, scoreFilters, limit }) {
-  const docs = await jobsCollection.find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION }).toArray();
+async function directStatusRanking({ dataQuery, profileCtx, scoreFilters, limit }) {
+  const docs = await jobsCollection.find(dataQuery || {}, { projection: JOB_LIST_PROJECTION }).toArray();
   const candidates = docs.map((job) => {
     const hasAi = Array.isArray(job.aiSkills) && job.aiSkills.length;
     const aiSkills = hasAi ? job.aiSkills : enrichJobSkillsFromTitle(job).skills;
@@ -453,7 +454,7 @@ export async function listQueryTimeRankedJobs({
   applierName,
   profileId: providedProfileId = null,
   listBody,
-  mongoQuery,
+  dataQuery,
   scoreFilters,
   skip,
   limit,
@@ -475,7 +476,7 @@ export async function listQueryTimeRankedJobs({
   const profileId = providedProfileId
     ? String(providedProfileId)
     : hasPersonalStatusFilter(listBody)
-      ? profileIdFromQuery(mongoQuery)
+      ? profileIdFromQuery(dataQuery)
       : null;
   const [dictionary, profileVersion, catalogRevision, statusRevision] = await Promise.all([
     loadCanonicalSkillDictionary(),
@@ -492,7 +493,7 @@ export async function listQueryTimeRankedJobs({
   ]);
   // Tier visibility is not a client filter, but it must be part of the cache
   // identity so a beta ranking can never be reused after a tier change.
-  const excludesExtensionV2 = queryExcludesExtensionV2Jobs(mongoQuery);
+  const excludesExtensionV2 = queryExcludesExtensionV2Jobs(dataQuery);
   const filterHash = rankingFilterHash({
     ...listBody,
     _extensionV2Visibility: excludesExtensionV2 ? 'public' : 'beta',
@@ -507,7 +508,7 @@ export async function listQueryTimeRankedJobs({
   });
   let cached = await readRankingCache(cacheKey);
   incrementCounter('athens_job_ranking_cache_total', { result: cached ? 'hit' : 'miss' });
-  const filter = buildJobRankingFilter(listBody, { includeExternal, mongoQuery });
+  const filter = buildJobRankingFilter(listBody, { includeExternal, dataQuery });
   let profileCtx;
 
   if (!cached) {
@@ -526,7 +527,7 @@ export async function listQueryTimeRankedJobs({
       ? countPersonalStatusJobs({ listBody, profileId, rankingFilter: filter })
       : authoritativePostFilter
         ? countAuthoritativeJobs({
-            marketQuery: mongoQuery,
+            marketQuery: dataQuery,
             externalQuery,
             includeExternal,
           })
@@ -561,7 +562,7 @@ export async function listQueryTimeRankedJobs({
         } else {
           [docs, catalogTotal] = await Promise.all([
             jobsCollection
-              .find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+              .find(dataQuery || {}, { projection: JOB_LIST_PROJECTION })
               .sort({ postedAt: -1, _id: -1 })
               .skip(skip)
               .limit(limit)
@@ -572,7 +573,7 @@ export async function listQueryTimeRankedJobs({
       } else {
         [docs, catalogTotal] = await Promise.all([
           jobsCollection
-            .find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+            .find(dataQuery || {}, { projection: JOB_LIST_PROJECTION })
             .sort({ postedAt: -1, _id: -1 })
             .skip(skip)
             .limit(limit)
@@ -598,7 +599,7 @@ export async function listQueryTimeRankedJobs({
     if (hasPositiveStatusFilter(listBody)) {
       const rerankStarted = performance.now();
       entries = await directStatusRanking({
-        mongoQuery,
+        dataQuery,
         profileCtx,
         scoreFilters,
         limit: limits.personalized,
@@ -626,7 +627,7 @@ export async function listQueryTimeRankedJobs({
         const statusFiltered = await filterEntriesByPersonalStatus(fused, { profileId, listBody });
         acceptedCandidates = authoritativePostFilter
           ? await filterEntriesByAuthoritativeQueries(statusFiltered, {
-              marketQuery: mongoQuery,
+              marketQuery: dataQuery,
               externalQuery,
               includeExternal,
             })
@@ -673,7 +674,7 @@ export async function listQueryTimeRankedJobs({
     if (!supportsRedisDateTail(listBody)) {
       if (!serving) return null;
       return listDateRankedRankingFallback({
-        mongoQuery,
+        dataQuery,
         externalQuery,
         skip,
         limit,
@@ -694,7 +695,7 @@ export async function listQueryTimeRankedJobs({
     if (pageEntries.length < limit && cached.total > skip + pageEntries.length) {
       if (!serving) return null;
       return listDateRankedRankingFallback({
-        mongoQuery,
+        dataQuery,
         externalQuery,
         skip,
         limit,

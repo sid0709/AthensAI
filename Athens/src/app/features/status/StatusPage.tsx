@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 import { API_BASE } from "@/lib/api-base";
 import { LiveMetricsPanel, type LiveMetricPoint, type LiveRange, type TodayHealthSegment, type VpsAvailabilityPoint } from "./LiveMetricsPanel";
+import { DependencyMetricsPanel, type DependencyMetrics } from "./DependencyMetricsPanel";
 
 type StatusValue = "operational" | "degraded" | "partial_outage" | "major_outage" | "maintenance" | "unknown";
 type ComponentStatus = { component: string; name: string; status: StatusValue; message: string; lastCheckedAt: string | null; lastSuccessAt: string | null; latencyMs: number | null; uptimePercent: number | null };
@@ -11,6 +12,7 @@ type Incident = { component: string; name: string; status: StatusValue; severity
 type LiveResponse = { updatedAt: string | null; points: LiveMetricPoint[] };
 type TodayComponent = { component: string; name: string; segments: TodayHealthSegment[] };
 type TodayResponse = { startAt: string; endAt: string; bucketMinutes: number; components: TodayComponent[] };
+type DependenciesResponse = { dependencies: DependencyMetrics };
 type HistoryState = "up" | "degraded" | "down" | "no_data";
 
 const statusCopy: Record<StatusValue, string> = {
@@ -116,21 +118,26 @@ export function StatusPage() {
   const [livePoints, setLivePoints] = useState<LiveMetricPoint[]>([]);
   const [liveRange, setLiveRange] = useState<LiveRange>(60);
   const [liveUpdatedAt, setLiveUpdatedAt] = useState<string | null>(null);
+  const [dependencies, setDependencies] = useState<DependencyMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [dependencyError, setDependencyError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [liveLoading, setLiveLoading] = useState(false);
+  const [dependencyLoading, setDependencyLoading] = useState(false);
 
   const refreshStatus = useCallback(async () => {
-    try {
-      const [nextCurrent, nextHistory, nextIncidents, nextToday] = await Promise.all([
-        getJson<CurrentResponse>("/status/current"),
-        getJson<{ rollups: Rollup[] }>("/status/history?days=90"),
-        getJson<{ incidents: Incident[] }>("/status/incidents"),
-        getJson<TodayResponse>("/status/today"),
-      ]);
-      setCurrent(nextCurrent); setRollups(nextHistory.rollups); setIncidents(nextIncidents.incidents); setTodayComponents(nextToday.components); setError(null);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load status"); }
+    const [nextCurrent, nextHistory, nextIncidents, nextToday] = await Promise.allSettled([
+      getJson<CurrentResponse>("/status/current"),
+      getJson<{ rollups: Rollup[] }>("/status/history?days=90"),
+      getJson<{ incidents: Incident[] }>("/status/incidents"),
+      getJson<TodayResponse>("/status/today"),
+    ] as const);
+    if (nextCurrent.status === "fulfilled") { setCurrent(nextCurrent.value); setError(null); }
+    else setError(nextCurrent.reason instanceof Error ? nextCurrent.reason.message : "Unable to load current status");
+    if (nextHistory.status === "fulfilled") setRollups(nextHistory.value.rollups);
+    if (nextIncidents.status === "fulfilled") setIncidents(nextIncidents.value.incidents);
+    if (nextToday.status === "fulfilled") setTodayComponents(nextToday.value.components);
   }, []);
 
   const refreshLive = useCallback(async () => {
@@ -142,14 +149,24 @@ export function StatusPage() {
     finally { setLiveLoading(false); }
   }, [liveRange]);
 
+  const refreshDependencies = useCallback(async () => {
+    setDependencyLoading(true);
+    try {
+      const next = await getJson<DependenciesResponse>(`/status/dependencies?minutes=${liveRange}`);
+      setDependencies(next.dependencies); setDependencyError(null);
+    } catch (cause) { setDependencyError(cause instanceof Error ? cause.message : "Unable to load dependency metrics"); }
+    finally { setDependencyLoading(false); }
+  }, [liveRange]);
+
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([refreshStatus(), refreshLive()]);
+    await Promise.all([refreshStatus(), refreshLive(), refreshDependencies()]);
     setRefreshing(false);
-  }, [refreshLive, refreshStatus]);
+  }, [refreshDependencies, refreshLive, refreshStatus]);
 
   useEffect(() => { void refreshStatus(); const id = window.setInterval(() => void refreshStatus(), 30000); return () => window.clearInterval(id); }, [refreshStatus]);
   useEffect(() => { void refreshLive(); const id = window.setInterval(() => void refreshLive(), 30000); return () => window.clearInterval(id); }, [refreshLive]);
+  useEffect(() => { void refreshDependencies(); const id = window.setInterval(() => void refreshDependencies(), 60000); return () => window.clearInterval(id); }, [refreshDependencies]);
 
   const activeIncidents = incidents.filter((incident) => !incident.resolvedAt);
   const historyByComponent = useMemo(() => new Map(rollups.map((rollup) => [`${rollup.component}:${rollup.date}`, rollup])), [rollups]);
@@ -188,6 +205,8 @@ export function StatusPage() {
         {error && <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">{error}. The page will retry automatically.</div>}
 
         <LiveMetricsPanel points={livePoints} range={liveRange} onRangeChange={setLiveRange} updatedAt={liveUpdatedAt} loading={liveLoading} error={liveError} vpsStatus={vpsStatus} availability={vpsAvailability} todaySegments={todayByComponent.get("vps") || []} />
+
+        <DependencyMetricsPanel dependencies={dependencies} range={liveRange} loading={dependencyLoading} error={dependencyError} />
 
         {activeIncidents.length > 0 && (
           <section className="mt-10"><div className="flex items-center gap-2"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-600" /><h2 className="text-xl font-bold">Active incidents</h2></div><div className="mt-4 grid gap-3">{activeIncidents.map((incident) => <article key={`${incident.component}-${incident.startedAt}`} className="rounded-2xl border border-red-200 bg-white p-5 shadow-sm"><div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-red-100"><AlertTriangle className="h-4 w-4 text-red-700" /></span><div><p className="font-bold text-red-900">{incident.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{incident.description}</p><p className="mt-2 text-xs font-medium text-slate-500">Started {formatTime(incident.startedAt)}</p></div></div></article>)}</div></section>

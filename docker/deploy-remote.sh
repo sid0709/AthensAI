@@ -40,8 +40,6 @@ set +a
 
 : "${API_KEYS_ENCRYPTION_KEY:?API_KEYS_ENCRYPTION_KEY must be set in $DEPLOY_ENV}"
 
-DATABASE_BACKEND="${DATABASE_BACKEND:-mongo}"
-EMBEDDED_MONGO="${EMBEDDED_MONGO:-false}"
 FIREBASE_AUTH_REQUIRED="${FIREBASE_AUTH_REQUIRED:-false}"
 BACKGROUND_WORKERS_MODE="${BACKGROUND_WORKERS_MODE:-local}"
 FIRESTORE_WRITES_ENABLED="${FIRESTORE_WRITES_ENABLED:-false}"
@@ -54,27 +52,20 @@ QDRANT_API_KEY="${QDRANT_API_KEY:-}"
 RECOMMENDATION_QUERY_TIME_MODE="${RECOMMENDATION_QUERY_TIME_MODE:-on}"
 RANKING_BACKFILL_BATCH="${RANKING_BACKFILL_BATCH:-200}"
 
-volume_args=()
-if [[ "${DATABASE_BACKEND,,}" == "firestore" ]]; then
-  : "${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID must be set in $DEPLOY_ENV}"
-  : "${FIREBASE_STORAGE_BUCKET:?FIREBASE_STORAGE_BUCKET must be set in $DEPLOY_ENV}"
-  : "${GOOGLE_APPLICATION_CREDENTIALS:?GOOGLE_APPLICATION_CREDENTIALS must be set in $DEPLOY_ENV}"
-  : "${FIREBASE_SECRET_HOST_PATH:?FIREBASE_SECRET_HOST_PATH must be set in $DEPLOY_ENV}"
-  : "${KMS_KEY_NAME:?KMS_KEY_NAME must be set in $DEPLOY_ENV}"
-  if [[ ! -f "$FIREBASE_SECRET_HOST_PATH" ]]; then
-    echo "Missing Firebase secret file: $FIREBASE_SECRET_HOST_PATH" >&2
-    exit 1
-  fi
-  if [[ "${GOOGLE_APPLICATION_CREDENTIALS}" != "/run/secrets/firebase-service-account.json" ]]; then
-    echo "GOOGLE_APPLICATION_CREDENTIALS must be /run/secrets/firebase-service-account.json" >&2
-    exit 1
-  fi
-  volume_args=(-v "${FIREBASE_SECRET_HOST_PATH}:/run/secrets/firebase-service-account.json:ro")
-  EMBEDDED_MONGO=false
-else
-  : "${MONGO_URL:?MONGO_URL must be set in $DEPLOY_ENV when DATABASE_BACKEND=mongo}"
-  : "${MONGO_DB:?MONGO_DB must be set in $DEPLOY_ENV when DATABASE_BACKEND=mongo}"
+: "${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID must be set in $DEPLOY_ENV}"
+: "${FIREBASE_STORAGE_BUCKET:?FIREBASE_STORAGE_BUCKET must be set in $DEPLOY_ENV}"
+: "${GOOGLE_APPLICATION_CREDENTIALS:?GOOGLE_APPLICATION_CREDENTIALS must be set in $DEPLOY_ENV}"
+: "${FIREBASE_SECRET_HOST_PATH:?FIREBASE_SECRET_HOST_PATH must be set in $DEPLOY_ENV}"
+: "${KMS_KEY_NAME:?KMS_KEY_NAME must be set in $DEPLOY_ENV}"
+if [[ ! -f "$FIREBASE_SECRET_HOST_PATH" ]]; then
+  echo "Missing Firebase secret file: $FIREBASE_SECRET_HOST_PATH" >&2
+  exit 1
 fi
+if [[ "${GOOGLE_APPLICATION_CREDENTIALS}" != "/run/secrets/firebase-service-account.json" ]]; then
+  echo "GOOGLE_APPLICATION_CREDENTIALS must be /run/secrets/firebase-service-account.json" >&2
+  exit 1
+fi
+volume_args=(-v "${FIREBASE_SECRET_HOST_PATH}:/run/secrets/firebase-service-account.json:ro")
 
 if [[ "$TAG_OR_REF" == *:* ]]; then
   IMAGE_REF="$TAG_OR_REF"
@@ -163,10 +154,6 @@ docker run -d \
   -p 3920:3920 \
   -v nextoffer-puppeteer:/data/puppeteer \
   "${volume_args[@]}" \
-  -e "DATABASE_BACKEND=${DATABASE_BACKEND}" \
-  -e "EMBEDDED_MONGO=${EMBEDDED_MONGO}" \
-  -e "MONGO_URL=${MONGO_URL:-}" \
-  -e "MONGO_DB=${MONGO_DB:-AthensDB}" \
   -e "API_KEYS_ENCRYPTION_KEY=${API_KEYS_ENCRYPTION_KEY}" \
   -e "FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}" \
   -e "FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}" \
@@ -189,6 +176,7 @@ docker run -d \
   -e "ALGOLIA_ADMIN_API_KEY=${ALGOLIA_ADMIN_API_KEY:-}" \
   -e "ALGOLIA_JOBS_INDEX=${ALGOLIA_JOBS_INDEX:-athens_jobs}" \
   -e "PROMETHEUS_URL=${PROMETHEUS_URL}" \
+  -e "METRICS_PORT=9101" \
   "$IMAGE_REF"
 
 echo "Verifying private Prometheus and node-exporter connectivity"
@@ -257,6 +245,57 @@ docker exec "$CONTAINER_NAME" node --input-type=module -e '
   const response = await fetch(qdrantUrl, { headers, signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error(`Qdrant readiness failed: ${response.status}`);
 '
+
+echo "Waiting for the complete monitoring signal"
+monitoring_ok=0
+for ((i = 1; i <= 36; i++)); do
+  if docker exec "$CONTAINER_NAME" node --input-type=module -e '
+    const requiredComponents = ["athens-web", "athens-api", "ai-bff", "avalon-relay", "firestore", "storage", "redis", "qdrant", "vps", "public-api"];
+    const response = await fetch("http://127.0.0.1:8979/api/status/current", { signal: AbortSignal.timeout(5000) });
+    const payload = await response.json();
+    const byId = new Map((payload.components || []).map((item) => [item.component, item]));
+    const now = Date.now();
+    if (!response.ok || !requiredComponents.every((id) => byId.has(id))) process.exit(1);
+    if (!requiredComponents.every((id) => byId.get(id).lastCheckedAt && now - new Date(byId.get(id).lastCheckedAt).getTime() < 180000)) process.exit(1);
+  ' >/dev/null 2>&1; then
+    monitoring_ok=1
+    break
+  fi
+  sleep 5
+done
+if [[ "$monitoring_ok" -ne 1 ]]; then
+  echo "The complete v2 monitoring signal did not become fresh." >&2
+  docker logs --tail 120 "$CONTAINER_NAME" || true
+  exit 1
+fi
+
+echo "Verifying Prometheus targets and v2 Firestore snapshot"
+targets_ok=0
+for ((i = 1; i <= 24; i++)); do
+  if docker exec "$CONTAINER_NAME" node --input-type=module -e '
+    const base = process.env.PROMETHEUS_URL.replace(/\/+$/, "");
+    const url = new URL("/api/v1/query", `${base}/`);
+    url.searchParams.set("query", "up{job=~\"athens-server|redis|qdrant|google-cloud|node\"}");
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const payload = await response.json();
+    const rows = payload?.data?.result || [];
+    const jobs = new Map(rows.map((row) => [row.metric?.job, row.value?.[1]]));
+    for (const job of ["athens-server", "redis", "qdrant", "google-cloud", "node"]) {
+      if (jobs.get(job) !== "1") process.exit(1);
+    }
+    const { getFirestoreDb } = await import("./Athens-server/src/services/firebase/firebaseAdmin.js");
+    const snapshot = await getFirestoreDb().collection("monitor_status_v2").doc("production").get();
+    if (!snapshot.exists || snapshot.data()?.version !== 2) process.exit(1);
+  ' >/dev/null 2>&1; then
+    targets_ok=1
+    break
+  fi
+  sleep 5
+done
+if [[ "$targets_ok" -ne 1 ]]; then
+  echo "A required Prometheus target or the Firestore v2 snapshot is unavailable." >&2
+  exit 1
+fi
 
 if [[ "${RECOMMENDATION_QUERY_TIME_MODE,,}" == "on" || "${RECOMMENDATION_QUERY_TIME_MODE,,}" == "shadow" ]]; then
   bootstrap_state="$("${ranking_compose[@]}" exec -T redis redis-cli --raw GET "$RANKING_BOOTSTRAP_KEY" 2>/dev/null || true)"

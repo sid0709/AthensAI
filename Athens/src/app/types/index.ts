@@ -21,6 +21,7 @@ export type {
 } from "./agent";
 export type {
   Job,
+	CompanyJobGroup,
   JobStatus,
   SkillAnalysis,
   SkillAnalysisStatus,

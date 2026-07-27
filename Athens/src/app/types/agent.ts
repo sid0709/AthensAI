@@ -79,7 +79,7 @@ export interface HealthData {
   ok: boolean;
   model?: string;
   keyPresent?: boolean;
-  mongoDb?: string;
+  database?: string;
 }
 
 export interface AvalonHealthData {

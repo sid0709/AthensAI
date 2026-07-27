@@ -1,4 +1,4 @@
-import { skillDictionaryCollection } from '../../db/mongo.js';
+import { skillDictionaryCollection } from '../../db/dataStore.js';
 import { toCanonical } from '@nextoffer/shared/skill-normalize';
 import { skillTokens } from '@nextoffer/shared/skill-tokens';
 import { USER_SKILL_CATEGORIES } from '../../config/graphAndVectorConfig.js';

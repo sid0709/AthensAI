@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { getFirestoreDb } from "../services/firebase/firebaseAdmin.js";
 import { assertFirestoreDocumentSize } from "../services/firebase/objectStore.js";
@@ -27,12 +27,12 @@ const FIRESTORE_OPERATORS = new Map([
 	["$in", "in"],
 ]);
 
-// Some Mongo partial unique indexes have alternative business keys. The first
+// Some conditional uniqueness rules have alternative business keys. The first
 // complete key set is also used for deterministic IDs on newly inserted rows;
 // every complete key set gets a reservation document.
 
 function isPlain(value) {
-	return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof ObjectId);
+	return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof DocumentId);
 }
 
 function buildNativeQueryPlan(filter = {}) {
@@ -49,7 +49,7 @@ function buildNativeQueryPlan(filter = {}) {
 				complete = false;
 				continue;
 			}
-			if (!isPlain(condition) || condition instanceof Date || condition instanceof ObjectId) {
+			if (!isPlain(condition) || condition instanceof Date || condition instanceof DocumentId) {
 				clauses.push({ field, operator: "==", value: encode(condition) });
 				continue;
 			}
@@ -99,6 +99,14 @@ function selectBoundingClause(clauses = []) {
 	return [...clauses].sort((left, right) => score(right) - score(left))[0];
 }
 
+function buildFallbackQueryPlan(plan, collectionName) {
+	if (plan.clauses.length <= 1) return plan;
+	const boundingClause = collectionName === "mail_messages"
+		? plan.clauses.find((clause) => clause.field === "hasCustomLabels") || selectBoundingClause(plan.clauses)
+		: selectBoundingClause(plan.clauses);
+	return { ...plan, clauses: boundingClause ? [boundingClause] : [] };
+}
+
 function conjunctiveDocumentIds(filter = {}) {
 	if (!isPlain(filter)) return null;
 	if (isPlain(filter._id) && Array.isArray(filter._id.$in)) return filter._id.$in.map((id) => String(comparable(id)));
@@ -112,7 +120,7 @@ function conjunctiveDocumentIds(filter = {}) {
 }
 
 function encode(value) {
-	if (value instanceof ObjectId) return value.toHexString();
+	if (value instanceof DocumentId) return value.toHexString();
 	if (value instanceof Date) return value;
 	if (value instanceof RegExp) return value;
 	if (Array.isArray(value)) return value.map(encode);
@@ -135,12 +143,12 @@ function decodeFirestoreValue(value) {
 
 function decodeDoc(id, data) {
 	const decoded = decodeFirestoreValue(data);
-	decoded._id = /^[a-f0-9]{24}$/i.test(id) ? new ObjectId(id) : id;
+	decoded._id = /^[a-f0-9]{24}$/i.test(id) ? new DocumentId(id) : id;
 	return decoded;
 }
 
 function comparable(value) {
-	if (value instanceof ObjectId) return value.toHexString();
+	if (value instanceof DocumentId) return value.toHexString();
 	if (value instanceof Date) return value.getTime();
 	if (value?.toDate instanceof Function) return value.toDate().getTime();
 	return value;
@@ -217,7 +225,7 @@ function matchesCondition(values, condition, vars) {
 		if (operator === "$elemMatch" && !list.some((v) => Array.isArray(v) && v.some((item) => matches(item, operand, vars)))) return false;
 		if (operator === "$not" && matchesCondition(list, operand, vars)) return false;
 		if (operator === "$type") {
-			const ok = list.some((v) => operand === "string" ? typeof v === "string" : operand === "array" ? Array.isArray(v) : operand === "number" ? typeof v === "number" : operand === "objectId" ? v instanceof ObjectId || /^[a-f0-9]{24}$/i.test(String(v)) : v != null);
+			const ok = list.some((v) => operand === "string" ? typeof v === "string" : operand === "array" ? Array.isArray(v) : operand === "number" ? typeof v === "number" : operand === "documentId" ? v instanceof DocumentId || /^[a-f0-9]{24}$/i.test(String(v)) : v != null);
 			if (!ok) return false;
 		}
 	}
@@ -308,7 +316,7 @@ function applyProjection(doc, spec = {}) {
 		return out;
 	}
 	const out = structuredClone(encode(doc));
-	if (doc._id instanceof ObjectId) out._id = doc._id;
+	if (doc._id instanceof DocumentId) out._id = doc._id;
 	for (const [field, value] of Object.entries(spec)) if (value === 0) unsetPath(out, field);
 	return out;
 }
@@ -484,6 +492,10 @@ function seedFromFilter(filter) {
 	return out;
 }
 
+function resolveUpsertDocumentId(name, filter, seed = seedFromFilter(filter)) {
+	return seed._id ?? deterministicId(name, filter) ?? new DocumentId();
+}
+
 function mutateUpdatePath(target, path, arrayFilters, updater) {
 	const parts = String(path).split(".");
 	function visit(node, index) {
@@ -544,7 +556,10 @@ class Cursor {
 	limit(count) { this.limitCount = count; return this; }
 	project(spec) { this.projection = spec; return this; }
 	async toArray() {
-		let docs = await this.collection._readCached(this.filter, {
+		const read = this.options.bypassCache
+			? this.collection._read.bind(this.collection)
+			: this.collection._readCached.bind(this.collection);
+		let docs = await read(this.filter, {
 			sort: this.sortSpec,
 			skip: this.skipCount,
 			limit: this.limitCount,
@@ -578,7 +593,7 @@ class FirestoreCollection {
 		if (!ttl) return this._read(filter, hints);
 		const key = JSON.stringify({ filter, hints }, (_key, value) => {
 			if (value instanceof RegExp) return { $regex: value.source, $flags: value.flags };
-			if (value instanceof ObjectId) return value.toHexString();
+			if (value instanceof DocumentId) return value.toHexString();
 			return value;
 		});
 		const cached = this.readCache.get(key);
@@ -682,14 +697,9 @@ class FirestoreCollection {
 
 		// Firestore needs a composite index for most combinations of multiple
 		// filters and ordering. Until those indexes are deployed, use one native
-		// equality filter to bound the read and apply the remaining Mongo-shaped
+		// equality filter to bound the read and apply the remaining compatibility
 		// predicates locally.
-		const boundingClause = this.collectionName === 'mail_messages'
-			? plan.clauses.find((clause) => clause.field === 'hasCustomLabels') || selectBoundingClause(plan.clauses)
-			: selectBoundingClause(plan.clauses);
-		const queryPlan = plan.complete && plan.clauses.length > 1
-			? { ...plan, clauses: [boundingClause] }
-			: plan;
+		const queryPlan = buildFallbackQueryPlan(plan, this.collectionName);
 		let query = this._queryFromPlan(queryPlan);
 		if (selectedFields.length) query = query.select(...selectedFields);
 		const nativeSort = plan.complete &&
@@ -792,7 +802,7 @@ class FirestoreCollection {
 	}
 	async findOne(filter = {}, options = {}) { return (await this.find(filter, options).sort(options.sort || {}).limit(1).toArray())[0] || null; }
 	async insertOne(doc) {
-		const id = String(comparable(doc._id || deterministicId(this.collectionName, doc) || new ObjectId()));
+		const id = String(comparable(doc._id || deterministicId(this.collectionName, doc) || new DocumentId()));
 		const data = encode({
 			...doc,
 			...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}),
@@ -820,18 +830,33 @@ class FirestoreCollection {
 		}
 		this._invalidateCaches();
 		this._kickOutbox(outboxId);
-		return { acknowledged: true, insertedId: /^[a-f0-9]{24}$/i.test(id) ? new ObjectId(id) : id };
+		return { acknowledged: true, insertedId: /^[a-f0-9]{24}$/i.test(id) ? new DocumentId(id) : id };
 	}
 	async insertMany(docs) { const ids = []; for (const doc of docs) ids.push((await this.insertOne(doc)).insertedId); return { acknowledged: true, insertedCount: ids.length, insertedIds: Object.fromEntries(ids.map((id, i) => [i, id])) }; }
 	async updateOne(filter, update, options = {}) {
 		let found = await this.findOne(filter);
 		if (!found && !options.upsert) return { acknowledged: true, matchedCount: 0, modifiedCount: 0 };
-		if (!found) found = { ...seedFromFilter(filter), ...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}), _id: deterministicId(this.collectionName, filter) || new ObjectId() };
+		if (!found) {
+			const seed = seedFromFilter(filter);
+			found = {
+				...seed,
+				...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}),
+				// Exact-id conditional upserts (leases, identity claims, registries)
+				// must target that document. Replacing it with a fresh DocumentId makes
+				// every retry insert a different record and defeats atomic claiming.
+				_id: resolveUpsertDocumentId(this.collectionName, filter, seed),
+			};
+		}
 		const id = String(comparable(found._id));
 		let inserting = false;
 		let matched = false;
 		const outboxRef = this.sourceCatalog ? this.db.firestore.collection("search_outbox").doc() : null;
 		await this.db.firestore.runTransaction(async (transaction) => {
+			// Firestore may rerun this callback after a contention conflict. Reset
+			// attempt-local flags so a retried conditional upsert cannot report the
+			// abandoned first attempt as a successful insert.
+			inserting = false;
+			matched = false;
 			const ref = this.ref.doc(id);
 			const snapshot = await transaction.get(ref);
 			let current;
@@ -915,8 +940,39 @@ class FirestoreCollection {
 	}
 	async deleteMany(filter) {
 		const docs = await this._read(filter);
-		for (const doc of docs) await this.deleteOne({ _id: doc._id });
-		return { acknowledged: true, deletedCount: docs.length };
+		return this.bulkDeleteByIds(docs.map((doc) => doc._id));
+	}
+	/** Batch exact-document-id deletes used by one-time maintenance cleanup. */
+	async bulkDeleteByIds(ids) {
+		const uniqueIds = [...new Set(ids.map((id) => String(comparable(id))))];
+		if (!uniqueIds.length) return { acknowledged: true, deletedCount: 0 };
+		let deletedCount = 0;
+		const outboxIds = [];
+		// Keep well below Firestore's 500-write limit: a logical delete may also
+		// remove unique-key reservations and create a search outbox record.
+		for (let offset = 0; offset < uniqueIds.length; offset += 100) {
+			const chunk = uniqueIds.slice(offset, offset + 100);
+			const refs = chunk.map((id) => this.ref.doc(id));
+			const snapshots = await this.db.firestore.getAll(...refs);
+			const batch = this.db.firestore.batch();
+			for (let index = 0; index < snapshots.length; index += 1) {
+				const snapshot = snapshots[index];
+				if (!snapshot.exists) continue;
+				const doc = decodeDoc(snapshot.id, snapshot.data());
+				if (this.sourceCatalog && doc.sourceCatalog !== this.sourceCatalog) continue;
+				batch.delete(refs[index]);
+				for (const reservation of firestoreUniqueReservations(this.collectionName, doc, snapshot.id)) {
+					batch.delete(this.db.firestore.collection("unique_reservations").doc(reservation.id));
+				}
+				const outboxId = this._outbox(batch, snapshot.id, "delete");
+				if (outboxId) outboxIds.push(outboxId);
+				deletedCount += 1;
+			}
+			await batch.commit();
+		}
+		this._invalidateCaches();
+		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
+		return { acknowledged: true, deletedCount };
 	}
 	async countDocuments(filter = {}) {
 		if (filter?._id && !isPlain(filter._id)) return (await this._read(filter)).length;
@@ -996,6 +1052,62 @@ class FirestoreCollection {
 				batch.set(ref, data, { merge: true });
 			}
 			await batch.commit();
+		}
+		this._invalidateCaches();
+		return {
+			acknowledged: true,
+			modifiedCount: rows.length - upsertedCount,
+			upsertedCount,
+		};
+	}
+	/** Batch exact-document-id upserts used by one-time maintenance registries. */
+	async bulkUpsertById(operations) {
+		const rows = operations.map((operation) => {
+			const spec = operation?.updateOne;
+			const id = spec?.filter?._id;
+			const exactIdFilter = spec?.filter && Object.keys(spec.filter).length === 1;
+			if (
+				!id || !exactIdFilter || !spec?.upsert || !spec?.update ||
+				Object.keys(spec.update).some((key) => !['$setOnInsert', '$set', '$max'].includes(key))
+			) {
+				throw new Error(`bulkUpsertById received an unsupported ${this.collectionName} operation`);
+			}
+			return { spec, ref: this.ref.doc(String(comparable(id))) };
+		});
+		const chunks = [];
+		for (let offset = 0; offset < rows.length; offset += 400) {
+			chunks.push(rows.slice(offset, offset + 400));
+		}
+		const writeChunk = async (chunk) => {
+			const snapshots = await this.db.firestore.getAll(...chunk.map((row) => row.ref));
+			const batch = this.db.firestore.batch();
+			let chunkUpsertedCount = 0;
+			for (let index = 0; index < chunk.length; index += 1) {
+				const { spec, ref } = chunk[index];
+				const snapshot = snapshots[index];
+				const inserting = !snapshot.exists;
+				if (inserting) chunkUpsertedCount += 1;
+				const update = spec.update;
+				const data = encode({
+					...(inserting ? update.$setOnInsert || {} : {}),
+					...(update.$set || {}),
+				});
+				const current = snapshot.exists ? decodeFirestoreValue(snapshot.data()) : {};
+				for (const [path, value] of Object.entries(update.$max || {})) {
+					const currentValue = getPath(current, path);
+					if (currentValue == null || comparable(value) > comparable(currentValue)) {
+						setPath(data, path, encode(value));
+					}
+				}
+				batch.set(ref, data, { merge: true });
+			}
+			await batch.commit();
+			return chunkUpsertedCount;
+		};
+		let upsertedCount = 0;
+		for (let offset = 0; offset < chunks.length; offset += 4) {
+			const counts = await Promise.all(chunks.slice(offset, offset + 4).map(writeChunk));
+			upsertedCount += counts.reduce((sum, count) => sum + count, 0);
 		}
 		this._invalidateCaches();
 		return {
@@ -1100,7 +1212,7 @@ class FirestoreDbAdapter {
 	listCollections() { return { toArray: async () => (await this.firestore.listCollections()).map((ref) => ({ name: ref.id })) }; }
 }
 
-export function createFirestoreMongoAdapter() {
+export function createFirestoreDataAdapter() {
 	return new FirestoreDbAdapter();
 }
 
@@ -1111,7 +1223,9 @@ export const firestoreAdapterTest = {
 	evaluate,
 	applyProjection,
 	buildNativeQueryPlan,
+	buildFallbackQueryPlan,
 	collectFilterFields,
 	canTryCompositeQuery,
 	conjunctiveDocumentIds,
+	resolveUpsertDocumentId,
 };

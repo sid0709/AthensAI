@@ -1,4 +1,4 @@
-import { initMongo, closeMongo } from '../db/mongo.js';
+import { initDataStore, closeDataStore } from '../db/dataStore.js';
 import { rollupDay } from '../services/monitoring/statusStore.js';
 
 function dateKeys(from, to) {
@@ -14,11 +14,11 @@ const from = process.argv[2] || yesterday;
 const to = process.argv[3] || from;
 
 try {
-	await initMongo();
+	await initDataStore();
 	for (const dateKey of dateKeys(from, to)) {
 		await rollupDay(dateKey);
 		console.log(`[monitoring] rolled up ${dateKey}`);
 	}
 } finally {
-	await closeMongo();
+	await closeDataStore();
 }

@@ -1,5 +1,5 @@
 
-import { personalInfoCollection } from "../db/mongo.js";
+import { personalInfoCollection } from "../db/dataStore.js";
 
 export async function getSkillCategories(req, res) {
 	try {

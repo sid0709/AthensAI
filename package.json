@@ -27,6 +27,7 @@
     "normalize-job-statuses": "npm run firebase:normalize-job-statuses -w Athens-server",
     "build:ai": "npm run build -w ai-bff",
     "test:shared": "node --test packages/shared/src/pricing.test.mjs",
+    "verify:firestore-only": "node scripts/verify-firestore-only.mjs",
     "start:athens-server": "npm run start -w Athens-server",
     "start:ai": "npm run start -w ai-bff",
     "start:avalon-relay": "npm run start -w @avalon/backend",

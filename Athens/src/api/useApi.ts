@@ -8,7 +8,7 @@ export function useApi(baseUrl: string = API_BASE) {
   const [error, setError] = useState<Error | null>(null);
 
   const request = useCallback(
-    async (path: string, options: RequestInit & { body?: unknown } = {}) => {
+    async (path: string, options: Omit<RequestInit, "body"> & { body?: unknown } = {}) => {
       setLoading(true);
       setError(null);
       try {

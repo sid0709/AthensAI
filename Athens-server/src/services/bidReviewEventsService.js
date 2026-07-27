@@ -1,4 +1,4 @@
-import { getBidReviewEventsCollection } from "../db/mongo.js";
+import { getBidReviewEventsCollection } from "../db/dataStore.js";
 
 /**
  * Append-only bid review / lifecycle events for Athens Bid Management timeline.

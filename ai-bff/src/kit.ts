@@ -126,7 +126,7 @@ export class AiKit {
         await getRecordAiApiUsage()(entry);
       } catch (recordErr) {
         const message = recordErr instanceof Error ? recordErr.message : String(recordErr);
-        log.warn('mongo', 'ai_api_usage write failed', { requestId, error: message });
+        log.warn('firestore', 'ai_api_usage write failed', { requestId, error: message });
       }
       return elapsedMs;
     };

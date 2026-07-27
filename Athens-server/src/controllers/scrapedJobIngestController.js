@@ -54,6 +54,7 @@ export async function postExternalScrapedJob(req, res) {
 				duplicate: true,
 				jobID: result.jobID,
 				jobLink: result.jobLink,
+				...(result.reason ? { reason: result.reason } : {}),
 			});
 		}
 

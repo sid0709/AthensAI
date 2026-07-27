@@ -5,7 +5,7 @@ import {
 	TITLE_SCAN_ROLE_SET,
 } from '../../config/jobTitleScanRoles.js';
 import { resolveExtractionAuth } from '../jobSkillExtraction/aiExtractService.js';
-import { jobsCollection } from '../../db/mongo.js';
+import { jobsCollection } from '../../db/dataStore.js';
 
 export { resolveExtractionAuth };
 

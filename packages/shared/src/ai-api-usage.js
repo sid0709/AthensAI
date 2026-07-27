@@ -1,5 +1,5 @@
 /**
- * Canonical AI API usage log for Mongo collection `ai_api_usage`.
+ * Canonical AI API usage log for the Firestore `ai_api_usage` collection.
  * Written only by ai-bff — never stores request/response text.
  */
 
@@ -88,7 +88,7 @@ export function buildAiApiUsageEntry({
 }
 
 /**
- * @param {import('mongodb').Collection} collection
+ * @param {{ createIndex: Function }} collection
  */
 export async function ensureAiApiUsageIndexes(collection) {
 	await collection.createIndex({ createdAt: -1 });
@@ -101,7 +101,7 @@ export async function ensureAiApiUsageIndexes(collection) {
 }
 
 /**
- * @param {import('mongodb').Collection | null | undefined} collection
+ * @param {{ insertOne: Function } | null | undefined} collection
  */
 export function createAiApiUsageRecorder(collection) {
 	return async function recordAiApiUsage(entry) {

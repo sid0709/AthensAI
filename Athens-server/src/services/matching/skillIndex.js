@@ -1,4 +1,4 @@
-import { jobsCollection } from '../../db/mongo.js';
+import { jobsCollection } from '../../db/dataStore.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { normalizeSkillSet, toCanonical } from '@nextoffer/shared/skill-normalize';
 import { skillTokens } from '@nextoffer/shared/skill-tokens';
@@ -139,10 +139,10 @@ export async function getJobSkillsFromRedis(jobId) {
 }
 
 /**
- * Full rebuild of Redis index from Mongo (maintenance script).
+ * Full rebuild of the Redis index from Firestore (maintenance script).
  */
 export async function rebuildSkillIndex({ batchSize = 500 } = {}) {
-  if (!jobsCollection) throw new Error('MongoDB not ready');
+  if (!jobsCollection) throw new Error('Firestore not ready');
   if (!isRedisReady()) throw new Error('Redis not ready');
 
   const redis = getRedis();

@@ -1,9 +1,9 @@
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import {
 	getVendorTasksCollection,
 	jobsCollection,
 	llmCallLogCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { detectJobSource } from "../lib/jobSource.js";
 import { deriveBidUiStatus, REVIEW_STATUSES } from "../lib/bidResultStatus.js";
 import {
@@ -29,11 +29,11 @@ import {
 } from "../services/bidReviewEventsService.js";
 import { serializeTask } from "./vendorTaskController.js";
 
-function toObjectId(value) {
+function toDocumentId(value) {
 	if (!value) return null;
-	if (value instanceof ObjectId) return value;
+	if (value instanceof DocumentId) return value;
 	try {
-		return new ObjectId(String(value));
+		return new DocumentId(String(value));
 	} catch {
 		return null;
 	}
@@ -241,7 +241,7 @@ function serializeAiUsageRow(doc) {
 async function listTasksForApplier(applierName) {
 	const collection = getVendorTasksCollection();
 	if (!collection) {
-		throw new Error("MongoDB is not connected.");
+		throw new Error("Firestore is not connected.");
 	}
 
 	const [queueJobs, taskDocs] = await Promise.all([
@@ -309,7 +309,7 @@ async function listTasksForApplier(applierName) {
 
 async function upsertVendorTaskRecording(applierName, jobId, fields) {
 	const collection = getVendorTasksCollection();
-	if (!collection) throw new Error("MongoDB is not connected.");
+	if (!collection) throw new Error("Firestore is not connected.");
 
 	const now = new Date();
 	const $set = {
@@ -334,8 +334,8 @@ async function upsertVendorTaskRecording(applierName, jobId, fields) {
 
 async function findVendorTaskDoc(collection, applierName, rawId) {
 	let doc = null;
-	if (ObjectId.isValid(rawId)) {
-		doc = await collection.findOne({ _id: new ObjectId(rawId), applierName });
+	if (DocumentId.isValid(rawId)) {
+		doc = await collection.findOne({ _id: new DocumentId(rawId), applierName });
 	}
 	if (!doc) {
 		doc = await collection.findOne({ applierName, jobId: rawId });
@@ -390,7 +390,7 @@ export async function listRejectedBidResults(req, res) {
 
 		const collection = getVendorTasksCollection();
 		if (!collection) {
-			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+			return res.status(503).json({ success: false, error: "Firestore is not connected." });
 		}
 
 		const docs = await collection
@@ -444,7 +444,7 @@ export async function getBidResultStats(req, res) {
 
 		const collection = getVendorTasksCollection();
 		if (!collection) {
-			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+			return res.status(503).json({ success: false, error: "Firestore is not connected." });
 		}
 
 		const docs = await collection.find({ applierName }).limit(5000).toArray();
@@ -557,11 +557,11 @@ export async function getBidResultEvents(req, res) {
 
 		const collection = getVendorTasksCollection();
 		if (!collection) {
-			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+			return res.status(503).json({ success: false, error: "Firestore is not connected." });
 		}
 
 		const doc = await findVendorTaskDoc(collection, applierName, rawId);
-		const taskId = doc?._id ? String(doc._id) : ObjectId.isValid(rawId) ? rawId : null;
+		const taskId = doc?._id ? String(doc._id) : DocumentId.isValid(rawId) ? rawId : null;
 		const jobId = doc?.jobId ? String(doc.jobId) : rawId;
 
 		const events = await listBidReviewEvents({
@@ -605,7 +605,7 @@ export async function updateBidResultStatus(req, res) {
 
 		const collection = getVendorTasksCollection();
 		if (!collection) {
-			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+			return res.status(503).json({ success: false, error: "Firestore is not connected." });
 		}
 
 		const existing = await findVendorTaskDoc(collection, applierName, rawId);
@@ -699,7 +699,7 @@ export async function markFixedBidResult(req, res) {
 
 		const collection = getVendorTasksCollection();
 		if (!collection) {
-			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+			return res.status(503).json({ success: false, error: "Firestore is not connected." });
 		}
 
 		const existing = await findVendorTaskDoc(collection, applierName, rawId);
@@ -796,10 +796,10 @@ export async function startBidResult(req, res) {
 		};
 		if (applyUrl) fields.applyUrl = applyUrl;
 
-		const objectId = toObjectId(jobId);
-		if (objectId && jobsCollection) {
+		const documentId = toDocumentId(jobId);
+		if (documentId && jobsCollection) {
 			const job = await jobsCollection.findOne(
-				{ _id: objectId },
+				{ _id: documentId },
 				{ projection: { title: 1, company: 1, applyLink: 1, applyUrl: 1, source: 1 } },
 			);
 			if (job) {
@@ -1487,12 +1487,12 @@ export async function getBidResultAiUsage(req, res) {
 			return res.status(400).json({ success: false, error: "id is required." });
 		}
 		if (!llmCallLogCollection) {
-			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+			return res.status(503).json({ success: false, error: "Firestore is not connected." });
 		}
 
 		const collection = getVendorTasksCollection();
 		if (!collection) {
-			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+			return res.status(503).json({ success: false, error: "Firestore is not connected." });
 		}
 
 		const doc = await findVendorTaskDoc(collection, applierName, rawId);

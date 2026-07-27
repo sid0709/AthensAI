@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { jobsCollection, accountInfoCollection } from '../../db/mongo.js';
+import { jobsCollection, accountInfoCollection } from '../../db/dataStore.js';
 import { chatCompletion, resolveDefaultModel } from '../llm/llmService.js';
 import { JOB_SKILL_EXTRACTION_PROMPT } from '../../config/jobSkillExtractionPrompt.js';
 import { toCanonical } from '@nextoffer/shared/skill-normalize';

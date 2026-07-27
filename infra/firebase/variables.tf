@@ -17,7 +17,7 @@ variable "firestore_location" {
 }
 
 variable "storage_bucket" {
-  description = "US multi-region bucket for migrated GridFS and application objects."
+  description = "US multi-region bucket for application objects."
   type        = string
   default     = "drwretail-bm-migrated"
 }

@@ -47,8 +47,10 @@ export interface JobScores {
 
 export interface Job {
   id: string;
-  /** MongoDB _id when loaded from Athens-server API */
+  /** Firestore _id when loaded from Athens-server API */
   backendId?: string;
+	/** Stable canonical employer identity used by grouped Job Search. */
+	companyId: string;
   title: string;
   company: string;
   companyUrl: string;
@@ -79,6 +81,7 @@ export interface Job {
   skillAnalysis?: SkillAnalysis;
   /** Tech stack of the resume that best matched this job (recommendation API). */
   bestResumeTechStack?: string;
+  bestResumeId?: string;
   /** Per-skill match flags for UI (from list-time Best Match scoring). */
   skillHighlights?: { name: string; matched: boolean }[];
   /** AI-detected skills with category + requirement (1-5), when analyzed. */
@@ -89,6 +92,19 @@ export interface Job {
   version?: string | null;
   /** Data catalog: job_market (default) or external_scraped_jobs. */
   catalog?: "market" | "external";
+}
+
+export interface CompanyJobGroup {
+	companyId: string;
+	company: {
+		name: string;
+		logoUrl?: string;
+		url?: string;
+	};
+	jobs: Job[];
+	/** Present only for Beta-tier grouped responses. */
+	matchingJobCount?: number;
+	nextMemberOffset?: number | null;
 }
 
 export function isExternalJob(job: Pick<Job, "catalog">): boolean {

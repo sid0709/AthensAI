@@ -3,7 +3,7 @@ import {
 	userKnowledgeGraphsCollection,
 	personalInfoCollection,
 	userResumesCollection,
-} from '../../db/mongo.js';
+} from '../../db/dataStore.js';
 import {
 	normalizeResumeSkillEntry,
 	compareResumeSkills,
@@ -50,7 +50,7 @@ function graphSkillFromEntry({ name: raw, category, level }) {
 }
 
 /**
- * Build or update a per-resume user knowledge graph (Mongo only).
+ * Build or update a per-resume user knowledge graph in Firestore.
  */
 export async function buildUserGraphFromResume({
 	applierName,

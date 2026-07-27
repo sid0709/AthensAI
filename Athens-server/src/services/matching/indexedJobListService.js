@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { ObjectId } from 'mongodb';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import { excludeExtensionV2JobsFilter } from '../../config/jobMarketSchema.js';
-import { jobsCollection } from '../../db/mongo.js';
+import { jobsCollection } from '../../db/dataStore.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { buildJobsListQuery, JOB_LIST_PROJECTION, resolveApplierContext } from '../jobListQuery.js';
 import { resolveStatusTabFromBody, shouldMergeExternal } from '../externalScrapedJobsListQuery.js';
@@ -114,7 +114,7 @@ async function hydrateIndexedCards(payloads, profileId, statusTab, { excludeExte
 			const acceptedDocs = await jobsCollection.find({
 				$and: [
 					excludeExtensionV2JobsFilter(),
-					{ _id: { $in: suspiciousIds.map((id) => new ObjectId(id)) } },
+					{ _id: { $in: suspiciousIds.map((id) => new DocumentId(id)) } },
 				],
 			}, { projection: { _id: 1 } }).toArray();
 			const accepted = new Set(acceptedDocs.map((doc) => String(doc._id)));
@@ -131,8 +131,8 @@ async function hydrateIndexedCards(payloads, profileId, statusTab, { excludeExte
   }));
   const missing = ids.filter((id) => !cards.has(id));
   if (missing.length) {
-    const objectIds = missing.map((id) => new ObjectId(id));
-    const docs = await jobsCollection.find({ _id: { $in: objectIds } }, { projection: JOB_LIST_PROJECTION }).toArray();
+    const documentIds = missing.map((id) => new DocumentId(id));
+    const docs = await jobsCollection.find({ _id: { $in: documentIds } }, { projection: JOB_LIST_PROJECTION }).toArray();
     docs.forEach((doc) => cards.set(String(doc._id), doc));
   }
   const statusById = profileId && statusTab !== 'posted'
@@ -170,7 +170,7 @@ export async function listIndexedJobPage(body = {}) {
 	}
 
   const { query } = await buildJobsListQuery(body, { includePersonalStatus: false });
-  let filter = buildJobRankingFilter(body, { includeExternal, mongoQuery: query });
+  let filter = buildJobRankingFilter(body, { includeExternal, dataQuery: query });
   filter = addStatusCondition(filter, statusTab, statusIds);
   const page = Math.max(1, Number.parseInt(body.page, 10) || 1);
   const limit = Math.max(1, Math.min(5000, Number.parseInt(body.limit, 10) || 10));
@@ -202,7 +202,7 @@ export async function countIndexedJobStatuses(body = {}) {
 	const profileId = String(account.id);
 	const includeExternal = shouldMergeExternal(body, 'all');
 	const { query } = await buildJobsListQuery(body, { includePersonalStatus: false });
-	const baseFilter = buildJobRankingFilter(body, { includeExternal, mongoQuery: query });
+	const baseFilter = buildJobRankingFilter(body, { includeExternal, dataQuery: query });
 	const [anyIds, appliedIds, scheduledIds, declinedIds, bidReadyIds, bidCompletedIds] = await Promise.all([
 		readMaterializedJobStatusIds(profileId, 'any'),
 		readMaterializedJobStatusIds(profileId, 'applied'),

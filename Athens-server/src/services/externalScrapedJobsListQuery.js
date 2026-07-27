@@ -1,5 +1,5 @@
 import { JobSourceTitles, inferJobSource } from '../config/jobSources.js';
-import { buildMongoCaseInsensitiveRegexFilter } from '../utils/safeRegex.js';
+import { buildCaseInsensitiveRegexFilter } from '../utils/safeRegex.js';
 
 function finalizeQuery(query) {
 	if (query.$and?.length === 1) {
@@ -22,7 +22,7 @@ function buildSourceFilter(jobSources) {
 	if (allSourcesSelected) return null;
 
 	const sourceMatchers = jobSourceItem
-		.map((source) => buildMongoCaseInsensitiveRegexFilter(source, { exact: true }))
+		.map((source) => buildCaseInsensitiveRegexFilter(source, { exact: true }))
 		.filter(Boolean);
 
 	if (!sourceMatchers.length) return null;
@@ -33,19 +33,19 @@ function buildSourceFilter(jobSources) {
 }
 
 /**
- * Mongo filter for external_scraped_jobs from POST /jobs/list body.
+ * Compatibility filter for external_scraped_jobs from POST /jobs/list body.
  * Only maps filters external rows can satisfy (title, company, source).
  */
 export function buildExternalScrapedJobsQuery(body = {}) {
 	const { q, jobSources, aiExtracted, ...filters } = body;
 	const query = { $and: [] };
 
-	const titleFilter = buildMongoCaseInsensitiveRegexFilter(q);
+	const titleFilter = buildCaseInsensitiveRegexFilter(q);
 	if (titleFilter) query.$and.push({ jobTitle: titleFilter });
 
 	const companyName = filters['company.name'];
 	if (typeof companyName === 'string' && companyName.trim()) {
-		const companyFilter = buildMongoCaseInsensitiveRegexFilter(companyName);
+		const companyFilter = buildCaseInsensitiveRegexFilter(companyName);
 		if (companyFilter) query.$and.push({ companyName: companyFilter });
 	}
 

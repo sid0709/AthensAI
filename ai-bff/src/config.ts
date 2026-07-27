@@ -9,8 +9,8 @@ const moduleDir = dirname(fileURLToPath(import.meta.url));
 const localEnvPath = resolve(moduleDir, '../.env');
 const sharedRuntimeEnvPath = resolve(moduleDir, '../../Athens-server/.env');
 loadEnv({ path: localEnvPath });
-// Athens-server owns the shared local database/runtime selection. Service-local
-// AI keys keep precedence, while Firestore settings fill in missing values.
+// AI keys keep service-local precedence while shared Firebase settings fill in
+// missing runtime values.
 loadEnv({ path: sharedRuntimeEnvPath });
 
 const credentialPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
@@ -38,6 +38,4 @@ export function loadConfigFromEnv(): AiKitConfig {
 export const serverConfig = {
   port: readNumber(process.env.PORT, 3920),
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
-  mongoUri: process.env.MONGO_URL || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017',
-  mongoDb: process.env.MONGO_DB || 'AthensDB',
 };

@@ -15,7 +15,7 @@ VPS local services ──► Redis + Qdrant + Prometheus/Grafana
 | Tool | Why |
 |------|-----|
 | **Node.js 20+** | All services |
-| **Docker Desktop** | MongoDB + Redis (easiest path) |
+| **Docker Desktop** | Redis + Qdrant (easiest local path) |
 | **npm** | Package manager |
 | **Chrome** | Avalon extension drives your real browser for auto-apply |
 
@@ -46,21 +46,19 @@ cp ai-bff/.env.example ai-bff/.env
 npm start
 ```
 
-If you use **Homebrew MongoDB + Redis** instead of Docker:
+If Redis and Qdrant already run outside Docker:
 
 ```bash
-brew services start mongodb-community
 brew services start redis
 SKIP_DOCKER=1 npm start
 ```
 
 `npm start` automatically:
 
-1. **Starts MongoDB + Redis + Qdrant** via Docker
-2. **Waits** until ports are reachable
-3. **Runs `backfill-job-skills`**
-4. **Builds** `ai-bff`
-5. **Launches** Athens-server, ai-bff, and Athens UI
+1. **Validates Firebase credentials**
+2. **Starts Redis + Qdrant** via Docker when ranking is enabled
+3. **Builds** `ai-bff`
+4. **Launches** Athens-server, ai-bff, and Athens UI
 
 ## Monitoring and public status
 
@@ -68,7 +66,7 @@ Production health remains on the VPS Prometheus/Grafana/Alertmanager stack. Athe
 
 Google Cloud retains Firestore/Storage/KMS audit logs, backups, and billing alerts declared in [`infra/firebase/`](infra/firebase/), but it does not run the application.
 
-The production data-only Mongo/GridFS cutover procedure is in [`docs/firebase-migration-runbook.md`](docs/firebase-migration-runbook.md). Firebase Auth, Hosting, Cloud Run, Tasks, Scheduler, and Memorystore are intentionally excluded.
+Firebase Auth, Hosting, Cloud Run, Tasks, Scheduler, and Memorystore are intentionally excluded from the VPS runtime.
 
 | Service | URL |
 |---------|-----|

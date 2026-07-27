@@ -1,4 +1,5 @@
 import { API_BASE } from "@/lib/api-base";
+import { retryTransient } from "@/lib/transient-retry";
 
 export type SkillExtractSession = {
   running: boolean;
@@ -38,8 +39,14 @@ type StartResponse = {
 };
 
 async function parseJson<T>(res: Response): Promise<T> {
-  const data = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  const data = await res.json().catch(() => ({})) as T & { error?: string };
+  if (!res.ok) {
+    const error = new Error(data.error || `Request failed (${res.status})`) as Error & {
+      status?: number;
+    };
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 
@@ -47,8 +54,10 @@ export async function fetchSkillExtractStatus(applierName?: string): Promise<Ski
   const qs = applierName
     ? `?applierName=${encodeURIComponent(applierName)}`
     : "";
-  const res = await fetch(`${API_BASE}/jobs/skill-extract/status${qs}`);
-  return parseJson<StatusResponse>(res);
+  return retryTransient(async () => {
+    const res = await fetch(`${API_BASE}/jobs/skill-extract/status${qs}`);
+    return parseJson<StatusResponse>(res);
+  });
 }
 
 export async function startSkillExtract(applierName?: string): Promise<StartResponse> {

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { overallStatus, readCurrentStatus, readDailyRollups, readIncidents, readLiveMetrics, readTodayTimelines } from '../services/monitoring/statusStore.js';
+import { readPrometheusDependencyMetrics } from '../services/monitoring/prometheusClient.js';
 
 const router = Router();
 router.get('/status/current', async (_req, res, next) => {
@@ -35,6 +36,15 @@ router.get('/status/today', async (_req, res, next) => {
 		const timeline = await readTodayTimelines();
 		res.set('Cache-Control', 'no-store');
 		return res.json({ ok: true, ...timeline });
+	} catch (error) { return next(error); }
+});
+router.get('/status/dependencies', async (req, res, next) => {
+	try {
+		const minutes = Number(req.query.minutes || 60);
+		if (![15, 60, 360, 1440].includes(minutes)) return res.status(400).json({ ok: false, error: 'Unsupported dependency metrics range.' });
+		const dependencies = await readPrometheusDependencyMetrics(minutes);
+		res.set('Cache-Control', 'no-store');
+		return res.json({ ok: true, minutes, dependencies });
 	} catch (error) { return next(error); }
 });
 export default router;

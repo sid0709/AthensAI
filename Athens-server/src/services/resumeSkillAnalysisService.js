@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import { userResumesCollection, accountInfoCollection } from "../db/mongo.js";
+import { DocumentId } from "@nextoffer/shared/document-id";
+import { userResumesCollection, accountInfoCollection } from "../db/dataStore.js";
 import { chatCompletion, resolveDefaultModel } from "./llm/llmService.js";
 import { RESUME_SKILL_ANALYSIS_PROMPT } from "../config/resumeSkillAnalysisPrompt.js";
 import {
@@ -154,14 +154,14 @@ async function loadResumeDoc(resumeId, ownerName) {
   const name = String(ownerName || "").trim();
   if (!name) throw new Error("ownerName is required");
 
-  let objectId;
+  let documentId;
   try {
-    objectId = new ObjectId(resumeId);
+    documentId = new DocumentId(resumeId);
   } catch {
     throw new Error("Invalid resume id");
   }
 
-  const doc = await userResumesCollection.findOne({ _id: objectId, ownerName: name });
+  const doc = await userResumesCollection.findOne({ _id: documentId, ownerName: name });
   if (!doc) throw new Error("Resume not found");
   return doc;
 }

@@ -11,9 +11,7 @@ export const JOB_STATUS_STATES = Object.freeze([
 const CACHE_PREFIX = "ranking:v5:job-status";
 
 function backendNamespace() {
-	return String(process.env.DATABASE_BACKEND || "mongo").trim().toLowerCase() === "firestore"
-		? "firestore"
-		: "mongo";
+	return "firestore";
 }
 
 function nonNegativeInteger(value) {

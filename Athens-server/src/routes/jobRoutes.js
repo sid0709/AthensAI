@@ -3,6 +3,7 @@ import {
 	createJob,
 	getJobs,
 	getJobStatusCounts,
+	getCompanyGroupMembers,
 	applyToJob,
 	removeJobs,
 	updateJobStatus,
@@ -31,6 +32,7 @@ const router = express.Router();
 router.post('/jobs', createJob);
 router.post('/jobs/list', getJobs);
 router.post('/jobs/list/counts', getJobStatusCounts);
+router.post('/jobs/list/company-members', getCompanyGroupMembers);
 router.get('/jobs/skill-extract/status', getSkillExtractStatus);
 router.post('/jobs/skill-extract/start', startSkillExtract);
 router.post('/jobs/skill-extract/stop', stopSkillExtract);

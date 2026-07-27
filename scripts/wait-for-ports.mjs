@@ -11,7 +11,8 @@ import { installTerminalLogger } from '@nextoffer/shared/terminal-log';
 const execFileAsync = promisify(execFile);
 
 export const targets = [
-  { host: process.env.MONGO_HOST || '127.0.0.1', port: Number(process.env.MONGO_PORT || 27017), label: 'MongoDB' },
+  { host: process.env.REDIS_HOST || '127.0.0.1', port: Number(process.env.REDIS_PORT || 6379), label: 'Redis' },
+  { host: process.env.QDRANT_HOST || '127.0.0.1', port: Number(process.env.QDRANT_PORT || 6333), label: 'Qdrant' },
 ];
 
 const timeoutMs = Number(process.env.INFRA_WAIT_TIMEOUT_MS || 120_000);

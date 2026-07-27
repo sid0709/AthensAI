@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import { FieldValue } from "firebase-admin/firestore";
 import {
 	jobStatusContribution,
 	mergeJobStatusRows,
 	resolveJobStatusState,
 } from "@nextoffer/shared/job-status";
-import { accountInfoCollection, jobsCollection } from "../db/mongo.js";
+import { accountInfoCollection, jobsCollection } from "../db/dataStore.js";
 import { JobSourceTitles } from "../config/jobSources.js";
 import { buildJobsListQuery, JOB_LIST_PROJECTION, resolveApplierContext } from "./jobListQuery.js";
 import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
@@ -46,7 +46,7 @@ const statusCountWarmups = new Map();
 const statusIdBaselineCache = new Map();
 
 function enabled() {
-  return String(process.env.DATABASE_BACKEND || "").trim().toLowerCase() === "firestore";
+  return true;
 }
 
 export function stateOf(status = {}) {
@@ -195,7 +195,7 @@ export async function listMaterializedJobStatusPage(body = {}) {
 	if (hasGlobalFilters) {
 		const { query: globalQuery } = await buildJobsListQuery(body, { includePersonalStatus: false });
 		for (let start = 0; start < orderedIds.length; start += 250) {
-			const chunkIds = orderedIds.slice(start, start + 250).map((id) => new ObjectId(id));
+			const chunkIds = orderedIds.slice(start, start + 250).map((id) => new DocumentId(id));
 			preloadedDocs.push(...await jobsCollection.find(
 				{ $and: [globalQuery, { _id: { $in: chunkIds } }] },
 				{ projection: JOB_LIST_PROJECTION },
@@ -209,13 +209,13 @@ export async function listMaterializedJobStatusPage(body = {}) {
 		total = orderedIds.length;
 	}
 	const pageIds = orderedIds.slice(skip, skip + limit);
-	const objectIds = pageIds.map((id) => {
-		try { return new ObjectId(id); } catch { return id; }
+	const documentIds = pageIds.map((id) => {
+		try { return new DocumentId(id); } catch { return id; }
 	});
 	const docs = hasGlobalFilters
 		? preloadedDocs.filter((doc) => pageIds.includes(String(doc._id)))
-		: objectIds.length
-		? await jobsCollection.find({ _id: { $in: objectIds } }, { projection: JOB_LIST_PROJECTION }).toArray()
+		: documentIds.length
+		? await jobsCollection.find({ _id: { $in: documentIds } }, { projection: JOB_LIST_PROJECTION }).toArray()
 		: [];
 	const byId = new Map(docs.map((doc) => [String(doc._id), doc]));
 	return {
@@ -263,9 +263,9 @@ export async function listMaterializedPostedPage(body = {}) {
 	}));
 	const missingIds = ids.filter((id) => !cards.has(id));
 	if (missingIds.length) {
-		const objectIds = missingIds.map((id) => new ObjectId(id));
+		const documentIds = missingIds.map((id) => new DocumentId(id));
 		const fallbackDocs = await jobsCollection.find(
-			{ _id: { $in: objectIds } },
+			{ _id: { $in: documentIds } },
 			{ projection: JOB_LIST_PROJECTION },
 		).toArray();
 		for (const doc of fallbackDocs) cards.set(String(doc._id), doc);
@@ -424,7 +424,7 @@ async function loadStatusIdBaseline(profileId) {
 			// A pre-v2 projection is never interpreted as business state. Rebuild
 			// the in-memory baseline from the canonical embedded rows instead.
 			const profileValues = [key];
-			try { profileValues.unshift(new ObjectId(key)); } catch { /* string profile id */ }
+			try { profileValues.unshift(new DocumentId(key)); } catch { /* string profile id */ }
 			const docs = await jobsCollection.find(
 				{ 'status.applier': { $in: profileValues } },
 				{ projection: { status: 1, postedAt: 1 } },
@@ -436,7 +436,7 @@ async function loadStatusIdBaseline(profileId) {
 		}
 	} else {
 		const profileValues = [key];
-		try { profileValues.unshift(new ObjectId(key)); } catch { /* string profile id */ }
+		try { profileValues.unshift(new DocumentId(key)); } catch { /* string profile id */ }
 		const docs = await jobsCollection.find(
 			{ 'status.applier': { $in: profileValues } },
 			{ projection: { status: 1, postedAt: 1 } },
@@ -608,18 +608,18 @@ export function reduceJobStatuses(statusRows, profileValue, transition, now = ne
 export async function mutateJobStatus({ jobId: jobIdRaw, applierName, transition }) {
 	const jobId = String(jobIdRaw || "");
 	const name = String(applierName || "").trim();
-	if (!ObjectId.isValid(jobId)) throw new Error("Invalid job id");
+	if (!DocumentId.isValid(jobId)) throw new Error("Invalid job id");
 	if (!name) throw new Error("applierName is required");
 	const account = await resolveApplierContext(name);
 	if (!account?.id) throw new Error(`User ${name} not found`);
 	const profileId = String(account.id);
-	const objectId = new ObjectId(jobId);
+	const documentId = new DocumentId(jobId);
 
 	if (!enabled()) {
-		const job = await jobsCollection.findOne({ _id: objectId });
+		const job = await jobsCollection.findOne({ _id: documentId });
 		if (!job || (!account.isBeta && isExtensionV2Job(job))) throw new Error("Job not found");
 			const reduced = reduceJobStatuses(job.status, profileId, transition);
-		await jobsCollection.updateOne({ _id: objectId }, {
+		await jobsCollection.updateOne({ _id: documentId }, {
 			$set: { status: reduced.statuses },
 			$unset: { statusProfileIds: "" },
 		});
@@ -653,14 +653,14 @@ export async function mutateJobStatus({ jobId: jobIdRaw, applierName, transition
 			transaction.delete(statusRef);
 		}
 		return {
-			job: { ...job, _id: objectId, status: reduced.statuses },
+			job: { ...job, _id: documentId, status: reduced.statuses },
 			changed: reduced.changed,
 			profileStatuses,
 			previousStatuses: reduced.previous ? [reduced.previous] : [],
 			extensionV2: isExtensionV2Job(job),
 		};
 	});
-	// This write bypasses the Mongo-compatible adapter, so explicitly discard
+	// This write bypasses the compatibility adapter, so explicitly discard
 	// cached job reads before any subsequent filtered/list query can observe the
 	// old embedded status array.
 	jobsCollection?._invalidateCaches?.();
@@ -676,10 +676,10 @@ export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {
 	const profileId = String(profileIdRaw || "");
 	if (!jobId || !profileId) return false;
 	if (!jobsCollection) return false;
-	let objectId;
-	try { objectId = new ObjectId(jobId); } catch { objectId = jobId; }
+	let documentId;
+	try { documentId = new DocumentId(jobId); } catch { documentId = jobId; }
 	const job = await jobsCollection.findOne(
-		{ _id: objectId },
+		{ _id: documentId },
 		{ projection: { status: 1, postedAt: 1, sourceCatalog: 1, version: 1, extensionV2: 1 } },
 	);
 	if (!job) return false;
@@ -695,10 +695,10 @@ export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {
 	const statusRef = getFirestoreDb().collection("job_statuses").doc(jobStatusProjectionId(profileId, jobId));
 	if (statuses.length) {
 		await statusRef.set(buildStatusProjectionData({ profileId, jobId, job, statuses }), { merge: false });
-		await jobsCollection.updateOne({ _id: objectId }, { $unset: { statusProfileIds: "" } });
+		await jobsCollection.updateOne({ _id: documentId }, { $unset: { statusProfileIds: "" } });
 	} else {
 		await statusRef.delete();
-		await jobsCollection.updateOne({ _id: objectId }, { $unset: { statusProfileIds: "" } });
+		await jobsCollection.updateOne({ _id: documentId }, { $unset: { statusProfileIds: "" } });
 	}
 	await publishStatusCache(profileId, jobId, statuses, { adjustCounts: false });
 	return true;
@@ -765,11 +765,11 @@ export async function readProjectedJobStatuses(profileId, jobIds = []) {
 	}
 
 	if (canonicalFallbackIds.length) {
-		const objectIds = canonicalFallbackIds.map((jobId) => {
-			try { return new ObjectId(jobId); } catch { return jobId; }
+		const documentIds = canonicalFallbackIds.map((jobId) => {
+			try { return new DocumentId(jobId); } catch { return jobId; }
 		});
 		const docs = await jobsCollection.find(
-			{ _id: { $in: objectIds } },
+			{ _id: { $in: documentIds } },
 			{ projection: { status: 1, postedAt: 1, sourceCatalog: 1, version: 1, extensionV2: 1 } },
 		).toArray();
 		const docsById = new Map(docs.map((job) => [String(job._id), job]));

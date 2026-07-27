@@ -26,7 +26,7 @@ import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList"
 import { isExternalJob } from "../../types/job";
 import { useProfileMatchSkills } from "./hooks/useProfileMatchSkills";
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 500];
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 export function JobSearchPage() {
   return <JobSearchPageContent />;
@@ -50,11 +50,37 @@ function JobSearchPageContent() {
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
   const { profileVersion, matchContext } = useProfileMatchSkills();
 
-  const { jobs, total, loading, error, staleResults, retry, requestKey, countsLoading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts, rescoreVisibleJobs } =
+  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, countsLoading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, removeJobsById, refreshStatusCounts, rescoreVisibleJobs, loadCompanyMembers, memberLoadingIds, groupedBeta } =
     useJobsList(filters, removedIds, profileVersion);
-  const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
+
+  useEffect(() => {
+    setActiveJobIds((previous) => {
+      const next: Record<string, string> = {};
+      for (const group of groups) {
+        const preserved = previous[group.companyId];
+        next[group.companyId] = preserved && group.jobs.some((job) => job.id === preserved)
+          ? preserved
+          : group.jobs[0]?.id ?? "";
+      }
+      const previousKeys = Object.keys(previous);
+      const unchanged = previousKeys.length === Object.keys(next).length
+        && previousKeys.every((key) => previous[key] === next[key]);
+      return unchanged ? previous : next;
+    });
+  }, [groups]);
+
+  const visibleJobs = useMemo(
+    () => groups.flatMap((group) => {
+      const activeId = activeJobIds[group.companyId];
+      const active = group.jobs.find((job) => job.id === activeId) ?? group.jobs[0];
+      return active ? [active] : [];
+    }),
+    [activeJobIds, groups],
+  );
+  const { selectedIds, selectedJobs, selectJob, deselectJob, selectAllOnPage, clearSelection } = useJobSelection(visibleJobs);
   const {
     applyToJob,
     updateJobStatus,
@@ -98,7 +124,7 @@ function JobSearchPageContent() {
     setFilters((prev) => (prev.titleRoles.length ? { ...prev, titleRoles: [] } : prev));
   }, [isBeta]);
 
-  const pageIds = useMemo(() => jobs.map((j) => j.id), [jobs]);
+  const pageIds = useMemo(() => visibleJobs.map((job) => job.id), [visibleJobs]);
   const selectedOnPage = useMemo(
     () => pageIds.filter((id) => selectedIds.has(id)).length,
     [pageIds, selectedIds],
@@ -111,6 +137,13 @@ function JobSearchPageContent() {
 
   const toggleSelectAllOnPage = () => {
     selectAllOnPage(pageIds, allOnPageSelected);
+  };
+
+  const handleActiveJobChange = (companyId: string, jobId: string) => {
+    const previousId = activeJobIds[companyId];
+    if (previousId === jobId) return;
+    if (previousId && selectedIds.has(previousId)) deselectJob(previousId);
+    setActiveJobIds((previous) => ({ ...previous, [companyId]: jobId }));
   };
 
   const handleApplyAll = async (jobs = selectedJobs) => {
@@ -155,6 +188,7 @@ function JobSearchPageContent() {
     try {
       const res = await removeJobs(ids);
       if (!res?.success) throw new Error(res?.error || "Remove failed");
+      removeJobsById(ids);
       toast.success(`Removed ${res.deletedCount ?? ids.length} job${ids.length === 1 ? "" : "s"}`);
       void refreshStatusCounts();
     } catch (err) {
@@ -205,7 +239,7 @@ function JobSearchPageContent() {
 
       <JobListStickyBar
         selectedOnPage={selectedOnPage}
-        pageCount={jobs.length}
+        pageCount={visibleJobs.length}
         totalSelected={selectedIds.size}
         allOnPageSelected={allOnPageSelected}
         onToggleSelectAll={toggleSelectAllOnPage}
@@ -249,6 +283,7 @@ function JobSearchPageContent() {
         page={page}
         pageSize={pageSize}
         total={total}
+        totalJobs={totalJobs}
         onPageChange={setPage}
         onPageSizeChange={setPageSize}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
@@ -285,7 +320,12 @@ function JobSearchPageContent() {
       ) : (
         <TabTransition tabKey={showGrid ? "grid" : "list"}>
           <JobListView
-            jobs={jobs}
+            groups={groups}
+            isBeta={groupedBeta}
+            activeJobIds={activeJobIds}
+            onActiveJobChange={handleActiveJobChange}
+            onLoadCompanyMembers={(companyId) => void loadCompanyMembers(companyId)}
+            memberLoadingIds={memberLoadingIds}
             layout={showGrid ? "grid" : "list"}
             selectedIds={selectedIds}
             onSelectJob={selectJob}
@@ -315,6 +355,8 @@ function JobSearchPageContent() {
         onPageSizeChange={setPageSize}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         detailed
+        unitLabel="companies"
+        secondaryTotal={totalJobs}
         loading={loading}
         className="mt-2"
       />

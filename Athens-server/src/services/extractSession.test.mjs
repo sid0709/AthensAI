@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { claimPendingJobs } from "./jobSkillExtraction/extractSession.js";
+import {
+	claimPendingJobs,
+	pendingExtractionQuery,
+} from "./jobSkillExtraction/extractSession.js";
+import { pendingTitleAnalysisQuery } from "./jobTitleScan/titleScanSession.js";
 import {
 	parseJobSkillsBatchJson,
 	parseJobSkillsJson,
@@ -38,6 +42,26 @@ test("combined pending count is sum of both catalogs", () => {
 	const pendingMarket = 180;
 	const pendingExternal = 45;
 	assert.equal(pendingMarket + pendingExternal, 225);
+});
+
+test("pending skill badge counts only jobs the user's tier can process", () => {
+	assert.deepEqual(pendingExtractionQuery(true), { aiSkillStatus: "pending" });
+	assert.deepEqual(pendingExtractionQuery(false), {
+		aiSkillStatus: "pending",
+		extensionV2: false,
+	});
+});
+
+test("pending title badge uses the same unprocessed New-job policy as title analysis", () => {
+	const query = pendingTitleAnalysisQuery("applier-1");
+	assert.deepEqual(query.$and[0].$and[0].$or, [
+		{ titleScanned: { $exists: false } },
+		{ titleScanned: null },
+		{ titleScanned: "" },
+	]);
+	assert.deepEqual(query.$and[1].$or[1], {
+		status: { $not: { $elemMatch: { applier: "applier-1" } } },
+	});
 });
 
 test("claimPendingJobs returns only jobs atomically claimed by this session", async () => {

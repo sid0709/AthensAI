@@ -11,7 +11,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { initMongo, llmCallLogCollection, avalonRunsCollection, closeMongo } from '../db/mongo.js';
+import { initDataStore, llmCallLogCollection, avalonRunsCollection, closeDataStore } from '../db/dataStore.js';
 
 function readArgLimit(argv, defaultLimit = 300) {
   const idx = argv.indexOf('--limit');
@@ -23,9 +23,9 @@ function readArgLimit(argv, defaultLimit = 300) {
 }
 
 async function main() {
-  await initMongo();
-  if (!llmCallLogCollection) throw new Error('MongoDB not ready (llm_call_log missing)');
-  if (!avalonRunsCollection) throw new Error('MongoDB not ready (avalon_apply_runs missing)');
+  await initDataStore();
+  if (!llmCallLogCollection) throw new Error('Firestore not ready (llm_call_log missing)');
+  if (!avalonRunsCollection) throw new Error('Firestore not ready (avalon_apply_runs missing)');
 
   const limit = readArgLimit(process.argv, 300);
 
@@ -73,7 +73,7 @@ async function main() {
 
   console.log(`[backfill-llm-call-log-applier-name] scanned=${scanned} updated=${updated} skipped=${skipped}`);
 
-  await closeMongo?.();
+  await closeDataStore?.();
   process.exit(0);
 }
 

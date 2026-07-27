@@ -1,4 +1,4 @@
-import { jobsCollection, externalScrapedJobsCollection } from '../db/mongo.js';
+import { jobsCollection, externalScrapedJobsCollection } from '../db/dataStore.js';
 import { buildJobsListQuery, JOB_LIST_PROJECTION } from './jobListQuery.js';
 import { listMergedRecommendedJobs } from './matching/matchScoreReader.js';
 import {

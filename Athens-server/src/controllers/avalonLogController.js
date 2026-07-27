@@ -1,6 +1,6 @@
 import { recordApplyRun, listApplyRuns, getApplyRun } from "../services/avalonRunLog.js";
 
-/** POST /api/agents/apply-log — append a batch of apply-run events (file + Mongo). */
+/** POST /api/agents/apply-log — append apply-run events to Storage + Firestore. */
 export async function postApplyLog(req, res) {
   try {
     const body = req.body || {};

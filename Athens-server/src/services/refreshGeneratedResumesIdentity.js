@@ -12,12 +12,12 @@
  *
  * PDF speed: high parallel Chromium pool + no nested limiter; skips review copies.
  */
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import {
   accountInfoCollection,
   resumeGenerationsCollection,
   userResumesCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
 import {
@@ -42,7 +42,7 @@ import { storeUserResumeContent } from "./userResumeService.js";
 
 const cleanString = (v) => String(v ?? "").trim();
 
-/** How many generations to update in parallel (Mongo + library + PDF). */
+/** How many generations to update in parallel (Firestore + library + PDF). */
 const DEFAULT_REFRESH_CONCURRENCY = 16;
 
 function refreshConcurrency() {
@@ -107,7 +107,7 @@ async function updateLibraryResumeText({ generationId, resumeId, ownerName, extr
   let filter;
   if (resumeId) {
     try {
-      filter = { _id: new ObjectId(String(resumeId)), ownerName };
+      filter = { _id: new DocumentId(String(resumeId)), ownerName };
     } catch {
       return false;
     }
@@ -137,7 +137,7 @@ async function updateLibraryResumeText({ generationId, resumeId, ownerName, extr
   };
   const byGen = await userResumesCollection.updateOne(
     { _id: existing._id },
-    { $set: patch, $unset: { gridFsId: "" } },
+    { $set: patch },
   );
   return byGen.matchedCount > 0;
 }

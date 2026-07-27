@@ -1,5 +1,5 @@
 
-import { personalInfoCollection, accountInfoCollection, getCloudMirrorStatus } from "../db/mongo.js";
+import { personalInfoCollection, accountInfoCollection } from "../db/dataStore.js";
 import { updateAccountInfoById } from "../services/accountInfoStore.js";
 import { verifyKey, getProvider } from "../services/llm/llmService.js";
 import { toCanonical } from "../services/skillNormalize.js";
@@ -308,7 +308,7 @@ function buildAutoBidProfileResponse(p, accountName = "") {
 /**
  * Resolve `account_info` by applier name: exact match first, then case-insensitive.
  * @param {string} nameRaw
- * @param {object} [projection] Mongo projection (defaults to name + autoBidProfile)
+ * @param {object} [projection] field projection (defaults to name + autoBidProfile)
  */
 async function findAccountByApplierName(nameRaw, projection) {
 	const trimmed = String(nameRaw ?? "").trim();
@@ -385,7 +385,6 @@ export async function upsertAutoBidProfile(req, res) {
 			success: true,
 			profile: await decryptProfileApiKeys(autoBidProfile),
 			vendorAllowed,
-			cloudMirror: getCloudMirrorStatus(),
 		});
 	} catch (err) {
 		console.error("PUT /api/personal/auto-bid-profile error", err);

@@ -1,5 +1,5 @@
 import { KeyManagementServiceClient } from '@google-cloud/kms';
-import { accountInfoCollection } from '../db/mongo.js';
+import { accountInfoCollection } from '../db/dataStore.js';
 import { decryptSecret as decryptLegacy, encryptSecret as encryptLegacy, isEncryptedSecret } from '@nextoffer/shared/secretCrypto';
 
 const FIELDS = ['openaiApiKey', 'deepseekApiKey', 'gmailPassword', 'gmailAppPassword', 'defaultPassword'];

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { fetchResumeTemplatePreviewImages, type ResumeTemplatePreviewPage } from "@/app/services/resumeApi";
 import type { GeneratedContent } from "../types";
-import { uploadedTemplateMongoId } from "../types";
+import { uploadedTemplateDocumentId } from "../types";
 
 const LETTER_WIDTH_PX = 816;
 const LETTER_HEIGHT_PX = 1056;
@@ -83,7 +83,7 @@ export function UploadedTemplatePreview({
     };
   }, [ownerName, templateId, sectionsKey]);
 
-  const mongoId = uploadedTemplateMongoId(templateId);
+  const documentId = uploadedTemplateDocumentId(templateId);
   const docHeight = pages.reduce((sum, page, index) => {
     const gap = index === 0 ? 0 : 16;
     return sum + gap + (page.height || LETTER_HEIGHT_PX) * scale;
@@ -137,7 +137,7 @@ export function UploadedTemplatePreview({
       </div>
       <p className="text-[11px] text-neutral-400 dark:text-white/40 mt-2 text-center">
         Preview rendered from your uploaded DOCX template
-        {mongoId ? ` (${mongoId.slice(0, 8)}…)` : ""}. Word export uses the same fill pipeline.
+        {documentId ? ` (${documentId.slice(0, 8)}…)` : ""}. Word export uses the same fill pipeline.
       </p>
     </div>
   );

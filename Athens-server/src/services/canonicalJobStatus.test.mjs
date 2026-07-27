@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ObjectId } from 'mongodb';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import {
   createProfileIdResolver,
   normalizeCanonicalJobStatuses,
@@ -47,8 +47,8 @@ test('invalid dates and unresolved users fail closed', () => {
   assert.equal(invalidDate.issues[0].reason, 'invalid timestamp');
 });
 
-test('ObjectId references become stable strings and normalization is idempotent', () => {
-  const profileId = new ObjectId();
+test('DocumentId references become stable strings and normalization is idempotent', () => {
+  const profileId = new DocumentId();
   const resolve = createProfileIdResolver([{ _id: profileId, name: 'Owner' }]);
   const first = normalizeCanonicalJobStatuses([
     { applier: profileId, appliedDate: '2026-01-01' },

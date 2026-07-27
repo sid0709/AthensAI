@@ -50,9 +50,9 @@ async function qdrantFetch(path, { method = 'GET', body } = {}) {
 	return res.json();
 }
 
-/** Deterministic UUID from Mongo id string for Qdrant point ids. */
-export function toPointId(mongoId) {
-	const hash = crypto.createHash('sha256').update(String(mongoId)).digest('hex');
+/** Deterministic UUID from a document id string for Qdrant point ids. */
+export function toPointId(documentId) {
+	const hash = crypto.createHash('sha256').update(String(documentId)).digest('hex');
 	return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
 }
 
@@ -142,12 +142,14 @@ const RANKING_PAYLOAD_INDEXES = [
 	{ field_name: 'source', field_schema: 'keyword' },
 	{ field_name: 'postedAt', field_schema: 'datetime' },
 	{ field_name: 'workMode', field_schema: 'keyword' },
+	{ field_name: 'employmentType', field_schema: 'keyword' },
 	{ field_name: 'seniority', field_schema: 'keyword' },
 	{ field_name: 'titleRoles', field_schema: 'keyword' },
 	{ field_name: 'extensionV2', field_schema: 'bool' },
 	{ field_name: 'version', field_schema: 'keyword' },
 	{ field_name: 'title', field_schema: 'text' },
 	{ field_name: 'companyName', field_schema: 'text' },
+	{ field_name: 'companyId', field_schema: 'keyword' },
 	{ field_name: 'location', field_schema: 'text' },
 	{ field_name: 'companyTags', field_schema: 'keyword' },
 	{ field_name: 'aiExtracted', field_schema: 'bool' },

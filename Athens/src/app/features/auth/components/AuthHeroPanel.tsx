@@ -6,7 +6,7 @@ const FEATURES = [
   {
     icon: Target,
     title: "Smart job matching",
-    body: "Rank roles by skill fit, salary, freshness, and competition — all from your live MongoDB pipeline.",
+    body: "Rank roles by skill fit, salary, freshness, and competition — all from your live Firestore pipeline.",
   },
   {
     icon: Sparkles,

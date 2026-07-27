@@ -1,5 +1,5 @@
 /** Current job_market document schema version. */
-export const JOB_MARKET_MODEL_VERSION = '2026.07.07';
+export const JOB_MARKET_MODEL_VERSION = '2026.07.27-company-v1';
 
 /**
  * Ingest provenance for jobs uploaded by extension-v2.
@@ -11,17 +11,9 @@ export const JOB_MARKET_EXTENSION_VERSION_V2 = 'v2';
 /** Header extension-v2 sends on every API request. */
 export const EXTENSION_V2_CLIENT_HEADER = 'extension-v2';
 
-/** Mongo clause that hides extension-v2 jobs from non-beta viewers. */
+/** Query clause that hides extension-v2 jobs from non-beta viewers. */
 export function excludeExtensionV2JobsFilter() {
-	if (String(process.env.DATABASE_BACKEND || "").trim().toLowerCase() === "firestore") {
-		return { extensionV2: false };
-	}
-	return {
-		$and: [
-			{ version: { $ne: JOB_MARKET_EXTENSION_VERSION_V2 } },
-			{ extensionV2: { $ne: true } },
-		],
-	};
+	return { extensionV2: false };
 }
 
 /** Accept both persisted provenance shapes during database migrations. */
@@ -47,7 +39,7 @@ export function stripScraperOnlyJobFields(job) {
 	return job;
 }
 
-/** MongoDB $unset map for scraper-only fields. */
+/** Update-unset map for scraper-only fields. */
 export function scraperOnlyJobFieldsUnset() {
 	return Object.fromEntries(SCRAPER_ONLY_JOB_FIELDS.map((field) => [field, '']));
 }

@@ -11,7 +11,6 @@
 # Optional secrets / variables:
 #   VPS_SSH_PORT        — default 22
 #   DOCKER_IMAGE        — default: omnimuh730/nextoffer
-#   SLACK_WEBHOOK_URL   — optional Slack incoming-webhook URL for monitoring alerts
 #   GRAFANA_ADMIN_PASSWORD — optional; otherwise generated and persisted on the VPS
 #   PUBLIC_ORIGIN       — public web origin baked into extension zips
 #                         (e.g. https://sid.example.com or http://IP:9030).
@@ -27,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       bootstrap_firebase_runtime:
-        description: Create and install the least-privilege VPS Firebase credential
+        description: Install Firebase runtime and read-only monitoring credentials
         type: boolean
         required: false
         default: false
@@ -54,6 +53,46 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install validation dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix Athens --ignore-scripts
+
+      - name: Enforce Firestore-only architecture
+        run: npm run verify:firestore-only
+
+      - name: Test data and monitoring layers
+        run: |
+          node --test packages/shared/src/document-id.test.mjs
+          npm run test:firestore-adapter -w Athens-server
+          npm run test:monitoring -w Athens-server
+          npm run test:firestore-status -w Athens-server
+
+      - name: Build application services
+        run: |
+          npm run build -w @avalon/shared
+          npm run build -w ai-bff
+          npm run build --prefix Athens
+
+      - name: Validate deployment and monitoring configuration
+        env:
+          GRAFANA_ADMIN_PASSWORD: ci-validation-only
+          GCP_MONITORING_CREDENTIALS_PATH: /tmp/monitoring-reader.json
+        run: |
+          bash -n docker/entrypoint.sh docker/deploy-remote.sh
+          docker compose -f docker/ranking-compose.yml config >/dev/null
+          docker compose -f monitoring/docker-compose.yml config >/dev/null
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v2.54.1 \
+            check config /etc/prometheus/prometheus.yml
 
       - name: Validate Google Cloud deployment identity
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
@@ -208,7 +247,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Create least-privilege VPS runtime credential
+      - name: Create least-privilege VPS and monitoring credentials
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
         shell: bash
         run: |
@@ -216,6 +255,8 @@ jobs:
           project=drwretail-bm
           runtime=athens-vps-runtime@drwretail-bm.iam.gserviceaccount.com
           runtime_name="${runtime%@*}"
+          monitoring=athens-monitoring-reader@drwretail-bm.iam.gserviceaccount.com
+          monitoring_name="${monitoring%@*}"
           bucket=drwretail-bm.firebasestorage.app
 
           if ! gcloud iam service-accounts describe "${runtime}" --project "${project}" >/dev/null 2>&1; then
@@ -223,6 +264,16 @@ jobs:
               --project "${project}" \
               --display-name "Athens VPS data runtime"
           fi
+          if ! gcloud iam service-accounts describe "${monitoring}" --project "${project}" >/dev/null 2>&1; then
+            gcloud iam service-accounts create "${monitoring_name}" \
+              --project "${project}" \
+              --display-name "Athens monitoring metrics reader"
+          fi
+          gcloud projects add-iam-policy-binding "${project}" \
+            --member "serviceAccount:${monitoring}" \
+            --role roles/monitoring.viewer \
+            --condition=None \
+            --quiet >/dev/null
           for role in roles/datastore.user roles/serviceusage.serviceUsageConsumer; do
             gcloud projects add-iam-policy-binding "${project}" \
               --member "serviceAccount:${runtime}" \
@@ -250,8 +301,13 @@ jobs:
             --iam-account "${runtime}" \
             --project "${project}"
           chmod 600 runtime-transfer/firebase-service-account.json
+          gcloud iam service-accounts keys create \
+            runtime-transfer/monitoring-reader.json \
+            --iam-account "${monitoring}" \
+            --project "${project}"
+          chmod 600 runtime-transfer/monitoring-reader.json
 
-      - name: Transfer VPS runtime credential
+      - name: Transfer VPS and monitoring credentials
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
         shell: bash
         env:
@@ -270,8 +326,8 @@ jobs:
           ssh "${ssh_opts[@]}" "${VPS_USER}@${VPS_HOST}" \
             'install -d -m 700 /tmp/athens-vps-runtime'
           scp -i "${key_file}" -P "${VPS_SSH_PORT}" -o StrictHostKeyChecking=accept-new \
-            runtime-transfer/firebase-service-account.json \
-            "${VPS_USER}@${VPS_HOST}:/tmp/athens-vps-runtime/firebase-service-account.json"
+            runtime-transfer/firebase-service-account.json runtime-transfer/monitoring-reader.json \
+            "${VPS_USER}@${VPS_HOST}:/tmp/athens-vps-runtime/"
 
       - name: Install Firestore VPS configuration
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
@@ -289,11 +345,15 @@ jobs:
             deploy_env=/opt/nextoffer/deploy.env
             secret_dir=/opt/nextoffer/secrets
             incoming=/tmp/athens-vps-runtime/firebase-service-account.json
+            monitoring_incoming=/tmp/athens-vps-runtime/monitoring-reader.json
             installed=${secret_dir}/firebase-service-account.json
             test -f "${deploy_env}"
             test -f "${incoming}"
+            test -f "${monitoring_incoming}"
             as_root install -d -m 700 "${secret_dir}"
             as_root install -m 600 "${incoming}" "${installed}"
+            as_root install -d -m 711 /opt/athens-monitoring/secrets
+            as_root install -o 65534 -g 65534 -m 400 "${monitoring_incoming}" /opt/athens-monitoring/secrets/monitoring-reader.json
             rm -rf /tmp/athens-vps-runtime
             as_root cp "${deploy_env}" "${deploy_env}.pre-firestore"
 
@@ -311,8 +371,6 @@ jobs:
               rm -f "${tmp}"
             }
 
-            set_env DATABASE_BACKEND firestore
-            set_env EMBEDDED_MONGO false
             set_env FIREBASE_PROJECT_ID drwretail-bm
             set_env FIREBASE_STORAGE_BUCKET drwretail-bm.firebasestorage.app
             set_env GOOGLE_APPLICATION_CREDENTIALS /run/secrets/firebase-service-account.json
@@ -353,14 +411,13 @@ jobs:
         id: deploy
         uses: appleboy/ssh-action@v1.2.0
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
-          envs: SLACK_WEBHOOK_URL,GRAFANA_ADMIN_PASSWORD
+          envs: GRAFANA_ADMIN_PASSWORD
           command_timeout: 45m
           script: |
             set -eu
@@ -437,6 +494,7 @@ jobs:
               /opt/athens-monitoring/data/prometheus \
               /opt/athens-monitoring/data/grafana \
               /opt/athens-monitoring/data/alertmanager
+            as_root install -d -m 711 /opt/athens-monitoring/secrets
             echo "Monitoring directories are ready"
             if [ "$(id -u)" -eq 0 ]; then
               chown 65534:65534 /opt/athens-monitoring/data/prometheus /opt/athens-monitoring/data/alertmanager
@@ -449,50 +507,43 @@ jobs:
               exit 1
             fi
             echo "Monitoring data ownership is ready"
+            monitoring_credential=/opt/athens-monitoring/secrets/monitoring-reader.json
+            if [ ! -f "${monitoring_credential}" ]; then
+              echo "Missing read-only Google monitoring credential. Re-run the workflow with bootstrap_firebase_runtime enabled." >&2
+              exit 1
+            fi
+            if ! command -v python3 >/dev/null 2>&1; then
+              if command -v apt-get >/dev/null 2>&1; then
+                as_root apt-get update
+                as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y python3
+              elif command -v dnf >/dev/null 2>&1; then
+                as_root dnf install -y python3
+              else
+                echo "Python 3 is required to install the Grafana monitoring credential." >&2
+                exit 1
+              fi
+            fi
             grafana_password="${GRAFANA_ADMIN_PASSWORD:-}"
             if [ -z "$grafana_password" ] && [ -f /opt/athens-monitoring/.env ]; then
               grafana_password="$(awk -F= '$1 == "GRAFANA_ADMIN_PASSWORD" {print substr($0, index($0, "=") + 1)}' /opt/athens-monitoring/.env)"
             fi
             grafana_password="${grafana_password:-$(openssl rand -hex 24)}"
             alertmanager_config_file=alertmanager.yml
-            if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-              alertmanager_config_file=alertmanager.slack.yml
-            fi
+            gcp_project_id="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_id"])' "${monitoring_credential}")"
+            gcp_client_email="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["client_email"])' "${monitoring_credential}")"
+            gcp_private_key="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["private_key"], end="")' "${monitoring_credential}")"
             umask 077
             monitoring_env_tmp="$(mktemp)"
-            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\nALERTMANAGER_CONFIG_FILE=%s\n' \
-              "$grafana_password" "$alertmanager_config_file" > "$monitoring_env_tmp"
+            printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\nALERTMANAGER_CONFIG_FILE=%s\nGCP_PROJECT_ID=%s\nGCP_MONITORING_CREDENTIALS_PATH=%s\nGCP_MONITORING_CLIENT_EMAIL=%s\n' \
+              "$grafana_password" "$alertmanager_config_file" "$gcp_project_id" "$monitoring_credential" "$gcp_client_email" > "$monitoring_env_tmp"
+            printf "GCP_MONITORING_PRIVATE_KEY='" >> "$monitoring_env_tmp"
+            printf '%s' "$gcp_private_key" >> "$monitoring_env_tmp"
+            printf "'\n" >> "$monitoring_env_tmp"
             as_root install -o "$(id -u)" -g "$(id -g)" -m 600 \
               "$monitoring_env_tmp" /opt/athens-monitoring/.env
             rm -f "$monitoring_env_tmp"
             echo "Monitoring environment file is installed"
-            if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-              alertmanager_tmp="$(mktemp)"
-              printf '%s\n' \
-                'global:' \
-                '  resolve_timeout: 5m' \
-                '' \
-                'route:' \
-                '  receiver: slack' \
-                '  group_by: [alertname, component]' \
-                '  group_wait: 30s' \
-                '  group_interval: 5m' \
-                '  repeat_interval: 4h' \
-                '' \
-                'receivers:' \
-                '  - name: slack' \
-                '    slack_configs:' > "$alertmanager_tmp"
-              printf "      - api_url: '%s'\n" "$SLACK_WEBHOOK_URL" >> "$alertmanager_tmp"
-              printf '%s\n' \
-                '        channel: "#athens-alerts"' \
-                '        send_resolved: true' >> "$alertmanager_tmp"
-              as_root install -m 600 "$alertmanager_tmp" \
-                /opt/athens-monitoring/alertmanager/alertmanager.slack.yml
-              rm -f "$alertmanager_tmp"
-            else
-              echo "SLACK_WEBHOOK_URL is not configured; monitoring alerts will not be delivered to Slack."
-            fi
-            echo "Alertmanager configuration is installed"
+            echo "Alertmanager is configured for internal visibility only; no outbound receiver is installed."
             if docker compose version >/dev/null 2>&1; then
               compose_cmd="docker compose"
             elif command -v docker-compose >/dev/null 2>&1; then
@@ -506,6 +557,10 @@ jobs:
             export GRAFANA_ADMIN_PASSWORD="$grafana_password"
             export GRAFANA_ROOT_URL=http://127.0.0.1:3000
             export ALERTMANAGER_CONFIG_FILE="$alertmanager_config_file"
+            export GCP_PROJECT_ID="$gcp_project_id"
+            export GCP_MONITORING_CREDENTIALS_PATH="$monitoring_credential"
+            export GCP_MONITORING_CLIENT_EMAIL="$gcp_client_email"
+            export GCP_MONITORING_PRIVATE_KEY="$gcp_private_key"
             echo "Using ${compose_cmd} for Athens monitoring"
             echo "Validating monitoring Compose configuration"
             ${compose_cmd} --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml config >/dev/null
@@ -518,17 +573,13 @@ jobs:
             echo "Starting Athens application deploy"
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 
-            backend="$(docker inspect nextoffer --format '{{range .Config.Env}}{{println .}}{{end}}' | awk -F= '$1 == "DATABASE_BACKEND" {print $2}')"
-            if [ "${backend}" != firestore ]; then
-              echo "Expected Firestore backend after deployment, got: ${backend:-unset}" >&2
-              exit 1
-            fi
             docker logs nextoffer 2>&1 | tail -200 | grep -q 'Connected to native Firestore database'
-            if docker logs nextoffer 2>&1 | tail -200 | grep -q 'Connected to MongoDB'; then
-              echo 'MongoDB connection detected after Firestore cutover.' >&2
-              exit 1
-            fi
-            echo "Verified Firestore backend with no MongoDB connection."
+            docker exec nextoffer node --input-type=module -e '
+              const response = await fetch("http://127.0.0.1:8979/readyz", { signal: AbortSignal.timeout(5000) });
+              const payload = await response.json();
+              if (!response.ok || !payload.databaseReady) process.exit(1);
+            '
+            echo "Verified Firestore readiness."
 
       - name: Summary
         shell: bash

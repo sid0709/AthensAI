@@ -1,7 +1,7 @@
 /**
  * Persist recommend-resume + stack-vs-upload compare onto vendor_tasks.
  */
-import { getVendorTasksCollection } from "../db/mongo.js";
+import { getVendorTasksCollection } from "../db/dataStore.js";
 import { matchUploadToRecommended } from "../lib/resumeCatalogCompress.js";
 import { appendBidReviewEvent } from "./bidReviewEventsService.js";
 

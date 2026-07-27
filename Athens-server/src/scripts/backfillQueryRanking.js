@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import {
-  initMongo,
-  closeMongo,
-  getMongoDb,
+  initDataStore,
+  closeDataStore,
+  getDataStore,
   jobsCollection,
   externalScrapedJobsCollection,
   skillDictionaryCollection,
-} from '../db/mongo.js';
+} from '../db/dataStore.js';
 import { initRedis, closeRedis, isRedisReady } from '../db/redis.js';
 import {
   activateJobRankingCollection,
@@ -49,7 +49,7 @@ async function backfillDictionaryIds() {
     if (!Number(doc.skillId)) assignments.push({ id: String(doc._id), skillId });
   }
 
-  const nativeFirestore = getMongoDb()?.firestore;
+  const nativeFirestore = getDataStore()?.firestore;
   if (assignments.length && nativeFirestore) {
     const writer = nativeFirestore.bulkWriter();
     for (const assignment of assignments) {
@@ -82,7 +82,10 @@ async function backfillCollection(collection, catalog) {
     projection: {
       title: 1, jobTitle: 1, company: 1, companyName: 1, location: 1, details: 1,
       source: 1, postedAt: 1, createdAt: 1, _createdAt: 1, version: 1, extensionV2: 1,
+			companyId: 1, companyNameNormalized: 1, companyDomain: 1,
+			companyIdentitySource: 1, companyIdentityVersion: 1,
       aiSkills: 1, skills: 1, titleScanned: 1, active: 1, companyIcon: 1, companyLink: 1,
+      scoreOverall: 1, scoreSkill: 1, matchScore: 1, skillsCovered: 1, skillsRequired: 1,
       applyLink: 1, jobLink: 1, sender: 1, postedAgo: 1, tags: 1, applicants: 1,
       skillAnalysis: 1, aiSkillStatus: 1, aiSkillExtractedAt: 1,
     },
@@ -119,7 +122,7 @@ async function backfillCollection(collection, catalog) {
 }
 
 async function main() {
-  await initMongo();
+  await initDataStore();
   await initRedis({ force: true });
   if (!isRedisReady()) throw new Error('Redis is required for the ranking backfill');
   const legacyReady = await initQdrantCollections();
@@ -136,13 +139,20 @@ async function main() {
   const market = await backfillCollection(jobsCollection, 'market');
   const external = await backfillCollection(externalScrapedJobsCollection, 'external');
   const indexed = await countJobRankingPoints(undefined, { collectionName: JOB_RANKINGS_COLLECTION });
+  const missingCompanyIds = await countJobRankingPoints(
+    { must: [{ is_empty: { key: 'companyId' } }] },
+    { collectionName: JOB_RANKINGS_COLLECTION },
+  );
   const expected = market.indexed + external.indexed;
   if (indexed !== expected) {
     throw new Error(`Qdrant document count mismatch: expected ${expected}, found ${indexed}`);
   }
+  if (missingCompanyIds !== 0) {
+    throw new Error(`Qdrant companyId validation failed: ${missingCompanyIds} points are missing companyId`);
+  }
   await activateJobRankingCollection(JOB_RANKINGS_COLLECTION);
   await markPublicDateTailReady();
-  console.log('[ranking-backfill] complete', { dictionary, market, external, indexed });
+  console.log('[ranking-backfill] complete', { dictionary, market, external, indexed, missingCompanyIds });
 }
 
 main()
@@ -152,5 +162,5 @@ main()
   })
   .finally(async () => {
     await closeRedis();
-    await closeMongo();
+    await closeDataStore();
   });

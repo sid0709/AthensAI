@@ -7,7 +7,7 @@ Backend for **Athens** (NextOffer job search, resume analysis, skill graph, and 
 - **Job market** — ingest, list, filter, and sort jobs (`POST /api/jobs/list`)
 - **Multi-vector job recommendations** — per-applier ranking from analyzed resumes (not a single global profile score)
 - **Resume upload & analysis** — LLM skill extraction, per-resume knowledge graphs
-- **Skill knowledge graph** — Neo4j world graph + MongoDB user graphs; graph boost during ranking
+- **Skill knowledge graph** — Neo4j world graph + Firestore user graphs; graph boost during ranking
 - **Real-time** — Socket.io for extension / frontend events
 - **Mail, accounts, rules, FoxHire integration** — see routes under `src/routes/`
 
@@ -15,7 +15,7 @@ Backend for **Athens** (NextOffer job search, resume analysis, skill graph, and 
 
 | Service | Purpose |
 |---------|---------|
-| **MongoDB** | Jobs, resumes, accounts, user knowledge graphs |
+| **Firestore** | Jobs, resumes, accounts, user knowledge graphs |
 | **Neo4j** | Shared skill ontology (enrichment, graph re-rank) |
 | **Neo4j GDS** | Weighted path scoring (Dijkstra) + link prediction for missing edges |
 | **Qdrant** | Vector index for job + resume embeddings |
@@ -67,11 +67,11 @@ When Job Search uses **Best match** (`sort=recommended`):
 
 1. Load analyzed resume + profile vectors for the applier (cached ~3 min)
 2. **Qdrant ring pagination** — fetch only the current page via vector similarity boundaries (`scoreAtRank`), not a full-catalog re-rank
-3. Apply Mongo filters on the page’s job IDs (status tab, title, company, etc.)
+3. Apply Firestore-compatible filters on the page’s job IDs (status tab, title, company, etc.)
 4. Optional Neo4j graph boost on **the vector candidate pool** using GDS weighted paths (falls back to Cypher if GDS plugin missing)
 5. Return jobs with `matchScore`, `scoreSkill`, `bestResumeTechStack`, etc.
 
-Job vectors store `source` and `postedAt` in Qdrant payload for pre-filtering. Status-tab filters use a small Mongo `$in` on hydrated page IDs.
+Job vectors store `source` and `postedAt` in Qdrant payload for pre-filtering. Status-tab filters use a bounded Firestore-compatible `$in` on hydrated page IDs.
 
 If Qdrant, Ollama, or analyzed resumes are missing, the API falls back to newest-first and sets `recommendationFallback: true`.
 
@@ -82,7 +82,8 @@ See [`idea.md`](../idea.md) in the repo root for the full design.
 ## Prerequisites
 
 - **Node.js** 18+ and npm
-- **MongoDB** running locally or remote
+- **Firebase** project with Firestore, Cloud Storage, and Admin SDK credentials
+- **Redis** for cache, queues, and clustered Socket.IO
 - **Neo4j** (skill graph enrichment) — install **Graph Data Science** plugin for best path scoring
 - **Qdrant** (vector search) — Docker or binary
 - **Ollama** (embeddings) — [native macOS app](https://ollama.com) or Docker
@@ -97,7 +98,8 @@ See [`idea.md`](../idea.md) in the repo root for the full design.
 cd Athens-server
 npm install
 cp .env.example .env
-# Edit .env — at minimum MONGO_URL, NEO4J_*, QDRANT_URL, Ollama settings
+# Edit .env — at minimum FIREBASE_*, GOOGLE_APPLICATION_CREDENTIALS,
+# NEO4J_*, REDIS_URL, QDRANT_URL, and Ollama settings
 ```
 
 ### 2. Ollama (embeddings)
@@ -188,7 +190,7 @@ New jobs and newly analyzed resumes are embedded automatically in the background
 npm start
 ```
 
-On startup you should see logs for MongoDB, Neo4j, Qdrant collections, and Ollama model readiness.
+On startup you should see logs for Firestore, Redis, Neo4j, Qdrant collections, and Ollama model readiness.
 
 ---
 
@@ -199,7 +201,8 @@ Copy from [`.env.example`](.env.example). Key groups:
 | Variable | Description |
 |----------|-------------|
 | `PORT`, `HOST` | HTTP server (default `8979`) |
-| `MONGO_URL`, `MONGO_DB` | Primary database |
+| `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`, `GOOGLE_APPLICATION_CREDENTIALS` | Firestore and Cloud Storage runtime |
+| `REDIS_URL` | Cache, queues, and cluster coordination |
 | `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` | Skill graph |
 | `QDRANT_URL` | Vector database |
 | `EMBEDDING_PROVIDER` | `ollama` (default) or `openai` |
@@ -239,7 +242,6 @@ Switching embedding provider or dimensions requires **re-backfilling** all vecto
 | Script | Description |
 |--------|-------------|
 | `npm start` | Dev server (nodemon) |
-| `npm run migrate` | Mongo migrations |
 | `npm run qdrant:start` | Start Qdrant via Docker on `:6333` |
 | `npm run qdrant:stop` | Stop Docker Qdrant |
 | `npm run qdrant:start-native` | Legacy embedded binary (`.local/qdrant/`) |

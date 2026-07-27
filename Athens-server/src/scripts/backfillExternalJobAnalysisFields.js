@@ -10,20 +10,20 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import {
-	initMongo,
-	closeMongo,
+	initDataStore,
+	closeDataStore,
 	jobsCollection,
 	externalScrapedJobsCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
 
 const dryRun = process.argv.includes("--dry-run");
 
 async function main() {
-	await initMongo();
+	await initDataStore();
 
 	if (!externalScrapedJobsCollection || !jobsCollection) {
-		throw new Error("MongoDB not ready");
+		throw new Error("Firestore not ready");
 	}
 
 	const missing = await externalScrapedJobsCollection
@@ -77,7 +77,7 @@ async function main() {
 			(dryRun ? " (dry run, no writes)" : ""),
 	);
 
-	await closeMongo();
+	await closeDataStore();
 }
 
 main().catch((err) => {

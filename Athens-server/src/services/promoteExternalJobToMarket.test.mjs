@@ -3,7 +3,9 @@ import test from "node:test";
 import {
 	externalSourceFieldsFromLink,
 	mapExternalDocToMarketJob,
+	promoteExternalJobToMarket,
 } from "./promoteExternalJobToMarket.js";
+import { buildJobIdentity } from "./jobIdentityDedupe.js";
 
 test("externalSourceFieldsFromLink derives Greenhouse from host", () => {
 	const fields = externalSourceFieldsFromLink(
@@ -31,6 +33,10 @@ test("mapExternalDocToMarketJob maps flat external schema", () => {
 	assert.equal(market.title, "Engineer");
 	assert.equal(market.company.name, "Acme");
 	assert.equal(market.company.logo, "https://example.com/logo.png");
+	assert.match(market.companyId, /^cmp_/);
+	assert.equal(market.companyNameNormalized, "acme");
+	assert.equal(market.companyIdentitySource, "name");
+	assert.equal(market.companyIdentityVersion, 1);
 	assert.equal(market.applyLink, "https://boards.greenhouse.io/acme/jobs/99");
 	assert.equal(market.source, "Greenhouse");
 	assert.equal(market.aiSkillStatus, "pending");
@@ -66,4 +72,45 @@ test("mapExternalDocToMarketJob copies enrichment when extracted", () => {
 	assert.deepEqual(market.skills, ["Go"]);
 	assert.equal(market.details.remote, "Remote");
 	assert.deepEqual(market.company.tags, ["Fintech"]);
+});
+
+test("direct promotion applies the same recent company/title duplicate guard", async () => {
+	const identity = buildJobIdentity("Acme", "Engineer");
+	let marketInserts = 0;
+	let externalUpdates = 0;
+	const result = await promoteExternalJobToMarket({
+		_id: "external-1",
+		companyName: " ACME ",
+		jobTitle: "engineer",
+		jobDescription: "A different description",
+		jobLink: "https://example.com/a-different-url",
+		createdAt: new Date(),
+	}, {
+		marketCollection: {
+			async findOne() {
+				return null;
+			},
+			async insertOne() {
+				marketInserts += 1;
+				return { insertedId: "unexpected" };
+			},
+		},
+		externalCollection: {
+			async updateOne() {
+				externalUpdates += 1;
+				return { modifiedCount: 1 };
+			},
+		},
+		identityRegistry: {
+			async findOne(filter) {
+				assert.equal(filter._id, identity.key);
+				return { _id: identity.key, acceptedAt: new Date().toISOString() };
+			},
+		},
+	});
+
+	assert.equal(result.promoted, false);
+	assert.equal(result.duplicate, true);
+	assert.equal(marketInserts, 0);
+	assert.equal(externalUpdates, 2);
 });

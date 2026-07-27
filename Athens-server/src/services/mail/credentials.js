@@ -1,4 +1,4 @@
-import { accountInfoCollection } from '../../db/mongo.js';
+import { accountInfoCollection } from '../../db/dataStore.js';
 import { decryptProfileApiKeys } from '../autoBidProfileSecrets.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 

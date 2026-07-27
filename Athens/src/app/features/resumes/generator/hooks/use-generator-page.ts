@@ -3,6 +3,7 @@ import type { DropdownOption } from "../adapters/ui";
 import { useNotify } from "../adapters/notify";
 import { useApi } from "@/api/useApi";
 import { API_BASE } from "@/lib/api-base";
+import { retryTransient } from "@/lib/transient-retry";
 import { useApplier } from "@/context/applier-context";
 import { buildResumeModel } from "../build-resume-model";
 import { templateById } from "../constants/templates";
@@ -40,7 +41,7 @@ import type {
   UploadedTemplateManifest,
   UsageBreakdown,
 } from "../types";
-import { isUploadedTemplateId, PURPOSES, SECTION_LABEL, uploadedTemplateMongoId } from "../types";
+import { isUploadedTemplateId, PURPOSES, SECTION_LABEL, uploadedTemplateDocumentId } from "../types";
 import { applyHistoryRun } from "./load-history-run";
 import type { FullRun } from "../history/history-types";
 
@@ -309,7 +310,7 @@ export function useGeneratorPage() {
       setUploadedTemplates(templates);
       setConfig((c) => {
         if (!isUploadedTemplateId(c.templateId)) return c;
-        const id = uploadedTemplateMongoId(c.templateId);
+        const id = uploadedTemplateDocumentId(c.templateId);
         const match = templates.find((t) => t.id === id);
         return match ? { ...c, uploadedTemplate: match } : c;
       });
@@ -379,7 +380,7 @@ export function useGeneratorPage() {
     }
   };
 
-  // Restore saved config: localStorage first, then MongoDB (authoritative).
+  // Restore saved config: localStorage first, then Firestore (authoritative).
   useEffect(() => {
     externalLoadRef.current = false;
     setConfigHydratedFor(null);
@@ -408,16 +409,25 @@ export function useGeneratorPage() {
       };
     }
 
-    void get(`/personal/resume-generator/config?applierName=${encodeURIComponent(applierName)}`)
+    void retryTransient(
+      () => get(
+        `/personal/resume-generator/config?applierName=${encodeURIComponent(applierName)}`,
+      ) as Promise<{ success?: boolean; config?: Partial<GeneratorConfig> | null }>,
+    )
       .then((raw) => {
         const dbConfig = (raw as { success?: boolean; config?: Partial<GeneratorConfig> | null })?.config;
+        if (raw?.success === false) throw new Error("Could not load the saved Resume Generator configuration.");
         if (cancelled || externalLoadRef.current || !dbConfig || typeof dbConfig !== "object") return;
         const restored = mergeStoredConfig(dbConfig);
         configSaveRef.current.lastSavedKey = `${applierName}\u0000${JSON.stringify(restored)}`;
         setConfig(restored);
       })
-      .catch(() => undefined)
-      .finally(finishHydration);
+      .then(finishHydration)
+      .catch((error) => {
+        // A failed read must never make the temporary defaults eligible for an
+        // automatic remote save; that would overwrite a migrated config.
+        console.error("resume generator config load failed", error);
+      });
 
     return () => {
       cancelled = true;

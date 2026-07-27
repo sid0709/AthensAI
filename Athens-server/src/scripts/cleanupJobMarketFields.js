@@ -7,7 +7,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { initMongo, closeMongo, jobsCollection } from '../db/mongo.js';
+import { initDataStore, closeDataStore, jobsCollection } from '../db/dataStore.js';
 import {
 	JOB_MARKET_MODEL_VERSION,
 	SCRAPER_ONLY_JOB_FIELDS,
@@ -17,8 +17,8 @@ import {
 const BATCH = 500;
 
 async function main() {
-	await initMongo();
-	if (!jobsCollection) throw new Error('MongoDB not ready');
+	await initDataStore();
+	if (!jobsCollection) throw new Error('Firestore not ready');
 
 	const unset = scraperOnlyJobFieldsUnset();
 	const hasScraperField = SCRAPER_ONLY_JOB_FIELDS.map((field) => ({ [field]: { $exists: true } }));
@@ -59,7 +59,7 @@ async function main() {
 	await flush();
 
 	console.log('[cleanup-job-market] done:', { updated, modelVersion: JOB_MARKET_MODEL_VERSION });
-	await closeMongo?.();
+	await closeDataStore?.();
 	process.exit(0);
 }
 

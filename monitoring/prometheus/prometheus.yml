@@ -28,12 +28,27 @@ scrape_configs:
   - job_name: athens-server
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8979"]
+      - targets: ["nextoffer:9101"]
 
   - job_name: ai-bff
     metrics_path: /metrics
     static_configs:
       - targets: ["host.docker.internal:3920"]
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: qdrant
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["qdrant:6333"]
+
+  - job_name: google-cloud
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    static_configs:
+      - targets: ["stackdriver-exporter:9255"]
 
   - job_name: public-http
     metrics_path: /probe

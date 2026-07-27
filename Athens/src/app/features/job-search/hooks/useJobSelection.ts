@@ -71,6 +71,15 @@ export function useJobSelection(results: Job[]) {
     anchorIndexRef.current = null;
   }, []);
 
+  const deselectJob = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
   const selectedJobs = useMemo(
     () => results.filter((job) => selectedIds.has(job.id)),
     [results, selectedIds],
@@ -80,6 +89,7 @@ export function useJobSelection(results: Job[]) {
     selectedIds,
     selectedJobs,
     selectJob,
+    deselectJob,
     selectAllOnPage,
     clearSelection,
   };

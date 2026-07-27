@@ -1,4 +1,4 @@
-import { userSkillsCollection } from '../../db/mongo.js';
+import { userSkillsCollection } from '../../db/dataStore.js';
 import { toCanonical } from '@nextoffer/shared/skill-normalize';
 import {
   USER_SKILL_CATEGORIES,

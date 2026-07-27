@@ -22,7 +22,7 @@ export interface ApplyLogPayload {
 }
 
 /**
- * Persist a batch of apply-run events to the backend (local JSONL file + MongoDB).
+ * Persist a batch of apply-run events to the backend (local JSONL file + Firestore).
  * Fire-and-forget: logging must never break the apply flow, so this never throws.
  */
 export async function postApplyLog(payload: ApplyLogPayload): Promise<void> {

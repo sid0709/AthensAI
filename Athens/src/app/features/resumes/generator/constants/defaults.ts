@@ -45,7 +45,7 @@ export function resolveModelForProvider(provider: ProviderId, savedModel: string
   return model;
 }
 
-/** Merge a partial saved config (localStorage or MongoDB) onto defaults. */
+/** Merge a partial saved config (localStorage or Firestore) onto defaults. */
 export function mergeStoredConfig(parsed: Partial<GeneratorConfig> | null | undefined): GeneratorConfig {
   const base = defaultConfig();
   if (!parsed || typeof parsed !== "object") return base;

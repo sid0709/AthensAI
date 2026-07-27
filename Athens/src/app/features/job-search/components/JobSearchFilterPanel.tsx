@@ -43,6 +43,7 @@ const STATUS_TABS: {
 
 const SORT_OPTIONS = [
   { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" },
   { value: "matchScore", label: "Best match" },
   { value: "title", label: "Title A–Z" },
 ];

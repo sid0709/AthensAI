@@ -1,4 +1,4 @@
-import { accountInfoCollection } from "../db/mongo.js";
+import { accountInfoCollection } from "../db/dataStore.js";
 
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

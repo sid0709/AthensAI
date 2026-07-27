@@ -1,4 +1,4 @@
-import { jobsCollection, jobMatchScoresCollection, externalScrapedJobsCollection } from '../../db/mongo.js';
+import { jobsCollection, jobMatchScoresCollection, externalScrapedJobsCollection } from '../../db/dataStore.js';
 import { JobSourceTitles } from '../../config/jobSources.js';
 import {
   getQueryTimeRankingMode,
@@ -21,7 +21,7 @@ import { ndcgAtK, recallAtK } from './rankingEvaluation.js';
 import { incrementCounter, setGauge } from '../monitoring/metrics.js';
 
 function isFirestoreRuntime() {
-  return String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() === 'firestore';
+  return true;
 }
 
 const firestoreRecommendationMeta = new Map();
@@ -160,15 +160,15 @@ function refreshFirestoreRecommendationMeta(name) {
   return promise;
 }
 
-async function listFirestoreWarmingPage({ mongoQuery, skip, limit }) {
+async function listFirestoreWarmingPage({ dataQuery, skip, limit }) {
   const [docs, total] = await Promise.all([
     jobsCollection
-      .find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+      .find(dataQuery || {}, { projection: JOB_LIST_PROJECTION })
       .sort({ postedAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray(),
-    jobsCollection.countDocuments(mongoQuery || {}),
+    jobsCollection.countDocuments(dataQuery || {}),
   ]);
 
   return {
@@ -188,7 +188,7 @@ async function listFirestoreWarmingPage({ mongoQuery, skip, limit }) {
 
 async function listFromMaterializedScoresFirestore({
   applierName,
-  mongoQuery,
+  dataQuery,
   scoreFilters,
   listBody,
   skip,
@@ -208,13 +208,13 @@ async function listFromMaterializedScoresFirestore({
       .skip(skip)
       .limit(overscan)
       .toArray(),
-    jobsCollection.countDocuments(mongoQuery || {}),
+    jobsCollection.countDocuments(dataQuery || {}),
   ]);
 
   const jobIds = scoreRows.map((row) => row.jobId).filter(Boolean);
   const jobs = jobIds.length
     ? await jobsCollection
-        .find({ $and: [mongoQuery || {}, { _id: { $in: jobIds } }] }, { projection: JOB_LIST_PROJECTION })
+        .find({ $and: [dataQuery || {}, { _id: { $in: jobIds } }] }, { projection: JOB_LIST_PROJECTION })
         .toArray()
     : [];
   const jobsById = new Map(jobs.map((job) => [String(job._id), job]));
@@ -225,7 +225,7 @@ async function listFromMaterializedScoresFirestore({
     .map((job) => composePageDoc(job, profileCtx));
 
   if (!scoreRange && pageDocs.length < limit) {
-    const fill = await listFirestoreWarmingPage({ mongoQuery, skip: 0, limit: limit * 2 });
+    const fill = await listFirestoreWarmingPage({ dataQuery, skip: 0, limit: limit * 2 });
     const used = new Set(pageDocs.map((job) => String(job._id)));
     pageDocs = [
       ...pageDocs,
@@ -335,7 +335,7 @@ export function composePageDoc(job, profileCtx) {
 
 async function listFromMaterializedScores({
   applierName,
-  mongoQuery,
+  dataQuery,
   scoreFilters,
   listBody,
   skip,
@@ -349,7 +349,7 @@ async function listFromMaterializedScores({
   const scoreMatch = { applierName, ...prefilters };
   if (scoreRange) scoreMatch.score = scoreRange;
 
-  const catalogTotal = await jobsCollection.countDocuments(mongoQuery || {});
+  const catalogTotal = await jobsCollection.countDocuments(dataQuery || {});
 
   const pageRows = await jobMatchScoresCollection
     .aggregate([
@@ -360,7 +360,7 @@ async function listFromMaterializedScores({
           from: 'job_market',
           localField: 'jobId',
           foreignField: '_id',
-          pipeline: [{ $match: mongoQuery || {} }, { $project: JOB_LIST_PROJECTION }],
+          pipeline: [{ $match: dataQuery || {} }, { $project: JOB_LIST_PROJECTION }],
           as: 'job',
         },
       },
@@ -388,7 +388,7 @@ async function listFromMaterializedScores({
               from: 'job_market',
               localField: 'jobId',
               foreignField: '_id',
-              pipeline: [{ $match: mongoQuery || {} }, { $project: { _id: 1 } }],
+              pipeline: [{ $match: dataQuery || {} }, { $project: { _id: 1 } }],
               as: 'job',
             },
           },
@@ -405,7 +405,7 @@ async function listFromMaterializedScores({
     const dateSkip = Math.max(0, skip - rankedCount);
     const fillDocs = await jobsCollection
       .aggregate([
-        { $match: mongoQuery || {} },
+        { $match: dataQuery || {} },
         { $sort: { postedAt: -1, _id: -1 } },
         {
           $lookup: {
@@ -472,7 +472,7 @@ export async function listRecommendedJobs(params) {
       includeExternal: false,
     },
     {
-      mongoQuery: rankingParams.mongoQuery,
+      dataQuery: rankingParams.dataQuery,
       skip: rankingParams.skip,
       limit: rankingParams.limit,
       includeExternal: false,
@@ -565,7 +565,7 @@ export async function listMergedRecommendedJobs({
       applierName: name,
       profileId,
       listBody,
-      mongoQuery: marketQuery,
+      dataQuery: marketQuery,
       scoreFilters,
       skip,
       limit,
@@ -573,7 +573,7 @@ export async function listMergedRecommendedJobs({
       externalQuery,
     },
     {
-      mongoQuery: marketQuery,
+      dataQuery: marketQuery,
       externalQuery,
       skip,
       limit,
@@ -585,7 +585,7 @@ export async function listMergedRecommendedJobs({
   if (!isMaterializedRecommendationEnabled() || !jobMatchScoresCollection || !name) {
     const marketResult = await matchJobsForApplier({
       applierName: name,
-      mongoQuery: marketQuery,
+      dataQuery: marketQuery,
       scoreFilters,
       listBody,
       skip,
@@ -608,7 +608,7 @@ export async function listMergedRecommendedJobs({
   if (!hasProfile) {
     return matchJobsForApplier({
       applierName: name,
-      mongoQuery: marketQuery,
+      dataQuery: marketQuery,
       scoreFilters,
       listBody,
       skip,

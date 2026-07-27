@@ -46,7 +46,7 @@ export function sanitizeResumeSegment(value) {
 	return s;
 }
 
-/** Short stable id from Mongo ObjectId / any job id string. */
+/** Short stable id from any job id string. */
 export function shortJobId(jobId) {
 	const raw = String(jobId ?? "").trim();
 	if (!raw) return "unknown";

@@ -1,8 +1,8 @@
 import { PassThrough } from "node:stream";
 import { finished } from "node:stream/promises";
 import { ZipArchive } from "archiver";
-import { ObjectId } from "mongodb";
-import { jobsCollection, getVendorTasksCollection } from "../db/mongo.js";
+import { DocumentId } from "@nextoffer/shared/document-id";
+import { jobsCollection, getVendorTasksCollection } from "../db/dataStore.js";
 import { buildCanonicalResumeStem } from "../lib/canonicalResumeName.js";
 import { listBidQueueJobs } from "./jobBidStatusService.js";
 import { resolveAgentJobDraftPdf } from "./agentResumeGenService.js";
@@ -28,7 +28,7 @@ async function resolveJobMeta(jobId, applierName) {
 		};
 	}
 	try {
-		const oid = new ObjectId(String(jobId));
+		const oid = new DocumentId(String(jobId));
 		const job = jobsCollection
 			? await jobsCollection.findOne(
 					{ _id: oid },
