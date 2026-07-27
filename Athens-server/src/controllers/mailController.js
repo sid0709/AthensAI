@@ -32,6 +32,7 @@ import {
 	loadLabelOrSearchPage,
 	getFolderCounts,
 	prefetchMessageBodies,
+	prefetchMessageSnippets,
 	folderToMailbox,
 	invalidateMailListCaches,
 } from '../services/mail/mailSyncService.js';
@@ -187,10 +188,18 @@ export async function getMailThreads(req, res) {
 			return res.status(500).json({ success: false, error: result.error });
 		}
 
-		if (!cacheOnly) {
+		// The AI dialog intentionally reads its candidate catalog from cache for a
+		// fast open, but should still warm lightweight snippets for the visible page.
+		if (!cacheOnly || unlabeled) {
 			const uids = result.threads.map((t) => Number(t.uid)).filter(Boolean);
 			const mailbox = folderToMailbox(folder);
-			void prefetchMessageBodies(applierName, uids, mailbox);
+			if (unlabeled) {
+				void prefetchMessageSnippets(applierName, uids, mailbox).catch((error) => {
+					console.warn('[mail] background AI snippet prefetch failed:', error?.message || error);
+				});
+			} else {
+				void prefetchMessageBodies(applierName, uids, mailbox);
+			}
 		}
 
 		return res.json({
@@ -746,61 +755,68 @@ export async function putMailLabelDefinitions(req, res) {
 	}
 }
 
+async function prepareMailAiLabelRun(req, res) {
+	if (!mailMessagesCollection) {
+		res.status(503).json({ success: false, error: 'Database not ready' });
+		return null;
+	}
+	const applierName = await requireBetaApplier(req, res);
+	if (!applierName) return null;
+
+	const creds = await resolveMailCredentials(applierName);
+	if (!creds.ok) {
+		res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
+		return null;
+	}
+	const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+	if (!rawMessages.length) {
+		res.status(400).json({ success: false, error: 'messages array required' });
+		return null;
+	}
+	if (rawMessages.length > 50) {
+		res.status(400).json({ success: false, error: 'Maximum 50 messages per batch' });
+		return null;
+	}
+
+	const acc = await findAccountByApplierName(applierName);
+	const profile = await decryptProfileApiKeys(acc?.autoBidProfile || {});
+	const storedDefinitions = await getUserLabelDefinitions(
+		applierName,
+		acc?.autoBidProfile?.mailLabelDefinitions,
+	);
+	const labelDefinitions = normalizeLabelDefinitions(req.body?.labelDefinitions || storedDefinitions);
+	const labelResult = await loadCachedGmailLabels(applierName, creds);
+	const allowedLabels = (labelResult.labels || []).map((label) => label.path || label.name).filter(Boolean);
+	if (!allowedLabels.length) {
+		res.status(400).json({ success: false, error: 'No custom Gmail labels found. Create labels first.' });
+		return null;
+	}
+	const messages = rawMessages
+		.map((message) => ({
+			uid: Number(message.uid),
+			mailbox: typeof message.mailbox === 'string' ? message.mailbox : undefined,
+		}))
+		.filter((message) => Number.isFinite(message.uid));
+	if (!messages.length) {
+		res.status(400).json({ success: false, error: 'No valid message UIDs provided' });
+		return null;
+	}
+	return {
+		applierName,
+		profile,
+		email: creds.email,
+		password: creds.password,
+		messages,
+		allowedLabels,
+		labelDefinitions,
+	};
+}
+
 export async function postMailAiLabel(req, res) {
 	try {
-		if (!mailMessagesCollection) {
-			return res.status(503).json({ success: false, error: 'Database not ready' });
-		}
-
-		const applierName = await requireBetaApplier(req, res);
-		if (!applierName) return;
-
-		const creds = await resolveMailCredentials(applierName);
-		if (!creds.ok) {
-			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
-		}
-
-		const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-		if (!rawMessages.length) {
-			return res.status(400).json({ success: false, error: 'messages array required' });
-		}
-		if (rawMessages.length > 50) {
-			return res.status(400).json({ success: false, error: 'Maximum 50 messages per batch' });
-		}
-
-		const acc = await findAccountByApplierName(applierName);
-		const profile = await decryptProfileApiKeys(acc?.autoBidProfile || {});
-		const storedDefinitions = await getUserLabelDefinitions(
-			applierName,
-			acc?.autoBidProfile?.mailLabelDefinitions,
-		);
-		const labelDefinitions = normalizeLabelDefinitions(
-			req.body?.labelDefinitions || storedDefinitions,
-		);
-
-		const labelResult = await loadCachedGmailLabels(applierName, creds);
-		const gmailLabels = labelResult.labels || [];
-		const allowedLabels = gmailLabels.map((l) => l.path || l.name).filter(Boolean);
-		if (!allowedLabels.length) {
-			return res.status(400).json({ success: false, error: 'No custom Gmail labels found. Create labels first.' });
-		}
-
-		const messages = rawMessages
-			.map((m) => ({
-				uid: Number(m.uid),
-				mailbox: typeof m.mailbox === 'string' ? m.mailbox : undefined,
-			}))
-			.filter((m) => Number.isFinite(m.uid));
-
-		const result = await runMailAiLabelBatch({
-			applierName,
-			profile,
-			email: creds.email,
-			password: creds.password,
-			messages,
-			allowedLabels,
-			labelDefinitions,
-		});
+		const run = await prepareMailAiLabelRun(req, res);
+		if (!run) return;
+		const result = await runMailAiLabelBatch(run);
 
 		if (!result.ok) {
 			return res.status(400).json({ success: false, error: result.error });
@@ -816,6 +832,57 @@ export async function postMailAiLabel(req, res) {
 	} catch (err) {
 		console.error('POST /api/mail/ai-label error', err);
 		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function postMailAiLabelStream(req, res) {
+	try {
+		const run = await prepareMailAiLabelRun(req, res);
+		if (!run) return;
+
+		res.writeHead(200, {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-cache, no-transform',
+			Connection: 'keep-alive',
+			'X-Accel-Buffering': 'no',
+		});
+		const send = (event, data) => {
+			if (res.writableEnded || res.destroyed) return;
+			res.write(`event: ${event}\n`);
+			res.write(`data: ${JSON.stringify(data)}\n\n`);
+		};
+		const heartbeat = setInterval(() => {
+			if (!res.writableEnded && !res.destroyed) res.write(': keep-alive\n\n');
+		}, 15_000);
+		heartbeat.unref?.();
+
+		let result;
+		try {
+			result = await runMailAiLabelBatch({ ...run, onEvent: send });
+		} finally {
+			clearInterval(heartbeat);
+		}
+		if (!result.ok) {
+			send('error', { error: result.error });
+		} else {
+			send('done', {
+				success: true,
+				results: result.results,
+				usage: result.usage,
+				model: result.model,
+				processing: result.processing,
+			});
+		}
+		if (!res.writableEnded && !res.destroyed) res.end();
+	} catch (err) {
+		console.error('POST /api/mail/ai-label/stream error', err);
+		if (!res.headersSent) {
+			return res.status(500).json({ success: false, error: err.message });
+		}
+		if (!res.writableEnded && !res.destroyed) {
+			res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
+			res.end();
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ import {
 	fetchFlagsForUids,
 	fetchMessageBody,
 	fetchMessagePlainText,
+	fetchMessageTextSnippets,
 	fetchMailboxPage,
 	fetchNewEnvelopes,
 	fetchFolderCounts,
@@ -20,6 +21,7 @@ import {
 	upsertSyncState,
 	messageToThread,
 	getMessagesByUids,
+	bulkUpdateMessageFlags,
 	enrichMessagesFromCache,
 	updateMessagePlainText,
 } from './mailStore.js';
@@ -579,6 +581,49 @@ export async function prefetchMessageBodies(applierName, uids, mailbox = ALL_MAI
 			// best effort
 		}
 	}
+}
+
+/**
+ * Warm lightweight AI snippets for every visible candidate without downloading
+ * full messages. This is intentionally best-effort and safe to run in the
+ * background when the unlabeled dialog opens.
+ */
+export async function prefetchMessageSnippets(applierName, uids, mailbox = ALL_MAIL_PATH) {
+	const uniqueUids = [...new Set((uids || []).map(Number).filter(Number.isFinite))];
+	if (!uniqueUids.length) return;
+
+	const creds = await resolveMailCredentials(applierName);
+	if (!creds.ok) return;
+
+	const docs = await getMessagesByUids(applierName, uniqueUids, mailbox);
+	const byUid = new Map(docs.map((doc) => [Number(doc.uid), doc]));
+	const uncached = uniqueUids.filter((uid) => {
+		const doc = byUid.get(uid);
+		return !String(doc?.aiSnippet || doc?.bodyText || '').trim();
+	});
+	if (!uncached.length) return;
+
+	const snippets = await fetchMessageTextSnippets(
+		creds.email,
+		creds.password,
+		uncached,
+		mailbox,
+		{ maxBytes: 2_048, maxChars: 1_000 },
+	);
+	const updates = snippets
+		.filter((snippet) => snippet?.bodyText)
+		.map((snippet) => {
+			const existing = byUid.get(Number(snippet.uid));
+			return {
+				...(existing?._id ? { _id: existing._id } : {}),
+				uid: Number(snippet.uid),
+				mailbox,
+				aiSnippet: snippet.bodyText,
+				preview: snippet.preview || snippet.bodyText.slice(0, 240),
+				aiSnippetCachedAt: new Date(),
+			};
+		});
+	if (updates.length) await bulkUpdateMessageFlags(applierName, updates);
 }
 
 export { folderToMailbox };

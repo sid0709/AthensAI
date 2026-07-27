@@ -406,6 +406,10 @@ export async function getMessagesByUids(applierName, uids, mailbox = ALL_MAIL_PA
 			bodyText: 1,
 			bodyObject: 1,
 			preview: 1,
+			aiSnippet: 1,
+			aiSnippetCachedAt: 1,
+			aiBodyText: 1,
+			aiBodyCachedAt: 1,
 			messageId: 1,
 		})
 		.toArray();

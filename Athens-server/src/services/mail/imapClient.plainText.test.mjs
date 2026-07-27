@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { filterExactUnlabeledDocs, findTextBodyPart } from "./imapClient.js";
+import {
+	filterExactUnlabeledDocs,
+	findTextBodyPart,
+	groupMessageTextParts,
+} from "./imapClient.js";
 
 test("findTextBodyPart prefers text/plain in multipart/alternative", () => {
 	const structure = {
@@ -42,4 +46,25 @@ test("exact unlabeled filtering ignores Gmail system labels only", () => {
 		{ uid: 4, gmailLabels: ["Application"] },
 	];
 	assert.deepEqual(filterExactUnlabeledDocs(docs).map((doc) => doc.uid), [1, 2]);
+});
+
+test("bulk text fetch planning groups UIDs by shared plain or HTML part", () => {
+	const plan = groupMessageTextParts([
+		{ uid: 1, bodyStructure: { part: "1", type: "text/plain" } },
+		{ uid: 2, bodyStructure: { part: "1", type: "text/plain" } },
+		{ uid: 3, bodyStructure: { part: "2", type: "text/html" } },
+		{ uid: 4, bodyStructure: { part: "1", type: "application/pdf" } },
+	]);
+	assert.deepEqual(
+		plan.groups.map((group) => ({
+			partId: group.partId,
+			isHtml: group.isHtml,
+			uids: group.messages.map((message) => message.uid),
+		})),
+		[
+			{ partId: "1", isHtml: false, uids: [1, 2] },
+			{ partId: "2", isHtml: true, uids: [3] },
+		],
+	);
+	assert.deepEqual(plan.unresolved, [4]);
 });

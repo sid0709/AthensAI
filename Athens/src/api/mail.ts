@@ -1,5 +1,6 @@
 import { API_BASE } from "@/lib/api-base";
 import type { MailLabel, MailThread } from "@/app/types";
+import { streamSSE } from "@/app/features/resumes/lib/sse";
 
 type ApiResult<T> = T & { success?: boolean; error?: string };
 
@@ -234,7 +235,21 @@ export type MailAiLabelResponse = {
     messages: number;
     aiRequests: number;
     gmailWriteBatches: number;
+    snippetFetchMs: number;
+    bodyFetchMs: number;
+    aiRequestMs: number;
+    gmailWriteMs: number;
+    snippetCacheHits: number;
+    fullBodyFallbacks: number;
+    firstResultMs: number | null;
   };
+};
+
+export type MailAiLabelProgress = {
+  phase: "loading_snippets" | "classifying_snippet" | "loading_body" | "classifying_body" | "labeling";
+  completed: number;
+  total: number;
+  fullBodyFallbacks?: number;
 };
 
 export async function fetchUnlabeledThreads(
@@ -303,4 +318,31 @@ export async function runMailAiLabel(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function runMailAiLabelStream(
+  applierName: string,
+  payload: {
+    messages: { uid: number; mailbox?: string }[];
+    labelDefinitions: MailLabelDefinitions;
+  },
+  onEvent: (event: string, data: Record<string, unknown>) => void,
+  signal?: AbortSignal,
+): Promise<MailAiLabelResponse> {
+  const state: { completed?: MailAiLabelResponse } = {};
+  const url = `${API_BASE.replace(/\/$/, "")}/mail/ai-label/stream`;
+  await streamSSE(
+    url,
+    { applierName, ...payload },
+    (event, data) => {
+      if (event === "error") {
+        throw new Error(String(data.error || "AI labeling failed"));
+      }
+      if (event === "done") state.completed = data as unknown as MailAiLabelResponse;
+      onEvent(event, data);
+    },
+    signal,
+  );
+  if (!state.completed) throw new Error("AI labeling stream ended before completion.");
+  return state.completed;
 }

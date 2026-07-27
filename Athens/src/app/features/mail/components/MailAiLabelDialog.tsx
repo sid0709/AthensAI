@@ -3,9 +3,10 @@ import { Check, ChevronDown, ChevronRight, Loader2, Sparkles, X } from "lucide-r
 import {
   fetchMailLabelDefinitions,
   fetchUnlabeledThreads,
-  runMailAiLabel,
+  runMailAiLabelStream,
   saveMailLabelDefinitions,
   type MailAiLabelResult,
+  type MailAiLabelProgress,
   type MailLabelDefinitions,
 } from "@/api/mail";
 import { AthensTextarea } from "../../../components/forms";
@@ -128,6 +129,7 @@ export function MailAiLabelDialog({
   const [rowResults, setRowResults] = useState<Record<string, MailAiLabelResult>>({});
   const [summary, setSummary] = useState<{ applied: number; skipped: number; failed: number } | null>(null);
   const [runDetails, setRunDetails] = useState<{ durationMs: number; model?: string } | null>(null);
+  const [runProgress, setRunProgress] = useState<MailAiLabelProgress | null>(null);
 
   const labelTree = useMemo(() => buildLabelTree(labels), [labels]);
   const pageIds = useMemo(() => threads.map((t) => t.id), [threads]);
@@ -210,6 +212,7 @@ export function MailAiLabelDialog({
     setRowResults({});
     setSummary(null);
     setRunDetails(null);
+    setRunProgress(null);
     setRunError(null);
     setLoadError(null);
     setPage(1);
@@ -289,58 +292,74 @@ export function MailAiLabelDialog({
     setRunError(null);
     setSummary(null);
     setRunDetails(null);
+    setRunProgress({ phase: "loading_snippets", completed: 0, total: messages.length });
     setRowStatus(Object.fromEntries(messages.map((m) => [String(m.uid), "running"])));
 
     try {
-      const { results, processing, model } = await runMailAiLabel(applierName, {
-        messages,
-        labelDefinitions: definitions,
-      });
+      const streamedIds = new Set<string>();
+      const recordResult = (result: MailAiLabelResult) => {
+        const id = String(result.uid);
+        if (streamedIds.has(id)) return;
+        streamedIds.add(id);
+        const status: RowStatus = result.applied
+          ? "done"
+          : result.error || (result.reason && result.reason !== "no_match")
+            ? "error"
+            : "skipped";
+        setRowResults((prev) => ({ ...prev, [id]: result }));
+        setRowStatus((prev) => ({ ...prev, [id]: status }));
+        setRunProgress((prev) => prev ? { ...prev, completed: streamedIds.size } : prev);
+        if (result.applied) {
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+          setThreads((prev) => prev.filter((thread) => thread.id !== id));
+          setTotal((prev) => (prev === null ? null : Math.max(0, prev - 1)));
+        }
+      };
 
-      const nextStatus: Record<string, RowStatus> = {};
-      const nextResults: Record<string, MailAiLabelResult> = {};
+      const { results, processing, model } = await runMailAiLabelStream(
+        applierName,
+        { messages, labelDefinitions: definitions },
+        (event, data) => {
+          if (event === "progress") {
+            setRunProgress(data as unknown as MailAiLabelProgress);
+          } else if (event === "result" && data.result) {
+            recordResult(data.result as MailAiLabelResult);
+          }
+        },
+      );
+
       let applied = 0;
       let skipped = 0;
       let failed = 0;
 
       for (const r of results) {
-        const id = String(r.uid);
-        nextResults[id] = r;
+        recordResult(r);
         if (r.applied) {
-          nextStatus[id] = "done";
           applied += 1;
         } else if (r.error || (r.reason && r.reason !== "no_match")) {
-          nextStatus[id] = "error";
           failed += 1;
         } else {
-          nextStatus[id] = "skipped";
           skipped += 1;
         }
       }
 
-      setRowStatus(nextStatus);
-      setRowResults(nextResults);
       setSummary({ applied, skipped, failed });
       if (processing) {
         setRunDetails({ durationMs: processing.durationMs, model: model?.model });
       }
       onComplete?.();
-
-      if (applied > 0) {
-        const appliedIds = new Set(results.filter((r) => r.applied).map((r) => String(r.uid)));
-        setSelectedIds((prev) => {
-          const next = new Set(prev);
-          appliedIds.forEach((id) => next.delete(id));
-          return next;
-        });
-        setThreads((prev) => prev.filter((thread) => !appliedIds.has(thread.id)));
-        setTotal((prev) => (prev === null ? null : Math.max(0, prev - appliedIds.size)));
-      }
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "AI labeling failed");
-      setRowStatus({});
+      setRowStatus((prev) => Object.fromEntries(
+        Object.entries(prev).map(([id, status]) => [id, status === "running" ? "error" : status]),
+      ));
     } finally {
       setRunning(false);
+      setRunProgress(null);
     }
   };
 
@@ -353,8 +372,8 @@ export function MailAiLabelDialog({
             AI Label
           </DialogTitle>
           <DialogDescription>
-            Select inbox emails without custom labels. AI will assign one label using your definitions and profile
-            default model.
+            Select inbox emails without custom labels. AI checks a short preview first, reads more only when needed,
+            and uses your profile default model.
           </DialogDescription>
         </DialogHeader>
 
@@ -582,7 +601,11 @@ export function MailAiLabelDialog({
                 <Sparkles className="size-4" />
               )}
             </span>
-            <span>{running ? `Labeling ${totalSelected} in batches…` : `Run AI Label (${totalSelected})`}</span>
+            <span>
+              {running
+                ? `Labeling ${runProgress?.completed ?? 0}/${runProgress?.total ?? totalSelected}…`
+                : `Run AI Label (${totalSelected})`}
+            </span>
           </button>
         </DialogFooter>
       </DialogContent>
