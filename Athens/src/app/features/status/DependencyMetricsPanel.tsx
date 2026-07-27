@@ -1,4 +1,4 @@
-import { Boxes, Cloud, Database, HardDrive, RefreshCw } from "lucide-react";
+import { Boxes, Database, RefreshCw } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { LiveRange } from "./LiveMetricsPanel";
 
@@ -7,15 +7,13 @@ export type DependencyMetricSeries = {
   updatedAt: string | null;
   current: DependencyMetricPoint | null;
   points: DependencyMetricPoint[];
-  source?: "prometheus" | "google-cloud-monitoring";
+  source?: "prometheus";
   delayed?: boolean;
   expectedDelaySeconds?: number;
 };
 export type DependencyMetrics = {
   redis: DependencyMetricSeries;
   qdrant: DependencyMetricSeries;
-  firestore: DependencyMetricSeries;
-  storage: DependencyMetricSeries;
 };
 
 type Metric = { key: string; label: string; color: string; format: (value: number | null) => string };
@@ -36,7 +34,6 @@ const cards: Array<{
   title: string;
   description: string;
   Icon: typeof Database;
-  cloud?: boolean;
   metrics: Metric[];
   chart: string[];
 }> = [
@@ -60,24 +57,6 @@ const cards: Array<{
       { key: "memoryBytes", label: "Memory", color: "#7c3aed", format: bytes },
     ], chart: ["requestsPerSecond", "errorRatePercent"],
   },
-  {
-    key: "firestore", title: "Cloud Firestore", description: "Database operations and API health", Icon: Cloud, cloud: true,
-    metrics: [
-      { key: "readsPerMinute", label: "Reads/min", color: "#2563eb", format: number },
-      { key: "writesPerMinute", label: "Writes/min", color: "#16a34a", format: number },
-      { key: "deletesPerMinute", label: "Deletes/min", color: "#d97706", format: number },
-      { key: "errorRatePercent", label: "Error rate", color: "#dc2626", format: percent },
-      { key: "p95LatencyMs", label: "p95 latency", color: "#7c3aed", format: milliseconds },
-    ], chart: ["readsPerMinute", "writesPerMinute", "deletesPerMinute"],
-  },
-  {
-    key: "storage", title: "Cloud Storage", description: "Object API traffic and egress", Icon: HardDrive, cloud: true,
-    metrics: [
-      { key: "requestsPerMinute", label: "Requests/min", color: "#2563eb", format: number },
-      { key: "errorRatePercent", label: "Error rate", color: "#dc2626", format: percent },
-      { key: "egressBytesPerSecond", label: "Egress/sec", color: "#7c3aed", format: bytes },
-    ], chart: ["requestsPerMinute", "errorRatePercent"],
-  },
 ];
 
 function value(point: DependencyMetricPoint | null, key: string) {
@@ -87,13 +66,12 @@ function value(point: DependencyMetricPoint | null, key: string) {
 
 function MetricCard({ definition, series }: { definition: (typeof cards)[number]; series: DependencyMetricSeries | undefined }) {
   const chartMetrics = definition.metrics.filter((metric) => definition.chart.includes(metric.key));
-  const delayed = Boolean(definition.cloud && (series?.delayed ?? true));
   const Icon = definition.Icon;
   return (
     <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
       <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><Icon className="h-5 w-5" /></span><div><h3 className="font-bold text-slate-950">{definition.title}</h3><p className="mt-0.5 text-xs text-slate-500">{definition.description}</p></div></div>
-        <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${delayed ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>{delayed ? "Cloud data delayed" : "Live"}</span>
+        <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-bold text-blue-800">Live</span>
       </div>
       <div className="grid grid-cols-2 gap-px bg-slate-200 sm:grid-cols-3">
         {definition.metrics.map((metric) => <div key={metric.key} className="bg-white px-4 py-3"><p className="text-lg font-bold tabular-nums text-slate-950">{metric.format(value(series?.current || null, metric.key))}</p><p className="mt-0.5 text-[11px] font-medium text-slate-500">{metric.label}</p></div>)}
@@ -109,7 +87,7 @@ function MetricCard({ definition, series }: { definition: (typeof cards)[number]
           </AreaChart></ResponsiveContainer>
         )}
       </div>
-      <p className="border-t border-slate-100 px-5 py-2.5 text-[10px] text-slate-500">Telemetry sampled: {series?.updatedAt ? new Date(series.updatedAt).toLocaleString() : "not available"}{definition.cloud ? ` · Google Cloud Monitoring source data normally trails by about ${Math.round((series?.expectedDelaySeconds || 300) / 60)} minutes` : ""}</p>
+      <p className="border-t border-slate-100 px-5 py-2.5 text-[10px] text-slate-500">Telemetry sampled: {series?.updatedAt ? new Date(series.updatedAt).toLocaleString() : "not available"}</p>
     </article>
   );
 }

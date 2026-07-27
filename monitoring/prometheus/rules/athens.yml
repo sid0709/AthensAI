@@ -153,30 +153,6 @@ groups:
         annotations:
           summary: Qdrant metrics are unavailable
           description: Prometheus cannot scrape Qdrant's native metrics endpoint.
-      - alert: AthensGoogleCloudExporterDown
-        expr: up{job="google-cloud"} == 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: Firebase and Storage metrics are unavailable
-          description: Prometheus cannot scrape the read-only Google Cloud metrics exporter.
-      - alert: AthensFirestoreSyntheticFailure
-        expr: athens_health_status{component="firestore"} == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: Firestore synthetic check is failing
-          description: The production application cannot read Firestore.
-      - alert: AthensStorageSyntheticFailure
-        expr: athens_health_status{component="storage"} == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: Cloud Storage synthetic check is failing
-          description: The production application cannot read Cloud Storage metadata.
       - alert: AthensRedisUnavailable
         expr: athens_health_status{component="redis"} == 0
         for: 5m

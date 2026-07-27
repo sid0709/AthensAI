@@ -29,18 +29,6 @@ export const DEPENDENCY_QUERIES = {
 		p95LatencyMs: '1000 * histogram_quantile(0.95, sum by (le) (rate(rest_responses_duration_seconds_bucket[5m])))',
 		memoryBytes: 'max(memory_active_bytes)',
 	},
-	firestore: {
-		readsPerMinute: '60 * sum(rate(stackdriver_firestore_googleapis_com_document_read_count[5m]))',
-		writesPerMinute: '60 * sum(rate(stackdriver_firestore_googleapis_com_document_write_count[5m]))',
-		deletesPerMinute: '60 * sum(rate(stackdriver_firestore_googleapis_com_document_delete_count[5m]))',
-		errorRatePercent: '100 * sum(rate(stackdriver_firestore_googleapis_com_api_request_count{response_code=~"4..|5.."}[5m])) / clamp_min(sum(rate(stackdriver_firestore_googleapis_com_api_request_count[5m])), 1)',
-		p95LatencyMs: 'histogram_quantile(0.95, sum by (le) (rate(stackdriver_firestore_googleapis_com_api_request_latencies_bucket[5m])))',
-	},
-	storage: {
-		requestsPerMinute: '60 * sum(rate(stackdriver_storage_googleapis_com_api_request_count[5m]))',
-		errorRatePercent: '100 * sum(rate(stackdriver_storage_googleapis_com_api_request_count{response_code=~"4..|5.."}[5m])) / clamp_min(sum(rate(stackdriver_storage_googleapis_com_api_request_count[5m])), 1)',
-		egressBytesPerSecond: 'sum(rate(stackdriver_storage_googleapis_com_network_sent_bytes_count[5m]))',
-	},
 };
 
 function baseUrl(value = process.env.PROMETHEUS_URL || DEFAULT_PROMETHEUS_URL) {
@@ -295,11 +283,9 @@ export async function readPrometheusDependencyMetrics(minutes = 60, options = {}
 			updatedAt: points.at(-1)?.timestamp || null,
 			current: points.at(-1) || null,
 			points,
-			...(dependency === 'firestore' || dependency === 'storage' ? {
-				source: 'google-cloud-monitoring',
-				delayed: true,
-				expectedDelaySeconds: 300,
-			} : { source: 'prometheus', delayed: false, expectedDelaySeconds: 0 }),
+			source: 'prometheus',
+			delayed: false,
+			expectedDelaySeconds: 0,
 		}];
 	}));
 	return Object.fromEntries(entries);
