@@ -54,6 +54,11 @@ type CountsResponse = {
   warming?: boolean;
 };
 
+type ApiRequest = (
+  path: string,
+  options?: Omit<RequestInit, "body"> & { body?: unknown },
+) => Promise<unknown>;
+
 const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   all: 0,
   posted: 0,
@@ -80,6 +85,46 @@ type ListCacheEntry = { response: ListResponse; expiresAt: number; staleAt: numb
 const listCache = new Map<string, ListCacheEntry>();
 const listRequests = new Map<string, Promise<ListResponse>>();
 let listCacheDbPromise: ReturnType<typeof openDB> | null = null;
+
+function requestJobsPage(
+  cacheKey: string,
+  body: Record<string, unknown>,
+  request: ApiRequest,
+): Promise<ListResponse> {
+  const existing = listRequests.get(cacheKey);
+  if (existing) return existing;
+
+  // This request belongs to the cache key, not to any one React effect. A
+  // rerender may stop consuming it, but must not abort it for another consumer.
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, JOB_LIST_REQUEST_TIMEOUT_MS);
+
+  const pending = retryTransient(
+    () => request(JOB_LIST_ENDPOINT, {
+      method: "POST",
+      body,
+      signal: controller.signal,
+    }) as Promise<ListResponse>,
+    { signal: controller.signal, delaysMs: [300] },
+  ).catch((error: unknown) => {
+    if (timedOut && (error as Error)?.name === "AbortError") {
+      const timeoutError = new Error("Job Search request timed out");
+      timeoutError.name = "TimeoutError";
+      throw timeoutError;
+    }
+    throw error;
+  }).finally(() => {
+    clearTimeout(timeout);
+    if (listRequests.get(cacheKey) === pending) listRequests.delete(cacheKey);
+  });
+
+  listRequests.set(cacheKey, pending);
+  return pending;
+}
 
 function listCacheDb() {
   if (typeof indexedDB === "undefined") return null;
@@ -212,14 +257,14 @@ function listCacheKey(body: Record<string, unknown>) {
 async function prefetchJobsPage(
   body: Record<string, unknown>,
   rankingRevision: number,
-  request: (path: string, options: { method: string; body: unknown }) => Promise<unknown>,
+  request: ApiRequest,
 ) {
   const key = `${rankingRevision}:${listCacheKey(body)}`;
   const cached = listCache.get(key);
   if (cached?.expiresAt && cached.expiresAt > Date.now()) return;
   const persisted = await readPersistentListResponse(key);
   if (persisted?.expiresAt && persisted.expiresAt > Date.now()) return;
-  const data = (await request(JOB_LIST_ENDPOINT, { method: "POST", body })) as ListResponse;
+  const data = await requestJobsPage(key, body, request);
   if (data?.success && Array.isArray(data.data)) {
     cacheListResponse(key, data);
   }
@@ -414,8 +459,10 @@ export function useJobsList(
   const [rankingStatus, setRankingStatus] = useState<ListResponse["rankingStatus"]>(null);
   const [groupedBeta, setGroupedBeta] = useState(false);
   const rawGroupsRef = useRef<CompanyJobGroup[]>([]);
+  const applierRef = useRef(applier);
   const rankingEventVersionRef = useRef<string | null>(null);
   rawGroupsRef.current = rawGroups;
+  applierRef.current = applier;
 
   const {
     filters: debouncedFilters,
@@ -464,18 +511,12 @@ export function useJobsList(
   useEffect(() => {
     if (!applierReady || isDebouncing) return;
     let cancelled = false;
-    let timedOut = false;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, JOB_LIST_REQUEST_TIMEOUT_MS);
     const cacheKey = currentQueryKey;
     let cached = listCache.get(currentQueryKey);
     let hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
     const applyResponse = (res: ListResponse) => {
       if (!res?.success || !Array.isArray(res.data)) return false;
-			setRawGroups(mapResponseGroups(res.data, applier));
+			setRawGroups(mapResponseGroups(res.data, applierRef.current));
       const responseTotal = res.pagination?.total ?? res.data.length;
       setTotal(responseTotal);
 			setTotalJobs(res.pagination?.totalJobs ?? responseTotal);
@@ -507,22 +548,7 @@ export function useJobsList(
           if (!hasFreshCache) setStaleResults(true);
         }
 
-        let pending = listRequests.get(cacheKey);
-        if (!pending) {
-          pending = retryTransient(
-            () => request(JOB_LIST_ENDPOINT, {
-              method: "POST",
-              body: listBody,
-              signal: controller.signal,
-            }) as Promise<ListResponse>,
-            { signal: controller.signal, delaysMs: [300] },
-          );
-          listRequests.set(cacheKey, pending);
-          void pending.finally(() => {
-            if (listRequests.get(cacheKey) === pending) listRequests.delete(cacheKey);
-          }).catch(() => undefined);
-        }
-        const res = await pending;
+        const res = await requestJobsPage(cacheKey, listBody, request);
         if (cancelled) return;
         if (!applyResponse(res)) throw new Error("The jobs response was incomplete");
         cacheListResponse(cacheKey, res);
@@ -534,13 +560,22 @@ export function useJobsList(
           }
         }
       } catch (e) {
-        if ((e as Error)?.name === "AbortError" && !timedOut) return;
+        const timedOut = (e as Error)?.name === "TimeoutError";
+        if ((e as Error)?.name === "AbortError") return;
         console.error(e);
+        let showingFallback = false;
         if (cached && cached.staleAt > Date.now() && applyResponse(cached.response)) {
+          showingFallback = true;
           setStaleResults(true);
           setError(timedOut
             ? "Job refresh took too long. Showing cached results."
             : "Could not refresh jobs. Showing cached results.");
+        } else if (rawGroupsRef.current.length > 0) {
+          showingFallback = true;
+          setStaleResults(true);
+          setError(timedOut
+            ? "Job refresh took too long. Showing the previous results."
+            : "Could not refresh jobs. Showing the previous results.");
         } else if (rawGroupsRef.current.length === 0) {
 			setRawGroups([]);
           setTotal(0);
@@ -554,22 +589,21 @@ export function useJobsList(
             ? "Job Search took too long to respond. Please try again."
             : "Could not load jobs. Check the server connection and try again.");
         }
-        toast.error("Failed to load jobs", {
-          description: timedOut
-            ? "The request timed out. Please try again."
-            : "Check that Athens-server is running and VITE_API_URL is set.",
-        });
+        if (!showingFallback) {
+          toast.error("Failed to load jobs", {
+            description: timedOut
+              ? "The request timed out. Please try again."
+              : "Check that Athens-server is running and VITE_API_URL is set.",
+          });
+        }
       } finally {
-        clearTimeout(timeout);
         if (!cancelled) setRequestInFlight(false);
       }
     })();
     return () => {
       cancelled = true;
-      clearTimeout(timeout);
-      controller.abort();
     };
-  }, [currentQueryKey, retryRevision, request, applier, applierReady, isDebouncing]);
+  }, [currentQueryKey, retryRevision, request, applierReady, isDebouncing]);
 
   useEffect(() => {
     if (!applierReady || isDebouncing) return;
