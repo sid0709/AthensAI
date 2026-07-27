@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { withPooledClient } from './imapPool.js';
+import { mapPool } from '../../utils/concurrency.js';
 import {
 	ALL_MAIL_PATH,
 	FOLDER_MAILBOX,
@@ -15,6 +16,15 @@ import {
 	displayLabelName,
 	isSystemLabel,
 } from './folderMapper.js';
+
+const UNLABELED_SCAN_BATCH_SIZE = Math.max(
+	100,
+	Number(process.env.MAIL_UNLABELED_SCAN_BATCH_SIZE || 2_000),
+);
+const UNLABELED_SCAN_CONCURRENCY = Math.max(
+	1,
+	Number(process.env.MAIL_UNLABELED_SCAN_CONCURRENCY || 8),
+);
 
 function stripHtml(html) {
 	return html
@@ -151,26 +161,14 @@ export async function fetchRecentEnvelopes(email, password, count, applierName) 
 	});
 }
 
-/**
- * Query Gmail for inbox messages that have no user-created labels and fetch one
- * metadata-only page. Gmail performs the filtering; message bodies are not read.
- */
-export async function fetchUnlabeledInboxEnvelopes(
-	email,
-	password,
-	{ page = 1, pageSize = 50, applierName } = {},
-) {
-	return withMailboxPath(email, password, 'INBOX', async (client) => {
-		const matches = await client.search({ gmraw: 'in:inbox has:nouserlabels' }, { uid: true });
-		const newestUids = [...(matches || [])].map(Number).filter(Number.isFinite).sort((a, b) => b - a);
-		const start = (Math.max(1, page) - 1) * pageSize;
-		const pageUids = newestUids.slice(start, start + pageSize);
-		if (!pageUids.length) {
-			return { messages: [], hasMore: false };
-		}
+export function filterExactUnlabeledDocs(docs) {
+	return (docs || []).filter((doc) => extractCustomLabels(doc?.gmailLabels).length === 0);
+}
 
+async function fetchInboxEnvelopeBatch(email, password, uids, applierName) {
+	return withMailboxPath(email, password, 'INBOX', async (client) => {
 		const messages = [];
-		for await (const message of client.fetch(pageUids, {
+		for await (const message of client.fetch(uids, {
 			envelope: true,
 			flags: true,
 			uid: true,
@@ -178,12 +176,51 @@ export async function fetchUnlabeledInboxEnvelopes(
 		})) {
 			messages.push(messageToDoc(message, applierName, 'INBOX'));
 		}
-		messages.sort((a, b) => b.uid - a.uid);
-		return {
-			messages,
-			hasMore: newestUids.length > start + pageSize,
-		};
+		return messages;
 	});
+}
+
+/**
+ * Fetch an exact page of messages with no user-created Gmail labels.
+ *
+ * Gmail's `has:nouserlabels` raw search is conversation-aware and can return a
+ * labeled message when another message in the same thread is unlabeled. Search
+ * the INBOX UID set, fetch only envelope/flag metadata in parallel batches, and
+ * make the final decision from each message's X-GM-LABELS value instead.
+ */
+export async function fetchUnlabeledInboxEnvelopes(
+	email,
+	password,
+	{ page = 1, pageSize = 50, applierName } = {},
+) {
+	const matches = await withMailboxPath(
+		email,
+		password,
+		'INBOX',
+		(client) => client.search({ all: true }, { uid: true }),
+	);
+	const newestUids = [...(matches || [])]
+		.map(Number)
+		.filter(Number.isFinite)
+		.sort((a, b) => b - a);
+	const batches = [];
+	for (let offset = 0; offset < newestUids.length; offset += UNLABELED_SCAN_BATCH_SIZE) {
+		batches.push(newestUids.slice(offset, offset + UNLABELED_SCAN_BATCH_SIZE));
+	}
+	const groups = await mapPool(
+		batches,
+		Math.min(UNLABELED_SCAN_CONCURRENCY, Math.max(1, batches.length)),
+		(uids) => fetchInboxEnvelopeBatch(email, password, uids, applierName),
+	);
+	const allMessages = filterExactUnlabeledDocs(groups.flat())
+		.sort((left, right) => right.uid - left.uid);
+	const start = (Math.max(1, page) - 1) * pageSize;
+	return {
+		messages: allMessages.slice(start, start + pageSize),
+		allMessages,
+		total: allMessages.length,
+		hasMore: allMessages.length > start + pageSize,
+	};
 }
 
 /**

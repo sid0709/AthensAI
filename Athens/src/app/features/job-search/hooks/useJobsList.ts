@@ -231,6 +231,7 @@ export function useJobsList(
   const [recommendationWarming, setRecommendationWarming] = useState(false);
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
   const [rankingStatus, setRankingStatus] = useState<ListResponse["rankingStatus"]>(null);
+  const rankingWarmRetryCount = useRef(0);
 
   const {
     filters: debouncedFilters,
@@ -358,6 +359,19 @@ export function useJobsList(
       controller.abort();
     };
   }, [currentQueryKey, retryRevision, request, applier, applierReady, isDebouncing]);
+
+  useEffect(() => {
+    if (debouncedFilters.sort !== "matchScore" || !recommendationWarming) {
+      rankingWarmRetryCount.current = 0;
+      return;
+    }
+    if (requestInFlight || rankingWarmRetryCount.current >= 4) return;
+    const timer = setTimeout(() => {
+      rankingWarmRetryCount.current += 1;
+      setRetryRevision((revision) => revision + 1);
+    }, 1_500);
+    return () => clearTimeout(timer);
+  }, [debouncedFilters.sort, recommendationWarming, requestInFlight, retryRevision, currentQueryKey]);
 
   useEffect(() => {
     if (!applierReady || isDebouncing) return;
@@ -502,6 +516,8 @@ function recommendationFallbackMessage(reason: string | null): string {
       return "Add your skills via the My skills button in the toolbar before using Best match — scoring is based on that list.";
     case "ranking_backend_unavailable":
       return "Best match is temporarily unavailable. Showing the newest jobs instead.";
+    case "ranking_warming":
+      return "Best match is preparing your skill ranking. Showing recent jobs briefly while it finishes.";
     case "ranking_partial_retrieval":
     case "ranking_tail_incomplete":
       return "Personalized ranking is unavailable for this deep filtered page. Showing the newest jobs instead.";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findTextBodyPart } from "./imapClient.js";
+import { filterExactUnlabeledDocs, findTextBodyPart } from "./imapClient.js";
 
 test("findTextBodyPart prefers text/plain in multipart/alternative", () => {
 	const structure = {
@@ -32,4 +32,14 @@ test("findTextBodyPart returns null when no matching part", () => {
 	};
 	assert.equal(findTextBodyPart(structure, false), null);
 	assert.equal(findTextBodyPart(structure, true), null);
+});
+
+test("exact unlabeled filtering ignores Gmail system labels only", () => {
+	const docs = [
+		{ uid: 1, gmailLabels: ["Important", "Starred"] },
+		{ uid: 2, gmailLabels: ["Inbox", "Unread"] },
+		{ uid: 3, gmailLabels: ["Important", "Notify/Decline"] },
+		{ uid: 4, gmailLabels: ["Application"] },
+	];
+	assert.deepEqual(filterExactUnlabeledDocs(docs).map((doc) => doc.uid), [1, 2]);
 });

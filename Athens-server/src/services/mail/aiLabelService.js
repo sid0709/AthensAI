@@ -23,8 +23,8 @@ import { folderToMailbox } from './folderMapper.js';
 const BODY_MAX_CHARS = Math.max(1_000, Number(process.env.MAIL_AI_LABEL_BODY_MAX_CHARS || 4_000));
 const AI_BATCH_SIZE = Math.max(1, Math.min(20, Number(process.env.MAIL_AI_LABEL_BATCH_SIZE || 8)));
 const AI_BATCH_MAX_CHARS = Math.max(8_000, Number(process.env.MAIL_AI_LABEL_BATCH_MAX_CHARS || 32_000));
-const AI_BATCH_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_AI_CONCURRENCY || 4));
-const GMAIL_WRITE_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_GMAIL_CONCURRENCY || 4));
+const AI_BATCH_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_AI_CONCURRENCY || 8));
+const GMAIL_WRITE_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_GMAIL_CONCURRENCY || 8));
 
 const CLASSIFY_SYSTEM_PROMPT = [
 	'You classify each email into exactly ONE custom Gmail label from the provided list.',

@@ -28,6 +28,7 @@
     "firebase:copy-athensdb": "node src/scripts/simpleAthensDbCopy.js all",
 		"firebase:rebuild-job-statuses": "node src/scripts/simpleAthensDbCopy.js statuses",
 		"firebase:normalize-job-statuses": "node src/scripts/normalizeJobStatuses.js",
+		"firebase:migrate-legacy-skills": "node src/scripts/migrateLegacyPersonalSkills.js",
     "firebase:verify-athensdb-copy": "node src/scripts/verifyAthensDbCopy.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
 		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",

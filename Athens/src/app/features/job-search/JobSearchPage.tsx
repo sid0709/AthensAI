@@ -180,15 +180,15 @@ function JobSearchPageContent() {
 
   const matchScoreHint =
     filters.sort === "matchScore"
-      ? recommendationFallback
-        ? recommendationFallbackMessage(recommendationReason)
-        : recommendationWarming
+      ? recommendationWarming
           ? "Match scores are being recalculated for your profile — ranking will sharpen shortly."
+        : recommendationFallback
+          ? recommendationFallbackMessage(recommendationReason)
           : "Best match ranks the most relevant jobs first; remaining jobs follow sorted by date."
       : null;
 
   const matchScoreHintVariant =
-    filters.sort === "matchScore" && recommendationFallback ? "warning" : "info";
+    filters.sort === "matchScore" && recommendationFallback && !recommendationWarming ? "warning" : "info";
 
   return (
     <PageShell>

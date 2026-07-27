@@ -213,7 +213,9 @@ Copy from [`.env.example`](.env.example). Key groups:
 | `PUPPETEER_BROWSER_POOL` | Chromium processes for PDF (default **6**) |
 | `LLM_GLOBAL_CONCURRENCY` | Priority admission cap for all LLM calls (default **48**) |
 | `MAIL_AI_LABEL_CONCURRENCY` | Parallel AI label classify+apply (default **8**) |
+| `MAIL_AI_LABEL_AI_CONCURRENCY`, `MAIL_AI_LABEL_GMAIL_CONCURRENCY` | Parallel AI batches and grouped Gmail label writes (default **8** each) |
 | `IMAP_MAX_CONNS_PER_ACCOUNT` | IMAP pool size per Gmail account (default **8**) |
+| `MAIL_UNLABELED_SCAN_BATCH_SIZE`, `MAIL_UNLABELED_SCAN_CONCURRENCY` | Exact Gmail label metadata scan batch size (**2000**) and parallelism (**8**) |
 | `JOB_SKILL_EXTRACT_CONCURRENCY` | Skill-extract fan-out (default **16**) |
 
 All KG tunables are documented in [`.env.example`](.env.example) and loaded via `src/config/graphAndVectorConfig.js`.

@@ -81,12 +81,15 @@ async function listQueryTimeRankedJobsWithFallback(
     const detail = error?.message || error;
     console.warn(`[ranking] ${label}query-time read unavailable; serving newest jobs:`, detail);
     if (!isQueryTimeRankingEnabled()) return null;
-    const fastResult = await runFastRankingFallback(fastFallback, 'ranking_backend_unavailable');
-    if (fastResult) return fastResult;
-    return listDateRankedRankingFallback({
+    const warming = error?.code === 'RANKING_RESPONSE_TIMEOUT';
+    const reason = warming ? 'ranking_warming' : 'ranking_backend_unavailable';
+    const fastResult = await runFastRankingFallback(fastFallback, reason);
+    if (fastResult) return { ...fastResult, recommendationWarming: warming };
+    const fallback = await listDateRankedRankingFallback({
       ...fallbackParams,
-      reason: 'ranking_backend_unavailable',
+      reason,
     });
+    return { ...fallback, recommendationWarming: warming };
   }
 }
 

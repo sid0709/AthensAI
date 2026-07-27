@@ -24,8 +24,6 @@ type MatchSkillsResponse = {
   categories?: UserSkillCategory[];
   levelMin?: number;
   levelMax?: number;
-  boostSkills?: string[];
-  exactSkills?: string[];
   profileTokens?: string[];
   profileCompacts?: string[];
   boostCompacts?: string[];
@@ -59,8 +57,6 @@ function useProfileMatchSkillsState(enabled = true) {
   const { post, get, del } = useApi(API_BASE);
   const { applier } = useApplier();
   const [skills, setSkills] = useState<UserSkill[]>([]);
-  const [boostSkills, setBoostSkills] = useState<string[]>([]);
-  const [exactSkills, setExactSkills] = useState<string[]>([]);
   const [matchContext, setMatchContext] = useState<ProfileMatchContext | null>(null);
   const [loading, setLoading] = useState(false);
   const [boostingSkill, setBoostingSkill] = useState<string | null>(null);
@@ -69,8 +65,6 @@ function useProfileMatchSkillsState(enabled = true) {
 
   const applyProfileResponse = useCallback((res: MatchSkillsResponse) => {
     setSkills(res.skills ?? []);
-    setBoostSkills(res.boostSkills ?? []);
-    setExactSkills(res.exactSkills ?? []);
     setMatchContext(contextFromResponse(res));
     if (typeof res.profileVersion === "number") setProfileVersion(res.profileVersion);
     if (typeof res.dictionaryVersion === "string") setDictionaryVersion(res.dictionaryVersion);
@@ -82,7 +76,7 @@ function useProfileMatchSkillsState(enabled = true) {
     setLoading(true);
     try {
       const res = (await get(
-        `/personal/profile-match-skills?applierName=${encodeURIComponent(name)}`,
+        `/personal/profile-match-skills?applierName=${encodeURIComponent(name)}&compact=1`,
       )) as MatchSkillsResponse;
       if (res?.success) {
         applyProfileResponse(res);
@@ -113,6 +107,7 @@ function useProfileMatchSkillsState(enabled = true) {
           category: options?.category,
           level: options?.level,
           jobSkills: job.skills,
+          compact: true,
         })) as AddSkillResponse;
 
         if (!res?.success) return null;
@@ -162,6 +157,7 @@ function useProfileMatchSkillsState(enabled = true) {
           skill: label,
           category,
           level,
+          compact: true,
         })) as AddSkillResponse;
         if (!res?.success) return false;
         applyProfileResponse(res);
@@ -184,6 +180,7 @@ function useProfileMatchSkillsState(enabled = true) {
         const res = (await del("/personal/profile-match-skills", {
           applierName: name,
           skill: label,
+          compact: true,
         })) as MatchSkillsResponse & { removed?: boolean };
         if (!res?.success) return false;
         applyProfileResponse(res);
@@ -197,8 +194,6 @@ function useProfileMatchSkillsState(enabled = true) {
 
   return {
     skills,
-    boostSkills,
-    exactSkills,
     matchContext,
     profileVersion,
     dictionaryVersion,

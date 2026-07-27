@@ -37,10 +37,29 @@ function unlabeledRevisionKey(applierName) {
 	return `mail:v2:unlabeled-revision:${String(applierName).trim().toLowerCase()}`;
 }
 
-async function unlabeledCacheKey(applierName, page, pageSize) {
+async function unlabeledCacheKeys(applierName, page, pageSize) {
 	let revision = '0';
 	if (isRedisReady()) revision = String((await getRedis().get(unlabeledRevisionKey(applierName)).catch(() => null)) || '0');
-	return `mail:v8:unlabeled-page:${String(applierName).trim().toLowerCase()}:${revision}:${page}:${pageSize}`;
+	const identity = String(applierName).trim().toLowerCase();
+	return {
+		pageKey: `mail:v9:unlabeled-page:${identity}:${revision}:${page}:${pageSize}`,
+		catalogKey: `mail:v9:unlabeled-catalog:${identity}:${revision}`,
+	};
+}
+
+function pageFromUnlabeledCatalog(catalog, page, pageSize, fromCache) {
+	const start = (Math.max(1, page) - 1) * pageSize;
+	const docs = catalog.slice(start, start + pageSize);
+	return {
+		ok: true,
+		threads: docs.map((doc) => messageToThread(doc, { includeBody: false })),
+		total: catalog.length,
+		totalExact: true,
+		hasMore: catalog.length > start + pageSize,
+		page,
+		pageSize,
+		fromCache,
+	};
 }
 
 export async function invalidateMailListCaches(applierName) {
@@ -229,14 +248,26 @@ async function refreshFolderInBackground(applierName, folder, pageSize) {
 
 export async function loadLabelOrSearchPage(applierName, { folder, label, search, unlabeled, page, pageSize }) {
 	let cacheKey;
+	let catalogKey;
 	if (unlabeled && isRedisReady()) {
-		cacheKey = await unlabeledCacheKey(applierName, page, pageSize);
+		const keys = await unlabeledCacheKeys(applierName, page, pageSize);
+		cacheKey = keys.pageKey;
+		catalogKey = keys.catalogKey;
 		const cached = await getRedis().get(cacheKey).catch(() => null);
 		if (cached) {
 			try {
 				return { ...JSON.parse(cached), fromCache: true };
 			} catch {
 				await getRedis().del(cacheKey).catch(() => undefined);
+			}
+		}
+		const cachedCatalog = await getRedis().get(catalogKey).catch(() => null);
+		if (cachedCatalog) {
+			try {
+				const catalog = JSON.parse(cachedCatalog);
+				if (Array.isArray(catalog)) return pageFromUnlabeledCatalog(catalog, page, pageSize, true);
+			} catch {
+				await getRedis().del(catalogKey).catch(() => undefined);
 			}
 		}
 	}
@@ -249,23 +280,17 @@ export async function loadLabelOrSearchPage(applierName, { folder, label, search
 					pageSize,
 					applierName,
 				});
-				const result = {
-					ok: true,
-					threads: gmailPage.messages.map((doc) => messageToThread(doc, { includeBody: false })),
-					total: null,
-					totalExact: false,
-					hasMore: gmailPage.hasMore,
-					page,
-					pageSize,
-					fromCache: false,
-				};
+				const result = pageFromUnlabeledCatalog(gmailPage.allMessages, page, pageSize, false);
 				if (gmailPage.messages.length) {
 					void upsertMessages(gmailPage.messages).catch((error) => {
 						console.warn('[mail] background unlabeled-envelope cache write failed:', error?.message || error);
 					});
 				}
-				if (cacheKey && isRedisReady()) {
-					await getRedis().setEx(cacheKey, UNLABELED_CACHE_TTL_SEC, JSON.stringify(result)).catch(() => undefined);
+				if (cacheKey && catalogKey && isRedisReady()) {
+					await Promise.all([
+						getRedis().setEx(cacheKey, UNLABELED_CACHE_TTL_SEC, JSON.stringify(result)),
+						getRedis().setEx(catalogKey, UNLABELED_CACHE_TTL_SEC, JSON.stringify(gmailPage.allMessages)),
+					]).catch(() => undefined);
 				}
 				return result;
 			} catch (error) {
