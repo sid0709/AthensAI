@@ -20,18 +20,31 @@ function qs(profileId: string | null | undefined, extra: Record<string, string> 
 }
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${AGENTS_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
-  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok || (data as { error?: string }).error) {
-    throw new Error((data as { error?: string }).error || `Request failed (${res.status})`);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  const abort = () => controller.abort();
+  init?.signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const res = await fetch(`${AGENTS_BASE}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+    });
+    const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+    if (!res.ok || (data as { error?: string }).error) {
+      throw new Error((data as { error?: string }).error || `Request failed (${res.status})`);
+    }
+    return data;
+  } catch (error) {
+    if (controller.signal.aborted && !init?.signal?.aborted) throw new Error("Request timed out. Try again.");
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    init?.signal?.removeEventListener("abort", abort);
   }
-  return data;
 }
 
 export function avalonRelayUrl() {
@@ -78,7 +91,7 @@ export function avalonRelaySocketOptions(): { url?: string; path?: string } {
 }
 
 const AVALON_SOCKET_COMMON = {
-  transports: ["websocket", "polling"] as const,
+  transports: ["websocket", "polling"],
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,
@@ -205,6 +218,30 @@ export interface CandidateJobFilters {
   postedTo?: string;
 }
 
+export interface CandidateJobsPage {
+  jobs: JobCandidate[];
+  sources: { title: string; type: string; posted: number }[];
+  page: number;
+  total: number;
+  totalPages: number;
+}
+
+function candidateFromDocument(d: Record<string, unknown>, fallbackSource: string): JobCandidate | null {
+  const company = d.company as { name?: string } | undefined;
+  const id =
+    d._id != null && typeof d._id === "object" && "$oid" in (d._id as object)
+      ? String((d._id as { $oid: string }).$oid)
+      : String(d._id ?? "");
+  const job = {
+    id,
+    title: String(d.title ?? ""),
+    company: String(company?.name ?? ""),
+    url: String(d.applyLink ?? d.url ?? ""),
+    source: String(d.source ?? fallbackSource),
+  };
+  return job.id && /^https?:\/\//i.test(job.url) ? job : null;
+}
+
 /**
  * Candidate jobs for the transfer list, in Job Search's **Best match** rank order
  * (sort=recommended), posted (not-yet-applied) only — so the list matches what the
@@ -216,44 +253,100 @@ export interface CandidateJobFilters {
 export async function fetchCandidateJobs(
   applierName: string,
   source: string,
-  limit = 200,
+  limit = 100,
   filters: CandidateJobFilters = {},
-): Promise<JobCandidate[]> {
+  options: { page?: number; signal?: AbortSignal } = {},
+): Promise<CandidateJobsPage> {
+  const page = Math.max(1, options.page || 1);
   const body: Record<string, unknown> = {
     sort: "recommended", // Best match
     applied: false, // posted, not yet applied
     applierName,
-    page: 1,
+    page,
     limit,
+    facets: ["source"],
   };
   if (source) body.jobSources = source;
   if (filters.titleQuery?.trim()) body.q = filters.titleQuery.trim();
   if (filters.postedFrom) body.postedAtFrom = filters.postedFrom;
   if (filters.postedTo) body.postedAtTo = filters.postedTo;
 
-  const res = await fetch(`${API_BASE.replace(/\/$/, "")}/jobs/list`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as { data?: Record<string, unknown>[] };
-  const docs = Array.isArray(data.data) ? data.data : [];
-  return docs
-    .map((d) => {
-      const company = d.company as { name?: string } | undefined;
-      // Prefer the persisted `_id` — the numeric `id` field is a different scrape key.
-      // and must not be used for résumé lookup (Job Search stores under `_id`).
-      const id =
-        d._id != null && typeof d._id === "object" && "$oid" in (d._id as object)
-          ? String((d._id as { $oid: string }).$oid)
-          : String(d._id ?? "");
-      return {
-        id,
-        title: String(d.title ?? ""),
-        company: String(company?.name ?? ""),
-        url: String(d.applyLink ?? d.url ?? ""),
-        source: String(d.source ?? source),
+  const request = async (path: string, includeFacets: boolean) => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    const abort = () => controller.abort();
+    options.signal?.addEventListener("abort", abort, { once: true });
+    try {
+      const res = await fetch(`${API_BASE.replace(/\/$/, "")}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(includeFacets ? body : { ...body, facets: undefined }),
+        signal: controller.signal,
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        data?: Record<string, unknown>[];
+        error?: string;
+        facets?: { sources?: { title: string; type: string; posted: number }[] };
+        pagination?: { page?: number; total?: number; totalPages?: number };
       };
-    })
-    .filter((j) => j.id && /^https?:\/\//i.test(j.url));
+      if (!res.ok) throw new Error(data.error || `Candidate request failed (${res.status})`);
+      const jobs = (Array.isArray(data.data) ? data.data : [])
+        .map((doc) => candidateFromDocument(doc, source))
+        .filter((job): job is JobCandidate => Boolean(job));
+      return {
+        jobs,
+        sources: data.facets?.sources || [],
+        page: data.pagination?.page || page,
+        total: data.pagination?.total ?? jobs.length,
+        totalPages: data.pagination?.totalPages ?? (jobs.length === limit ? page + 1 : page),
+      };
+    } catch (error) {
+      if (controller.signal.aborted && !options.signal?.aborted) throw new Error("Candidate loading timed out. Try again.");
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abort);
+    }
+  };
+
+  try {
+    return await request("/jobs/list/v2", true);
+  } catch (v2Error) {
+    if (options.signal?.aborted) throw v2Error;
+    const legacy = await request("/jobs/list", false);
+    const sourceData = await json<{ sources: { title: string; type: string; posted: number }[] }>(
+      `/job-sources${qs(null, { applierName })}`,
+      { signal: options.signal },
+    ).catch(() => ({ sources: [] }));
+    const sources = sourceData.sources || [];
+    return { ...legacy, sources };
+  }
+}
+
+export interface AgentReadiness {
+  profile: { id: string; name: string; ready: boolean };
+  ai: { ready: boolean; provider: string; model: string };
+  resume: { ready: boolean; profileReady: boolean; submissionKitReady: boolean };
+}
+
+export function fetchAgentReadiness(profileId: string, signal?: AbortSignal): Promise<AgentReadiness> {
+  return json<AgentReadiness>(`/readiness${qs(profileId)}`, { signal });
+}
+
+export interface ResolvedManualJob {
+  created: boolean;
+  job: JobCandidate;
+}
+
+export function resolveManualJob(
+  profileId: string,
+  applierName: string,
+  input: { url: string; title: string; company: string; description: string },
+  signal?: AbortSignal,
+): Promise<ResolvedManualJob> {
+  return json<ResolvedManualJob>("/manual-jobs/resolve", {
+    method: "POST",
+    signal,
+    body: JSON.stringify({ profileId, applierName, ...input }),
+  });
 }

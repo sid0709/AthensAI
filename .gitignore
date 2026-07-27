@@ -52,6 +52,10 @@ Athens-server/.cache/
 # OS
 Thumbs.db
 
+# Generated local extension download bundles
+Athens/public/downloads/*
+!Athens/public/downloads/.gitkeep
+
 # Nested package manager locks in sub-apps (root lockfile is canonical for workspaces)
 Athens/node_modules/
 connector/node_modules/

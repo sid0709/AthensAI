@@ -23,6 +23,7 @@ import {
 import { relayHttpBase, relaySocketOrigin } from './endpoint';
 import { ensureContentScript, runActionInTab } from './tab-messages';
 import { waitForPageReady } from './page-ready';
+import { readJobContextFromPage } from './job-context';
 
 let socket: Socket | null = null;
 let tabListenersBound = false;
@@ -236,7 +237,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   if (action.action === 'screenshot') {
     // captureVisibleTab requires the tab to be visible in a focused window.
     await focusTab(tabId);
-    const dataUrl = await browser.tabs.captureVisibleTab(undefined, { format: 'png' });
+    const dataUrl = await browser.tabs.captureVisibleTab({ format: 'png' });
     return { actionId: action.id, success: true, data: { dataUrl } };
   }
 
@@ -257,7 +258,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
       };
     }
     try {
-      const results = await chrome.scripting.executeScript({
+      const results = await browser.scripting.executeScript({
         target: { tabId },
         func: fn as () => unknown,
       });
@@ -281,7 +282,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   // 'unsafe-eval' in their CSP (e.g. Greenhouse).
   if (action.action === 'read_page_state') {
     try {
-      const results = await chrome.scripting.executeScript({
+      const results = await browser.scripting.executeScript({
         target: { tabId },
         func: () => {
           const controls = document.querySelectorAll(
@@ -323,6 +324,29 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
     }
   }
 
+  if (action.action === 'read_job_context') {
+    try {
+      const results = await browser.scripting.executeScript({
+        target: { tabId },
+        func: readJobContextFromPage,
+      });
+      return {
+        actionId: action.id,
+        success: true,
+        data: results[0]?.result ?? {
+          title: '', company: '', description: '', visibleText: '', structured: false,
+          page: await readPageContext(tabId),
+        },
+      };
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   // fill_verification_code is CSP-safe (hardcoded func, no eval). It distributes an
   // emailed one-time code across the page's code inputs — a group of single-char
   // boxes, or a single code field — using the React-safe native setter, then clicks
@@ -332,7 +356,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
     const platform = String(action.payload?.platform ?? '').toLowerCase();
     if (!code) return { actionId: action.id, success: false, error: 'code is required' };
     try {
-      const results = await chrome.scripting.executeScript({
+      const results = await browser.scripting.executeScript({
         target: { tabId },
         func: async (codeStr: string, platformHint: string) => {
           const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -487,7 +511,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   }
 
   if (action.action === 'apply_injection_plan') {
-    const payload = (action.payload ?? {}) as ApplyInjectionPlanPayload;
+    const payload = (action.payload ?? {}) as unknown as ApplyInjectionPlanPayload;
     const planTabId = payload.page?.tabId ?? tabId;
 
     await ensureContentScript(planTabId);
@@ -500,11 +524,12 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
 
     try {
       const data = await executeInjectionPlan(planTabId, payload, emitApplyProgress);
+      const executionData = data && typeof data === 'object' ? data : { result: data };
       return {
         actionId: action.id,
         success: true,
         data: {
-          ...data,
+          ...executionData,
           page: current,
           urlMismatch,
         },
@@ -627,7 +652,7 @@ export async function connectRelay(
         payload.tabId ?? (await browser.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
       if (!tabId) throw new Error('No tab for screenshot');
       await focusTab(tabId);
-      const dataUrl = await browser.tabs.captureVisibleTab(undefined, { format: 'png' });
+      const dataUrl = await browser.tabs.captureVisibleTab({ format: 'png' });
       socket?.emit(SOCKET_EVENTS.SCREENSHOT_RESULT, { tabId, dataUrl });
     } catch (error) {
       socket?.emit(SOCKET_EVENTS.SCREENSHOT_RESULT, {

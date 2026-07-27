@@ -133,7 +133,7 @@ export function JobCard({
   const resumeReady = resumeState?.status === "done";
   const skillLabels = analyzedSkillLabels(job);
   const visibleSkills = skillLabels.slice(0, MAX_SKILL_CHIPS);
-  const hiddenSkillCount = skillLabels.length - visibleSkills.length;
+  const hiddenSkillCount = Math.max(0, (job.skillCount ?? skillLabels.length) - visibleSkills.length);
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;

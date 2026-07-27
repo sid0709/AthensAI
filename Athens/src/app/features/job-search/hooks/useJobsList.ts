@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { openDB } from "idb";
 import { toast } from "sonner";
 import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
@@ -8,6 +9,7 @@ import { JobSourceTitles } from '@/app/data/jobs/pub';
 import { JOB_TITLE_SCAN_ROLES } from "@/app/data/jobTitleRoles";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
 import { rescoreJobWithContext, type ProfileMatchContext } from "../../../lib/skill-match";
+import { subscribeJobRankingReady } from "../../../services/job-ranking-events";
 import type { CompanyJobGroup, Job } from "../../../types";
 import type {
   JobSearchFilterState,
@@ -28,9 +30,12 @@ type ListResponse = {
   recommendationReason?: string | null;
   recommendationWarming?: boolean;
   catalogTotal?: number | null;
-  pagination?: { total: number; totalJobs?: number; unit?: "companies"; page: number; limit: number; totalPages: number };
+  pagination?: { total: number; totalJobs?: number; unit?: "companies" | "jobs"; page: number; limit: number; totalPages: number };
+  readModelVersion?: string | null;
+  ranking?: { status?: "fresh" | "stale" | "warming"; version?: string | null; computedAt?: string | null };
+  statusOverlayVersion?: string | null;
   rankingVersion?: string | null;
-  rankingStatus?: "fresh" | "warming" | "fallback" | "legacy" | null;
+  rankingStatus?: "fresh" | "stale" | "warming" | "fallback" | "legacy" | null;
   beta?: boolean;
   catalogRevision?: string | null;
   personalizedThroughRank?: number | null;
@@ -59,19 +64,140 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   declined: 0,
 };
 
-const JOB_LIST_REQUEST_TIMEOUT_MS = 30_000;
+const JOB_LIST_REQUEST_TIMEOUT_MS = 5_000;
+const JOB_LIST_V2_ENABLED = !["0", "false", "no", "off"].includes(
+  String(import.meta.env.VITE_JOB_LIST_V2_ENABLED ?? "true").trim().toLowerCase(),
+);
+const JOB_LIST_ENDPOINT = JOB_LIST_V2_ENABLED ? "/jobs/list/v2" : "/jobs/list";
+const JOB_COUNTS_ENDPOINT = JOB_LIST_V2_ENABLED ? "/jobs/list/v2/counts" : "/jobs/list/counts";
 
-const LIST_CACHE_TTL_MS = 60_000;
+const LIST_CACHE_TTL_MS = 10 * 60_000;
+const LIST_CACHE_STALE_MS = 24 * 60 * 60_000;
 const LIST_CACHE_MAX_ENTRIES = 200;
-const listCache = new Map<string, { response: ListResponse; expiresAt: number }>();
+const LIST_CACHE_DB = "athens-job-search-v2";
+const LIST_CACHE_STORE = "responses";
+type ListCacheEntry = { response: ListResponse; expiresAt: number; staleAt: number };
+const listCache = new Map<string, ListCacheEntry>();
+const listRequests = new Map<string, Promise<ListResponse>>();
+let listCacheDbPromise: ReturnType<typeof openDB> | null = null;
+
+function listCacheDb() {
+  if (typeof indexedDB === "undefined") return null;
+  if (!listCacheDbPromise) {
+    listCacheDbPromise = openDB(LIST_CACHE_DB, 1, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains(LIST_CACHE_STORE)) db.createObjectStore(LIST_CACHE_STORE);
+      },
+    });
+  }
+  return listCacheDbPromise;
+}
+
+async function readPersistentListResponse(key: string): Promise<ListCacheEntry | null> {
+  try {
+    const db = await listCacheDb();
+    if (!db) return null;
+    const entry = (await db.get(LIST_CACHE_STORE, key)) as ListCacheEntry | undefined;
+    if (!entry || entry.staleAt <= Date.now()) {
+      if (entry) await db.delete(LIST_CACHE_STORE, key);
+      return null;
+    }
+    listCache.set(key, entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+async function persistListResponse(key: string, entry: ListCacheEntry) {
+  try {
+    const db = await listCacheDb();
+    if (db) await db.put(LIST_CACHE_STORE, entry, key);
+  } catch {
+    /* IndexedDB is an optional acceleration layer. */
+  }
+}
+
+function cachedStatusTab(cacheKey?: string): JobStatusTab {
+  if (!cacheKey) return "all";
+  try {
+    const body = JSON.parse(cacheKey.slice(cacheKey.indexOf("{"))) as { applied?: boolean; status?: string };
+    if (body.applied === false) return "posted";
+    if (body.applied !== true) return "all";
+    const statusByApi: Record<string, JobStatusTab> = {
+      Applied: "applied",
+      Scheduled: "scheduled",
+      Declined: "declined",
+      BidReady: "bid-ready",
+      BidCompleted: "bid-completed",
+    };
+    return statusByApi[body.status || ""] || "all";
+  } catch {
+    return "all";
+  }
+}
+
+function patchResponseJobStatus(
+  response: ListResponse,
+  jobId: string,
+  status: Job["status"],
+  cacheKey?: string,
+): boolean {
+  let changed = false;
+  const requestedStatus = cachedStatusTab(cacheKey);
+  const remove = requestedStatus !== "all" && requestedStatus !== status;
+  response.data = (response.data || []).flatMap((row) => {
+    if (Array.isArray(row.jobs)) {
+      const jobs = row.jobs.flatMap((job) => {
+        if (String(job._id || "") !== jobId) return [job];
+        changed = true;
+        if (remove) return [];
+        job.viewerStatus = status;
+        return [job];
+      });
+      return jobs.length ? [{ ...row, jobs }] : [];
+    }
+    if (String(row._id || "") !== jobId) return [row];
+    changed = true;
+    if (remove) return [];
+    row.viewerStatus = status;
+    return [row];
+  });
+  if (changed && remove && response.pagination) {
+    response.pagination.total = Math.max(0, response.pagination.total - 1);
+    if (typeof response.pagination.totalJobs === "number") {
+      response.pagination.totalJobs = Math.max(0, response.pagination.totalJobs - 1);
+    }
+    response.pagination.totalPages = Math.ceil(response.pagination.total / Math.max(1, response.pagination.limit));
+  }
+  return changed;
+}
+
+async function patchPersistentJobStatus(jobId: string, status: Job["status"]) {
+  try {
+    const db = await listCacheDb();
+    if (!db) return;
+    const keys = await db.getAllKeys(LIST_CACHE_STORE);
+    for (const key of keys) {
+      const entry = (await db.get(LIST_CACHE_STORE, key)) as ListCacheEntry | undefined;
+      if (entry && patchResponseJobStatus(entry.response, jobId, status, String(key))) {
+        await db.put(LIST_CACHE_STORE, entry, key);
+      }
+    }
+  } catch {
+    /* Cache patching must never affect the mutation itself. */
+  }
+}
 
 function cacheListResponse(key: string, response: ListResponse) {
   const now = Date.now();
   for (const [existingKey, entry] of listCache) {
-    if (entry.expiresAt <= now) listCache.delete(existingKey);
+    if (entry.staleAt <= now) listCache.delete(existingKey);
   }
   listCache.delete(key);
-  listCache.set(key, { response, expiresAt: now + LIST_CACHE_TTL_MS });
+  const entry = { response, expiresAt: now + LIST_CACHE_TTL_MS, staleAt: now + LIST_CACHE_STALE_MS };
+  listCache.set(key, entry);
+  void persistListResponse(key, entry);
   while (listCache.size > LIST_CACHE_MAX_ENTRIES) {
     const oldest = listCache.keys().next().value as string | undefined;
     if (!oldest) break;
@@ -83,18 +209,17 @@ function listCacheKey(body: Record<string, unknown>) {
   return JSON.stringify(body);
 }
 
-async function prefetchJobsPage(body: Record<string, unknown>, rankingRevision: number) {
+async function prefetchJobsPage(
+  body: Record<string, unknown>,
+  rankingRevision: number,
+  request: (path: string, options: { method: string; body: unknown }) => Promise<unknown>,
+) {
   const key = `${rankingRevision}:${listCacheKey(body)}`;
   const cached = listCache.get(key);
   if (cached?.expiresAt && cached.expiresAt > Date.now()) return;
-  const url = `${API_BASE.replace(/\/$/, "")}/jobs/list`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) return;
-  const data = (await response.json()) as ListResponse;
+  const persisted = await readPersistentListResponse(key);
+  if (persisted?.expiresAt && persisted.expiresAt > Date.now()) return;
+  const data = (await request(JOB_LIST_ENDPOINT, { method: "POST", body })) as ListResponse;
   if (data?.success && Array.isArray(data.data)) {
     cacheListResponse(key, data);
   }
@@ -175,8 +300,8 @@ export function buildJobsListBody(
     jobSources: filters.source.length
       ? filters.source.join(",")
       : JobSourceTitles.join(","),
-		groupBy: "company",
   };
+  if (!JOB_LIST_V2_ENABLED) body.groupBy = "company";
 
   if (opts.applierName) body.applierName = opts.applierName;
   if (filters.aiExtractedOnly) body.aiExtracted = true;
@@ -219,7 +344,6 @@ export function buildJobsCountsBody(
   delete body.limit;
   delete body.applied;
   delete body.status;
-	delete body.groupBy;
   return body;
 }
 
@@ -227,11 +351,13 @@ function mapResponseGroups(
   rows: NonNullable<ListResponse["data"]>,
   applier: ReturnType<typeof useApplier>["applier"],
 ): CompanyJobGroup[] {
-  return rows.map((row) => {
+  const groups: CompanyJobGroup[] = [];
+  const groupIndexes = new Map<string, number>();
+  for (const row of rows) {
     if (Array.isArray(row.jobs)) {
       const jobs = row.jobs.map((doc) => mapDocToJob(doc, applier));
       const first = jobs[0];
-      return {
+      groups.push({
         companyId: String(row.companyId || first?.companyId || `legacy:${first?.id || "unknown"}`),
         company: {
           name: String(row.company?.name || first?.company || "Unknown"),
@@ -241,15 +367,23 @@ function mapResponseGroups(
         jobs,
         matchingJobCount: typeof row.matchingJobCount === "number" ? row.matchingJobCount : undefined,
         nextMemberOffset: row.nextMemberOffset ?? undefined,
-      };
+      });
+      continue;
     }
     const job = mapDocToJob(row, applier);
-    return {
-      companyId: job.companyId,
-      company: { name: job.company, logoUrl: job.logoUrl, url: job.companyUrl },
-      jobs: [job],
-    };
-  });
+    const index = groupIndexes.get(job.companyId);
+    if (index === undefined) {
+      groupIndexes.set(job.companyId, groups.length);
+      groups.push({
+        companyId: job.companyId,
+        company: { name: job.company, logoUrl: job.logoUrl, url: job.companyUrl },
+        jobs: [job],
+      });
+    } else {
+      groups[index].jobs.push(job);
+    }
+  }
+  return groups;
 }
 
 export function useJobsList(
@@ -279,7 +413,9 @@ export function useJobsList(
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
   const [rankingStatus, setRankingStatus] = useState<ListResponse["rankingStatus"]>(null);
   const [groupedBeta, setGroupedBeta] = useState(false);
-  const rankingWarmRetryCount = useRef(0);
+  const rawGroupsRef = useRef<CompanyJobGroup[]>([]);
+  const rankingEventVersionRef = useRef<string | null>(null);
+  rawGroupsRef.current = rawGroups;
 
   const {
     filters: debouncedFilters,
@@ -323,8 +459,7 @@ export function useJobsList(
   const loading =
     !applierReady ||
     isDebouncing ||
-    requestInFlight ||
-    settledKey !== currentQueryKey;
+    ((requestInFlight || settledKey !== currentQueryKey) && rawGroups.length === 0);
 
   useEffect(() => {
     if (!applierReady || isDebouncing) return;
@@ -336,19 +471,20 @@ export function useJobsList(
       controller.abort();
     }, JOB_LIST_REQUEST_TIMEOUT_MS);
     const cacheKey = currentQueryKey;
-    const cached = listCache.get(currentQueryKey);
-    const hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
+    let cached = listCache.get(currentQueryKey);
+    let hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
     const applyResponse = (res: ListResponse) => {
       if (!res?.success || !Array.isArray(res.data)) return false;
 			setRawGroups(mapResponseGroups(res.data, applier));
       const responseTotal = res.pagination?.total ?? res.data.length;
       setTotal(responseTotal);
 			setTotalJobs(res.pagination?.totalJobs ?? responseTotal);
+      const v2RankingStatus = res.ranking?.status ?? null;
       setRecommendationFallback(Boolean(res.recommendationFallback));
       setRecommendationReason(res.recommendationReason ?? null);
-      setRecommendationWarming(Boolean(res.recommendationWarming));
+      setRecommendationWarming(Boolean(res.recommendationWarming) || v2RankingStatus === "warming");
       setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
-      setRankingStatus(res.rankingStatus ?? null);
+      setRankingStatus(v2RankingStatus ?? res.rankingStatus ?? null);
       setGroupedBeta(res.beta === true);
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
@@ -362,14 +498,31 @@ export function useJobsList(
 
     (async () => {
       try {
-        const res = await retryTransient(
-          () => request("/jobs/list", {
-            method: "POST",
-            body: listBody,
-            signal: controller.signal,
-          }) as Promise<ListResponse>,
-          { signal: controller.signal },
-        );
+        if (!cached || cached.staleAt <= Date.now()) {
+          cached = await readPersistentListResponse(cacheKey) ?? undefined;
+          hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
+        }
+        if (cached && cached.staleAt > Date.now() && !cancelled) {
+          applyResponse(cached.response);
+          if (!hasFreshCache) setStaleResults(true);
+        }
+
+        let pending = listRequests.get(cacheKey);
+        if (!pending) {
+          pending = retryTransient(
+            () => request(JOB_LIST_ENDPOINT, {
+              method: "POST",
+              body: listBody,
+              signal: controller.signal,
+            }) as Promise<ListResponse>,
+            { signal: controller.signal, delaysMs: [300] },
+          );
+          listRequests.set(cacheKey, pending);
+          void pending.finally(() => {
+            if (listRequests.get(cacheKey) === pending) listRequests.delete(cacheKey);
+          }).catch(() => undefined);
+        }
+        const res = await pending;
         if (cancelled) return;
         if (!applyResponse(res)) throw new Error("The jobs response was incomplete");
         cacheListResponse(cacheKey, res);
@@ -377,18 +530,18 @@ export function useJobsList(
         const totalPages = res.pagination?.totalPages ?? 1;
         for (const adjacent of [currentPage - 1, currentPage + 1]) {
           if (adjacent >= 1 && adjacent <= totalPages) {
-            void prefetchJobsPage({ ...listBody, page: adjacent }, rankingRevision).catch(() => {});
+            void prefetchJobsPage({ ...listBody, page: adjacent }, rankingRevision, request).catch(() => {});
           }
         }
       } catch (e) {
         if ((e as Error)?.name === "AbortError" && !timedOut) return;
         console.error(e);
-        if (hasFreshCache && cached && applyResponse(cached.response)) {
+        if (cached && cached.staleAt > Date.now() && applyResponse(cached.response)) {
           setStaleResults(true);
           setError(timedOut
             ? "Job refresh took too long. Showing cached results."
             : "Could not refresh jobs. Showing cached results.");
-        } else {
+        } else if (rawGroupsRef.current.length === 0) {
 			setRawGroups([]);
           setTotal(0);
 			setTotalJobs(0);
@@ -419,19 +572,6 @@ export function useJobsList(
   }, [currentQueryKey, retryRevision, request, applier, applierReady, isDebouncing]);
 
   useEffect(() => {
-    if (debouncedFilters.sort !== "matchScore" || !recommendationWarming) {
-      rankingWarmRetryCount.current = 0;
-      return;
-    }
-    if (requestInFlight || rankingWarmRetryCount.current >= 4) return;
-    const timer = setTimeout(() => {
-      rankingWarmRetryCount.current += 1;
-      setRetryRevision((revision) => revision + 1);
-    }, 1_500);
-    return () => clearTimeout(timer);
-  }, [debouncedFilters.sort, recommendationWarming, requestInFlight, retryRevision, currentQueryKey]);
-
-  useEffect(() => {
     if (!applierReady || isDebouncing) return;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -440,7 +580,7 @@ export function useJobsList(
       if (!cancelled) setCountsLoading(true);
       try {
         const res = await retryTransient(
-          () => request("/jobs/list/counts", {
+          () => request(JOB_COUNTS_ENDPOINT, {
             method: "POST",
             body: countsBody,
             signal: controller.signal,
@@ -466,6 +606,12 @@ export function useJobsList(
     };
   }, [countsKey, applierReady, request, isDebouncing]);
 
+  useEffect(() => subscribeJobRankingReady(applier?.name, (event) => {
+    if (event.version && rankingEventVersionRef.current === event.version) return;
+    rankingEventVersionRef.current = event.version || null;
+    setRetryRevision((revision) => revision + 1);
+  }), [applier?.name]);
+
   const setPageSizeAndReset = useCallback((size: number) => {
     setPageSize(size);
     setPage(1);
@@ -473,7 +619,19 @@ export function useJobsList(
 
   const patchJob = useCallback(
     (updated: Job) => {
-      listCache.clear();
+      const updatedId = updated.backendId || updated.id;
+      const previousJob = rawGroupsRef.current
+        .flatMap((group) => group.jobs)
+        .find((job) => job.id === updated.id || job.backendId === updated.backendId);
+      if (previousJob && previousJob.status !== updated.status) {
+        setStatusCounts((previous) => ({
+          ...previous,
+          [previousJob.status]: Math.max(0, previous[previousJob.status] - 1),
+          [updated.status]: previous[updated.status] + 1,
+        }));
+      }
+      for (const [key, entry] of listCache) patchResponseJobStatus(entry.response, updatedId, updated.status, key);
+      void patchPersistentJobStatus(updatedId, updated.status);
       const statusTab = debouncedFilters.statusTab;
 			setRawGroups((previous) => {
 				let removedGroupCount = 0;
@@ -499,7 +657,8 @@ export function useJobsList(
 					jobs[index] = updated;
 					return [{ ...group, jobs }];
 				});
-				if (removedGroupCount) setTotal((value) => Math.max(0, value - removedGroupCount));
+				const removedUnits = JOB_LIST_V2_ENABLED ? removedJobCount : removedGroupCount;
+				if (removedUnits) setTotal((value) => Math.max(0, value - removedUnits));
 				if (removedJobCount) setTotalJobs((value) => Math.max(0, value - removedJobCount));
 				if (needsDirectoryRefresh) queueMicrotask(() => setRetryRevision((revision) => revision + 1));
 				return next;
@@ -527,7 +686,8 @@ export function useJobsList(
 				if (!jobs.length) needsDirectoryRefresh = true;
 				return [{ ...group, jobs, matchingJobCount }];
 			});
-			if (removedGroups) setTotal((value) => Math.max(0, value - removedGroups));
+			const removedUnits = JOB_LIST_V2_ENABLED ? removedJobs : removedGroups;
+			if (removedUnits) setTotal((value) => Math.max(0, value - removedUnits));
 			if (removedJobs) setTotalJobs((value) => Math.max(0, value - removedJobs));
 			if (needsDirectoryRefresh) queueMicrotask(() => setRetryRevision((revision) => revision + 1));
 			return next;
@@ -538,7 +698,7 @@ export function useJobsList(
     if (!applierReady) return;
     setCountsLoading(true);
     try {
-      const res = (await post("/jobs/list/counts", countsBody)) as CountsResponse;
+      const res = (await post(JOB_COUNTS_ENDPOINT, countsBody)) as CountsResponse;
       if (res?.success && res.counts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
       }

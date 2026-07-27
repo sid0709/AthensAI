@@ -1,4 +1,5 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { JobCard } from "./JobCard";
 import { cn } from "../../../lib/utils";
 import { alignJobScoreForDisplay } from "../../../lib/skill-match";
@@ -62,6 +63,67 @@ export function JobListView({
     })),
     [groups, matchContext],
   );
+  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+  const listRef = useCallback((node: HTMLDivElement | null) => {
+    setScrollElement(node?.closest<HTMLElement>("[data-page-scroll-container]") ?? null);
+  }, []);
+  const virtualizer = useVirtualizer({
+    count: layout === "list" ? displayGroups.length : 0,
+    getScrollElement: () => scrollElement,
+    estimateSize: () => 350,
+    overscan: 4,
+  });
+
+  const renderGroup = (group: CompanyJobGroup) => {
+    const job = group.jobs[0];
+    if (!job) return null;
+    if (isBeta || group.jobs.length > 1) {
+      return (
+        <CompanyJobCarousel
+          key={group.companyId}
+          group={group}
+          activeJobId={activeJobIds?.[group.companyId]}
+          onActiveJobChange={(jobId) => onActiveJobChange?.(group.companyId, jobId)}
+          selectedIds={selectedIds}
+          onSelectJob={onSelectJob}
+          showScores={showScores}
+          bookmarkedIds={bookmarkedIds}
+          onToggleBookmark={onToggleBookmark}
+          isJobPending={isJobPending}
+          onApply={onApply}
+          onMarkBidReady={onMarkBidReady}
+          onMarkScheduled={onMarkScheduled}
+          onMarkDeclined={onMarkDeclined}
+          onCancel={onCancel}
+          onJobScoresUpdated={onJobScoresUpdated}
+          resumeStates={resumeStates}
+          onGenerateResume={onGenerateResume}
+          onLoadMore={onLoadCompanyMembers}
+          loadingMore={memberLoadingIds?.has(group.companyId)}
+        />
+      );
+    }
+    return (
+      <JobCard
+        key={group.companyId}
+        job={job}
+        selected={selectedIds?.has(job.id)}
+        onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
+        showScores={showScores}
+        bookmarked={bookmarkedIds?.has(job.id)}
+        onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
+        statusPending={isJobPending?.(job.id)}
+        onApply={onApply ? () => onApply(job) : undefined}
+        onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(job) : undefined}
+        onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
+        onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
+        onCancel={onCancel ? () => onCancel(job) : undefined}
+        onJobScoresUpdated={onJobScoresUpdated}
+        resumeState={resumeStates?.[job.id]}
+        onGenerateResume={onGenerateResume ? () => onGenerateResume(job) : undefined}
+      />
+    );
+  };
 
   if (displayGroups.length === 0) {
     return (
@@ -71,63 +133,28 @@ export function JobListView({
     );
   }
 
+  if (layout === "grid") {
+    return (
+      <div className={cn("grid grid-cols-1 gap-4 py-2 md:grid-cols-2 xl:grid-cols-3")}>
+        {displayGroups.map(renderGroup)}
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={cn(
-        "py-2",
-        layout === "grid"
-          ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
-          : "flex flex-col gap-4",
-      )}
-    >
-      {displayGroups.map((group) => {
-        const job = group.jobs[0];
-        if (!job) return null;
-        if (isBeta) {
-          return (
-            <CompanyJobCarousel
-              key={group.companyId}
-              group={group}
-              activeJobId={activeJobIds?.[group.companyId]}
-              onActiveJobChange={(jobId) => onActiveJobChange?.(group.companyId, jobId)}
-              selectedIds={selectedIds}
-              onSelectJob={onSelectJob}
-              showScores={showScores}
-              bookmarkedIds={bookmarkedIds}
-              onToggleBookmark={onToggleBookmark}
-              isJobPending={isJobPending}
-              onApply={onApply}
-              onMarkBidReady={onMarkBidReady}
-              onMarkScheduled={onMarkScheduled}
-              onMarkDeclined={onMarkDeclined}
-              onCancel={onCancel}
-              onJobScoresUpdated={onJobScoresUpdated}
-              resumeStates={resumeStates}
-              onGenerateResume={onGenerateResume}
-              onLoadMore={onLoadCompanyMembers}
-              loadingMore={memberLoadingIds?.has(group.companyId)}
-            />
-          );
-        }
+    <div ref={listRef} className="relative py-2" style={{ height: virtualizer.getTotalSize() }}>
+      {virtualizer.getVirtualItems().map((virtualRow) => {
+        const group = displayGroups[virtualRow.index];
         return (
-          <JobCard
+          <div
             key={group.companyId}
-            job={job}
-            selected={selectedIds?.has(job.id)}
-            onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
-            showScores={showScores}
-            bookmarked={bookmarkedIds?.has(job.id)}
-            onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
-            statusPending={isJobPending?.(job.id)}
-            onApply={onApply ? () => onApply(job) : undefined}
-            onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(job) : undefined}
-            onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
-            onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
-            onCancel={onCancel ? () => onCancel(job) : undefined}
-            onJobScoresUpdated={onJobScoresUpdated}
-            resumeState={resumeStates?.[job.id]}
-            onGenerateResume={onGenerateResume ? () => onGenerateResume(job) : undefined}
-          />
+            data-index={virtualRow.index}
+            ref={virtualizer.measureElement}
+            className="absolute left-0 top-0 w-full pb-4"
+            style={{ transform: `translateY(${virtualRow.start}px)` }}
+          >
+            {renderGroup(group)}
+          </div>
         );
       })}
     </div>

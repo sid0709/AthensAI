@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "predev": "npm run pack:extensions",
+    "dev": "vite",
+    "pack:extensions": "PUBLIC_ORIGIN=http://localhost:9030 EXTENSION_OUTPUT_DIR=$PWD/public/downloads bash ../docker/pack-extensions.sh"
   },
   "dependencies": {
     "@avalon/shared": "file:../project-avalon/packages/shared",
@@ -15,6 +17,7 @@
     "@mui/material": "7.3.5",
     "@nextoffer/shared": "file:../packages/shared",
     "@popperjs/core": "2.11.8",
+    "@tanstack/react-virtual": "^3.13.12",
     "@radix-ui/react-accordion": "1.2.3",
     "@radix-ui/react-alert-dialog": "1.1.6",
     "@radix-ui/react-aspect-ratio": "1.1.2",

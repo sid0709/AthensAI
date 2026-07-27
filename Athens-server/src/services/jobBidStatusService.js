@@ -1,7 +1,11 @@
 import { DocumentId } from '@nextoffer/shared/document-id';
 import { accountInfoCollection, jobsCollection } from '../db/dataStore.js';
-import { mutateJobStatus } from './jobStatusProjectionService.js';
-import { mergeJobStatusRows } from '@nextoffer/shared/job-status';
+import {
+	mutateJobStatus,
+	readCanonicalProjectedJobStatusIdsByState,
+	readProjectedJobStatuses,
+} from './jobStatusProjectionService.js';
+import { mergeJobStatusRows, resolveJobStatusState } from '@nextoffer/shared/job-status';
 
 function toDocumentId(value) {
 	if (!value) return null;
@@ -33,11 +37,6 @@ export async function resolveApplierId(applierName) {
 	return doc?._id ?? null;
 }
 
-function findStatusEntry(job, applierId) {
-	if (!job || !Array.isArray(job.status)) return null;
-	return mergeJobStatusRows(job.status, String(applierId));
-}
-
 /**
  * Permanently mark a job as bid-ready / bid-completed for an applier.
  * Does not set appliedDate.
@@ -45,27 +44,25 @@ function findStatusEntry(job, applierId) {
 export async function upsertJobBidStatus(
 	applierName,
 	jobId,
-	{ bidReady = false, bidCompleted = false } = {},
+	{ bidReady = false, bidCompleted = false, catalog = 'market', mutationId = null } = {},
 ) {
 	if (!jobsCollection || !applierName || !jobId || (!bidReady && !bidCompleted)) return false;
 	return mutateJobStatus({
 		jobId,
 		applierName,
 		transition: bidCompleted ? 'bid-completed' : 'bid-ready',
+		catalog,
+		mutationId,
 	});
 }
 
 /** Original bid-ready timestamp for stable Bid Management dayKey folders. */
 export async function getJobBidReadyDate(applierName, jobId) {
 	if (!jobsCollection || !applierName || !jobId) return null;
-	const documentId = toDocumentId(jobId);
 	const applierId = await resolveApplierId(applierName);
-	if (!documentId || !applierId) return null;
-	const job = await jobsCollection.findOne(
-		{ _id: documentId, 'status.applier': applierId },
-		{ projection: { status: 1 } },
-	);
-	const entry = findStatusEntry(job, applierId);
+	if (!toDocumentId(jobId) || !applierId) return null;
+	const projected = await readProjectedJobStatuses(String(applierId), [String(jobId)]);
+	const entry = mergeJobStatusRows(projected.get(String(jobId)), String(applierId));
 	const raw = entry?.bidReadyDate ?? null;
 	if (!raw) return null;
 	if (raw instanceof Date) return raw.toISOString();
@@ -76,9 +73,9 @@ export async function getJobBidReadyDate(applierName, jobId) {
  * Clear bid-ready / bid-completed so the job returns to New (posted) in Job Search.
  * Pulls the whole status entry when it has no applied/scheduled/declined dates.
  */
-export async function clearJobBidStatus(applierName, jobId) {
+export async function clearJobBidStatus(applierName, jobId, { catalog = 'market', mutationId = null } = {}) {
 	if (!jobsCollection || !applierName || !jobId) return false;
-	return mutateJobStatus({ jobId, applierName, transition: 'clear-bid' });
+	return mutateJobStatus({ jobId, applierName, transition: 'clear-bid', catalog, mutationId });
 }
 
 /** Find a job_market doc by apply URL (exact, then soft hostname+path match). */
@@ -127,44 +124,56 @@ export async function markBidCompletedByUrl(applierName, url) {
 	return { updated: true, jobId: String(job._id) };
 }
 
-/** List bid-ready (+ bid-completed, not yet applied) jobs for an applier. */
-export async function listBidQueueJobs(applierName, { limit = 50, includeCompleted = true } = {}) {
-	if (!jobsCollection || !applierName) return [];
-	const applierId = await resolveApplierId(applierName);
-	if (!applierId) return [];
-
-	const elem = {
-		applier: applierId,
-		bidReadyDate: { $exists: true },
-		appliedDate: { $exists: false },
-		scheduledDate: { $exists: false },
-		declinedDate: { $exists: false },
-	};
-	if (!includeCompleted) {
-		elem.bidCompletedDate = { $exists: false };
-	}
-
-	const docs = await jobsCollection
-		.find({ status: { $elemMatch: elem } })
-		.sort({ _id: -1 })
-		.limit(Math.max(1, Math.min(500, Number(limit) || 50)))
-		.toArray();
-
-	return docs.map((job) => {
-		const entry = findStatusEntry(job, applierId);
+export function mapBidQueueJobs(jobIds, docs, projectedStatuses, applierId, { includeCompleted = true } = {}) {
+	const docsById = new Map((Array.isArray(docs) ? docs : []).map((job) => [String(job._id), job]));
+	const profileId = String(applierId);
+	return (Array.isArray(jobIds) ? jobIds : []).flatMap((rawJobId) => {
+		const jobId = String(rawJobId);
+		const job = docsById.get(jobId);
+		if (!job) return [];
+		const entry = mergeJobStatusRows(projectedStatuses?.get(jobId), profileId);
+		const state = resolveJobStatusState(entry);
+		if (state !== 'bid-ready' && !(includeCompleted && state === 'bid-completed')) return [];
 		const company =
 			job.company && typeof job.company === 'object'
 				? String(job.company.name || '')
 				: String(job.companyName || '');
-		return {
-			jobId: String(job._id),
+		return [{
+			jobId,
 			title: String(job.title || 'Untitled role'),
 			company,
 			applyUrl: String(job.applyLink || job.jobLink || ''),
 			source: String(job.source || ''),
 			bidReadyDate: entry?.bidReadyDate ?? null,
 			bidCompletedDate: entry?.bidCompletedDate ?? null,
-			completed: Boolean(entry?.bidCompletedDate),
-		};
+			completed: state === 'bid-completed',
+		}];
 	});
+}
+
+/** List bid-ready (+ bid-completed, not yet applied) jobs for an applier. */
+export async function listBidQueueJobs(applierName, { limit = 50, includeCompleted = true } = {}) {
+	if (!jobsCollection || !applierName) return [];
+	const applierId = await resolveApplierId(applierName);
+	if (!applierId) return [];
+
+	const profileId = String(applierId);
+	const boundedLimit = Math.max(1, Math.min(500, Number(limit) || 50));
+	const requestedStates = includeCompleted ? ['bid-ready', 'bid-completed'] : ['bid-ready'];
+	const idsByState = await readCanonicalProjectedJobStatusIdsByState(profileId, requestedStates);
+	const readyIds = idsByState.get('bid-ready') || [];
+	const completedIds = idsByState.get('bid-completed') || [];
+	// Pending work is always retained ahead of historical completed rows.
+	const jobIds = [...new Set([...readyIds, ...completedIds].map(String))].slice(0, boundedLimit);
+	if (!jobIds.length) return [];
+	const documentIds = jobIds.map(toDocumentId).filter(Boolean);
+	const [docs, projectedStatuses] = await Promise.all([
+		jobsCollection.find(
+			{ _id: { $in: documentIds } },
+			{ projection: { title: 1, company: 1, companyName: 1, applyLink: 1, jobLink: 1, source: 1 } },
+		).toArray(),
+		readProjectedJobStatuses(profileId, jobIds),
+	]);
+
+	return mapBidQueueJobs(jobIds, docs, projectedStatuses, profileId, { includeCompleted });
 }

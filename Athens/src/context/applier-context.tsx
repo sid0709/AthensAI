@@ -38,8 +38,16 @@ const ApplierContext = createContext<ApplierContextValue>({
 
 export function ApplierProvider({ children }: { children: ReactNode }) {
   const { user, isAuthenticated } = useAuth();
-  const [applier, setApplier] = useState<ApplierAccount | null>(null);
-  const [applierReady, setApplierReady] = useState(false);
+  const fallbackAccount = user && isAuthenticated
+    ? {
+        _id: user._id,
+        name: user.name,
+        tier: user.tier,
+        permission: user.permission,
+      }
+    : null;
+  const [applier, setApplier] = useState<ApplierAccount | null>(() => fallbackAccount);
+  const [applierReady, setApplierReady] = useState(() => Boolean(fallbackAccount));
 
   useEffect(() => {
     if (!isAuthenticated || !user?.name) {
@@ -49,8 +57,9 @@ export function ApplierProvider({ children }: { children: ReactNode }) {
     }
 
     let cancelled = false;
+    setApplier((current) => current?.name === user.name ? current : fallbackAccount);
+    setApplierReady(true);
     (async () => {
-      setApplierReady(false);
       try {
         const res = await retryTransient(async () => {
           const response = await fetch(

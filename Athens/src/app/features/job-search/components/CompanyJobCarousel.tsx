@@ -181,26 +181,30 @@ export function CompanyJobCarousel({
 
       <div className="overflow-hidden" ref={viewportRef}>
         <div className="flex touch-pan-y">
-          {group.jobs.map((job) => (
+          {group.jobs.map((job, index) => (
             <div key={job.id} className="min-w-0 flex-[0_0_100%] p-1">
-              <JobCard
-                job={job}
-                className="rounded-lg border-transparent shadow-none ring-0"
-                selected={selectedIds?.has(job.id)}
-                onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
-                showScores={showScores}
-                bookmarked={bookmarkedIds?.has(job.id)}
-                onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
-                statusPending={isJobPending?.(job.id)}
-                onApply={onApply ? () => onApply(job) : undefined}
-                onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(job) : undefined}
-                onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
-                onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
-                onCancel={onCancel ? () => onCancel(job) : undefined}
-                onJobScoresUpdated={onJobScoresUpdated}
-                resumeState={resumeStates?.[job.id]}
-                onGenerateResume={onGenerateResume ? () => onGenerateResume(job) : undefined}
-              />
+              {index === selectedIndex ? (
+                <JobCard
+                  job={job}
+                  className="rounded-lg border-transparent shadow-none ring-0"
+                  selected={selectedIds?.has(job.id)}
+                  onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
+                  showScores={showScores}
+                  bookmarked={bookmarkedIds?.has(job.id)}
+                  onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
+                  statusPending={isJobPending?.(job.id)}
+                  onApply={onApply ? () => onApply(job) : undefined}
+                  onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(job) : undefined}
+                  onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
+                  onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
+                  onCancel={onCancel ? () => onCancel(job) : undefined}
+                  onJobScoresUpdated={onJobScoresUpdated}
+                  resumeState={resumeStates?.[job.id]}
+                  onGenerateResume={onGenerateResume ? () => onGenerateResume(job) : undefined}
+                />
+              ) : (
+                <div className="min-h-64" aria-hidden />
+              )}
             </div>
           ))}
           {loadingMore ? (

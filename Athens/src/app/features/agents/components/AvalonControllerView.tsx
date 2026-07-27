@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -30,6 +30,7 @@ import { isBetaTier } from "../../../lib/beta";
 import { AgentResumePdfPreview, agentJobResumePdfUrl } from "./AgentResumePdfPreview";
 import { resolveProfileDefaultModel } from "../avalon/ai/model";
 import { formatAgentRate, resolveAgentModelPricing, type AgentPricingRates } from "../avalon/ai/pricing";
+import { fetchAgentReadiness, type AgentReadiness } from "../../../services/agentApi";
 
 const WORKSPACE_PANEL =
   "rounded-2xl border border-border/80 bg-card shadow-sm flex flex-col min-w-0 overflow-hidden";
@@ -170,10 +171,27 @@ export function AvalonControllerView({
 }) {
   const { applier } = useApplier();
   const [showSettings, setShowSettings] = useState(false);
+  const [readiness, setReadiness] = useState<AgentReadiness | null>(null);
+  const [readinessError, setReadinessError] = useState("");
 
   // The relay lives in a persistent per-session engine (AgentSessionsProvider), so
   // state survives navigation and background runs; here we just consume it.
   const relay = useSessionRelay();
+  const profileId = applier?._id != null ? String(applier._id) : "";
+  useEffect(() => {
+    if (!profileId) {
+      setReadiness(null);
+      return;
+    }
+    const controller = new AbortController();
+    setReadinessError("");
+    fetchAgentReadiness(profileId, controller.signal)
+      .then(setReadiness)
+      .catch((error) => {
+        if (!controller.signal.aborted) setReadinessError(error instanceof Error ? error.message : String(error));
+      });
+    return () => controller.abort();
+  }, [profileId]);
 
   const selectedFieldLabel =
     relay.selectedTreeFieldId && relay.actionableTree
@@ -207,8 +225,9 @@ export function AvalonControllerView({
   const hasPlan = pipeline.analyzed && Boolean(relay.formAnalysis?.fields.length);
   const hasResumeDraft = pipeline.resumeReady;
   const liveOk = relay.connected && relay.peers.extension;
+  const fullyReady = Boolean(liveOk && readiness?.ai.ready && readiness?.resume.ready);
   const applyBlocked = applyDisabledReason(relay, hasPlan);
-  const canApply = hasPlan && !applyBlocked;
+  const canApply = hasPlan && !applyBlocked && fullyReady;
   const pipelineLocked = relay.autoRunning || relay.applying;
   const verifyWaiting = relay.applyPhase?.phase === "verify-wait";
   const verifyWaitSeconds = verifyWaiting ? relay.applyPhase?.secondsLeft : undefined;
@@ -508,9 +527,34 @@ export function AvalonControllerView({
         </div>
       )}
 
-      {relay.executeDisabledReason && !relay.canExecute && !hasPlan && (
-        <div className="rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-xs text-amber-900">
-          {relay.executeDisabledReason}
+      {!fullyReady && (
+        <div className="rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-xs text-amber-950 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="font-bold">Finish Agent Mode setup</p>
+              <p className="text-[11px] text-amber-900/80">Queues remain available while setup is incomplete.</p>
+            </div>
+            <a href="/apps#avalon" className="inline-flex items-center gap-1 rounded-lg bg-amber-900/10 px-3 py-1.5 font-semibold hover:bg-amber-900/15">
+              Avalon in Apps &amp; Plugins <ExternalLink size={11} />
+            </a>
+          </div>
+          <div className="grid sm:grid-cols-4 gap-2">
+            {[
+              { label: "Relay", ok: relay.connected, detail: relay.connected ? "Connected" : "Reconnect" },
+              { label: "Extension", ok: relay.peers.extension, detail: relay.peers.extension ? "Paired" : "Sign in and pair" },
+              { label: "AI", ok: readiness?.ai.ready, detail: readiness?.ai.ready ? readiness.ai.model : "Set profile model/key" },
+              { label: "Résumé", ok: readiness?.resume.ready, detail: readiness?.resume.ready ? "Ready" : "Complete profile + kit" },
+            ].map((item) => (
+              <div key={item.label} className="rounded-lg border border-amber-200/70 bg-white/50 px-2.5 py-2">
+                <div className="flex items-center gap-1.5 font-bold"><StatusDot ok={Boolean(item.ok)} warn={!item.ok} />{item.label}</div>
+                <p className="mt-1 text-[10px] text-amber-900/75 truncate" title={item.detail}>{item.detail}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] font-mono break-all">
+            Extension profile: {readiness?.profile.name || applier?.name || "—"} ({profileId || "—"}) · session: {relay.sessionId || "default"}
+          </p>
+          {readinessError && <p className="text-[10px] text-red-700">Readiness check failed: {readinessError}</p>}
         </div>
       )}
 
@@ -532,7 +576,7 @@ export function AvalonControllerView({
               <button
                 type="button"
                 onClick={() => void relay.applyQueue()}
-                disabled={!relay.canExecute || relay.applying}
+                disabled={!fullyReady || relay.applying}
                 className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-40"
                 title="Open each job, scan, and fill — stops before submit for your review"
               >
@@ -614,7 +658,7 @@ export function AvalonControllerView({
                           relay.selectActiveJob(i);
                           void relay.runPipelineAuto(job);
                         }}
-                        disabled={!relay.canExecute || relay.applying || relay.autoRunning}
+                        disabled={!fullyReady || relay.applying || relay.autoRunning}
                         className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold text-violet-700 bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-40"
                       >
                         Apply (auto-submit)
@@ -672,7 +716,7 @@ export function AvalonControllerView({
             onClick={() => void relay.runPipelineAuto()}
             disabled={
               !activeJob ||
-              !relay.canExecute ||
+              !fullyReady ||
               relay.autoRunning ||
               pipelineLocked ||
               relay.validatingTab ||

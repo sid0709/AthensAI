@@ -56,9 +56,39 @@ const AthensApi = (() => {
           'Recording too large for the server (413). If you use host nginx/HTTPS, set client_max_body_size 4096m there too.',
         );
       }
-      throw new Error(data?.error || `Athens request failed (${response.status})`);
+      const error = new Error(data?.error || data?.message || `Athens request failed (${response.status})`);
+      if (data?.code) error.code = String(data.code);
+      throw error;
     }
     return data;
+  }
+
+  async function bidderSignIn(applierName, password, apiUrl) {
+    const name = String(applierName || '').trim();
+    const secret = String(password || '');
+    if (!name || !secret) {
+      return {
+        ok: false,
+        code: 'MISSING_CREDENTIALS',
+        error: 'Profile name and vendor access password are required.',
+      };
+    }
+
+    try {
+      const data = await fetchJson('/auth/bidder-signin', {
+        method: 'POST',
+        body: { name, password: secret },
+        apiUrl,
+        timeoutMs: QUEUE_TIMEOUT_MS,
+      });
+      return { ok: true, user: data?.user || null };
+    } catch (error) {
+      return {
+        ok: false,
+        code: error?.code || 'ATHENS_AUTH',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   function mapTaskToJob(task, applierName) {
@@ -537,6 +567,7 @@ const AthensApi = (() => {
     ANALYZE_TIMEOUT_MS,
     getSettings,
     saveSettings,
+    bidderSignIn,
     fetchBidReadyPools,
     fetchRejectedBids,
     markBidFixed,
@@ -559,3 +590,7 @@ const AthensApi = (() => {
     mapTaskToJob,
   };
 })();
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { AthensApi };
+}

@@ -20,6 +20,7 @@ import { initSocket, closeSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 import { startLocalSearchOutboxWorker, stopLocalSearchOutboxWorker } from "./src/services/search/localOutboxWorker.js";
+import { startJobStatusOutboxWorker, stopJobStatusOutboxWorker } from "./src/services/jobStatusOutboxWorker.js";
 import { shutdownPool as shutdownImapPool } from "./src/services/mail/imapPool.js";
 import { shutdownPdfPool } from "./src/services/pdf/pdfRenderPool.js";
 import statusRoutes from "./src/routes/statusRoutes.js";
@@ -34,6 +35,12 @@ import {
 } from "./src/config/graphAndVectorConfig.js";
 import { shutdownRankingPool, warmRankingPool } from "./src/services/matching/exactRerankPool.js";
 import { cleanupExistingJobIdentityDuplicates } from "./src/services/jobIdentityCleanup.js";
+import {
+	getJobListReadModelState,
+	initJobListCatalogSnapshot,
+	initJobListReadModel,
+	isJobListV2Enabled,
+} from "./src/services/jobListReadModelService.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -135,7 +142,11 @@ function createApp() {
 		if (!databaseReady || !getDataStore()) return res.status(503).json({ ok: false, databaseReady: false });
 		try {
 			await getDataStore().command({ ping: 1 });
-			return res.json({ ok: true, databaseReady: true });
+			const jobListReadModel = getJobListReadModelState();
+			if (jobListReadModel.enabled && !jobListReadModel.ready) {
+				return res.status(503).json({ ok: false, databaseReady: true, jobListReadModel });
+			}
+			return res.json({ ok: true, databaseReady: true, jobListReadModel });
 		} catch {
 			return res.status(503).json({ ok: false, databaseReady: false, error: "database unavailable" });
 		}
@@ -199,12 +210,13 @@ function createApp() {
 
 async function startBackgroundWorkers() {
 	await initDataStore();
-	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled();
+	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled() || isJobListV2Enabled();
 	await initRedis({ force: rankingIndexNeeded });
 	if (rankingIndexNeeded) {
 		await initQdrantCollections();
 		await initJobRankingCollection();
 	}
+	if (isJobListV2Enabled()) await initJobListCatalogSnapshot();
 	databaseReady = true;
 	void cleanupHistoricalJobDuplicates().catch((error) => {
 		console.error("[job-identity] historical cleanup failed:", error?.message || error);
@@ -213,6 +225,7 @@ async function startBackgroundWorkers() {
 		startJobAnalysisWorker();
 		if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 		startLocalSearchOutboxWorker();
+		startJobStatusOutboxWorker();
 	}
 	console.log(`[athens] primary background workers started (pid ${process.pid})`);
 }
@@ -233,8 +246,9 @@ async function startHttpWorker({ clustered }) {
 	}
 
 	await initDataStore();
-	await initRedis({ force: isQueryTimeRankingIndexEnabled() });
-	if (isQueryTimeRankingIndexEnabled()) {
+	const needsJobRankingIndex = isQueryTimeRankingIndexEnabled() || isJobListV2Enabled();
+	await initRedis({ force: needsJobRankingIndex });
+	if (needsJobRankingIndex) {
 		await initQdrantCollections();
 		const rankingReady = await initJobRankingCollection();
 		if (rankingReady && isRedisReady()) {
@@ -242,6 +256,7 @@ async function startHttpWorker({ clustered }) {
 			await warmRankingPool();
 		}
 	}
+	if (isJobListV2Enabled()) await initJobListReadModel();
 	databaseReady = true;
 	if (!clustered) {
 		startAggregateMetricsServer();
@@ -266,6 +281,7 @@ async function startHttpWorker({ clustered }) {
 				stopJobAnalysisWorker();
 				stopMatchScoreWorker();
 				stopLocalSearchOutboxWorker();
+				stopJobStatusOutboxWorker();
 				await new Promise((resolve) => server.close(() => resolve()));
 			}
 			await shutdownPdfPool();
@@ -302,10 +318,6 @@ async function startPrimary() {
 		console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
 	});
 
-	for (let i = 0; i < workerCount; i += 1) {
-		cluster.fork();
-	}
-
 	cluster.on("exit", (worker, code, signal) => {
 		console.warn(
 			`[athens] worker ${worker.process.pid} exited (code=${code} signal=${signal}) — respawning`,
@@ -314,6 +326,9 @@ async function startPrimary() {
 	});
 
 	await startBackgroundWorkers();
+	for (let i = 0; i < workerCount; i += 1) {
+		cluster.fork();
+	}
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
 	let shuttingDown = false;
@@ -324,6 +339,7 @@ async function startPrimary() {
 		stopJobAnalysisWorker();
 		stopMatchScoreWorker();
 		stopLocalSearchOutboxWorker();
+		stopJobStatusOutboxWorker();
 		for (const id of Object.keys(cluster.workers || {})) {
 			cluster.workers[id]?.process.kill("SIGTERM");
 		}
@@ -359,6 +375,7 @@ async function main() {
 			startJobAnalysisWorker();
 			if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 			startLocalSearchOutboxWorker();
+			startJobStatusOutboxWorker();
 		}
 	}
 }

@@ -97,7 +97,7 @@ async function attachTaggedFiles(tabId: number, resume: AttachedFile): Promise<n
   const name = (resume.name || 'resume.pdf').replace(/\.txt\.pdf$/i, '.pdf');
   const mime = resume.mimeType || 'application/pdf';
 
-  const [injection] = await chrome.scripting.executeScript({
+  const [injection] = await browser.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
     func: setFilesInMainWorld,
