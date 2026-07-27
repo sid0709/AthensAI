@@ -12,6 +12,11 @@ import {
 } from "../services/jobStatusProjectionService.js";
 import { normalizeCanonicalJobStatuses } from "../services/canonicalJobStatus.js";
 import { assertAuthoritativeAthensDb, DAVID_MOLL_ID, TEMP_ACCOUNT_ID } from "./firebaseResetSupport.js";
+import { closeRedis, getRedis, initRedis, isRedisReady } from "../db/redis.js";
+import {
+  buildJobStatusCachePlan,
+  replaceJobStatusCaches,
+} from "../services/jobStatusCacheMaintenance.js";
 
 const sourceUrl = process.env.MONGO_SOURCE_URL || "mongodb://127.0.0.1:27017";
 const sourceDbName = process.env.MONGO_SOURCE_DB || "";
@@ -256,6 +261,24 @@ async function verify(firestore, expectedCounts) {
   console.log("Verification passed", { counts: Object.fromEntries(expectedCounts), david: expectedDavid, jimmy: expectedJimmy });
 }
 
+async function rebuildDerivedJobStatusCaches(firestore) {
+  const connected = await initRedis({ force: true });
+  if (!connected || !isRedisReady()) {
+    throw new Error("Redis is required to finish the job status restore safely");
+  }
+  try {
+    const plan = await buildJobStatusCachePlan(firestore);
+    if (plan.issues.length) {
+      throw new Error(`Job status cache plan contains ${plan.issues.length} canonical issue(s)`);
+    }
+    const result = await replaceJobStatusCaches(getRedis(), plan);
+    console.log("Job status Redis caches rebuilt", result);
+    return result;
+  } finally {
+    await closeRedis();
+  }
+}
+
 async function main() {
   if (!new Set(["accounts", "all", "statuses"]).has(mode)) throw new Error("Use: simpleAthensDbCopy.js accounts|all|statuses");
   const client = new MongoClient(sourceUrl);
@@ -278,6 +301,7 @@ async function main() {
       const marketJobs = (await firestore.collection("jobs").where("sourceCatalog", "==", "market").count().get()).data().count;
       const rebuilt = await rebuildJobStatuses(db, firestore, marketJobs);
       await verify(firestore, new Map([["jobs", totalJobs], ["job_statuses", rebuilt.projections], ["job_status_counts", rebuilt.accounts]]));
+      await rebuildDerivedJobStatusCaches(firestore);
       return;
     }
     const expected = await copyRemaining(db, firestore, profileIds);
@@ -287,6 +311,7 @@ async function main() {
     expected.set("job_status_counts", rebuilt.accounts);
     expected.set("account_info", 35);
     await verify(firestore, expected);
+    await rebuildDerivedJobStatusCaches(firestore);
   } finally {
     await client.close();
   }

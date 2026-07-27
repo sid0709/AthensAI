@@ -29,6 +29,7 @@
     "firebase:copy-athensdb": "node src/scripts/simpleAthensDbCopy.js all",
 		"firebase:rebuild-job-statuses": "node src/scripts/simpleAthensDbCopy.js statuses",
 		"firebase:normalize-job-statuses": "node src/scripts/normalizeJobStatuses.js",
+		"firebase:repair-job-status-caches": "node src/scripts/repairJobStatusCaches.js",
 		"firebase:cleanup-legacy-skills": "node src/scripts/cleanupLegacyPersonalSkills.js",
     "firebase:verify-athensdb-copy": "node src/scripts/verifyAthensDbCopy.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
@@ -48,7 +49,7 @@
 		"monitoring:rollup": "node src/scripts/rollupMonitoring.js",
 		"test:monitoring": "node --test src/services/monitoring/*.test.mjs",
 		"test:firestore-adapter": "node --test src/db/firestoreMongoAdapter.test.mjs",
-		"test:firebase-reset": "node --test src/scripts/firebaseResetSupport.test.mjs src/services/jobStatusProjectionService.test.mjs"
+		"test:firebase-reset": "node --test src/scripts/firebaseResetSupport.test.mjs src/services/jobStatusCache.test.mjs src/services/jobStatusCacheMaintenance.test.mjs src/services/jobStatusProjectionService.test.mjs"
 	},
 	"dependencies": {
 		"@google-cloud/kms": "^5.4.0",

@@ -15,6 +15,10 @@ import {
   normalizeCanonicalJobStatuses,
 } from '../services/canonicalJobStatus.js';
 import { closeRedis, getRedis, initRedis, isRedisReady } from '../db/redis.js';
+import {
+  buildJobStatusCachePlan,
+  replaceJobStatusCaches,
+} from '../services/jobStatusCacheMaintenance.js';
 
 const APPLY = process.argv.includes('--apply');
 const backupArg = process.argv.find((arg) => arg.startsWith('--backup='));
@@ -188,117 +192,6 @@ async function rebuildProjections(firestore, records, profileIds) {
   return { statuses: expected.size, counts: expectedCounts.size };
 }
 
-async function clearStatusCaches() {
-  await initRedis({ force: true });
-  if (!isRedisReady()) return 0;
-  const redis = getRedis();
-  let deleted = 0;
-  for await (const keys of redis.scanIterator({ MATCH: 'ranking:v5:job-status*', COUNT: 500 })) {
-    const batch = Array.isArray(keys) ? keys : [keys];
-    if (batch.length) deleted += await redis.del(batch);
-  }
-  await closeRedis();
-  return deleted;
-}
-
-function projectionCounts(profileId, rows) {
-  const counts = {
-    profileId,
-    any: rows.length,
-    rawApplied: 0,
-    applied: 0,
-    scheduled: 0,
-    declined: 0,
-    'bid-ready': 0,
-    'bid-completed': 0,
-    other: 0,
-  };
-  for (const { projection } of rows) {
-    for (const [field, value] of Object.entries(projection.contribution || {})) {
-      if (field in counts) counts[field] += Number(value || 0);
-    }
-    if (!projection.states?.length) counts.other += 1;
-  }
-  return counts;
-}
-
-async function rebuildRedisStatusIndexes(records, profileIds = []) {
-  await initRedis({ force: true });
-  if (!isRedisReady()) return { available: false, written: 0 };
-  const redis = getRedis();
-  const rowsByProfile = new Map(profileIds.map((profileId) => [String(profileId), []]));
-  for (const record of records) {
-    for (const statusRow of record.status) {
-      const profileId = String(statusRow.applier);
-      const projection = buildStatusProjectionData({
-        profileId,
-        jobId: record.jobId,
-        job: record.job,
-        statuses: [statusRow],
-      });
-      const rows = rowsByProfile.get(profileId) || [];
-      rows.push({ jobId: record.jobId, statusRow, projection });
-      rowsByProfile.set(profileId, rows);
-    }
-  }
-
-  let written = 0;
-  let pipeline = redis.multi();
-  let pending = 0;
-  const flush = async () => {
-    if (!pending) return;
-    await pipeline.exec();
-    written += pending;
-    pipeline = redis.multi();
-    pending = 0;
-  };
-  const queue = async (method, ...args) => {
-    pipeline[method](...args);
-    pending += 1;
-    if (pending >= 500) await flush();
-  };
-
-  for (const [profileId, rows] of rowsByProfile) {
-    rows.sort((left, right) =>
-      (Date.parse(right.projection.postedAt || 0) || 0) -
-      (Date.parse(left.projection.postedAt || 0) || 0),
-    );
-    const baseline = Object.fromEntries(
-      ['applied', 'scheduled', 'declined', 'bid-ready', 'bid-completed']
-        .map((state) => [state, rows.filter(({ projection }) => projection.state === state).map(({ jobId }) => jobId)]),
-    );
-    await queue(
-      'setEx',
-      `ranking:v5:job-status-ids:firestore:${profileId}:baseline`,
-      7 * 24 * 60 * 60,
-      JSON.stringify(baseline),
-    );
-    const publicRows = rows.filter(({ projection }) => !projection.extensionV2);
-    await queue(
-      'setEx',
-      `ranking:v5:job-status-counts:firestore:${profileId}:all`,
-      7 * 24 * 60 * 60,
-      JSON.stringify(projectionCounts(profileId, rows)),
-    );
-    await queue(
-      'setEx',
-      `ranking:v5:job-status-counts:firestore:${profileId}:public`,
-      7 * 24 * 60 * 60,
-      JSON.stringify(projectionCounts(profileId, publicRows)),
-    );
-    for (const { jobId, statusRow } of rows) {
-      await queue(
-        'setEx',
-        `ranking:v5:job-status:firestore:${profileId}:${jobId}`,
-        60 * 60,
-        JSON.stringify(statusRow),
-      );
-    }
-  }
-  await flush();
-  return { available: true, written };
-}
-
 async function main() {
   const firestore = getFirestoreDb();
   const accountSnapshot = await firestore.collection('account_info').get();
@@ -327,17 +220,18 @@ async function main() {
     plan.records,
     accounts.map((account) => String(account._id)),
   );
-  const deletedCacheKeys = await clearStatusCaches();
-  const redisIndexes = await rebuildRedisStatusIndexes(
-    plan.records,
-    accounts.map((account) => String(account._id)),
-  );
+  const connected = await initRedis({ force: true });
+  if (!connected || !isRedisReady()) {
+    throw new Error('Redis is required to finish job status normalization safely');
+  }
+  const cachePlan = await buildJobStatusCachePlan(firestore);
+  const redisIndexes = await replaceJobStatusCaches(getRedis(), cachePlan);
   // The obsolete helper field is removed only after the canonical source and
   // every derived projection have passed fingerprint verification.
   const removedObsoleteFields = await removeObsoleteStatusFields(firestore, plan.records);
   console.log(`[job-status] backup=${backupPath}`);
-  console.log(`[job-status] updatedJobs=${updated} projections=${projections.statuses} countProjections=${projections.counts} clearedRedisKeys=${deletedCacheKeys}`);
-  console.log(`[job-status] redisAvailable=${redisIndexes.available} redisIndexes=${redisIndexes.written} removedStatusProfileIds=${removedObsoleteFields}`);
+  console.log(`[job-status] updatedJobs=${updated} projections=${projections.statuses} countProjections=${projections.counts} clearedRedisKeys=${redisIndexes.cleared.deleted}`);
+  console.log(`[job-status] redisIndexes=${redisIndexes.written} verifiedProfiles=${redisIndexes.verifiedProfiles} removedStatusProfileIds=${removedObsoleteFields}`);
   await closeRedis();
 }
 

@@ -16,6 +16,20 @@ import { isBetaTier } from "../lib/betaTier.js";
 import { excludeExtensionV2JobsFilter, isExtensionV2Job } from "../config/jobMarketSchema.js";
 import { readDateTailPage } from "./matching/jobRankingIndex.js";
 import { getJobRankingPoints } from "./vectorStore/qdrantClient.js";
+import {
+	JOB_STATUS_STATES,
+	buildJobStatusCountsCache,
+	emptyJobStatusBaseline,
+	jobStatusAddedKey,
+	jobStatusBaselineCacheKey,
+	jobStatusCacheKey,
+	jobStatusCountsCacheKey,
+	jobStatusCountsPendingKey,
+	jobStatusRemovedKey,
+	parseJobStatusBaseline,
+	parseJobStatusCountsCache,
+	serializeJobStatusBaseline,
+} from "./jobStatusCache.js";
 
 const STATUS_CACHE_TTL_SEC = 60 * 60;
 // Numeric counters are mutation-maintained and rebased onto the live catalog,
@@ -25,11 +39,11 @@ const STATUS_COUNTS_CACHE_TTL_SEC = 7 * 24 * 60 * 60;
 const STATUS_CACHE_EMPTY = '-';
 export const STATUS_PROJECTION_SCHEMA_VERSION = 2;
 const STATUS_BASELINE_CACHE_TTL_SEC = 7 * 24 * 60 * 60;
+const STATUS_BASELINE_MEMORY_TTL_MS = 60_000;
 const LIVE_STATUS_COUNT_TTL_MS = 60_000;
 const liveStatusCountCache = new Map();
 const statusCountWarmups = new Map();
 const statusIdBaselineCache = new Map();
-const STATUS_STATES = ["applied", "scheduled", "declined", "bid-ready", "bid-completed"];
 
 function enabled() {
   return String(process.env.DATABASE_BACKEND || "").trim().toLowerCase() === "firestore";
@@ -100,36 +114,6 @@ export function invalidateLiveProjectedStatusCount(profileId) {
 
 export function jobStatusProjectionId(profileId, jobId) {
   return createHash("sha256").update(`${profileId}\0${jobId}`).digest("hex");
-}
-
-function statusBackendNamespace() {
-	return String(process.env.DATABASE_BACKEND || 'mongo').trim().toLowerCase() === 'firestore'
-		? 'firestore'
-		: 'mongo';
-}
-
-function statusCacheKey(profileId, jobId) {
-  return `ranking:v5:job-status:${statusBackendNamespace()}:${String(profileId)}:${String(jobId)}`;
-}
-
-function statusCountsCacheKey(profileId, includeExtensionV2 = true) {
-	return `ranking:v5:job-status-counts:${statusBackendNamespace()}:${String(profileId)}:${includeExtensionV2 ? "all" : "public"}`;
-}
-
-function statusCountsPendingKey(profileId, includeExtensionV2 = true) {
-	return `${statusCountsCacheKey(profileId, includeExtensionV2)}:pending`;
-}
-
-function statusAddedKey(profileId, state) {
-	return `ranking:v5:job-status-ids:${statusBackendNamespace()}:${String(profileId)}:${state}:added`;
-}
-
-function statusRemovedKey(profileId, state) {
-	return `ranking:v5:job-status-ids:${statusBackendNamespace()}:${String(profileId)}:${state}:removed`;
-}
-
-function statusBaselineCacheKey(profileId) {
-	return `ranking:v5:job-status-ids:${statusBackendNamespace()}:${String(profileId)}:baseline`;
 }
 
 function canonicalStatusRow(profileId, row = {}) {
@@ -372,36 +356,17 @@ end
 return 1
 `;
 
-function countsFromStatusBaseline(profileId, baseline) {
-	const idsByState = STATUS_STATES.map((state) => baseline[state] || []);
-	return {
-		profileId: String(profileId),
-		any: new Set(idsByState.flat().map(String)).size,
-		rawApplied: new Set([
-			...(baseline.applied || []),
-			...(baseline.scheduled || []),
-			...(baseline.declined || []),
-		].map(String)).size,
-		applied: (baseline.applied || []).length,
-		scheduled: (baseline.scheduled || []).length,
-		declined: (baseline.declined || []).length,
-		'bid-ready': (baseline['bid-ready'] || []).length,
-		'bid-completed': (baseline['bid-completed'] || []).length,
-		other: 0,
-	};
-}
-
 function warmMaterializedJobStatusCounts(profileId, includeExtensionV2) {
 	if (!isRedisReady()) return null;
 	const warmupKey = `${profileId}:${includeExtensionV2 ? "all" : "public"}`;
 	if (statusCountWarmups.has(warmupKey)) return statusCountWarmups.get(warmupKey);
 	const warmup = (async () => {
 		const baseline = await loadStatusIdBaseline(profileId);
-		const counts = countsFromStatusBaseline(profileId, baseline);
+		const counts = buildJobStatusCountsCache(profileId, baseline);
 		await getRedis().eval(INITIALIZE_COUNTS_SCRIPT, {
 			keys: [
-				statusCountsCacheKey(profileId, includeExtensionV2),
-				statusCountsPendingKey(profileId, includeExtensionV2),
+				jobStatusCountsCacheKey(profileId, includeExtensionV2),
+				jobStatusCountsPendingKey(profileId, includeExtensionV2),
 			],
 			arguments: [JSON.stringify(counts), String(STATUS_COUNTS_CACHE_TTL_SEC)],
 		});
@@ -417,15 +382,23 @@ function warmMaterializedJobStatusCounts(profileId, includeExtensionV2) {
 async function loadStatusIdBaseline(profileId) {
 	const key = String(profileId);
 	const cached = statusIdBaselineCache.get(key);
-	if (cached) return cached;
+	if (cached?.expiresAt > Date.now()) return cached.baseline;
+	if (cached) statusIdBaselineCache.delete(key);
 	if (isRedisReady()) {
-		const raw = await getRedis().get(statusBaselineCacheKey(key));
+		const cacheKey = jobStatusBaselineCacheKey(key);
+		const raw = await getRedis().get(cacheKey);
 		if (raw) {
-			try {
-				const baseline = JSON.parse(raw);
-				statusIdBaselineCache.set(key, baseline);
+			const baseline = parseJobStatusBaseline(raw, key);
+			if (baseline) {
+				statusIdBaselineCache.set(key, {
+					baseline,
+					expiresAt: Date.now() + STATUS_BASELINE_MEMORY_TTL_MS,
+				});
 				return baseline;
-			} catch { /* rebuild from Firestore */ }
+			}
+			// Legacy/unversioned baselines are not authoritative. In particular, an
+			// empty pre-migration value must not hide populated Firestore projections.
+			await getRedis().del(cacheKey);
 		}
 	}
 	let baseline;
@@ -434,7 +407,7 @@ async function loadStatusIdBaseline(profileId) {
 			.where("profileId", "==", key)
 			.select("jobId", "state", "postedAt", "schemaVersion", "statusRow", "statusFingerprint")
 			.get();
-		baseline = Object.fromEntries(STATUS_STATES.map((state) => [state, []]));
+		baseline = emptyJobStatusBaseline();
 		const projectionRows = snapshot.docs.map((doc) => doc.data());
 		// An empty result is not proof that this profile has no statuses: it can
 		// also mean the projection collection has not been backfilled yet.
@@ -445,7 +418,7 @@ async function loadStatusIdBaseline(profileId) {
 				(Date.parse(right.postedAt || 0) || 0) - (Date.parse(left.postedAt || 0) || 0),
 			);
 			for (const row of projectionRows) {
-				if (STATUS_STATES.includes(row.state) && row.jobId) baseline[row.state].push(String(row.jobId));
+				if (JOB_STATUS_STATES.includes(row.state) && row.jobId) baseline[row.state].push(String(row.jobId));
 			}
 		} else {
 			// A pre-v2 projection is never interpreted as business state. Rebuild
@@ -458,7 +431,7 @@ async function loadStatusIdBaseline(profileId) {
 			).sort({ postedAt: -1, _id: -1 }).toArray();
 			for (const job of docs) {
 				const state = resolveJobStatusState(job.status, key);
-				if (STATUS_STATES.includes(state)) baseline[state].push(String(job._id));
+				if (JOB_STATUS_STATES.includes(state)) baseline[state].push(String(job._id));
 			}
 		}
 	} else {
@@ -468,33 +441,40 @@ async function loadStatusIdBaseline(profileId) {
 			{ 'status.applier': { $in: profileValues } },
 			{ projection: { status: 1, postedAt: 1 } },
 		).sort({ postedAt: -1, _id: -1 }).toArray();
-		baseline = Object.fromEntries(STATUS_STATES.map((state) => [state, []]));
+		baseline = emptyJobStatusBaseline();
 		for (const job of docs) {
 			const statuses = (Array.isArray(job.status) ? job.status : [])
 				.filter((row) => String(row?.applier || '') === key);
 			for (const state of statesOf(statuses)) baseline[state].push(String(job._id));
 		}
 	}
-	statusIdBaselineCache.set(key, baseline);
+	statusIdBaselineCache.set(key, {
+		baseline,
+		expiresAt: Date.now() + STATUS_BASELINE_MEMORY_TTL_MS,
+	});
 	if (isRedisReady()) {
-		await getRedis().setEx(statusBaselineCacheKey(key), STATUS_BASELINE_CACHE_TTL_SEC, JSON.stringify(baseline));
+		await getRedis().setEx(
+			jobStatusBaselineCacheKey(key),
+			STATUS_BASELINE_CACHE_TTL_SEC,
+			serializeJobStatusBaseline(key, baseline),
+		);
 	}
 	return baseline;
 }
 
 /** Ordered status IDs without requiring a Firestore composite index. */
 export async function readMaterializedJobStatusIds(profileId, state) {
-	if (!profileId || (state !== "any" && !STATUS_STATES.includes(state))) return [];
+	if (!profileId || (state !== "any" && !JOB_STATUS_STATES.includes(state))) return [];
 	const baseline = await loadStatusIdBaseline(profileId);
 	if (state === "any") {
-		if (!isRedisReady()) return [...new Set(STATUS_STATES.flatMap((item) => baseline[item] || []).map(String))];
-		const stateLists = await Promise.all(STATUS_STATES.map((item) => readMaterializedJobStatusIds(profileId, item)));
+		if (!isRedisReady()) return [...new Set(JOB_STATUS_STATES.flatMap((item) => baseline[item] || []).map(String))];
+		const stateLists = await Promise.all(JOB_STATUS_STATES.map((item) => readMaterializedJobStatusIds(profileId, item)));
 		return [...new Set(stateLists.flat().map(String))];
 	}
 	if (!isRedisReady()) return [...(baseline[state] || [])];
 	const [added, removed] = await Promise.all([
-		getRedis().sMembers(statusAddedKey(profileId, state)),
-		getRedis().sMembers(statusRemovedKey(profileId, state)),
+		getRedis().sMembers(jobStatusAddedKey(profileId, state)),
+		getRedis().sMembers(jobStatusRemovedKey(profileId, state)),
 	]);
 	const removedIds = new Set(removed.map(String));
 	const addedIds = added.map(String);
@@ -528,6 +508,7 @@ async function publishStatusCache(profileId, jobId, statuses, {
 	adjustCounts = true,
 } = {}) {
 	invalidateLiveProjectedStatusCount(profileId);
+	statusIdBaselineCache.delete(String(profileId));
 	await bumpStatusRevision(profileId);
 	if (!isRedisReady()) return;
 	const merged = mergeJobStatusRows(statuses, profileId);
@@ -535,17 +516,17 @@ async function publishStatusCache(profileId, jobId, statuses, {
 		? JSON.stringify(canonicalStatusRow(profileId, merged))
 		: STATUS_CACHE_EMPTY;
 	const deltas = countDeltas(previousStatuses, statuses).map(String);
-	const countKeys = adjustCounts ? [statusCountsCacheKey(profileId, true)] : [];
-	if (adjustCounts && !extensionV2) countKeys.push(statusCountsCacheKey(profileId, false));
+	const countKeys = adjustCounts ? [jobStatusCountsCacheKey(profileId, true)] : [];
+	if (adjustCounts && !extensionV2) countKeys.push(jobStatusCountsCacheKey(profileId, false));
 	const currentStates = new Set(statesOf(statuses));
 	const statusIdWrite = adjustCounts
 		? getRedis().eval(UPDATE_STATUS_IDS_SCRIPT, {
-			keys: STATUS_STATES.flatMap((state) => [statusAddedKey(profileId, state), statusRemovedKey(profileId, state)]),
-			arguments: [jobId, STATUS_STATES.find((state) => currentStates.has(state)) || ""],
+			keys: JOB_STATUS_STATES.flatMap((state) => [jobStatusAddedKey(profileId, state), jobStatusRemovedKey(profileId, state)]),
+			arguments: [jobId, JOB_STATUS_STATES.find((state) => currentStates.has(state)) || ""],
 		})
 		: Promise.resolve(1);
 	const adjustmentResults = await Promise.all([
-		getRedis().setEx(statusCacheKey(profileId, jobId), STATUS_CACHE_TTL_SEC, value),
+		getRedis().setEx(jobStatusCacheKey(profileId, jobId), STATUS_CACHE_TTL_SEC, value),
 		statusIdWrite,
 		...countKeys.map((key) => getRedis().eval(ADJUST_COUNTS_SCRIPT, {
 			keys: [key, `${key}:pending`],
@@ -725,11 +706,13 @@ export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {
 
 export async function readMaterializedJobStatusCounts(profileId, { includeExtensionV2 = true } = {}) {
 	if (!profileId) return null;
-	const cacheKey = statusCountsCacheKey(profileId, includeExtensionV2);
+	const cacheKey = jobStatusCountsCacheKey(profileId, includeExtensionV2);
 	if (isRedisReady()) {
 		const cached = await getRedis().get(cacheKey);
 		if (cached) {
-			try { return JSON.parse(cached); } catch { /* reload */ }
+			const counts = parseJobStatusCountsCache(cached, profileId);
+			if (counts) return counts;
+			await getRedis().del(cacheKey);
 		}
 	}
 	void warmMaterializedJobStatusCounts(profileId, includeExtensionV2);
@@ -740,8 +723,8 @@ export async function readProjectedJobStatuses(profileId, jobIds = []) {
   if (!profileId || !jobIds.length) return new Map();
   const normalizedProfileId = String(profileId);
   const ids = [...new Set(jobIds.map(String))];
-  const values = isRedisReady()
-    ? await getRedis().mGet(ids.map((jobId) => statusCacheKey(normalizedProfileId, jobId)))
+	const values = isRedisReady()
+		? await getRedis().mGet(ids.map((jobId) => jobStatusCacheKey(normalizedProfileId, jobId)))
     : ids.map(() => null);
   const statuses = new Map();
   const missingIds = [];
@@ -818,8 +801,8 @@ export async function readProjectedJobStatuses(profileId, jobIds = []) {
 		const row = rowsById.get(jobId) || null;
     if (row) statuses.set(jobId, [row]);
     if (isRedisReady()) {
-      cacheWrites.push(getRedis().setEx(
-        statusCacheKey(normalizedProfileId, jobId),
+		cacheWrites.push(getRedis().setEx(
+			jobStatusCacheKey(normalizedProfileId, jobId),
         STATUS_CACHE_TTL_SEC,
         row ? JSON.stringify(row) : STATUS_CACHE_EMPTY,
       ));
