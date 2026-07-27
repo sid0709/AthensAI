@@ -1,5 +1,6 @@
 import { Skeleton } from "../../../components/ui/skeleton";
 import { cn } from "../../../lib/utils";
+import { Loader2 } from "lucide-react";
 
 type JobListSkeletonProps = {
   count?: number;
@@ -49,20 +50,22 @@ export function JobListSkeleton({
 }: JobListSkeletonProps) {
   const n = Math.min(Math.max(count, 3), 12);
   return (
-    <div
-      aria-busy="true"
-      aria-live="polite"
-      className={cn(
-        "py-2",
-        layout === "grid"
-          ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
-          : "flex flex-col gap-4",
-        className,
-      )}
-    >
-      {Array.from({ length: n }, (_, i) => (
-        <JobCardSkeleton key={i} />
-      ))}
+    <div role="status" aria-busy="true" aria-live="polite" className={cn("py-2", className)}>
+      <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border border-border/60 bg-card/80 px-3 py-2 text-sm font-medium text-muted-foreground">
+        <Loader2 className="size-4 animate-spin text-primary" aria-hidden />
+        Loading jobs…
+      </div>
+      <div
+        className={cn(
+          layout === "grid"
+            ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
+            : "flex flex-col gap-4",
+        )}
+      >
+        {Array.from({ length: n }, (_, i) => (
+          <JobCardSkeleton key={i} />
+        ))}
+      </div>
     </div>
   );
 }

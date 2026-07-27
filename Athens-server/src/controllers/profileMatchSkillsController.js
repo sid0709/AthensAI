@@ -10,32 +10,46 @@ import {
   USER_SKILL_CATEGORIES,
   USER_SKILL_LEVEL_MIN,
   USER_SKILL_LEVEL_MAX,
+  getSkillCategoryWeights,
 } from '../config/graphAndVectorConfig.js';
+import { getRescoreState } from '../services/matching/matchScoreStore.js';
+import { loadCanonicalSkillDictionary } from '../services/matching/canonicalSkillDictionary.js';
 
 /**
  * Manual user skill management (name + category + level). These skills are the
- * sole input to weighted match scoring; every mutation queues a background
- * rescore of the user's materialized job scores.
+ * sole input to weighted match scoring. Query-time mode only bumps the profile
+ * version; legacy mode queues a materialized full-catalog rescore.
  */
 
-async function contextPayload(applierName) {
-  const [skills, ctx] = await Promise.all([
+async function contextPayload(applierName, { includeLegacy = true } = {}) {
+  const [skills, state, dictionary] = await Promise.all([
     listUserSkills(applierName),
-    loadProfileMatchContext(applierName),
+    getRescoreState(applierName),
+    loadCanonicalSkillDictionary(),
   ]);
-  return {
+  // listUserSkills primes the shared skill-doc cache. Building context second
+  // avoids two simultaneous full profile reads on a cold migrated account.
+  const ctx = await loadProfileMatchContext(applierName);
+  const payload = {
     skills,
     categories: USER_SKILL_CATEGORIES,
     levelMin: USER_SKILL_LEVEL_MIN,
     levelMax: USER_SKILL_LEVEL_MAX,
-    // Legacy shape kept for existing consumers:
-    boostSkills: skills.map((s) => s.name),
-    exactSkills: [...ctx.exactSet],
     profileCompacts: ctx.profileCompacts || [],
-    boostCompacts: ctx.profileCompacts || [],
     profileTokens: ctx.profileTokens || [],
+    tokenWeights: ctx.tokenWeights || {},
+    compactWeights: ctx.compactWeights || [],
+    categoryWeights: getSkillCategoryWeights(),
     ctx,
+    profileVersion: state?.profileVersion ?? 0,
+    dictionaryVersion: dictionary.version,
   };
+  if (includeLegacy) {
+    payload.boostSkills = skills.map((skill) => skill.name);
+    payload.exactSkills = [...ctx.exactSet];
+    payload.boostCompacts = ctx.profileCompacts || [];
+  }
+  return payload;
 }
 
 export async function getProfileMatchSkills(req, res) {
@@ -45,7 +59,8 @@ export async function getProfileMatchSkills(req, res) {
       return res.status(400).json({ success: false, error: 'applierName query required' });
     }
 
-    const { ctx: _ctx, ...payload } = await contextPayload(applierName);
+    const includeLegacy = !['1', 'true'].includes(String(req.query?.compact || '').toLowerCase());
+    const { ctx: _ctx, ...payload } = await contextPayload(applierName, { includeLegacy });
     return res.json({ success: true, ...payload });
   } catch (err) {
     console.error('GET /api/personal/profile-match-skills error', err);
@@ -66,7 +81,9 @@ export async function addProfileMatchSkill(req, res) {
       category: req.body?.category,
       level: req.body?.level,
     });
-    const { ctx, ...payload } = await contextPayload(applierName);
+    const { ctx, ...payload } = await contextPayload(applierName, {
+      includeLegacy: req.body?.compact !== true,
+    });
 
     const jobSkills = Array.isArray(req.body?.jobSkills)
       ? req.body.jobSkills.map((s) => String(s).trim()).filter(Boolean)
@@ -100,7 +117,9 @@ export async function removeProfileMatchSkill(req, res) {
     }
 
     const result = await removeUserSkill(applierName, skill);
-    const { ctx: _ctx, ...payload } = await contextPayload(applierName);
+    const { ctx: _ctx, ...payload } = await contextPayload(applierName, {
+      includeLegacy: req.body?.compact !== true,
+    });
 
     return res.json({
       success: true,

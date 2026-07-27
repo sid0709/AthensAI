@@ -6,18 +6,32 @@ import {
   USER_SKILL_LEVEL_MAX,
   computeUserSkillWeight,
 } from '../../config/graphAndVectorConfig.js';
-import { invalidateProfileSkillCache } from './profileSkills.js';
+import {
+  getProfileSkillCacheRevision,
+  invalidateProfileSkillCache,
+} from './profileSkills.js';
+import { getRedis, isRedisReady } from '../../db/redis.js';
 
 /**
  * Manual user skills — the sole source for match scoring. Each skill carries a
- * category (hard/soft/devops/tools/domain) and level (1-5); the two combine
- * into a 0..1 weight consumed by the weighted coverage scorer. Every mutation
- * funnels through invalidateProfileSkillCache, which queues a background
- * rescore of the user's materialized job scores.
+ * category (hard/soft/devops/tools/domain) and level (1-5). Every mutation
+ * funnels through invalidateProfileSkillCache, which bumps the query ranking
+ * version or queues the legacy materialized rescore.
  */
 
 export const DEFAULT_SKILL_CATEGORY = 'hard';
 export const DEFAULT_SKILL_LEVEL = 3;
+const SKILL_DOCS_CACHE_TTL_SEC = 60 * 60;
+const skillDocLoads = new Map();
+
+function skillDocsCacheKey(applierName) {
+  return `profile:skill-docs:${String(applierName || '').trim()}`;
+}
+
+async function clearSkillDocsCache(applierName) {
+  skillDocLoads.delete(String(applierName || '').trim());
+  if (isRedisReady()) await getRedis().del(skillDocsCacheKey(applierName));
+}
 
 function normalizeCategory(category) {
   const c = String(category || '').trim().toLowerCase();
@@ -42,11 +56,14 @@ function presentSkill(doc) {
 export async function listUserSkills(applierName) {
   const name = String(applierName || '').trim();
   if (!name || !userSkillsCollection) return [];
-  const docs = await userSkillsCollection
-    .find({ applierName: name })
-    .sort({ category: 1, level: -1, name: 1 })
-    .toArray();
-  return docs.map(presentSkill);
+  const docs = await loadUserSkillDocs(name);
+  return [...docs]
+    .sort((left, right) =>
+      String(left.category || '').localeCompare(String(right.category || '')) ||
+      Number(right.level || 0) - Number(left.level || 0) ||
+      String(left.name || '').localeCompare(String(right.name || '')),
+    )
+    .map(presentSkill);
 }
 
 /** Upsert one skill: adding an existing skill updates its category/level. */
@@ -64,13 +81,16 @@ export async function upsertUserSkill(applierName, { name, category, level } = {
   await userSkillsCollection.updateOne(
     { applierName: owner, nameCanonical: canonical },
     {
-      $set: { name: label, category: cat, level: lv, updatedAt: now },
+      $set: { name: label, category: cat, level: lv, source: 'manual', updatedAt: now },
+      $unset: { migratedFrom: '' },
       $setOnInsert: { applierName: owner, nameCanonical: canonical, createdAt: now },
     },
     { upsert: true },
   );
 
+  await clearSkillDocsCache(owner);
   await invalidateProfileSkillCache(owner);
+  await clearSkillDocsCache(owner);
   return { skills: await listUserSkills(owner) };
 }
 
@@ -87,7 +107,9 @@ export async function removeUserSkill(applierName, skillName) {
   });
 
   if (res.deletedCount > 0) {
+    await clearSkillDocsCache(owner);
     await invalidateProfileSkillCache(owner);
+    await clearSkillDocsCache(owner);
   }
   return { removed: res.deletedCount > 0, skills: await listUserSkills(owner) };
 }
@@ -96,7 +118,32 @@ export async function removeUserSkill(applierName, skillName) {
 export async function loadUserSkillDocs(applierName) {
   const name = String(applierName || '').trim();
   if (!name || !userSkillsCollection) return [];
-  return userSkillsCollection
-    .find({ applierName: name }, { projection: { name: 1, category: 1, level: 1 } })
-    .toArray();
+  const existing = skillDocLoads.get(name);
+  if (existing) return existing;
+  const load = (async () => {
+    const loadRevision = await getProfileSkillCacheRevision(name);
+    if (isRedisReady()) {
+      const cached = await getRedis().get(skillDocsCacheKey(name));
+      if (cached && loadRevision === await getProfileSkillCacheRevision(name)) {
+        try {
+          const docs = JSON.parse(cached);
+          await getRedis().expire(skillDocsCacheKey(name), SKILL_DOCS_CACHE_TTL_SEC);
+          return docs;
+        } catch { /* reload */ }
+      }
+    }
+    const docs = await userSkillsCollection
+      .find({ applierName: name }, { projection: { name: 1, category: 1, level: 1 } })
+      .toArray();
+    if (isRedisReady() && loadRevision === await getProfileSkillCacheRevision(name)) {
+      await getRedis().setEx(skillDocsCacheKey(name), SKILL_DOCS_CACHE_TTL_SEC, JSON.stringify(docs));
+    }
+    return docs;
+  })();
+  skillDocLoads.set(name, load);
+  try {
+    return await load;
+  } finally {
+    if (skillDocLoads.get(name) === load) skillDocLoads.delete(name);
+  }
 }

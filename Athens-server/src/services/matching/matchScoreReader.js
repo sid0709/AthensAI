@@ -1,6 +1,11 @@
 import { jobsCollection, jobMatchScoresCollection, externalScrapedJobsCollection } from '../../db/mongo.js';
 import { JobSourceTitles } from '../../config/jobSources.js';
-import { isMaterializedRecommendationEnabled } from '../../config/graphAndVectorConfig.js';
+import {
+  getQueryTimeRankingMode,
+  getQueryTimeShadowSampleRate,
+  isMaterializedRecommendationEnabled,
+  isQueryTimeRankingEnabled,
+} from '../../config/graphAndVectorConfig.js';
 import { JOB_LIST_PROJECTION } from '../jobListQuery.js';
 import { normalizeExternalScrapedJob } from '../externalScrapedJobsListQuery.js';
 import { loadProfileMatchContext } from './profileSkills.js';
@@ -8,12 +13,127 @@ import { matchJobsForApplier } from './matchingService.js';
 import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
 import { computeCoverageScore, composeJobScores } from './coverageScore.js';
 import { countScoresForApplier, getRescoreState } from './matchScoreStore.js';
+import {
+  listDateRankedRankingFallback,
+  listQueryTimeRankedJobs,
+} from './jobRankingService.js';
+import { ndcgAtK, recallAtK } from './rankingEvaluation.js';
+import { incrementCounter, setGauge } from '../monitoring/metrics.js';
 
 function isFirestoreRuntime() {
   return String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() === 'firestore';
 }
 
 const firestoreRecommendationMeta = new Map();
+const DEFAULT_RANKING_RESPONSE_TIMEOUT_MS = 3_000;
+
+function rankingResponseTimeoutMs() {
+  const configured = Number.parseInt(String(process.env.RANKING_RESPONSE_TIMEOUT_MS || ''), 10);
+  if (!Number.isFinite(configured)) return DEFAULT_RANKING_RESPONSE_TIMEOUT_MS;
+  return Math.max(250, Math.min(30_000, configured));
+}
+
+async function withRankingResponseTimeout(operation) {
+  const timeoutMs = rankingResponseTimeoutMs();
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new Error(`Best Match exceeded its ${timeoutMs}ms response budget`);
+      error.code = 'RANKING_RESPONSE_TIMEOUT';
+      reject(error);
+    }, timeoutMs);
+    timeout.unref?.();
+  });
+  try {
+    // Register the watchdog before invoking ranking. Some cold-cache setup can
+    // do meaningful synchronous work before returning its first promise.
+    return await Promise.race([Promise.resolve().then(operation), timeoutPromise]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runFastRankingFallback(fastFallback, reason) {
+  if (typeof fastFallback !== 'function') return null;
+  const result = await fastFallback().catch((error) => {
+    console.warn('[ranking] indexed newest-job fallback failed:', error?.message || error);
+    return null;
+  });
+  if (!result) return null;
+  return {
+    ...result,
+    recommendationFallback: true,
+    recommendationReason: reason,
+    recommendationWarming: false,
+    rankingStatus: 'fallback',
+    personalizedThroughRank: 0,
+  };
+}
+
+async function listQueryTimeRankedJobsWithFallback(
+  queryParams,
+  fallbackParams,
+  { label = '', fastFallback = null } = {},
+) {
+  try {
+    return await withRankingResponseTimeout(() => listQueryTimeRankedJobs(queryParams));
+  } catch (error) {
+    const detail = error?.message || error;
+    console.warn(`[ranking] ${label}query-time read unavailable; serving newest jobs:`, detail);
+    if (!isQueryTimeRankingEnabled()) return null;
+    const warming = error?.code === 'RANKING_RESPONSE_TIMEOUT';
+    const reason = warming ? 'ranking_warming' : 'ranking_backend_unavailable';
+    const fastResult = await runFastRankingFallback(fastFallback, reason);
+    if (fastResult) return { ...fastResult, recommendationWarming: warming };
+    const fallback = await listDateRankedRankingFallback({
+      ...fallbackParams,
+      reason,
+    });
+    return { ...fallback, recommendationWarming: warming };
+  }
+}
+
+function resultJobId(job) {
+  return String(job?._id || job?.id || job?.jobId || '');
+}
+
+function resultRelevance(job) {
+  return Number(job?.scoreOverall ?? job?.matchScore ?? job?._score) || 0;
+}
+
+function maybeRunRankingShadowValidation(params) {
+  if (getQueryTimeRankingMode() !== 'shadow') return;
+  if ((Number(params.skip) || 0) !== 0) return;
+  if (params.scoreFilters && Object.keys(params.scoreFilters).length) return;
+  if (Math.random() >= getQueryTimeShadowSampleRate()) return;
+  const validationParams = { ...params, skip: 0, limit: Math.max(100, Number(params.limit) || 0) };
+  void Promise.all([
+    listQueryTimeRankedJobs({
+      ...validationParams,
+      listBody: validationParams.listBody || {},
+      includeExternal: false,
+      validationMode: true,
+    }),
+    matchJobsForApplier(validationParams),
+  ]).then(([shadow, legacy]) => {
+    if (!shadow || !legacy?.docs?.length) return;
+    const idealRows = legacy.docs.map((job) => ({
+      id: resultJobId(job),
+      relevance: resultRelevance(job),
+    }));
+    const relevantIds = idealRows.filter((row) => row.relevance > 0).map((row) => row.id);
+    const recall = recallAtK(shadow._candidateJobIds || [], relevantIds, 100);
+    const ndcg = ndcgAtK(shadow.docs.map(resultJobId), idealRows, 100);
+    setGauge('athens_job_ranking_shadow_recall_at_100', {}, recall);
+    setGauge('athens_job_ranking_shadow_ndcg_at_100', {}, ndcg);
+    incrementCounter('athens_job_ranking_shadow_samples_total', {
+      result: recall >= 0.99 && ndcg >= 0.99 ? 'pass' : 'fail',
+    });
+  }).catch((error) => {
+    incrementCounter('athens_job_ranking_shadow_samples_total', { result: 'error' });
+    console.warn('[ranking] shadow validation failed:', error?.message || error);
+  });
+}
 
 function refreshFirestoreRecommendationMeta(name) {
   const existing = firestoreRecommendationMeta.get(name);
@@ -340,11 +460,33 @@ async function listFromMaterializedScores({
  * the materialized path is disabled.
  */
 export async function listRecommendedJobs(params) {
-  const { applierName } = params;
+  const { applierName, fastFallback, ...rankingParams } = params;
   const name = String(applierName || '').trim();
+  maybeRunRankingShadowValidation({ ...rankingParams, applierName: name });
+
+  const queryTime = await listQueryTimeRankedJobsWithFallback(
+    {
+      ...rankingParams,
+      applierName: name,
+      listBody: rankingParams.listBody || {},
+      includeExternal: false,
+    },
+    {
+      mongoQuery: rankingParams.mongoQuery,
+      skip: rankingParams.skip,
+      limit: rankingParams.limit,
+      includeExternal: false,
+    },
+    { fastFallback },
+  );
+  if (queryTime) return queryTime;
+  if (isQueryTimeRankingEnabled()) {
+    const noSkillsFallback = await runFastRankingFallback(fastFallback, 'no_profile_skills');
+    if (noSkillsFallback) return noSkillsFallback;
+  }
 
   if (!isMaterializedRecommendationEnabled() || !jobMatchScoresCollection || !name) {
-    return matchJobsForApplier(params);
+    return matchJobsForApplier(rankingParams);
   }
 
   if (isFirestoreRuntime()) {
@@ -357,7 +499,7 @@ export async function listRecommendedJobs(params) {
       // return the already-indexed date page immediately; the next refresh
       // switches to materialized score order when rows exist.
       void refreshFirestoreRecommendationMeta(name);
-      const page = await listFirestoreWarmingPage(params);
+      const page = await listFirestoreWarmingPage(rankingParams);
       return { ...page, recommendationWarming: true };
     }
 
@@ -367,7 +509,7 @@ export async function listRecommendedJobs(params) {
       readyMeta.profileCtx.exactSet?.size,
     );
     if (!hasProfile) {
-      const page = await listFirestoreWarmingPage(params);
+      const page = await listFirestoreWarmingPage(rankingParams);
       return {
         ...page,
         recommendationFallback: true,
@@ -376,11 +518,11 @@ export async function listRecommendedJobs(params) {
       };
     }
     if (readyMeta.rowCount === 0) {
-      const page = await listFirestoreWarmingPage(params);
+      const page = await listFirestoreWarmingPage(rankingParams);
       const warming = readyMeta.state && (readyMeta.state.status === 'pending' || readyMeta.state.status === 'running');
       return warming ? { ...page, recommendationWarming: true } : page;
     }
-    return listFromMaterializedScoresFirestore({ ...params, applierName: name });
+    return listFromMaterializedScoresFirestore({ ...rankingParams, applierName: name });
   }
 
   const profileCtx = await loadProfileMatchContext(name);
@@ -389,18 +531,18 @@ export async function listRecommendedJobs(params) {
   );
   if (!hasProfile) {
     // Same "no analyzed resumes" fallback contract as the legacy path.
-    return matchJobsForApplier(params);
+    return matchJobsForApplier(rankingParams);
   }
 
   const rowCount = await countScoresForApplier(name);
   if (rowCount === 0) {
     const state = await getRescoreState(name);
     const warming = state && (state.status === 'pending' || state.status === 'running');
-    const result = await matchJobsForApplier(params);
+    const result = await matchJobsForApplier(rankingParams);
     return warming ? { ...result, recommendationWarming: true } : result;
   }
 
-  return listFromMaterializedScores({ ...params, applierName: name });
+  return listFromMaterializedScores({ ...rankingParams, applierName: name });
 }
 
 /**
@@ -409,6 +551,7 @@ export async function listRecommendedJobs(params) {
  */
 export async function listMergedRecommendedJobs({
   applierName,
+  profileId,
   marketQuery,
   externalQuery,
   scoreFilters,
@@ -417,6 +560,28 @@ export async function listMergedRecommendedJobs({
   limit,
 }) {
   const name = String(applierName || '').trim();
+  const queryTime = await listQueryTimeRankedJobsWithFallback(
+    {
+      applierName: name,
+      profileId,
+      listBody,
+      mongoQuery: marketQuery,
+      scoreFilters,
+      skip,
+      limit,
+      includeExternal: true,
+      externalQuery,
+    },
+    {
+      mongoQuery: marketQuery,
+      externalQuery,
+      skip,
+      limit,
+      includeExternal: true,
+    },
+    { label: 'merged ' },
+  );
+  if (queryTime) return queryTime;
   if (!isMaterializedRecommendationEnabled() || !jobMatchScoresCollection || !name) {
     const marketResult = await matchJobsForApplier({
       applierName: name,

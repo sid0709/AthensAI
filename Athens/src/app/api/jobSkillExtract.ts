@@ -2,20 +2,27 @@ import { API_BASE } from "@/lib/api-base";
 
 export type SkillExtractSession = {
   running: boolean;
-  status: "idle" | "running" | "completed" | "cancelled" | "failed";
+  status: "idle" | "running" | "stopping" | "completed" | "cancelled" | "failed";
   sessionId?: string;
-  pending?: number;
-  total?: number;
+  pending?: number | null;
+  pendingKnown?: boolean;
+  total?: number | null;
   processed?: number;
   extracted?: number;
   failed?: number;
   retried?: number;
-  remaining?: number;
+  cancelled?: number;
+  remaining?: number | null;
+  phase?: "starting" | "recovering" | "claiming" | "extracting" | "stopping" | "completed" | "cancelled";
+  inflight?: number;
+  lastProgressAt?: string | null;
   lastJob?: { id: string; title: string; skills?: number } | null;
   startedAt?: string;
   finishedAt?: string | null;
   error?: string | null;
   concurrency?: number;
+  batchSize?: number;
+  jobsPerWave?: number;
 };
 
 type StatusResponse = { success?: boolean; error?: string } & SkillExtractSession;
@@ -24,7 +31,8 @@ type StartResponse = {
   success?: boolean;
   error?: string;
   sessionId?: string | null;
-  pending?: number;
+  pending?: number | null;
+  pendingKnown?: boolean;
   started?: boolean;
   message?: string;
 };

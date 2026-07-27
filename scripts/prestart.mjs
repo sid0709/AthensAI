@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Bootstrap before `npm start`. The selected database backend is validated,
- * then the AI gateway is built. No Docker, Redis, or Qdrant is required.
+ * optional ranking infrastructure is started, then the AI gateway is built.
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -17,6 +17,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 loadEnv({ path: path.join(ROOT, 'Athens-server', '.env') });
 
 const DATABASE_BACKEND = String(process.env.DATABASE_BACKEND || 'mongo').trim().toLowerCase();
+const QUERY_TIME_RANKING_MODE = String(
+	process.env.RECOMMENDATION_QUERY_TIME_MODE
+		|| (process.env.RECOMMENDATION_QUERY_TIME === 'true' ? 'on' : 'off'),
+).trim().toLowerCase();
+const QUERY_TIME_RANKING_ENABLED = ['on', 'shadow'].includes(QUERY_TIME_RANKING_MODE);
 
 const MONGO_HOST = process.env.MONGO_HOST || '127.0.0.1';
 const MONGO_PORT = Number(process.env.MONGO_PORT || 27017);
@@ -32,7 +37,12 @@ function run(cmd, args, opts = {}) {
 	if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
-printBanner('NextOffer Prestart', [`${DATABASE_BACKEND} backend — no Docker required`]);
+printBanner('NextOffer Prestart', [
+	`${DATABASE_BACKEND} backend`,
+	QUERY_TIME_RANKING_ENABLED
+		? `query-time ranking ${QUERY_TIME_RANKING_MODE} — Redis + Qdrant required`
+		: 'query-time ranking off — Docker optional',
+]);
 
 // Free our own ports first so a stale service from a previous run can't linger
 // and cause port-in-use / transient ECONNREFUSED failures on the fresh start.
@@ -63,6 +73,24 @@ Then: npm start
 } else {
 	console.error(`[prestart] Unsupported DATABASE_BACKEND=${DATABASE_BACKEND}; use firestore or mongo`);
 	process.exit(1);
+}
+
+if (QUERY_TIME_RANKING_ENABLED) {
+	if (process.env.SKIP_DOCKER === '1') {
+		const targets = [
+			{ host: '127.0.0.1', port: 6379, label: 'Redis' },
+			{ host: '127.0.0.1', port: 6333, label: 'Qdrant' },
+		];
+		for (const target of targets) {
+			if (!(await probe(target.host, target.port))) {
+				console.error(`[prestart] ${target.label} is required for query-time ranking but is not reachable on ${target.host}:${target.port}`);
+				process.exit(1);
+			}
+		}
+	} else {
+		console.log(`[prestart] Query-time ranking is ${QUERY_TIME_RANKING_MODE} — starting Redis + Qdrant`);
+		run('docker', ['compose', 'up', '-d', '--wait', 'redis', 'qdrant']);
+	}
 }
 
 // Ensure Puppeteer's bundled Chrome is present for résumé PDF rendering.

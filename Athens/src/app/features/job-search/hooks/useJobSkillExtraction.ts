@@ -13,7 +13,7 @@ const POLL_MS = 1500;
 export function useJobSkillExtraction() {
   const { applier } = useApplier();
   const [session, setSession] = useState<SkillExtractSession>({ running: false, status: "idle" });
-  const [pending, setPending] = useState(0);
+  const [pending, setPending] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -21,7 +21,7 @@ export function useJobSkillExtraction() {
     try {
       const status = await fetchSkillExtractStatus(applier?.name);
       setSession(status);
-      setPending(status.pending ?? 0);
+      setPending(status.pending ?? null);
       return status;
     } catch {
       return null;
@@ -56,7 +56,9 @@ export function useJobSkillExtraction() {
       const result = await startSkillExtract(applier?.name);
       if (result.started) {
         toast.success("Skill extraction started", {
-          description: `${result.pending ?? pending} job(s) queued.`,
+          description: result.pending != null || pending != null
+            ? `${result.pending ?? pending} job(s) queued.`
+            : "Processing jobs that do not have extracted skills.",
         });
       } else {
         toast.info(result.message || "No jobs pending extraction.");

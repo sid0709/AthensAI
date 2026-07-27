@@ -1,9 +1,11 @@
 import { ObjectId } from 'mongodb';
+import crypto from 'node:crypto';
 import {
   jobMatchScoresCollection,
   matchProfileStateCollection,
   jobsCollection,
 } from '../../db/mongo.js';
+import { getRedis, isRedisReady } from '../../db/redis.js';
 import { enqueueMatchScoreTask } from '../cloudTasks.js';
 import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
 import { computeCoverageScore } from './coverageScore.js';
@@ -26,6 +28,17 @@ export const MIN_STORE_SCORE = (() => {
   const n = Number.parseInt(String(process.env.MATCH_SCORE_MIN_STORE ?? ''), 10);
   return Number.isFinite(n) && n >= 0 ? n : 1;
 })();
+
+function profileVersionKey(applierName) {
+  const owner = crypto.createHash('sha256').update(String(applierName || '')).digest('hex').slice(0, 20);
+  return `ranking:v2:profile-version:${owner}`;
+}
+
+async function cacheProfileVersion(applierName, version) {
+  if (isRedisReady() && Number.isFinite(Number(version))) {
+    await getRedis().set(profileVersionKey(applierName), String(version));
+  }
+}
 
 /**
  * Score one job against a profile context — the single scorer every writer uses.
@@ -124,8 +137,38 @@ export async function requestUserRescore(applierName) {
     },
     { upsert: true, returnDocument: 'after' },
   );
+  await cacheProfileVersion(name, state?.profileVersion ?? 0);
   await enqueueMatchScoreTask(`${name}-${state?.profileVersion || Date.now()}`);
   return state;
+}
+
+/** Bump the query-time ranking version without scheduling an O(users x jobs) rebuild. */
+export async function bumpProfileRankingVersion(applierName) {
+  const name = String(applierName || '').trim();
+  if (!name || !matchProfileStateCollection) return null;
+  const state = await matchProfileStateCollection.findOneAndUpdate(
+    { applierName: name },
+    {
+      $inc: { profileVersion: 1 },
+      $set: { status: 'idle', requestedAt: new Date().toISOString(), error: null },
+    },
+    { upsert: true, returnDocument: 'after' },
+  );
+  await cacheProfileVersion(name, state?.profileVersion ?? 0);
+  return state;
+}
+
+export async function getProfileRankingVersion(applierName) {
+  const name = String(applierName || '').trim();
+  if (!name) return 0;
+  if (isRedisReady()) {
+    const cached = await getRedis().get(profileVersionKey(name));
+    if (cached != null && Number.isFinite(Number(cached))) return Number(cached);
+  }
+  const state = await getRescoreState(name);
+  const version = Number(state?.profileVersion) || 0;
+  await cacheProfileVersion(name, version);
+  return version;
 }
 
 export async function getRescoreState(applierName) {

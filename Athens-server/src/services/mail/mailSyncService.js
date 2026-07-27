@@ -3,9 +3,11 @@ import {
 	fetchFlagsForUids,
 	fetchMessageBody,
 	fetchMessagePlainText,
+	fetchMessageTextSnippets,
 	fetchMailboxPage,
 	fetchNewEnvelopes,
 	fetchFolderCounts,
+	fetchUnlabeledInboxEnvelopes,
 } from './imapClient.js';
 import {
 	acquireSyncLock,
@@ -19,16 +21,58 @@ import {
 	upsertSyncState,
 	messageToThread,
 	getMessagesByUids,
+	bulkUpdateMessageFlags,
 	enrichMessagesFromCache,
 	updateMessagePlainText,
 } from './mailStore.js';
-import { ALL_MAIL_PATH, folderToMailbox } from './folderMapper.js';
+import { ALL_MAIL_PATH, extractCustomLabels, folderToMailbox } from './folderMapper.js';
+import { getRedis, isRedisReady } from '../../db/redis.js';
 
 const CACHE_STALE_MS = 2 * 60 * 1000; // 2 min before background IMAP refresh
 const FOLDER_COUNT_CACHE_MS = 5 * 60 * 1000; // 5 min before refreshing folder counts
 const PAGE_MEMORY_CACHE_MS = Math.max(5_000, Number(process.env.MAIL_PAGE_MEMORY_CACHE_MS || 30_000));
 const pageMemoryCache = new Map();
 const folderCountMemoryCache = new Map();
+const UNLABELED_CACHE_TTL_SEC = Math.max(15, Number(process.env.MAIL_UNLABELED_CACHE_TTL_SEC || 60));
+
+function unlabeledRevisionKey(applierName) {
+	return `mail:v2:unlabeled-revision:${String(applierName).trim().toLowerCase()}`;
+}
+
+async function unlabeledCacheKeys(applierName, page, pageSize) {
+	let revision = '0';
+	if (isRedisReady()) revision = String((await getRedis().get(unlabeledRevisionKey(applierName)).catch(() => null)) || '0');
+	const identity = String(applierName).trim().toLowerCase();
+	return {
+		pageKey: `mail:v9:unlabeled-page:${identity}:${revision}:${page}:${pageSize}`,
+		catalogKey: `mail:v9:unlabeled-catalog:${identity}:${revision}`,
+	};
+}
+
+function pageFromUnlabeledCatalog(catalog, page, pageSize, fromCache) {
+	const start = (Math.max(1, page) - 1) * pageSize;
+	const docs = catalog.slice(start, start + pageSize);
+	return {
+		ok: true,
+		threads: docs.map((doc) => messageToThread(doc, { includeBody: false })),
+		total: catalog.length,
+		totalExact: true,
+		hasMore: catalog.length > start + pageSize,
+		page,
+		pageSize,
+		fromCache,
+	};
+}
+
+export async function invalidateMailListCaches(applierName) {
+	const prefix = `${String(applierName).trim().toLowerCase()}\0`;
+	for (const key of pageMemoryCache.keys()) {
+		if (key.startsWith(prefix)) pageMemoryCache.delete(key);
+	}
+	if (isRedisReady()) {
+		await getRedis().incr(unlabeledRevisionKey(applierName)).catch(() => undefined);
+	}
+}
 
 function pageCacheKey(applierName, folder, page, pageSize) {
 	return `${String(applierName).trim().toLowerCase()}\0${folder}\0${page}\0${pageSize}`;
@@ -205,15 +249,118 @@ async function refreshFolderInBackground(applierName, folder, pageSize) {
 }
 
 export async function loadLabelOrSearchPage(applierName, { folder, label, search, unlabeled, page, pageSize }) {
-	const total = await countMessages(applierName, { folder, label, search, unlabeled });
-	const docs = await listMessages(applierName, { folder, label, search, unlabeled, page, pageSize });
-	return {
+	let cacheKey;
+	let catalogKey;
+	if (unlabeled && isRedisReady()) {
+		const keys = await unlabeledCacheKeys(applierName, page, pageSize);
+		cacheKey = keys.pageKey;
+		catalogKey = keys.catalogKey;
+		const cached = await getRedis().get(cacheKey).catch(() => null);
+		if (cached) {
+			try {
+				return { ...JSON.parse(cached), fromCache: true };
+			} catch {
+				await getRedis().del(cacheKey).catch(() => undefined);
+			}
+		}
+		const cachedCatalog = await getRedis().get(catalogKey).catch(() => null);
+		if (cachedCatalog) {
+			try {
+				const catalog = JSON.parse(cachedCatalog);
+				if (Array.isArray(catalog)) return pageFromUnlabeledCatalog(catalog, page, pageSize, true);
+			} catch {
+				await getRedis().del(catalogKey).catch(() => undefined);
+			}
+		}
+	}
+	if (unlabeled) {
+		const creds = await resolveMailCredentials(applierName);
+		if (creds.ok) {
+			try {
+				const gmailPage = await fetchUnlabeledInboxEnvelopes(creds.email, creds.password, {
+					page,
+					pageSize,
+					applierName,
+				});
+				const result = pageFromUnlabeledCatalog(gmailPage.allMessages, page, pageSize, false);
+				if (gmailPage.messages.length) {
+					void upsertMessages(gmailPage.messages).catch((error) => {
+						console.warn('[mail] background unlabeled-envelope cache write failed:', error?.message || error);
+					});
+				}
+				if (cacheKey && catalogKey && isRedisReady()) {
+					await Promise.all([
+						getRedis().setEx(cacheKey, UNLABELED_CACHE_TTL_SEC, JSON.stringify(result)),
+						getRedis().setEx(catalogKey, UNLABELED_CACHE_TTL_SEC, JSON.stringify(gmailPage.allMessages)),
+					]).catch(() => undefined);
+				}
+				return result;
+			} catch (error) {
+				console.warn('[mail] Gmail unlabeled search failed; using bounded cache fallback:', error?.message || error);
+			}
+		}
+
+		// This interactive request needs one page and a next-page signal, not a
+		// full legacy-marker migration or an exact count of the entire mailbox.
+		// Read bounded, indexed inbox-envelope pages and filter custom labels in
+		// memory so this also works before the new marker index is deployed.
+		const wanted = page * pageSize + 1;
+		const maxCandidates = Math.min(
+			1_000,
+			Math.ceil(Math.max(pageSize * 4, page * 200, wanted * 2) / 100) * 100,
+		);
+		const matches = [];
+		let scanned = 0;
+		let sourcePage = 1;
+		while (scanned < maxCandidates && matches.length < wanted) {
+			const docs = await listMessages(applierName, { folder, page: sourcePage, pageSize: 100 });
+			scanned += docs.length;
+			for (const doc of docs) {
+				const hasCustomLabels =
+					typeof doc.hasCustomLabels === 'boolean'
+						? doc.hasCustomLabels
+						: Array.isArray(doc.labels)
+							? doc.labels.length > 0
+							: extractCustomLabels(doc.gmailLabels || []).length > 0;
+				if (!hasCustomLabels) matches.push(doc);
+			}
+			if (docs.length < 100) {
+				break;
+			}
+			sourcePage += 1;
+		}
+		const start = (page - 1) * pageSize;
+		const pageDocs = matches.slice(start, start + pageSize);
+		const hasMore = matches.length > start + pageSize;
+		const result = {
+			ok: true,
+			threads: pageDocs.map((doc) => messageToThread(doc, { includeBody: false })),
+			total: null,
+			totalExact: false,
+			hasMore,
+			page,
+			pageSize,
+		};
+		if (cacheKey && isRedisReady()) {
+			await getRedis().setEx(cacheKey, UNLABELED_CACHE_TTL_SEC, JSON.stringify(result)).catch(() => undefined);
+		}
+		return result;
+	}
+	const [total, docs] = await Promise.all([
+		countMessages(applierName, { folder, label, search, unlabeled }),
+		listMessages(applierName, { folder, label, search, unlabeled, page, pageSize }),
+	]);
+	const result = {
 		ok: true,
 		threads: docs.map((doc) => messageToThread(doc, { includeBody: false })),
 		total,
 		page,
 		pageSize,
 	};
+	if (cacheKey && isRedisReady()) {
+		await getRedis().setEx(cacheKey, UNLABELED_CACHE_TTL_SEC, JSON.stringify(result)).catch(() => undefined);
+	}
+	return result;
 }
 
 /**
@@ -373,13 +520,13 @@ function usablePlainText(doc) {
 /**
  * Ensure plain-text body for AI labeling — skips full HTML MIME fetch/parse when possible.
  */
-export async function ensureMessagePlainText(applierName, uid, mailbox) {
-	const creds = await resolveMailCredentials(applierName);
+export async function ensureMessagePlainText(applierName, uid, mailbox, options = {}) {
+	const creds = options.credentials || (await resolveMailCredentials(applierName));
 	if (!creds.ok) return { ok: false, error: creds.error };
 
 	const { getMessage } = await import('./mailStore.js');
 	const mailboxPath = mailbox || ALL_MAIL_PATH;
-	const existing = await getMessage(applierName, uid, mailboxPath);
+	const existing = options.existing || (await getMessage(applierName, uid, mailboxPath));
 
 	const cached = usablePlainText(existing);
 	if (cached) {
@@ -434,6 +581,49 @@ export async function prefetchMessageBodies(applierName, uids, mailbox = ALL_MAI
 			// best effort
 		}
 	}
+}
+
+/**
+ * Warm lightweight AI snippets for every visible candidate without downloading
+ * full messages. This is intentionally best-effort and safe to run in the
+ * background when the unlabeled dialog opens.
+ */
+export async function prefetchMessageSnippets(applierName, uids, mailbox = ALL_MAIL_PATH) {
+	const uniqueUids = [...new Set((uids || []).map(Number).filter(Number.isFinite))];
+	if (!uniqueUids.length) return;
+
+	const creds = await resolveMailCredentials(applierName);
+	if (!creds.ok) return;
+
+	const docs = await getMessagesByUids(applierName, uniqueUids, mailbox);
+	const byUid = new Map(docs.map((doc) => [Number(doc.uid), doc]));
+	const uncached = uniqueUids.filter((uid) => {
+		const doc = byUid.get(uid);
+		return !String(doc?.aiSnippet || doc?.bodyText || '').trim();
+	});
+	if (!uncached.length) return;
+
+	const snippets = await fetchMessageTextSnippets(
+		creds.email,
+		creds.password,
+		uncached,
+		mailbox,
+		{ maxBytes: 2_048, maxChars: 1_000 },
+	);
+	const updates = snippets
+		.filter((snippet) => snippet?.bodyText)
+		.map((snippet) => {
+			const existing = byUid.get(Number(snippet.uid));
+			return {
+				...(existing?._id ? { _id: existing._id } : {}),
+				uid: Number(snippet.uid),
+				mailbox,
+				aiSnippet: snippet.bodyText,
+				preview: snippet.preview || snippet.bodyText.slice(0, 240),
+				aiSnippetCachedAt: new Date(),
+			};
+		});
+	if (updates.length) await bulkUpdateMessageFlags(applierName, updates);
 }
 
 export { folderToMailbox };

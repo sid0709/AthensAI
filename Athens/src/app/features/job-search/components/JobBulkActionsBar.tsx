@@ -25,6 +25,7 @@ type JobBulkActionsBarProps = {
   resumeRemoving?: boolean;
   hasSelectedResumes?: boolean;
   resumeProgress?: JobResumeBulkProgress;
+  loading?: boolean;
   embedded?: boolean;
   className?: string;
 };
@@ -48,6 +49,7 @@ export function JobBulkActionsBar({
   resumeRemoving = false,
   hasSelectedResumes = false,
   resumeProgress,
+  loading = false,
   embedded = false,
   className,
 }: JobBulkActionsBarProps) {
@@ -63,6 +65,7 @@ export function JobBulkActionsBar({
   return (
     <div className={cn("space-y-0", className)}>
       <div
+        aria-busy={loading}
         className={cn(
           "flex items-center gap-3 px-3 py-2.5",
           !embedded && "rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-sm",
@@ -70,7 +73,7 @@ export function JobBulkActionsBar({
           hasSelection && "bg-primary/[0.02]",
         )}
       >
-        <label className="inline-flex items-center gap-2.5 cursor-pointer select-none shrink-0">
+        <label className={cn("inline-flex items-center gap-2.5 select-none shrink-0", loading ? "cursor-wait" : "cursor-pointer")}>
           <Checkbox
             checked={
               allOnPageSelected && pageCount > 0
@@ -80,13 +83,14 @@ export function JobBulkActionsBar({
                   : false
             }
             onCheckedChange={onToggleSelectAll}
+            disabled={loading}
             aria-label="Select all jobs on this page"
           />
           <span className="text-sm whitespace-nowrap">
             <span className="text-muted-foreground">Select page</span>
             <span className="mx-1.5 text-border">·</span>
             <span className="font-semibold text-foreground tabular-nums">
-              {selectedOnPage}/{pageCount}
+              {loading ? "—/—" : `${selectedOnPage}/${pageCount}`}
             </span>
             {totalSelected > selectedOnPage && (
               <span className="ml-1.5 text-xs font-medium text-primary">
@@ -112,7 +116,7 @@ export function JobBulkActionsBar({
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMarkBidReady}
-              disabled={totalSelected === 0 || bidReadyPending || moveToNewPending}
+              disabled={loading || totalSelected === 0 || bidReadyPending || moveToNewPending}
               title="Mark selected New jobs as Bid ready for Vendor Monitor"
             >
               {bidReadyPending ? (
@@ -129,7 +133,7 @@ export function JobBulkActionsBar({
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMoveToNew}
-              disabled={totalSelected === 0 || moveToNewPending || bidReadyPending}
+              disabled={loading || totalSelected === 0 || moveToNewPending || bidReadyPending}
               title="Move selected Bid ready jobs back to New"
             >
               {moveToNewPending ? (
@@ -173,7 +177,7 @@ export function JobBulkActionsBar({
                 size="sm"
                 className="h-8 gap-1.5"
                 onClick={onGenerateResumes}
-                disabled={totalSelected === 0 || resumeRemoving}
+                disabled={loading || totalSelected === 0 || resumeRemoving}
                 title="Generate tailored résumés for the selected jobs (max 12 at a time)"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -190,6 +194,7 @@ export function JobBulkActionsBar({
               onClick={onRemoveResumes}
               disabled={
                 totalSelected === 0 ||
+                loading ||
                 !hasSelectedResumes ||
                 resumeGenerating ||
                 resumeRemoving
@@ -210,7 +215,7 @@ export function JobBulkActionsBar({
             size="sm"
             className="h-8 gap-1.5"
             onClick={onExport}
-            disabled={totalSelected === 0}
+            disabled={loading || totalSelected === 0}
           >
             <Download className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Export</span>
@@ -220,7 +225,7 @@ export function JobBulkActionsBar({
             size="sm"
             className="h-8 gap-1.5 text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700"
             onClick={onRemove}
-            disabled={totalSelected === 0}
+            disabled={loading || totalSelected === 0}
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Remove</span>

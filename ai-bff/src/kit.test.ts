@@ -1,6 +1,6 @@
 import { calculateCost, resolveModelPricing, DEFAULT_DEEPSEEK_MODEL } from './pricing.js';
 import { isValidApiKey } from './api-keys.js';
-import { estimateTokens } from './validation.js';
+import { estimateTokens, parseChatRequest } from './validation.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`FAIL: ${message}`);
@@ -39,6 +39,15 @@ function runTests() {
   assert(gptFallback.provider === 'openai', 'gpt catalog hit');
 
   assert(estimateTokens('hello world') >= 2, 'token estimate');
+
+  const extractionRequest = parseChatRequest({
+    model: 'gpt-5-nano',
+    messages: [{ role: 'user', content: 'Extract skills' }],
+    maxTokens: 1400,
+    reasoningEffort: 'minimal',
+  });
+  assert(extractionRequest.maxTokens === 1400, 'max completion tokens parsed');
+  assert(extractionRequest.reasoningEffort === 'minimal', 'reasoning effort parsed');
 
   const billedUsage = { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 };
   const billedCost = calculateCost('gpt-4o-mini-2024-07-18', billedUsage);

@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { ObjectId } from "mongodb";
 import { firestoreAdapterTest, firestoreUniqueReservations } from "./firestoreMongoAdapter.js";
 
-const { matches, applyUpdate, runPipeline, buildNativeQueryPlan, conjunctiveDocumentIds } = firestoreAdapterTest;
+const {
+	matches,
+	applyUpdate,
+	runPipeline,
+	buildNativeQueryPlan,
+	collectFilterFields,
+	canTryCompositeQuery,
+	conjunctiveDocumentIds,
+} = firestoreAdapterTest;
 
 test("Firestore compatibility query plan translates bounded indexed filters", () => {
 	const plan = buildNativeQueryPlan({
@@ -25,6 +33,22 @@ test("Firestore compatibility query plan marks regex and OR filters as fallback 
 	const plan = buildNativeQueryPlan({ $or: [{ title: /react/i }, { company: "Example" }] });
 	assert.equal(plan.complete, false);
 	assert.deepEqual(plan.clauses, []);
+});
+
+test("Firestore compatibility fallback keeps fields needed by nested local filters", () => {
+	const fields = collectFilterFields({
+		$and: [
+			{ sourceCatalog: "market" },
+			{ $or: [{ titleScanned: { $exists: false } }, { titleScanned: null }] },
+			{ status: { $not: { $elemMatch: { applier: "owner-1" } } } },
+		],
+	});
+	assert.deepEqual([...fields].sort(), ["sourceCatalog", "status", "titleScanned"]);
+});
+
+test("Firestore compatibility does not probe undeployed multi-field indexes by default", () => {
+	assert.equal(canTryCompositeQuery({ clauses: [{ field: "source" }, { field: "sourceCatalog" }] }), false);
+	assert.equal(canTryCompositeQuery({ clauses: [{ field: "sourceCatalog" }] }), true);
 });
 
 test("Firestore compatibility extracts Algolia document IDs for authoritative point reloads", () => {

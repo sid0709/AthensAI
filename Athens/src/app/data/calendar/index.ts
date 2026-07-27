@@ -53,6 +53,11 @@ export interface CalendarEvent {
   result?: InterviewResult;
   /** Why it failed or was ignored. */
   reason?: string;
+  source?: "notion" | "athens";
+  notionPageId?: string;
+  notionUrl?: string | null;
+  allDay?: boolean;
+  readOnly?: boolean;
 }
 
 export const EVENT_COLORS: Record<CalendarEventType, string> = {
@@ -243,7 +248,7 @@ export function eventsByDay(
 ): Record<number, CalendarEvent[]> {
   const map: Record<number, CalendarEvent[]> = {};
   source.forEach((e) => {
-    const d = new Date(e.start);
+    const d = parseCalendarDate(e.start);
     if (d.getMonth() === month && d.getFullYear() === year) {
       const day = d.getDate();
       if (!map[day]) map[day] = [];
@@ -257,9 +262,17 @@ export function eventsInWeek(weekStart: Date, source: CalendarEvent[] = CALENDAR
   const end = new Date(weekStart);
   end.setDate(end.getDate() + 7);
   return source.filter((e) => {
-    const s = new Date(e.start);
+    const s = parseCalendarDate(e.start);
     return s >= weekStart && s < end;
   });
+}
+
+export function parseCalendarDate(value: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day);
+  }
+  return new Date(value);
 }
 
 export function formatTimeRange(start: string, end: string): string {

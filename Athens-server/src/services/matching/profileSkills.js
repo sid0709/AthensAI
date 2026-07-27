@@ -5,11 +5,27 @@ import { buildProfileCompacts } from '@nextoffer/shared/skill-match';
 import { buildProfileTokens, skillTokens } from '@nextoffer/shared/skill-tokens';
 import { compactSkillText } from '@nextoffer/shared/skill-compact';
 import { skillLevelFactor } from '../../config/graphAndVectorConfig.js';
-import { requestUserRescore } from './matchScoreStore.js';
+import { bumpProfileRankingVersion, requestUserRescore } from './matchScoreStore.js';
+import { isQueryTimeRankingEnabled } from '../../config/graphAndVectorConfig.js';
 
-const PROFILE_CACHE_TTL_SEC = 180;
+// Skill mutations explicitly invalidate these keys and bump profileVersion, so
+// active profiles can remain warm without periodically falling back to Firestore.
+const PROFILE_CACHE_TTL_SEC = 60 * 60;
 const profileKey = (applierName) => `profile:skills:${String(applierName || '').trim()}`;
 const matchContextKey = (applierName) => `profile:match:${String(applierName || '').trim()}`;
+const skillDocsKey = (applierName) => `profile:skill-docs:${String(applierName || '').trim()}`;
+export const profileSkillRevisionKey = (applierName) =>
+  `profile:skills-revision:${String(applierName || '').trim()}`;
+
+export async function getProfileSkillCacheRevision(applierName) {
+  if (!isRedisReady()) return null;
+  return String((await getRedis().get(profileSkillRevisionKey(applierName))) || '0');
+}
+
+async function bumpProfileSkillCacheRevision(applierName) {
+  if (!isRedisReady()) return null;
+  return String(await getRedis().incr(profileSkillRevisionKey(applierName)));
+}
 
 /**
  * The profile match context is built SOLELY from manual user skills
@@ -75,12 +91,14 @@ export async function loadProfileMatchContext(applierName) {
     return buildContextFromSkillDocs([]);
   }
 
+  const loadRevision = await getProfileSkillCacheRevision(name);
   if (isRedisReady()) {
     const redis = getRedis();
     const cached = await redis.get(matchContextKey(name));
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
+        await redis.expire(matchContextKey(name), PROFILE_CACHE_TTL_SEC);
         return {
           exactSet: new Set(parsed.exactSet || []),
           profileCompacts: parsed.profileCompacts || [],
@@ -96,14 +114,29 @@ export async function loadProfileMatchContext(applierName) {
     }
   }
 
-  const skillDocs = userSkillsCollection
-    ? await userSkillsCollection
-        .find({ applierName: name }, { projection: { name: 1, category: 1, level: 1 } })
-        .toArray()
-    : [];
+  let skillDocs = null;
+  if (isRedisReady() && loadRevision === await getProfileSkillCacheRevision(name)) {
+    const rawDocs = await getRedis().get(skillDocsKey(name));
+    if (rawDocs) {
+      try {
+        skillDocs = JSON.parse(rawDocs);
+        await getRedis().expire(skillDocsKey(name), PROFILE_CACHE_TTL_SEC);
+      } catch { /* reload */ }
+    }
+  }
+  if (!Array.isArray(skillDocs)) {
+    skillDocs = userSkillsCollection
+      ? await userSkillsCollection
+          .find({ applierName: name }, { projection: { name: 1, category: 1, level: 1 } })
+          .toArray()
+      : [];
+    if (isRedisReady() && loadRevision === await getProfileSkillCacheRevision(name)) {
+      await getRedis().setEx(skillDocsKey(name), PROFILE_CACHE_TTL_SEC, JSON.stringify(skillDocs));
+    }
+  }
   const ctx = buildContextFromSkillDocs(skillDocs);
 
-  if (isRedisReady()) {
+  if (isRedisReady() && loadRevision === await getProfileSkillCacheRevision(name)) {
     const redis = getRedis();
     const payload = JSON.stringify({
       exactSet: [...ctx.exactSet],
@@ -125,7 +158,7 @@ export async function clearProfileSkillCache(applierName) {
   const name = String(applierName || '').trim();
   if (!name || !isRedisReady()) return;
   const redis = getRedis();
-  await redis.del(profileKey(name), matchContextKey(name));
+  await redis.del([profileKey(name), matchContextKey(name)]);
 }
 
 /**
@@ -137,6 +170,8 @@ export async function clearProfileSkillCache(applierName) {
 export async function invalidateProfileSkillCache(applierName) {
   const name = String(applierName || '').trim();
   if (!name) return;
-  await requestUserRescore(name);
+  await bumpProfileSkillCacheRevision(name);
+  if (isQueryTimeRankingEnabled()) await bumpProfileRankingVersion(name);
+  else await requestUserRescore(name);
   await clearProfileSkillCache(name);
 }

@@ -20,6 +20,7 @@ import {
 	upsertProfileVector,
 	upsertResumeVector,
 } from '../vectorStore/qdrantClient.js';
+import { indexOneJobRanking } from '../matching/jobRankingIndex.js';
 
 async function aggregateProfileSkills(ownerName) {
 	const name = String(ownerName || '').trim();
@@ -76,6 +77,7 @@ export async function upsertJobEmbedding(jobId, { applierName } = {}) {
 			source: job.source || 'Other',
 			postedAt: job.postedAt ? String(job.postedAt).slice(0, 10) : '',
 		});
+		await indexOneJobRanking(job, { semanticDense: vector }).catch(() => {});
 
 		await jobsCollection.updateOne(
 			{ _id: objectId },

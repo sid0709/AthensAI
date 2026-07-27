@@ -13,6 +13,7 @@ export const PATHS = {
   agents: "/agents",
   mail: "/mail",
   calendar: "/calendar",
+  notion: "/notion",
   interviews: "/interviews",
   reports: "/reports",
   aiUsage: "/ai-usage",
@@ -35,7 +36,7 @@ export const DEFAULT_TABS = {
 } as const;
 
 export type ResumesTab = "library" | "editor" | "history" | "analysis";
-export type CalendarTab = "month" | "week" | "pipeline";
+export type CalendarTab = "month" | "week";
 export type ReportsTab = "overview" | "sources" | "funnel" | "velocity" | "insights";
 export type SettingsTab = "profile" | "skills" | "notifications" | "integrations" | "security";
 
@@ -48,6 +49,7 @@ const VIEW_TO_BASE: Record<View, string> = {
   agents: PATHS.agents,
   mail: PATHS.mail,
   calendar: PATHS.calendar,
+  notion: PATHS.notion,
   interviews: PATHS.interviews,
   reports: PATHS.reports,
   "ai-usage": PATHS.aiUsage,
@@ -97,6 +99,7 @@ export function viewFromPathname(pathname: string): View {
   if (p.startsWith(PATHS.agents)) return "agents";
   if (p.startsWith(PATHS.mail)) return "mail";
   if (p.startsWith(PATHS.calendar)) return "calendar";
+  if (p.startsWith(PATHS.notion)) return "notion";
   if (p.startsWith(PATHS.interviews)) return "interviews";
   if (p.startsWith(PATHS.reports)) return "reports";
   if (p.startsWith(PATHS.aiUsage)) return "ai-usage";

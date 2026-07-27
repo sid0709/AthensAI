@@ -2,6 +2,10 @@ import { skillDictionaryCollection } from '../../db/mongo.js';
 import { toCanonical } from '@nextoffer/shared/skill-normalize';
 import { skillTokens } from '@nextoffer/shared/skill-tokens';
 import { USER_SKILL_CATEGORIES } from '../../config/graphAndVectorConfig.js';
+import { stableSkillId } from '../matching/canonicalSkillVectors.js';
+import {
+  publishCanonicalSkillDictionaryChange,
+} from '../matching/canonicalSkillDictionary.js';
 
 /**
  * Global, deduped dictionary of every skill seen in a job description.
@@ -37,38 +41,85 @@ export function presentDictionaryEntry(entry) {
   };
 }
 
+export function aggregateJobSkillBatches(skillLists = []) {
+  const aggregated = new Map();
+  for (const aiSkills of skillLists) {
+    const perJob = new Map();
+    for (const skill of Array.isArray(aiSkills) ? aiSkills : []) {
+      const name = String(skill?.name || '').trim();
+      if (!name) continue;
+      const canonical = toCanonical(name) || name.toLowerCase();
+      const category = USER_SKILL_CATEGORIES.includes(skill?.category) ? skill.category : 'hard';
+      const requirement = Math.min(5, Math.max(1, Number(skill?.requirement) || 1));
+      const existing = perJob.get(canonical);
+      if (!existing || requirement > existing.requirement) {
+        perJob.set(canonical, { name: existing?.name || name, canonical, category, requirement });
+      }
+    }
+    for (const skill of perJob.values()) {
+      const { name, canonical, category, requirement } = skill;
+      const entry = aggregated.get(canonical) || {
+        name,
+        canonical,
+        jobCount: 0,
+        requirementSum: 0,
+        categoryCounts: {},
+      };
+      entry.jobCount += 1;
+      entry.requirementSum += requirement;
+      entry.categoryCounts[category] = (entry.categoryCounts[category] || 0) + 1;
+      aggregated.set(canonical, entry);
+    }
+  }
+  return [...aggregated.values()];
+}
+
+/** Atomically fold many jobs' AI skills into the dictionary in one bulk write. */
+export async function recordJobSkillBatches(skillLists = []) {
+  if (!skillDictionaryCollection || !skillLists.length) return;
+  const now = new Date().toISOString();
+  const aggregated = aggregateJobSkillBatches(skillLists);
+  const changedEntries = aggregated.map(({ name, canonical }) => ({
+    name,
+    nameCanonical: canonical,
+    skillId: stableSkillId(canonical),
+  }));
+  const ops = aggregated.map((entry) => ({
+    updateOne: {
+      filter: { nameCanonical: entry.canonical },
+      update: {
+        $setOnInsert: {
+          nameCanonical: entry.canonical,
+          name: entry.name,
+          skillId: stableSkillId(entry.canonical),
+          createdAt: now,
+        },
+        $set: { lastSeenAt: now },
+        $inc: {
+          jobCount: entry.jobCount,
+          requirementSum: entry.requirementSum,
+          ...Object.fromEntries(
+            Object.entries(entry.categoryCounts).map(([category, count]) => [`categoryCounts.${category}`, count]),
+          ),
+        },
+        $addToSet: { tokens: { $each: skillTokens(entry.name) } },
+      },
+      upsert: true,
+    },
+  }));
+  if (ops.length) {
+    const result = typeof skillDictionaryCollection.atomicBulkUpsert === 'function'
+      ? await skillDictionaryCollection.atomicBulkUpsert(ops)
+      : await skillDictionaryCollection.bulkWrite(ops, { ordered: false });
+    if (Number(result?.upsertedCount) > 0) {
+      await publishCanonicalSkillDictionaryChange(changedEntries);
+    }
+  }
+}
+
 /** Atomically fold one job's AI skills into the dictionary. */
 export async function recordJobSkills(aiSkills = []) {
-  if (!skillDictionaryCollection || !aiSkills.length) return;
-  const now = new Date().toISOString();
-  const ops = [];
-  const seen = new Set();
-  for (const s of aiSkills) {
-    const name = String(s?.name || '').trim();
-    if (!name) continue;
-    const canonical = toCanonical(name) || name.toLowerCase();
-    if (seen.has(canonical)) continue; // one increment per job per skill
-    seen.add(canonical);
-    const category = USER_SKILL_CATEGORIES.includes(s?.category) ? s.category : 'hard';
-    const requirement = Math.min(5, Math.max(1, Number(s?.requirement) || 1));
-    ops.push({
-      updateOne: {
-        filter: { nameCanonical: canonical },
-        update: {
-          $setOnInsert: { nameCanonical: canonical, name, createdAt: now },
-          $set: { lastSeenAt: now },
-          $inc: {
-            jobCount: 1,
-            requirementSum: requirement,
-            [`categoryCounts.${category}`]: 1,
-          },
-          $addToSet: { tokens: { $each: skillTokens(name) } },
-        },
-        upsert: true,
-      },
-    });
-  }
-  if (ops.length) await skillDictionaryCollection.bulkWrite(ops, { ordered: false });
+  return recordJobSkillBatches([aiSkills]);
 }
 
 /**
@@ -112,5 +163,6 @@ export async function countCoveredSkills(skillName) {
 export async function clearDictionary() {
   if (!skillDictionaryCollection) return { deleted: 0 };
   const res = await skillDictionaryCollection.deleteMany({});
+  await publishCanonicalSkillDictionaryChange();
   return { deleted: res.deletedCount };
 }

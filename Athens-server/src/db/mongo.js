@@ -90,6 +90,7 @@ async function ensureMailCollectionsIndexes() {
 		);
 		await mailMessagesCollection.createIndex({ applierName: 1, date: -1 });
 		await mailMessagesCollection.createIndex({ applierName: 1, folder: 1, date: -1 });
+		await mailMessagesCollection.createIndex({ applierName: 1, folder: 1, hasCustomLabels: 1, date: -1 });
 	}
 	if (mailSyncStateCollection) {
 		await mailSyncStateCollection.createIndex({ applierName: 1 }, { unique: true });
@@ -148,6 +149,10 @@ async function ensureMatchScoreIndexes() {
 	}
 	if (skillDictionaryCollection) {
 		await skillDictionaryCollection.createIndex({ nameCanonical: 1 }, { unique: true });
+		await skillDictionaryCollection.createIndex(
+			{ skillId: 1 },
+			{ unique: true, partialFilterExpression: { skillId: { $type: 'number' } } },
+		);
 		await skillDictionaryCollection.createIndex({ tokens: 1 });
 		await skillDictionaryCollection.createIndex({ jobCount: -1 });
 	}

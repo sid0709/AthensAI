@@ -5,16 +5,25 @@
  */
 import { randomUUID } from 'crypto';
 import { excludeExtensionV2JobsFilter } from '../../config/jobMarketSchema.js';
-import { accountInfoCollection, jobsCollection } from '../../db/mongo.js';
-import { isBetaTier } from '../../lib/betaTier.js';
+import { jobsCollection } from '../../db/mongo.js';
 import { formatCostUsd } from '../llm/llmService.js';
 import {
   resolveExtractionAuth,
-  extractAndPersistJobByCatalog,
+  extractAndPersistJobBatch,
   recordExtractionFailure,
+  SKILL_EXTRACT_BATCH_SIZE,
 } from './aiExtractService.js';
 
-const CONCURRENCY = Math.max(1, Number(process.env.JOB_SKILL_EXTRACT_CONCURRENCY || 16));
+function positiveEnv(name, fallback, minimum = 1) {
+  const value = Number(process.env[name]);
+  return Math.floor(Number.isFinite(value) && value >= minimum ? value : fallback);
+}
+
+const BATCH_CONCURRENCY = positiveEnv('JOB_SKILL_EXTRACT_BATCH_CONCURRENCY', 8);
+const JOBS_PER_WAVE = BATCH_CONCURRENCY * SKILL_EXTRACT_BATCH_SIZE;
+const STALE_CLAIM_MS = positiveEnv('JOB_SKILL_EXTRACT_STALE_CLAIM_MS', 15 * 60_000, 60_000);
+const RECOVERY_CONCURRENCY = positiveEnv('JOB_SKILL_EXTRACT_RECOVERY_CONCURRENCY', 20);
+const CLAIM_CONCURRENCY = positiveEnv('JOB_SKILL_EXTRACT_CLAIM_CONCURRENCY', 8);
 
 const MARKET_CLAIM_PROJECTION = { title: 1, description: 1, jobDescription: 1, aiSkillAttempts: 1 };
 
@@ -25,13 +34,6 @@ const inflight = new Set();
 function pendingQuery(includeV2) {
   if (includeV2) return { aiSkillStatus: 'pending' };
   return { aiSkillStatus: 'pending', ...excludeExtensionV2JobsFilter() };
-}
-
-async function resolveIncludeV2Jobs(applierName) {
-  const name = String(applierName || '').trim();
-  if (!name || !accountInfoCollection) return false;
-  const acc = await accountInfoCollection.findOne({ name }, { projection: { tier: 1 } });
-  return isBetaTier(acc?.tier);
 }
 
 async function countPendingInCollection(collection, includeV2) {
@@ -48,62 +50,109 @@ export async function countPendingExtractionBreakdown(includeV2 = true) {
   return { pending: pendingMarket, pendingMarket, pendingExternal: 0 };
 }
 
-async function claimFromCollection(collection, catalog, projection, sortField, n, includeV2) {
+export async function claimPendingJobs(collection, jobs, { catalog = 'market', sessionId, claimedAt } = {}) {
+  const timestamp = claimedAt || new Date().toISOString();
+  const claimUpdate = {
+    $set: {
+      aiSkillStatus: 'extracting',
+      aiSkillClaimedAt: timestamp,
+      aiSkillSessionId: sessionId,
+    },
+  };
+  if (typeof collection.atomicClaimMany === 'function') {
+    const claimedIds = new Set(await collection.atomicClaimMany(
+      jobs.map((job) => job._id),
+      { aiSkillStatus: 'pending' },
+      claimUpdate,
+    ));
+    return jobs
+      .filter((job) => claimedIds.has(String(job._id)))
+      .map((job) => ({ ...job, catalog, title: job.title }));
+  }
+  const claimed = new Array(jobs.length).fill(null);
+  let next = 0;
+  async function worker() {
+    while (next < jobs.length) {
+      const index = next++;
+      const job = jobs[index];
+      const result = await collection.updateOne(
+        { _id: job._id, aiSkillStatus: 'pending' },
+        claimUpdate,
+      );
+      if (Number(result?.modifiedCount) === 1) {
+        claimed[index] = { ...job, catalog, title: job.title };
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(CLAIM_CONCURRENCY, jobs.length) }, () => worker()),
+  );
+  return claimed.filter(Boolean);
+}
+
+async function claimFromCollection(collection, catalog, projection, n, includeV2, sessionId) {
   if (!collection || n <= 0) return [];
   const query = pendingQuery(includeV2);
+  // Ordering pending work is not user-visible and would force Firestore to
+  // scan an ever-growing prefix of already-extracted jobs. Read directly from
+  // the aiSkillStatus index and modestly overfetch for the local tier filter.
   const jobs = await collection
     .find(query)
     .project(projection)
-    .sort({ [sortField]: -1 })
-    .limit(n)
+    .limit(n * 4)
     .toArray();
   if (!jobs.length) return [];
 
-  await collection.updateMany(
-    { _id: { $in: jobs.map((j) => j._id) }, aiSkillStatus: 'pending' },
-    { $set: { aiSkillStatus: 'extracting' } },
-  );
-
-  return jobs.map((job) => ({
-    ...job,
-    catalog,
-    title: job.title,
-  }));
+  return claimPendingJobs(collection, jobs.slice(0, n), { catalog, sessionId });
 }
 
-async function claimBatch(n, includeV2) {
+async function claimBatch(n, includeV2, sessionId) {
   return claimFromCollection(
     jobsCollection,
     'market',
     MARKET_CLAIM_PROJECTION,
-    'postedAt',
     n,
     includeV2,
+    sessionId,
   );
 }
 
-async function requeue(job) {
-  if (!jobsCollection) return;
-  await jobsCollection
-    .updateOne({ _id: job._id }, { $set: { aiSkillStatus: 'pending' } })
-    .catch(() => {});
+async function requeueJobs(jobs, sessionId) {
+  if (!jobsCollection || !jobs.length) return;
+  await jobsCollection.bulkWrite(
+    jobs.map((job) => ({
+      updateOne: {
+        filter: { _id: job._id, aiSkillSessionId: sessionId },
+        update: {
+          $set: { aiSkillStatus: 'pending' },
+          $unset: { aiSkillClaimedAt: '', aiSkillSessionId: '' },
+        },
+      },
+    })),
+    { ordered: false },
+  ).catch(() => {});
 }
 
-async function processOne(session, auth, job) {
-  const catalog = 'market';
+async function processBatch(session, auth, jobs) {
   const controller = new AbortController();
   inflight.add(controller);
+  session.inflight += jobs.length;
+  session.phase = 'extracting';
   try {
-    const result = await extractAndPersistJobByCatalog(job, auth, {
+    const result = await extractAndPersistJobBatch(jobs, auth, {
       signal: controller.signal,
-      catalog,
     });
-    session.extracted += 1;
+    session.extracted += result.results.length;
+    const lastResult = result.results[result.results.length - 1];
+    const lastJob = lastResult
+      ? jobs.find((job) => String(job._id) === lastResult.jobId)
+      : null;
     session.lastJob = {
-      id: result.jobId,
-      title: job.title || '',
-      skills: result.skillCount,
-      catalog,
+      id: lastResult?.jobId || String(jobs[jobs.length - 1]?._id || ''),
+      title: lastJob?.title || jobs[jobs.length - 1]?.title || '',
+      skills: lastResult?.skillCount || 0,
+      catalog: 'market',
+      batchSize: jobs.length,
     };
     if (result.usage) {
       session.inputTokens += result.usage.inputTokens || 0;
@@ -112,62 +161,104 @@ async function processOne(session, auth, job) {
     }
   } catch (err) {
     if (cancelRequested || controller.signal.aborted) {
-      await requeue(job);
+      await requeueJobs(jobs, session.id);
+      session.cancelled += jobs.length;
       return;
     }
-    const r = await recordExtractionFailure(job, err, { catalog });
-    if (r?.terminal) session.failed += 1;
-    else session.retried = (session.retried || 0) + 1;
-    console.error(`[job-skill-extract] failed ${catalog}:${job._id}: ${err.message}`);
+    const failures = await Promise.all(
+      jobs.map((job) => recordExtractionFailure(job, err, { catalog: 'market' })),
+    );
+    session.failed += failures.filter((failure) => failure?.terminal).length;
+    session.retried += failures.filter((failure) => failure && !failure.terminal).length;
+    console.error(`[job-skill-extract] batch failed (${jobs.length} jobs): ${err.message}`);
   } finally {
     inflight.delete(controller);
-    session.processed += 1;
-    session.remaining = Math.max(0, session.total - session.processed);
+    session.inflight = Math.max(0, session.inflight - jobs.length);
+    session.processed += jobs.length;
+    session.remaining = session.total == null
+      ? null
+      : Math.max(0, session.total - session.processed);
+    session.lastProgressAt = new Date().toISOString();
   }
+}
+
+function chunkJobs(jobs, size) {
+  const chunks = [];
+  for (let offset = 0; offset < jobs.length; offset += size) {
+    chunks.push(jobs.slice(offset, offset + size));
+  }
+  return chunks;
 }
 
 async function recoverStuckExtracting() {
-  await jobsCollection
-    ?.updateMany({ aiSkillStatus: 'extracting' }, { $set: { aiSkillStatus: 'pending' } })
-    .catch(() => {});
+  if (!jobsCollection) return 0;
+  const staleBeforeMs = Date.now() - STALE_CLAIM_MS;
+  const stuck = await jobsCollection
+    // Keep this as a single-field indexed query. The claimedAt stale check is
+    // deliberately local so recovery never depends on a Firestore composite
+    // index or falls back to scanning the whole job catalog.
+    .find({ aiSkillStatus: 'extracting' })
+    .project({ _id: 1, aiSkillClaimedAt: 1 })
+    .toArray()
+    .then((rows) => rows.filter((job) => {
+      if (!job.aiSkillClaimedAt) return true;
+      const claimedAtMs = new Date(job.aiSkillClaimedAt).getTime();
+      return !Number.isFinite(claimedAtMs) || claimedAtMs < staleBeforeMs;
+    }))
+    .catch(() => []);
+  let next = 0;
+  async function worker() {
+    while (next < stuck.length) {
+      const job = stuck[next++];
+      await jobsCollection.updateOne(
+        { _id: job._id, aiSkillStatus: 'extracting' },
+        {
+          $set: { aiSkillStatus: 'pending' },
+          $unset: { aiSkillClaimedAt: '', aiSkillSessionId: '' },
+        },
+      ).catch(() => {});
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(RECOVERY_CONCURRENCY, stuck.length) }, () => worker()));
+  return stuck.length;
 }
 
-async function runSession(session) {
-  let auth;
-  try {
-    auth = await resolveExtractionAuth(session.applierName);
-  } catch (err) {
-    session.running = false;
-    session.status = 'failed';
-    session.error = err.message;
-    return;
-  }
-
+async function runSession(session, auth) {
   session.provider = auth.providerId;
   session.model = auth.model;
   console.log(
-    `[job-skill-extract] starting — ${auth.providerId}/${auth.model}, up to ${CONCURRENCY} concurrent, ${session.total} job(s)`,
+    `[job-skill-extract] starting — ${auth.providerId}/${auth.model}, ` +
+      `${BATCH_CONCURRENCY}× batches of ≤${SKILL_EXTRACT_BATCH_SIZE}, ` +
+      `${session.total == null ? 'until the queue is empty' : `${session.total} job(s)`}`,
   );
 
   try {
+    session.phase = 'recovering';
+    await recoverStuckExtracting();
     while (!cancelRequested) {
-      let take = CONCURRENCY;
+      session.phase = 'claiming';
+      let take = JOBS_PER_WAVE;
       if (session.limit != null) {
         take = Math.min(take, session.limit - session.processed);
         if (take <= 0) break;
       }
-      const batch = await claimBatch(take, session.includeV2Jobs !== false);
+      const batch = await claimBatch(take, session.includeV2Jobs !== false, session.id);
       if (!batch.length) break;
-      await Promise.all(batch.map((job) => processOne(session, auth, job)));
+      await Promise.all(
+        chunkJobs(batch, SKILL_EXTRACT_BATCH_SIZE).map((jobs) => processBatch(session, auth, jobs)),
+      );
     }
   } finally {
     session.running = false;
     session.finishedAt = new Date().toISOString();
     session.status = cancelRequested ? 'cancelled' : 'completed';
-    const breakdown = await countPendingExtractionBreakdown(session.includeV2Jobs !== false);
-    session.remaining = breakdown.pending;
-    session.pendingMarket = breakdown.pendingMarket;
-    session.pendingExternal = breakdown.pendingExternal;
+    session.phase = session.status;
+    if (!cancelRequested) {
+      session.total = session.processed;
+      session.remaining = 0;
+    } else {
+      session.remaining = null;
+    }
     console.log(
       `[job-skill-extract] ${session.status} — ${session.extracted} extracted, ${session.failed} failed · ` +
         `${session.inputTokens + session.outputTokens} tokens · ${formatCostUsd(session.costUsd)}`,
@@ -193,7 +284,13 @@ export function getExtractionStatus() {
     startedAt: activeSession.startedAt,
     finishedAt: activeSession.finishedAt ?? null,
     error: activeSession.error ?? null,
-    concurrency: CONCURRENCY,
+    phase: activeSession.phase ?? null,
+    inflight: activeSession.inflight || 0,
+    cancelled: activeSession.cancelled || 0,
+    lastProgressAt: activeSession.lastProgressAt ?? null,
+    concurrency: BATCH_CONCURRENCY,
+    batchSize: SKILL_EXTRACT_BATCH_SIZE,
+    jobsPerWave: JOBS_PER_WAVE,
     provider: activeSession.provider ?? null,
     model: activeSession.model ?? null,
     inputTokens: activeSession.inputTokens,
@@ -203,9 +300,14 @@ export function getExtractionStatus() {
 }
 
 export async function getSkillExtractionStatus({ applierName } = {}) {
-  const includeV2 = await resolveIncludeV2Jobs(applierName);
-  const breakdown = await countPendingExtractionBreakdown(includeV2);
-  return { ...breakdown, ...getExtractionStatus() };
+  if (activeSession?.running) {
+    return {
+      ...getExtractionStatus(),
+      pending: activeSession.remaining,
+      pendingKnown: activeSession.remaining != null,
+    };
+  }
+  return { pending: null, pendingKnown: false, ...getExtractionStatus() };
 }
 
 export async function startSkillExtractionSession({ applierName, limit = null } = {}) {
@@ -214,22 +316,9 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
   }
   if (activeSession?.running) throw new Error('Skill extraction session already running');
 
-  await resolveExtractionAuth(applierName);
-  await recoverStuckExtracting();
-
-  const includeV2Jobs = await resolveIncludeV2Jobs(applierName);
-  const breakdown = await countPendingExtractionBreakdown(includeV2Jobs);
-  const pending = breakdown.pending;
-  if (pending === 0) {
-    return {
-      sessionId: null,
-      pending: 0,
-      pendingMarket: 0,
-      pendingExternal: 0,
-      started: false,
-      message: 'No jobs pending extraction',
-    };
-  }
+  const auth = await resolveExtractionAuth(applierName);
+  const includeV2Jobs = auth.includeV2Jobs === true;
+  const parsedLimit = limit != null ? Math.max(1, Math.floor(Number(limit) || 1)) : null;
 
   cancelRequested = false;
   activeSession = {
@@ -238,16 +327,20 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
     includeV2Jobs,
     running: true,
     status: 'running',
-    total: limit != null ? Math.min(pending, Number(limit)) : pending,
-    limit: limit != null ? Number(limit) : null,
+    total: parsedLimit,
+    limit: parsedLimit,
     processed: 0,
     extracted: 0,
     failed: 0,
     retried: 0,
-    remaining: pending,
-    pendingMarket: breakdown.pendingMarket,
-    pendingExternal: breakdown.pendingExternal,
+    cancelled: 0,
+    remaining: parsedLimit,
+    pendingMarket: null,
+    pendingExternal: null,
     lastJob: null,
+    phase: 'starting',
+    inflight: 0,
+    lastProgressAt: null,
     provider: null,
     model: null,
     inputTokens: 0,
@@ -257,7 +350,7 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
     finishedAt: null,
   };
 
-  void runSession(activeSession).catch((err) => {
+  void runSession(activeSession, auth).catch((err) => {
     console.error('[job-skill-extract] session error', err);
     if (activeSession) {
       activeSession.running = false;
@@ -268,9 +361,8 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
 
   return {
     sessionId: activeSession.id,
-    pending,
-    pendingMarket: breakdown.pendingMarket,
-    pendingExternal: breakdown.pendingExternal,
+    pending: null,
+    pendingKnown: false,
     started: true,
   };
 }
@@ -278,6 +370,8 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
 export function stopSkillExtractionSession() {
   if (!activeSession?.running) return { stopped: false, message: 'No active session' };
   cancelRequested = true;
+  activeSession.status = 'stopping';
+  activeSession.phase = 'stopping';
   for (const controller of inflight) controller.abort();
   return { stopped: true, sessionId: activeSession.id };
 }

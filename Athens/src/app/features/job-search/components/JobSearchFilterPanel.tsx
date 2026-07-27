@@ -51,6 +51,7 @@ type JobSearchFilterPanelProps = {
   filters: JobSearchFilterState;
   onChange: (filters: JobSearchFilterState) => void;
   statusCounts: Record<JobStatusTab, number>;
+  countsLoading?: boolean;
   showScoresOnCards: boolean;
   onShowScoresOnCardsChange: (v: boolean) => void;
   matchScoreHint?: string | null;
@@ -110,6 +111,7 @@ export function JobSearchFilterPanel({
   filters,
   onChange,
   statusCounts,
+  countsLoading = false,
   showScoresOnCards,
   onShowScoresOnCardsChange,
   matchScoreHint,
@@ -158,7 +160,9 @@ export function JobSearchFilterPanel({
                       active ? "bg-muted text-foreground" : "bg-muted/60 text-muted-foreground",
                     )}
                   >
-                    {statusCounts[tab.id]}
+                    {countsLoading ? (
+                      <span className="inline-block h-2.5 w-5 animate-pulse rounded bg-current/20" aria-label="Updating count" />
+                    ) : statusCounts[tab.id]}
                   </span>
                 </button>
               );

@@ -4,12 +4,13 @@ export type TitleScanSession = {
   running: boolean;
   status: "idle" | "running" | "completed" | "cancelled" | "failed";
   sessionId?: string;
-  pending?: number;
-  total?: number;
+  pending?: number | null;
+  pendingKnown?: boolean;
+  total?: number | null;
   processed?: number;
   classified?: number;
   failed?: number;
-  remaining?: number;
+  remaining?: number | null;
   lastJob?: { id: string; title: string; role?: string | null; batchSize?: number } | null;
   startedAt?: string;
   finishedAt?: string | null;
@@ -24,7 +25,7 @@ type StartResponse = {
   success?: boolean;
   error?: string;
   sessionId?: string | null;
-  pending?: number;
+  pending?: number | null;
   started?: boolean;
   message?: string;
 };

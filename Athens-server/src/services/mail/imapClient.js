@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { withPooledClient } from './imapPool.js';
+import { mapPool } from '../../utils/concurrency.js';
 import {
 	ALL_MAIL_PATH,
 	FOLDER_MAILBOX,
@@ -15,6 +16,15 @@ import {
 	displayLabelName,
 	isSystemLabel,
 } from './folderMapper.js';
+
+const UNLABELED_SCAN_BATCH_SIZE = Math.max(
+	100,
+	Number(process.env.MAIL_UNLABELED_SCAN_BATCH_SIZE || 2_000),
+);
+const UNLABELED_SCAN_CONCURRENCY = Math.max(
+	1,
+	Number(process.env.MAIL_UNLABELED_SCAN_CONCURRENCY || 8),
+);
 
 function stripHtml(html) {
 	return html
@@ -48,6 +58,32 @@ function decodeBodyPartBuffer(buf, structureNode) {
 	} catch {
 		return Buffer.isBuffer(buf) ? buf.toString('utf-8') : String(buf);
 	}
+}
+
+/**
+ * Build the smallest set of IMAP body-part fetches for a group of messages.
+ * Most Gmail messages use the same text part (usually `1` or `1.1`), so this
+ * turns two commands per message into one structure command plus a few grouped
+ * partial-body commands.
+ */
+export function groupMessageTextParts(messages) {
+	const groups = new Map();
+	const unresolved = [];
+	for (const message of messages || []) {
+		const plainPart = findTextBodyPart(message?.bodyStructure, false);
+		const htmlPart = plainPart ? null : findTextBodyPart(message?.bodyStructure, true);
+		const partNode = plainPart || htmlPart;
+		const partId = String(partNode?.part || '').trim();
+		if (!partId || !Number.isFinite(Number(message?.uid))) {
+			unresolved.push(Number(message?.uid));
+			continue;
+		}
+		const isHtml = Boolean(htmlPart && !plainPart);
+		const key = `${partId}\0${isHtml ? 'html' : 'plain'}`;
+		if (!groups.has(key)) groups.set(key, { partId, isHtml, messages: [] });
+		groups.get(key).messages.push({ uid: Number(message.uid), partNode });
+	}
+	return { groups: [...groups.values()], unresolved: unresolved.filter(Number.isFinite) };
 }
 
 function extractHtmlBody(parsed) {
@@ -149,6 +185,68 @@ export async function fetchRecentEnvelopes(email, password, count, applierName) 
 			lowestUid: uids.length ? Math.min(...uids) : 0,
 		};
 	});
+}
+
+export function filterExactUnlabeledDocs(docs) {
+	return (docs || []).filter((doc) => extractCustomLabels(doc?.gmailLabels).length === 0);
+}
+
+async function fetchInboxEnvelopeBatch(email, password, uids, applierName) {
+	return withMailboxPath(email, password, 'INBOX', async (client) => {
+		const messages = [];
+		for await (const message of client.fetch(uids, {
+			envelope: true,
+			flags: true,
+			uid: true,
+			labels: true,
+		})) {
+			messages.push(messageToDoc(message, applierName, 'INBOX'));
+		}
+		return messages;
+	});
+}
+
+/**
+ * Fetch an exact page of messages with no user-created Gmail labels.
+ *
+ * Gmail's `has:nouserlabels` raw search is conversation-aware and can return a
+ * labeled message when another message in the same thread is unlabeled. Search
+ * the INBOX UID set, fetch only envelope/flag metadata in parallel batches, and
+ * make the final decision from each message's X-GM-LABELS value instead.
+ */
+export async function fetchUnlabeledInboxEnvelopes(
+	email,
+	password,
+	{ page = 1, pageSize = 50, applierName } = {},
+) {
+	const matches = await withMailboxPath(
+		email,
+		password,
+		'INBOX',
+		(client) => client.search({ all: true }, { uid: true }),
+	);
+	const newestUids = [...(matches || [])]
+		.map(Number)
+		.filter(Number.isFinite)
+		.sort((a, b) => b - a);
+	const batches = [];
+	for (let offset = 0; offset < newestUids.length; offset += UNLABELED_SCAN_BATCH_SIZE) {
+		batches.push(newestUids.slice(offset, offset + UNLABELED_SCAN_BATCH_SIZE));
+	}
+	const groups = await mapPool(
+		batches,
+		Math.min(UNLABELED_SCAN_CONCURRENCY, Math.max(1, batches.length)),
+		(uids) => fetchInboxEnvelopeBatch(email, password, uids, applierName),
+	);
+	const allMessages = filterExactUnlabeledDocs(groups.flat())
+		.sort((left, right) => right.uid - left.uid);
+	const start = (Math.max(1, page) - 1) * pageSize;
+	return {
+		messages: allMessages.slice(start, start + pageSize),
+		allMessages,
+		total: allMessages.length,
+		hasMore: allMessages.length > start + pageSize,
+	};
 }
 
 /**
@@ -389,6 +487,63 @@ export async function fetchMessagePlainText(email, password, uid, mailboxPath = 
 	});
 }
 
+/**
+ * Fetch bounded text excerpts for many UIDs using grouped partial-body IMAP
+ * commands. The result never downloads attachments or the complete MIME source.
+ */
+export async function fetchMessageTextSnippets(
+	email,
+	password,
+	uids,
+	mailboxPath = ALL_MAIL_PATH,
+	{ maxBytes = 2_048, maxChars = 1_000 } = {},
+) {
+	const uniqueUids = [...new Set((uids || []).map(Number).filter(Number.isFinite))];
+	if (!uniqueUids.length) return [];
+	const byteLimit = Math.max(256, Number(maxBytes) || 2_048);
+	const charLimit = Math.max(120, Number(maxChars) || 1_000);
+
+	return withMailboxPath(email, password, mailboxPath, async (client) => {
+		const structures = [];
+		for await (const message of client.fetch(
+			uniqueUids,
+			{ bodyStructure: true, uid: true },
+			{ uid: true },
+		)) {
+			structures.push(message);
+		}
+
+		const { groups, unresolved } = groupMessageTextParts(structures);
+		const resultMap = new Map(
+			unresolved.map((uid) => [uid, { uid, error: 'No text body part found' }]),
+		);
+
+		for (const group of groups) {
+			const nodeByUid = new Map(group.messages.map((message) => [message.uid, message.partNode]));
+			const groupUids = group.messages.map((message) => message.uid);
+			for await (const message of client.fetch(
+				groupUids,
+				{
+					bodyParts: [{ key: group.partId, start: 0, maxLength: byteLimit }],
+					uid: true,
+				},
+				{ uid: true },
+			)) {
+				const raw = message?.bodyParts?.get(group.partId)
+					|| (message?.bodyParts?.size ? message.bodyParts.values().next().value : null);
+				let text = decodeBodyPartBuffer(raw, nodeByUid.get(Number(message.uid))).trim();
+				if (group.isHtml) text = stripHtml(text);
+				text = text.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().slice(0, charLimit);
+				resultMap.set(Number(message.uid), text
+					? { uid: Number(message.uid), bodyText: text, preview: text.slice(0, 240) }
+					: { uid: Number(message.uid), error: 'Text body part was empty' });
+			}
+		}
+
+		return uniqueUids.map((uid) => resultMap.get(uid) || { uid, error: 'Message not found' });
+	});
+}
+
 export async function setMessageSeen(email, password, uid, seen, mailboxPath = ALL_MAIL_PATH) {
 	return withMailboxPath(email, password, mailboxPath, async (client) => {
 		if (seen) {
@@ -503,10 +658,20 @@ export async function deleteGmailLabel(email, password, labelPath) {
 }
 
 export async function addLabelsToMessage(email, password, uid, labelNames, mailboxPath = ALL_MAIL_PATH) {
+	return addLabelsToMessages(email, password, [uid], labelNames, mailboxPath);
+}
+
+/**
+ * Add the same Gmail label(s) to many messages with one IMAP STORE command.
+ * ImapFlow accepts a comma-delimited UID sequence, which avoids one network
+ * round trip per message while preserving the single-message API above.
+ */
+export async function addLabelsToMessages(email, password, uids, labelNames, mailboxPath = ALL_MAIL_PATH) {
 	const tokens = (labelNames || []).map(toImapLabelToken).filter(Boolean);
-	if (!tokens.length) return;
+	const uidSet = [...new Set((uids || []).map(Number).filter(Number.isFinite))].join(',');
+	if (!tokens.length || !uidSet) return;
 	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		await client.messageFlagsAdd(String(uid), tokens, { uid: true, useLabels: true });
+		await client.messageFlagsAdd(uidSet, tokens, { uid: true, useLabels: true });
 	});
 }
 

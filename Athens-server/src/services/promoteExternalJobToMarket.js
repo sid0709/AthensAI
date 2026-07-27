@@ -3,6 +3,7 @@ import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
 import { inferJobSource, SOURCE_MAP_VERSION } from "../config/jobSources.js";
 import { attachStaticScoreFields } from "./jobListPipeline.js";
 import { indexJobInRedis } from "./matching/skillIndex.js";
+import { indexOneJobRanking } from "./matching/jobRankingIndex.js";
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -187,6 +188,7 @@ export async function promoteExternalJobToMarket(externalDoc, { dryRun = false }
 			marketJob.skillTokens,
 		).catch(() => {});
 	}
+	void indexOneJobRanking({ ...marketJob, _id: insertedId }).catch(() => {});
 
 	if (externalScrapedJobsCollection) {
 		await markExternalSkippedDuplicate(externalDoc._id);

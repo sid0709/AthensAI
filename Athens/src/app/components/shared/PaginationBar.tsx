@@ -10,17 +10,21 @@ import {
 } from "../ui/pagination";
 import { cn } from "../../lib/utils";
 import { AthensSelect } from "../forms";
+import { Loader2 } from "lucide-react";
 
 type PaginationBarProps = {
   page: number;
   pageSize: number;
-  total: number;
+  total: number | null;
+  itemCount?: number;
+  hasMore?: boolean;
   onPageChange: (page: number) => void;
   onPageSizeChange?: (size: number) => void;
   pageSizeOptions?: number[];
   className?: string;
   align?: "left" | "center" | "between";
   detailed?: boolean;
+  loading?: boolean;
 };
 
 function pageNumbers(current: number, total: number): (number | "ellipsis")[] {
@@ -39,21 +43,27 @@ export function PaginationBar({
   page,
   pageSize,
   total,
+  itemCount,
+  hasMore = false,
   onPageChange,
   onPageSizeChange,
   pageSizeOptions = [10, 25, 50],
   className,
   align = "between",
   detailed = false,
+  loading = false,
 }: PaginationBarProps) {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, total);
-  const pages = pageNumbers(page, totalPages);
-  const showingCount = total === 0 ? 0 : end - start + 1;
+  const totalPages = total === null ? null : Math.max(1, Math.ceil(total / pageSize));
+  const showingCount =
+    itemCount ?? (total === null || total === 0 ? 0 : Math.min(pageSize, total - (page - 1) * pageSize));
+  const start = showingCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = showingCount === 0 ? 0 : start + showingCount - 1;
+  const pages = loading || totalPages === null ? [] : pageNumbers(page, totalPages);
+  const canGoNext = !loading && (totalPages === null ? hasMore : page < totalPages);
 
   return (
     <div
+      aria-busy={loading}
       className={cn(
         "flex items-center gap-4 py-3 px-1 flex-wrap",
         align === "between" && "justify-between",
@@ -64,8 +74,15 @@ export function PaginationBar({
     >
       <div className="flex items-center gap-4 flex-wrap">
         <p className="text-sm text-muted-foreground whitespace-nowrap">
-          {total === 0
-            ? "No results"
+          {loading ? (
+            <span className="inline-flex items-center gap-2" role="status" aria-live="polite">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              Loading results…
+            </span>
+          ) : total === null
+            ? `${showingCount} loaded · Page ${page}`
+            : total === 0
+              ? "No results"
             : detailed
               ? `Showing ${showingCount} of ${total.toLocaleString()} · Page ${page} / ${totalPages}`
               : `${start}–${end} of ${total}`}
@@ -79,6 +96,7 @@ export function PaginationBar({
               options={pageSizeOptions.map((n) => ({ value: String(n), label: String(n) }))}
               size="sm"
               className="w-20"
+              disabled={loading}
             />
           </div>
         )}
@@ -90,9 +108,10 @@ export function PaginationBar({
               href="#"
               onClick={(e) => {
                 e.preventDefault();
-                if (page > 1) onPageChange(page - 1);
+                if (!loading && page > 1) onPageChange(page - 1);
               }}
-              className={page <= 1 ? "pointer-events-none opacity-40" : "cursor-pointer"}
+              aria-disabled={loading || page <= 1}
+              className={loading || page <= 1 ? "pointer-events-none opacity-40" : "cursor-pointer"}
             />
           </PaginationItem>
           {pages.map((p, i) =>
@@ -107,9 +126,10 @@ export function PaginationBar({
                   isActive={p === page}
                   onClick={(e) => {
                     e.preventDefault();
-                    onPageChange(p);
+                    if (!loading) onPageChange(p);
                   }}
-                  className="cursor-pointer min-w-9"
+                  aria-disabled={loading}
+                  className={cn("min-w-9", loading ? "pointer-events-none opacity-40" : "cursor-pointer")}
                 >
                   {p}
                 </PaginationLink>
@@ -121,9 +141,10 @@ export function PaginationBar({
               href="#"
               onClick={(e) => {
                 e.preventDefault();
-                if (page < totalPages) onPageChange(page + 1);
+                if (!loading && canGoNext) onPageChange(page + 1);
               }}
-              className={page >= totalPages ? "pointer-events-none opacity-40" : "cursor-pointer"}
+              aria-disabled={loading || !canGoNext}
+              className={loading || !canGoNext ? "pointer-events-none opacity-40" : "cursor-pointer"}
             />
           </PaginationItem>
         </PaginationContent>

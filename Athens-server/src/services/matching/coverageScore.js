@@ -14,15 +14,21 @@ function normalizeJobSkillObjects(jobSkills) {
   const list = jobSkills instanceof Set ? [...jobSkills] : Array.isArray(jobSkills) ? jobSkills : [];
   const seen = new Set();
   const out = [];
+  const categoryByCode = ['hard', 'devops', 'tools', 'domain', 'soft'];
   for (const item of list) {
-    const name = typeof item === 'string' ? item : String(item?.name ?? '');
+    const tuple = Array.isArray(item);
+    const name = typeof item === 'string' ? item : tuple ? String(item[0] ?? '') : String(item?.name ?? '');
     const key = name.trim().toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push({
       name,
-      category: typeof item === 'object' && item?.category ? item.category : 'hard',
-      requirement: typeof item === 'object' && Number(item?.requirement) ? Number(item.requirement) : 1,
+      category: tuple
+        ? (categoryByCode[Number(item[1])] || 'hard')
+        : typeof item === 'object' && item?.category ? item.category : 'hard',
+      requirement: tuple
+        ? (Number(item[2]) || 1)
+        : typeof item === 'object' && Number(item?.requirement) ? Number(item.requirement) : 1,
     });
   }
   return out;
@@ -44,7 +50,7 @@ function normalizeJobSkillObjects(jobSkills) {
  * @param {Set<string>|object} profileSkills
  * @returns {{ matchScore, covered: string[], missing: string[], required: number }}
  */
-export function computeCoverageScore(jobSkills, profileSkills) {
+export function computeCoverageScore(jobSkills, profileSkills, proficiencyCache = null) {
   const ctx = profileSkills instanceof Set
     ? {
         profileTokens: buildProfileTokens([...profileSkills]),
@@ -76,7 +82,12 @@ export function computeCoverageScore(jobSkills, profileSkills) {
   for (const { name, category, requirement } of jobSkillObjs) {
     const catW = typeof catWeights[category] === 'number' ? catWeights[category] : (catWeights.hard ?? 1);
     denom += requirement * catW;
-    const prof = matchProficiency(name, ctx); // 0..1 proficiency of best user match
+    const cacheKey = name.trim().toLowerCase();
+    let prof = proficiencyCache?.get(cacheKey);
+    if (prof === undefined) {
+      prof = matchProficiency(name, ctx); // 0..1 proficiency of best user match
+      proficiencyCache?.set(cacheKey, prof);
+    }
     if (prof > 0) {
       covered.push(name);
       num += requirement * catW * prof;

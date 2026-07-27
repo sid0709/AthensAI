@@ -10,7 +10,11 @@ Workflow: [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publ
 | Push / merge to `master` | Yes (`:latest`, `:sha-<sha>`, …) | Yes (immutable `:sha-<sha>`) |
 | Manual `workflow_dispatch` | Yes (same as master) | Yes |
 
-Deploy SSHs into the VPS, syncs [`docker/deploy-remote.sh`](docker/deploy-remote.sh) → `/opt/nextoffer/deploy.sh`, pulls the image, recreates container `nextoffer`, and waits for `http://127.0.0.1:9030/avalon/health`.
+Deploy SSHs into the VPS, syncs [`docker/deploy-remote.sh`](docker/deploy-remote.sh) and [`docker/ranking-compose.yml`](docker/ranking-compose.yml), provisions Redis and Qdrant when missing, pulls the application image, recreates container `nextoffer`, and waits for all required health checks.
+
+Redis and Qdrant run only on the private `athens-monitoring` Docker network. Their data is stored in the named volumes `nextoffer-redis-data` and `nextoffer-qdrant-data`; application redeploys, container recreation, and normal VPS reboots preserve both volumes. Redis uses AOF persistence, Qdrant writes its collections to its storage volume, and every container uses `restart: unless-stopped`.
+
+The first deployment automatically backfills the ranking index from the authoritative database and records a completion marker in persistent Redis. Later deployments reuse the existing index. Do not run `docker compose down -v`, `docker volume rm`, or volume-pruning commands unless you intentionally want to erase these local indexes; Firestore remains the authoritative job data source and can rebuild them if necessary.
 
 ### Required GitHub secrets
 
@@ -57,29 +61,7 @@ Prefer the deploy script (same command CI uses):
 /opt/nextoffer/deploy.sh sha-<shortsha>
 ```
 
-Equivalent one-liner (env from `/opt/nextoffer/deploy.env`):
-
-```bash
-docker stop nextoffer && docker rm nextoffer
-
-docker run -d \
-  --name nextoffer \
-  --restart unless-stopped \
-  --add-host=host.docker.internal:host-gateway \
-  -p 9030:80 \
-  -p 8979:8979 \
-  -p 3920:3920 \
-  -v nextoffer-puppeteer:/data/puppeteer \
-  -v /opt/nextoffer/secrets/firebase-service-account.json:/run/secrets/firebase-service-account.json:ro \
-  -e EMBEDDED_MONGO=false \
-  -e 'MONGO_URL=mongodb://admin:Test.1234%21@host.docker.internal:27017/?authSource=admin' \
-  -e MONGO_DB=AthensDB \
-  -e API_KEYS_ENCRYPTION_KEY=3b4bd0112a6ec1514860a961e3da66b577e5638abcbe44caf017f9fe87e574bd \
-  -e FIREBASE_PROJECT_ID=drwretail-bm \
-  -e FIREBASE_STORAGE_BUCKET=drwretail-bm.firebasestorage.app \
-  -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json \
-  omnimuh730/nextoffer:latest
-```
+Do not replace this with a standalone `docker run`: the deploy script also starts and verifies Redis/Qdrant, connects the application to their private network, preserves their volumes, and performs the first ranking backfill.
 
 Container nginx (port **9030**) already routes:
 

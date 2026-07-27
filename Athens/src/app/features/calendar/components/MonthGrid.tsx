@@ -56,7 +56,7 @@ export function MonthGrid({ cur, today, events, onEventClick }: MonthGridProps) 
                       !e.confirmed && "ring-1 ring-dashed ring-amber-400/50",
                     )}
                   >
-                    {formatTimeRange(e.start, e.end).split("–")[0]} {e.title}
+                    {!e.allDay && `${formatTimeRange(e.start, e.end).split("–")[0]} `}{e.title}
                   </button>
                 ))}
               </div>

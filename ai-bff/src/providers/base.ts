@@ -8,6 +8,8 @@ import { resolveModelPricing } from '../pricing.js';
 import { parseStructuredContent, preparePromptOnlyStructured, prepareStructuredChat } from '../structured-output.js';
 import type { AiProviderId, ProviderChatParams } from '../types.js';
 
+type OpenAiReasoningEffort = NonNullable<ChatCompletionCreateParamsNonStreaming['reasoning_effort']>;
+
 export interface ProviderRunResult {
   id: string;
   model: string;
@@ -27,6 +29,10 @@ export interface AiProvider {
   isConfigured(): boolean;
   supportsModel(model: string): boolean;
   chat(params: ProviderChatParams): Promise<ProviderRunResult>;
+}
+
+function isOpenAiReasoningModel(model: string) {
+  return /^(gpt-5|o1|o3|o4)/i.test(model);
 }
 
 async function createCompletion(
@@ -65,7 +71,14 @@ export function createOpenAiCompatibleProvider(
         model: params.model,
         messages: structured.messages,
         ...(params.temperature != null ? { temperature: params.temperature } : {}),
-        max_tokens: params.maxTokens,
+        ...(id === 'openai' && isOpenAiReasoningModel(params.model)
+          ? {
+              max_completion_tokens: params.maxTokens,
+              // The installed SDK's union can lag newly released effort values;
+              // OpenAI validates model-specific support at request time.
+              reasoning_effort: params.reasoningEffort as OpenAiReasoningEffort | undefined,
+            }
+          : { max_tokens: params.maxTokens }),
         top_p: params.topP,
         stop: params.stop,
         tools: params.tools,

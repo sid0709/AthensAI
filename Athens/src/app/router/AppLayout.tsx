@@ -7,6 +7,7 @@ import { pathForView, viewFromPathname, type NavigateOptions } from "../config/r
 import { AgentRunProvider } from "../context/AgentRunContext";
 import { AgentSessionsProvider } from "../features/agents/context/AgentSessionsContext";
 import { ApplierProvider } from "../../context/applier-context";
+import { ProfileMatchSkillsProvider } from "../features/job-search/hooks/useProfileMatchSkills";
 import { AppNavigationContext } from "../context/AppNavigationContext";
 import {
   JobSearchNavigationContext,
@@ -68,17 +69,19 @@ function AppProviders({ children }: { children: ReactNode }) {
 
   return (
     <ApplierProvider>
-      <AgentRunProvider>
-        {/* Mounted here (not inside the Agents route) so its relay engines — and
-            any auto-run in progress — survive navigating away from /agents. */}
-        <AgentSessionsProvider>
-          <AppNavigationContext.Provider value={appNav}>
-            <ResumeNavigationContext.Provider value={resumeNav}>
-              <JobSearchNavigationContext.Provider value={jobNav}>{children}</JobSearchNavigationContext.Provider>
-            </ResumeNavigationContext.Provider>
-          </AppNavigationContext.Provider>
-        </AgentSessionsProvider>
-      </AgentRunProvider>
+      <ProfileMatchSkillsProvider>
+        <AgentRunProvider>
+          {/* Mounted here (not inside the Agents route) so its relay engines — and
+              any auto-run in progress — survive navigating away from /agents. */}
+          <AgentSessionsProvider>
+            <AppNavigationContext.Provider value={appNav}>
+              <ResumeNavigationContext.Provider value={resumeNav}>
+                <JobSearchNavigationContext.Provider value={jobNav}>{children}</JobSearchNavigationContext.Provider>
+              </ResumeNavigationContext.Provider>
+            </AppNavigationContext.Provider>
+          </AgentSessionsProvider>
+        </AgentRunProvider>
+      </ProfileMatchSkillsProvider>
     </ApplierProvider>
   );
 }

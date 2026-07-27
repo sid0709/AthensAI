@@ -5,6 +5,8 @@ import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
 import { searchJobIds } from './search/algoliaJobs.js';
+import { getRedis, isRedisReady } from '../db/redis.js';
+import { createHash } from 'node:crypto';
 
 const SCORE_DIMENSIONS = {
 	overall: 'overallScore',
@@ -146,11 +148,16 @@ function finalizeQuery(query) {
 	return query;
 }
 
-const APPLIER_CACHE_TTL_MS = 5 * 60 * 1000;
+const APPLIER_CACHE_TTL_MS = 60 * 60 * 1000;
 const applierCache = new Map();
 
+function applierCacheKey(name) {
+	const digest = createHash('sha256').update(String(name)).digest('hex').slice(0, 20);
+	return `jobs:applier-context:${digest}`;
+}
+
 /** Resolve applier Mongo id + beta tier (cached briefly). */
-async function resolveApplierContext(applierName) {
+export async function resolveApplierContext(applierName) {
 	if (!applierName || !accountInfoCollection) {
 		return { id: null, isBeta: false };
 	}
@@ -159,12 +166,49 @@ async function resolveApplierContext(applierName) {
 	if (cached && cached.expiresAt > Date.now()) {
 		return { id: cached.id, isBeta: cached.isBeta };
 	}
+	if (isRedisReady()) {
+		const raw = await getRedis().get(applierCacheKey(name));
+		if (raw) {
+			try {
+				const stored = JSON.parse(raw);
+				const id = /^[a-f0-9]{24}$/i.test(String(stored.id || ''))
+					? new ObjectId(String(stored.id))
+					: stored.id || null;
+				const value = { id, isBeta: Boolean(stored.isBeta) };
+				applierCache.set(name, { ...value, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
+				return value;
+			} catch {
+				/* refresh from the authoritative account document */
+			}
+		}
+	}
 
 	const applierDoc = await accountInfoCollection.findOne({ name });
 	const id = applierDoc?._id || null;
 	const isBeta = Boolean(id) && isBetaTier(applierDoc?.tier);
 	applierCache.set(name, { id, isBeta, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
+	if (isRedisReady()) {
+		await getRedis().setEx(
+			applierCacheKey(name),
+			Math.ceil(APPLIER_CACHE_TTL_MS / 1000),
+			JSON.stringify({ id: id ? String(id) : null, isBeta }),
+		);
+	}
 	return { id, isBeta };
+}
+
+/** Clear local and Redis tier/id context after an account mutation. */
+export async function invalidateApplierContextCache(applierName) {
+	const name = String(applierName || '').trim();
+	if (!name) return false;
+	applierCache.delete(name);
+	if (!isRedisReady()) return true;
+	try {
+		await getRedis().del(applierCacheKey(name));
+	} catch (error) {
+		console.warn('[jobs] failed to invalidate applier context cache:', error?.message || error);
+	}
+	return true;
 }
 
 const SCORE_FILTER_KEYS = new Set([
@@ -179,7 +223,7 @@ const SCORE_FILTER_KEYS = new Set([
  * Build a Mongo filter for POST /jobs/list from the request body.
  * Pass statusTab to override applied/status: all | posted | bid-ready | bid-completed | applied | scheduled | declined
  */
-export async function buildJobsListQuery(body, { statusTab } = {}) {
+export async function buildJobsListQuery(body, { statusTab, includePersonalStatus = true } = {}) {
 	const {
 		q,
 		postedAtFrom,
@@ -317,7 +361,9 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 		}
 	}
 
-	applyStatusFilter(query, { appliedBool, status: statusFilter, applierId });
+	if (includePersonalStatus) {
+		applyStatusFilter(query, { appliedBool, status: statusFilter, applierId });
+	}
 
 	if (postedAtFrom || postedAtTo) {
 		const postedAtQuery = {};

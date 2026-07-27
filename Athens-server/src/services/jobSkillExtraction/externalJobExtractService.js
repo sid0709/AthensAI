@@ -6,6 +6,7 @@ import { JOB_MARKET_MODEL_VERSION } from "../../config/jobMarketSchema.js";
 import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from "../matching/skillIndex.js";
 import { enrichJobSkillsFromTitle } from "../matching/jobSkillExtraction.js";
 import { recordJobSkills } from "../skillDictionary/skillDictionaryStore.js";
+import { indexOneJobRanking } from "../matching/jobRankingIndex.js";
 import { parseJobSkillsJson, MAX_ATTEMPTS } from "./aiExtractService.js";
 
 const MAX_CHARS = Number(process.env.JOB_SKILL_EXTRACT_MAX_CHARS || 8000);
@@ -185,6 +186,14 @@ export async function extractAndPersistExternalJob(job, auth, { signal } = {}) {
 
 	await indexJobInRedis(jobId, skillsNormalized, tokens).catch(() => {});
 	await recordJobSkills(aiSkills).catch(() => {});
+	await indexOneJobRanking({
+		...job,
+		title: titleForFallback,
+		aiSkills,
+		skills: displaySkills,
+		details: metadata.details,
+		company: buildCompanyBlock(job, metadata.industryTags),
+	}, { catalog: 'external' }).catch(() => {});
 
 	return { jobId, skillCount: aiSkills.length, usage };
 }

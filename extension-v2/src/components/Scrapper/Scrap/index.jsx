@@ -14,7 +14,7 @@ import { PlayArrow, Stop } from '@mui/icons-material';
 import PropTypes from 'prop-types';
 import { useRuntime } from '../../../api/runtimeContext';
 import useApi from '../../../api/useApi';
-import useNotification from '../../../api/useNotification';
+import useNotification, { formatFailureMessage } from '../../../api/useNotification';
 import useScraperSocket from '../../../api/useScraperSocket';
 import {
 	bindScraperTab,
@@ -40,6 +40,7 @@ const PAGE_DELAY_MS = 800;
 const MAX_RECOVERY_ATTEMPTS = 6;
 const FEED_REFRESH_COOLDOWN_MS = 60_000;
 const MAX_EMPTY_FEED_CYCLES = 3;
+const JOB_UPLOAD_TIMEOUT_MS = 20_000;
 
 function CircularProgressWithLabel(props) {
 	return (
@@ -77,6 +78,7 @@ const ScrapComponent = () => {
 	const [progress, setProgress] = useState(0);
 	const [scrapFlag, setScrapFlag] = useState(false);
 	const [recoveryStatus, setRecoveryStatus] = useState('');
+	const [lastError, setLastError] = useState('');
 	const [lastJobAt, setLastJobAt] = useState(null);
 	const [stats, setStats] = useState({
 		saved: 0,
@@ -103,6 +105,7 @@ const ScrapComponent = () => {
 	scrapFlagRef.current = scrapFlag;
 
 	const notifyFailure = useCallback((err, fallback) => {
+		setLastError(formatFailureMessage(err, fallback || 'Scrape failed'));
 		notification.fail(err, { key: 'scrap-failure' });
 		if (fallback) console.error(fallback, err);
 	}, [notification]);
@@ -248,13 +251,14 @@ const ScrapComponent = () => {
 			const { resultData, jobrightJobId } = mapJobrightItemToResultData(item);
 			if (!resultData.title) {
 				setStats((s) => ({ ...s, errors: s.errors + 1 }));
+				setLastError('Skipped a Jobright item because its title was missing.');
 				continue;
 			}
 
 			setProgress(40 + Math.round(((i + 1) / jobs.length) * 40));
 
 			try {
-				const res = await api.post('/jobs', resultData);
+				const res = await api.post('/jobs', resultData, { timeoutMs: JOB_UPLOAD_TIMEOUT_MS });
 				const reason = String(res?.reason || '').toLowerCase();
 
 				if (res?.created === true) {
@@ -288,6 +292,7 @@ const ScrapComponent = () => {
 				}
 			} catch (err) {
 				setStats((s) => ({ ...s, errors: s.errors + 1 }));
+				setLastError(formatFailureMessage(err, 'Failed to save job'));
 				if (isNetworkError(err)) throw err;
 				console.error('Failed to save job', err);
 			}
@@ -389,6 +394,7 @@ const ScrapComponent = () => {
 		recoveryAttemptRef.current = 0;
 		recoveringRef.current = false;
 		setProgress(0);
+		setLastError('');
 		setRecoveryStatus('Binding Jobright tab…');
 		try {
 			const bind = await bindScraperTab();
@@ -449,6 +455,11 @@ const ScrapComponent = () => {
 						{stats.blocked} · Errors {stats.errors} · Position {positionDisplay} · Feed cycles{' '}
 						{stats.feedCycles}
 					</Typography>
+					{lastError ? (
+						<Typography variant="caption" color="error.main">
+							Last error: {lastError}
+						</Typography>
+					) : null}
 				</Stack>
 			</Paper>
 		</Stack>

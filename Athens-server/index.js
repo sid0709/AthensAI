@@ -14,6 +14,8 @@ import { setupMaster } from "@socket.io/sticky";
 import { setupPrimary } from "@socket.io/cluster-adapter";
 
 import { initMongo, closeMongo, getMongoDb } from "./src/db/mongo.js";
+import { initRedis, closeRedis, isRedisReady } from "./src/db/redis.js";
+import { loadCanonicalSkillDictionary } from "./src/services/matching/canonicalSkillDictionary.js";
 import { initSocket, closeSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
@@ -25,6 +27,12 @@ import statusAdminRoutes from "./src/routes/statusAdminRoutes.js";
 import { metricsMiddleware, renderMetrics } from "./src/services/monitoring/metrics.js";
 import { startMonitoringLoop } from "./src/services/monitoring/monitorLoop.js";
 import { markForegroundActivity } from "./src/services/runtimeLoad.js";
+import { initJobRankingCollection, initQdrantCollections } from "./src/services/vectorStore/qdrantClient.js";
+import {
+	isQueryTimeRankingEnabled,
+	isQueryTimeRankingIndexEnabled,
+} from "./src/config/graphAndVectorConfig.js";
+import { shutdownRankingPool, warmRankingPool } from "./src/services/matching/exactRerankPool.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -37,6 +45,7 @@ import ruleRoutes from "./src/routes/ruleRoutes.js";
 import vendorMonitorRoutes from "./src/routes/vendorMonitorRoutes.js";
 import mailRoutes from "./src/routes/mailRoutes.js";
 import settingsRoutes from "./src/routes/settingsRoutes.js";
+import notionRoutes from "./src/routes/notionRoutes.js";
 import agentRoutes from "./src/routes/agentRoutes.js";
 import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
@@ -128,6 +137,7 @@ function createApp() {
 	app.use("/api", vendorMonitorRoutes);
 	app.use("/api", mailRoutes);
 	app.use("/api", settingsRoutes);
+	app.use("/api", notionRoutes);
 	app.use("/api/agents", agentRoutes);
 	app.use("/api", scrapedJobIngestRoutes);
 	app.use("/api", aiUsageRoutes);
@@ -162,10 +172,15 @@ function createApp() {
 
 async function startBackgroundWorkers() {
 	await initMongo();
+	await initRedis({ force: isQueryTimeRankingIndexEnabled() });
+	if (isQueryTimeRankingIndexEnabled()) {
+		await initQdrantCollections();
+		await initJobRankingCollection();
+	}
 	databaseReady = true;
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
 		startJobAnalysisWorker();
-		startMatchScoreWorker();
+		if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 		startLocalSearchOutboxWorker();
 	}
 	console.log(`[athens] primary background workers started (pid ${process.pid})`);
@@ -173,6 +188,15 @@ async function startBackgroundWorkers() {
 
 async function startHttpWorker({ clustered }) {
 	await initMongo();
+	await initRedis({ force: isQueryTimeRankingIndexEnabled() });
+	if (isQueryTimeRankingIndexEnabled()) {
+		await initQdrantCollections();
+		const rankingReady = await initJobRankingCollection();
+		if (rankingReady && isRedisReady()) {
+			await loadCanonicalSkillDictionary();
+			await warmRankingPool();
+		}
+	}
 	databaseReady = true;
 	if (!clustered && process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
@@ -197,6 +221,8 @@ async function startHttpWorker({ clustered }) {
 			}
 			await shutdownPdfPool();
 			await shutdownImapPool();
+			await shutdownRankingPool();
+			await closeRedis();
 			await closeMongo();
 		} catch (err) {
 			console.error(`[athens] worker shutdown error:`, err.message);
@@ -265,6 +291,7 @@ async function startPrimary() {
 		force.unref?.();
 		try {
 			await shutdownImapPool();
+			await closeRedis();
 			await closeMongo();
 			await new Promise((resolve) => httpServer.close(() => resolve()));
 		} catch (err) {
@@ -289,7 +316,7 @@ async function main() {
 		// Single process also owns background workers (cluster primary runs them instead).
 		if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
 			startJobAnalysisWorker();
-			startMatchScoreWorker();
+			if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 			startLocalSearchOutboxWorker();
 		}
 	}

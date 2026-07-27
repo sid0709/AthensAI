@@ -103,9 +103,19 @@ async function listMergedByAggregation({ body, marketQuery, externalQuery, skip,
 	return { docs, total };
 }
 
-async function listMergedRecommended({ body, marketQuery, externalQuery, scoreFilters, skip, limit, applierName }) {
+async function listMergedRecommended({
+	body,
+	marketQuery,
+	externalQuery,
+	scoreFilters,
+	skip,
+	limit,
+	applierName,
+	profileId,
+}) {
 	const result = await listMergedRecommendedJobs({
 		applierName,
+		profileId,
 		marketQuery,
 		externalQuery,
 		scoreFilters,
@@ -136,7 +146,7 @@ export async function listMergedJobs(body) {
 	const statusTab = resolveStatusTabFromBody(body);
 	const mergeExternal = shouldMergeExternal(body, statusTab);
 
-	const { query: marketQuery, scoreFilters } = await buildJobsListQuery(body);
+	const { query: marketQuery, applierId, scoreFilters } = await buildJobsListQuery(body);
 
 	const pageNum = Math.max(1, parseInt(page, 10) || 1);
 	const limitNum = Math.max(1, Math.min(5000, parseInt(limit, 10) || 10));
@@ -146,7 +156,7 @@ export async function listMergedJobs(body) {
 			: (pageNum - 1) * limitNum;
 
 	if (!mergeExternal) {
-		return { mergeExternal: false, marketQuery, scoreFilters, skip, limit: limitNum, pageNum, countsOnly };
+		return { mergeExternal: false, marketQuery, applierId, scoreFilters, skip, limit: limitNum, pageNum, countsOnly };
 	}
 
 	const externalQuery = buildExternalScrapedJobsQuery(body);
@@ -181,6 +191,7 @@ export async function listMergedJobs(body) {
 			skip,
 			limit: limitNum,
 			applierName,
+			profileId: applierId ? String(applierId) : null,
 		});
 		return {
 			mergeExternal: true,
@@ -192,6 +203,12 @@ export async function listMergedJobs(body) {
 			recommendationReason: result.recommendationReason,
 			recommendationWarming: result.recommendationWarming,
 			catalogTotal: result.catalogTotal,
+			rankingVersion: result.rankingVersion ?? null,
+			rankingStatus: result.rankingStatus ?? (
+				result.recommendationFallback ? 'fallback' : result.recommendationWarming ? 'warming' : 'legacy'
+			),
+			catalogRevision: result.catalogRevision ?? null,
+			personalizedThroughRank: result.personalizedThroughRank ?? null,
 		};
 	}
 

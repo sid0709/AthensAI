@@ -96,8 +96,40 @@ export function useGeneratorPage() {
   // would overwrite the just-loaded run. Reset on a genuine applier change so
   // normal config restore still works after switching accounts.
   const externalLoadRef = useRef(false);
-  // Don't write to MongoDB until localStorage + DB restore have finished.
-  const [configHydrated, setConfigHydrated] = useState(false);
+  // Track which applier owns the hydrated config. A boolean can remain true for
+  // one render after an applier switch and persist the previous user's config.
+  const configOwnerKey = applier?.name ?? "default";
+  const [configHydratedFor, setConfigHydratedFor] = useState<string | null>(null);
+  const configSaveRef = useRef<{
+    inFlight: boolean;
+    queued: { applierName: string; config: GeneratorConfig; key: string } | null;
+    lastSavedKey: string | null;
+  }>({ inFlight: false, queued: null, lastSavedKey: null });
+
+  const flushConfigSave = useCallback(async () => {
+    const state = configSaveRef.current;
+    if (state.inFlight) return;
+    state.inFlight = true;
+    try {
+      while (state.queued) {
+        const save = state.queued;
+        state.queued = null;
+        if (save.key === state.lastSavedKey) continue;
+        try {
+          await put("/personal/resume-generator/config", {
+            applierName: save.applierName,
+            config: save.config,
+          });
+          state.lastSavedKey = save.key;
+        } catch {
+          // Keep editing responsive. A later config change will retry with the
+          // newest complete snapshot instead of replaying every intermediate one.
+        }
+      }
+    } finally {
+      state.inFlight = false;
+    }
+  }, [put]);
 
   // Reference tokens a prompt can use, resolved from the JD + profile careers.
   // Mirrors the backend substitution in resumeGenController so the chip previews
@@ -350,7 +382,9 @@ export function useGeneratorPage() {
   // Restore saved config: localStorage first, then MongoDB (authoritative).
   useEffect(() => {
     externalLoadRef.current = false;
-    setConfigHydrated(false);
+    setConfigHydratedFor(null);
+    configSaveRef.current.queued = null;
+    configSaveRef.current.lastSavedKey = null;
 
     let cancelled = false;
     let next = defaultConfig();
@@ -364,7 +398,7 @@ export function useGeneratorPage() {
 
     const applierName = applier?.name;
     const finishHydration = () => {
-      if (!cancelled) setConfigHydrated(true);
+      if (!cancelled) setConfigHydratedFor(applierName ?? "default");
     };
 
     if (!applierName) {
@@ -378,7 +412,9 @@ export function useGeneratorPage() {
       .then((raw) => {
         const dbConfig = (raw as { success?: boolean; config?: Partial<GeneratorConfig> | null })?.config;
         if (cancelled || externalLoadRef.current || !dbConfig || typeof dbConfig !== "object") return;
-        setConfig(mergeStoredConfig(dbConfig));
+        const restored = mergeStoredConfig(dbConfig);
+        configSaveRef.current.lastSavedKey = `${applierName}\u0000${JSON.stringify(restored)}`;
+        setConfig(restored);
       })
       .catch(() => undefined)
       .finally(finishHydration);
@@ -392,9 +428,11 @@ export function useGeneratorPage() {
     void refreshUploadedTemplates();
   }, [refreshUploadedTemplates]);
 
-  // Persist config: localStorage immediately + MongoDB (debounced) after hydration.
+  // Persist locally immediately. Remote writes are debounced, serialized, and
+  // coalesced so rapid editor changes never create a queue of stale Firestore
+  // transactions that blocks jobs and status requests.
   useEffect(() => {
-    if (!configHydrated) return;
+    if (configHydratedFor !== configOwnerKey) return;
     try {
       localStorage.setItem(storageKey(applier?.name), JSON.stringify(config));
     } catch {
@@ -402,11 +440,15 @@ export function useGeneratorPage() {
     }
     const applierName = applier?.name;
     if (!applierName) return;
+    const serialized = JSON.stringify(config);
+    const key = `${applierName}\u0000${serialized}`;
+    if (key === configSaveRef.current.lastSavedKey) return;
     const t = setTimeout(() => {
-      void put("/personal/resume-generator/config", { applierName, config }).catch(() => undefined);
+      configSaveRef.current.queued = { applierName, config, key };
+      void flushConfigSave();
     }, 800);
     return () => clearTimeout(t);
-  }, [config, applier?.name, put, configHydrated]);
+  }, [config, applier?.name, configHydratedFor, configOwnerKey, flushConfigSave]);
 
   const loadIdentity = useCallback(async () => {
     const applierName = applier?.name;

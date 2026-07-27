@@ -7,12 +7,20 @@ import { JOB_STATUS_TO_API } from "../../../api/jobs";
 import { mapDocToJob } from "../../../lib/job-adapters";
 import type { Job } from "../../../types";
 import { isExternalJob } from "../../../types/job";
+import { runWithConcurrency } from "../lib/run-with-concurrency";
 
 type JobMutationResponse = {
   success?: boolean;
   data?: Record<string, unknown>;
   message?: string;
 };
+
+type RequestError = Error & { data?: { error?: string } };
+
+function requestErrorMessage(error: unknown, fallback: string): string {
+  const requestError = error as RequestError;
+  return requestError?.data?.error || requestError?.message || fallback;
+}
 
 type PipelineStatus = "applied" | "scheduled" | "declined";
 
@@ -44,6 +52,7 @@ export function useJobApplicationActions(
       }
 
       setPending(jobId, true);
+      const optimistic = { ...job, status: "applied" as const };
       try {
         if (openUrl && job.applyUrl && job.applyUrl !== "#") {
           window.open(job.applyUrl, "_blank", "noopener,noreferrer");
@@ -52,6 +61,8 @@ export function useJobApplicationActions(
         if (isExternalJob(job)) {
           return;
         }
+
+        onJobUpdated(optimistic);
 
         const res = (await post(`/jobs/${jobId}/apply`, {
           applierName: applier.name,
@@ -64,8 +75,11 @@ export function useJobApplicationActions(
             toast.success("Marked as applied");
           }
         }
-      } catch {
-        toast.error("Failed to mark job as applied");
+      } catch (error) {
+        onJobUpdated(job);
+        toast.error("Failed to mark job as applied", {
+          description: requestErrorMessage(error, "The server rejected the update."),
+        });
       } finally {
         setPending(jobId, false);
       }
@@ -83,6 +97,8 @@ export function useJobApplicationActions(
       }
 
       setPending(jobId, true);
+      const optimistic = { ...job, status };
+      onJobUpdated(optimistic);
       try {
         const res = (await post(`/jobs/${jobId}/status`, {
           applierName: applier.name,
@@ -94,8 +110,11 @@ export function useJobApplicationActions(
           await refreshStatusCounts();
           toast.success(`Marked as ${status}`);
         }
-      } catch {
-        toast.error("Failed to update job status");
+      } catch (error) {
+        onJobUpdated(job);
+        toast.error("Failed to update job status", {
+          description: requestErrorMessage(error, "The server rejected the update."),
+        });
       } finally {
         setPending(jobId, false);
       }
@@ -113,6 +132,9 @@ export function useJobApplicationActions(
       }
 
       setPending(jobId, true);
+      const optimisticStatus =
+        job.status === "scheduled" || job.status === "declined" ? "applied" : "posted";
+      onJobUpdated({ ...job, status: optimisticStatus });
       try {
         let res: JobMutationResponse;
 
@@ -151,8 +173,11 @@ export function useJobApplicationActions(
                 : "Moved back to Applied";
           toast.success(message);
         }
-      } catch {
-        toast.error("Failed to cancel status");
+      } catch (error) {
+        onJobUpdated(job);
+        toast.error("Failed to cancel status", {
+          description: requestErrorMessage(error, "The server rejected the update."),
+        });
       } finally {
         setPending(jobId, false);
       }
@@ -170,6 +195,7 @@ export function useJobApplicationActions(
       }
 
       setPending(jobId, true);
+      onJobUpdated({ ...job, status: "bid-ready" });
       try {
         const res = (await post(`/jobs/${jobId}/bid-status`, {
           applierName: applier.name,
@@ -182,8 +208,11 @@ export function useJobApplicationActions(
           // Counts hit a heavy $facet aggregation — don't block the button on it.
           void refreshStatusCounts();
         }
-      } catch {
-        toast.error("Failed to mark job as Bid ready");
+      } catch (error) {
+        onJobUpdated(job);
+        toast.error("Failed to mark job as Bid ready", {
+          description: requestErrorMessage(error, "The server rejected the update."),
+        });
       } finally {
         setPending(jobId, false);
       }
@@ -205,9 +234,10 @@ export function useJobApplicationActions(
         return;
       }
 
-      // Parallelize — sequential POSTs made bulk Bid ready feel multi-second.
-      const outcomes = await Promise.all(
-        eligible.map(async (job) => {
+      eligible.forEach((job) => onJobUpdated({ ...job, status: "bid-ready" }));
+      const outcomes = await runWithConcurrency(
+        eligible,
+        async (job) => {
           const jobId = job.backendId || job.id;
           setPending(jobId, true);
           try {
@@ -221,11 +251,12 @@ export function useJobApplicationActions(
             }
             return false;
           } catch {
+            onJobUpdated(job);
             return false;
           } finally {
             setPending(jobId, false);
           }
-        }),
+        },
       );
       const ok = outcomes.filter(Boolean).length;
       const failed = outcomes.length - ok;
@@ -254,8 +285,10 @@ export function useJobApplicationActions(
         return;
       }
 
-      const outcomes = await Promise.all(
-        eligible.map(async (job) => {
+      eligible.forEach((job) => onJobUpdated({ ...job, status: "posted" }));
+      const outcomes = await runWithConcurrency(
+        eligible,
+        async (job) => {
           const jobId = job.backendId || job.id;
           setPending(jobId, true);
           try {
@@ -269,11 +302,12 @@ export function useJobApplicationActions(
             }
             return false;
           } catch {
+            onJobUpdated(job);
             return false;
           } finally {
             setPending(jobId, false);
           }
-        }),
+        },
       );
       const ok = outcomes.filter(Boolean).length;
       const failed = outcomes.length - ok;

@@ -18,6 +18,7 @@ const CATEGORY_META: Record<UserSkillCategory, { label: string; chip: string }> 
 };
 const CATEGORY_ORDER: UserSkillCategory[] = ["hard", "devops", "tools", "domain", "soft"];
 const LEVELS = [1, 2, 3, 4, 5];
+const MAX_RENDERED_SKILLS = 250;
 
 /**
  * Full-page skill editor (Settings → Skills). These manual skills are the sole
@@ -32,6 +33,7 @@ export function SkillsTab() {
   const [draftLevel, setDraftLevel] = useState(3);
   const [suggestions, setSuggestions] = useState<DictionarySkill[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [skillFilter, setSkillFilter] = useState("");
   const categoryTouched = useRef(false);
 
   useEffect(() => {
@@ -53,9 +55,21 @@ export function SkillsTab() {
     };
   }, [draft]);
 
+  const filteredSkills = useMemo(() => {
+    const query = skillFilter.trim().toLocaleLowerCase();
+    return query
+      ? skills.filter((skill) => skill.name.toLocaleLowerCase().includes(query))
+      : skills;
+  }, [skillFilter, skills]);
+
+  const visibleSkills = useMemo(
+    () => filteredSkills.slice(0, MAX_RENDERED_SKILLS),
+    [filteredSkills],
+  );
+
   const grouped = useMemo(() => {
     const byCategory = new Map<UserSkillCategory, UserSkill[]>();
-    for (const skill of skills) {
+    for (const skill of visibleSkills) {
       const list = byCategory.get(skill.category) ?? [];
       list.push(skill);
       byCategory.set(skill.category, list);
@@ -64,7 +78,7 @@ export function SkillsTab() {
       category: c,
       items: byCategory.get(c)!,
     }));
-  }, [skills]);
+  }, [visibleSkills]);
 
   const submitDraft = async () => {
     const label = draft.trim();
@@ -184,6 +198,23 @@ export function SkillsTab() {
         </p>
       ) : (
         <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <input
+              value={skillFilter}
+              onChange={(event) => setSkillFilter(event.target.value)}
+              placeholder={`Search ${skills.length.toLocaleString()} skills…`}
+              className="h-9 min-w-0 flex-1 rounded-md border border-border bg-secondary/60 px-3 text-sm text-foreground placeholder:text-muted-foreground/70 outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/10"
+            />
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {filteredSkills.length.toLocaleString()} matched
+            </span>
+          </div>
+          {filteredSkills.length > visibleSkills.length && (
+            <p className="text-xs text-muted-foreground">
+              Showing the first {visibleSkills.length.toLocaleString()} skills. Search to narrow the list;
+              all {skills.length.toLocaleString()} skills are still used for Best Match.
+            </p>
+          )}
           {grouped.map(({ category, items }) => (
             <div key={category}>
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">

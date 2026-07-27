@@ -13,7 +13,7 @@ const POLL_MS = 1200;
 export function useJobTitleScan({ enabled = true }: { enabled?: boolean } = {}) {
   const { applier } = useApplier();
   const [session, setSession] = useState<TitleScanSession>({ running: false, status: "idle" });
-  const [pending, setPending] = useState(0);
+  const [pending, setPending] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wasRunning = useRef(false);
@@ -23,7 +23,7 @@ export function useJobTitleScan({ enabled = true }: { enabled?: boolean } = {}) 
     try {
       const status = await fetchTitleScanStatus(applier.name);
       setSession(status);
-      setPending(status.pending ?? 0);
+      setPending(status.pending ?? null);
       return status;
     } catch {
       return null;
@@ -78,7 +78,9 @@ export function useJobTitleScan({ enabled = true }: { enabled?: boolean } = {}) 
       const result = await startTitleScan(applier?.name);
       if (result.started) {
         toast.success("Title analysis started", {
-          description: `${result.pending ?? pending} New job(s) queued.`,
+          description: result.pending != null || pending != null
+            ? `${result.pending ?? pending} New job(s) queued.`
+            : "Processing unclassified New jobs.",
         });
       } else {
         toast.info(result.message || "No New jobs pending title analysis.");

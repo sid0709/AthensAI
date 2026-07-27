@@ -6,8 +6,20 @@ import {
 import { createHash } from 'node:crypto';
 import { ALL_MAIL_PATH, extractCustomLabels } from './folderMapper.js';
 import { deleteStoredObject, putBinaryObject, readStoredObject, storageSlug } from '../firebase/objectStore.js';
+import { getRedis, isRedisReady } from '../../db/redis.js';
 
 const MAIL_INLINE_BODY_BYTES = 350 * 1024;
+const MAIL_LABEL_MARKER_VERSION = 1;
+const labelMarkerBackfills = new Map();
+
+function labelDefinitionsCacheKey(applierName) {
+	return `mail:v2:label-definitions:${String(applierName).trim().toLowerCase()}`;
+}
+
+function withCustomLabelMarker(patch) {
+	if (!Array.isArray(patch?.labels)) return patch;
+	return { ...patch, hasCustomLabels: patch.labels.length > 0 };
+}
 
 function mailBodyPath(applierName, uid, mailbox) {
 	const key = createHash('sha256').update(`${mailbox}\0${Number(uid)}`).digest('hex').slice(0, 32);
@@ -139,7 +151,7 @@ export async function upsertMessages(messages) {
 	}));
 	const ops = prepared.map((msg) => {
 		const mailbox = msg.mailbox || ALL_MAIL_PATH;
-		const setFields = { ...msg, mailbox, syncedAt: new Date() };
+		const setFields = withCustomLabelMarker({ ...msg, mailbox, syncedAt: new Date() });
 		// Preserve cached bodies when refreshing envelopes/flags only
 		if (!msg.hasBody) {
 			delete setFields.hasBody;
@@ -171,10 +183,46 @@ export async function updateMessageFlags(applierName, uid, patch, mailbox = ALL_
 	if (!mailMessagesCollection) return null;
 	const result = await mailMessagesCollection.findOneAndUpdate(
 		messageFilter(applierName, uid, mailbox),
-		{ $set: { ...patch, syncedAt: new Date() } },
+		{ $set: { ...withCustomLabelMarker(patch), syncedAt: new Date() } },
 		{ returnDocument: 'after' },
 	);
 	return result;
+}
+
+/** Persist a Gmail flag/label refresh with one unordered database write. */
+export async function bulkUpdateMessageFlags(applierName, updates) {
+	if (!mailMessagesCollection || !Array.isArray(updates) || updates.length === 0) return { updated: 0 };
+	const syncedAt = new Date();
+	const ops = updates
+		.filter((item) => Number.isFinite(Number(item?.uid)))
+		.map((item) => {
+			const { _id, uid, mailbox = ALL_MAIL_PATH, ...patch } = item;
+			return {
+				updateOne: {
+					filter: _id ? { _id } : messageFilter(applierName, uid, mailbox),
+					update: { $set: { ...withCustomLabelMarker(patch), syncedAt } },
+				},
+			};
+		});
+	if (!ops.length) return { updated: 0 };
+
+	// Firestore can patch known document IDs in one commit. Falling back to the
+	// Mongo-shaped bulk writer here would run a read transaction for every
+	// message and can keep the interactive AI-label request open for minutes.
+	const exactIdOps = ops.filter((operation) => operation.updateOne.filter._id);
+	const lookupOps = ops.filter((operation) => !operation.updateOne.filter._id);
+	let updated = 0;
+	if (exactIdOps.length && typeof mailMessagesCollection.atomicBulkPatch === 'function') {
+		const result = await mailMessagesCollection.atomicBulkPatch(exactIdOps);
+		updated += result.modifiedCount || 0;
+	} else {
+		lookupOps.push(...exactIdOps);
+	}
+	if (lookupOps.length) {
+		const result = await mailMessagesCollection.bulkWrite(lookupOps, { ordered: false });
+		updated += result.modifiedCount || 0;
+	}
+	return { updated };
 }
 
 export async function updateMessageBody(applierName, uid, bodyPatch, mailbox = ALL_MAIL_PATH) {
@@ -238,7 +286,7 @@ export async function getMessage(applierName, uid, mailbox) {
 	if (!mailMessagesCollection) return null;
 	if (mailbox) {
 		let doc = await mailMessagesCollection.findOne(messageFilter(applierName, uid, mailbox));
-		if (!doc) {
+		if (!doc && String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() !== 'firestore') {
 			// Legacy rows keyed only by uid (pre-mailbox migration)
 			doc = await mailMessagesCollection.findOne({
 				applierName,
@@ -269,12 +317,37 @@ export async function listMessages(
 	const size = Math.min(Math.max(limit ?? pageSize, 1), 100);
 	const skip = limit ? 0 : (Math.max(page, 1) - 1) * size;
 
-	return mailMessagesCollection.find(filter).sort({ date: -1 }).skip(skip).limit(size).toArray();
+	return mailMessagesCollection
+		.find(filter)
+		.project({
+			uid: 1,
+			mailbox: 1,
+			from: 1,
+			subject: 1,
+			preview: 1,
+			date: 1,
+			flags: 1,
+			gmailLabels: 1,
+			labels: 1,
+			hasCustomLabels: 1,
+			folder: 1,
+			hasBody: 1,
+		})
+		.sort({ date: -1 })
+		.skip(skip)
+		.limit(size)
+		.toArray();
 }
 
 export async function countMessages(applierName, { folder, label, search, unlabeled, beforeDate, mailbox } = {}) {
 	if (!mailMessagesCollection) return 0;
 	const filter = buildMessageFilter(applierName, { folder, label, search, unlabeled, beforeDate, mailbox });
+	if (unlabeled) {
+		// The Firestore compatibility adapter cannot aggregate Mongo's `$size`.
+		// A projected native query avoids downloading email bodies while an index
+		// is being created and remains fast after the marker index is available.
+		return (await mailMessagesCollection.find(filter).project({ _id: 1 }).toArray()).length;
+	}
 	return mailMessagesCollection.countDocuments(filter);
 }
 
@@ -283,7 +356,7 @@ function buildMessageFilter(applierName, { folder, label, search, unlabeled, bef
 	if (mailbox) filter.mailbox = mailbox;
 	if (folder) filter.folder = folder;
 	if (unlabeled) {
-		filter.labels = { $size: 0 };
+		filter.hasCustomLabels = false;
 	}
 	if (label) {
 		const escaped = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -319,15 +392,75 @@ export async function getMessagesByUids(applierName, uids, mailbox = ALL_MAIL_PA
 		.find({ applierName, mailbox, uid: { $in: uids } })
 		.project({
 			uid: 1,
+			mailbox: 1,
+			from: 1,
+			subject: 1,
+			date: 1,
+			folder: 1,
+			flags: 1,
+			labels: 1,
+			gmailLabels: 1,
+			hasCustomLabels: 1,
 			hasBody: 1,
 			bodyHtml: 1,
 			bodyText: 1,
 			bodyObject: 1,
 			preview: 1,
+			aiSnippet: 1,
+			aiSnippetCachedAt: 1,
+			aiBodyText: 1,
+			aiBodyCachedAt: 1,
 			messageId: 1,
 		})
 		.toArray();
 	return Promise.all(docs.map(hydrateMailBody));
+}
+
+/**
+ * One-time, per-account migration for the indexed unlabeled-mail marker.
+ * Existing cached messages predate `hasCustomLabels`; new syncs write it
+ * automatically. A shared promise prevents duplicate scans on concurrent UI loads.
+ */
+export async function ensureCustomLabelMarkers(applierName) {
+	if (!mailMessagesCollection || !mailSyncStateCollection) return { updated: 0 };
+	const key = String(applierName || '').trim().toLowerCase();
+	if (!key) return { updated: 0 };
+	if (labelMarkerBackfills.has(key)) return labelMarkerBackfills.get(key);
+
+	const promise = (async () => {
+		const state = await getSyncState(applierName);
+		if (Number(state?.customLabelMarkerVersion || 0) >= MAIL_LABEL_MARKER_VERSION) return { updated: 0 };
+
+		const docs = await mailMessagesCollection
+			.find({ applierName, hasCustomLabels: { $exists: false } })
+			.project({ _id: 1, labels: 1, gmailLabels: 1 })
+			.toArray();
+		const operations = docs.map((doc) => ({
+			updateOne: {
+				filter: { _id: doc._id },
+				update: {
+					$set: {
+						hasCustomLabels: Array.isArray(doc.labels)
+							? doc.labels.length > 0
+							: extractCustomLabels(doc.gmailLabels || []).length > 0,
+						},
+					},
+				},
+		}));
+
+		if (operations.length) {
+			if (typeof mailMessagesCollection.atomicBulkPatch === 'function') {
+				await mailMessagesCollection.atomicBulkPatch(operations);
+			} else {
+				await mailMessagesCollection.bulkWrite(operations, { ordered: false });
+			}
+		}
+		await upsertSyncState(applierName, { customLabelMarkerVersion: MAIL_LABEL_MARKER_VERSION });
+		return { updated: operations.length };
+	})().finally(() => labelMarkerBackfills.delete(key));
+
+	labelMarkerBackfills.set(key, promise);
+	return promise;
 }
 
 export function enrichMessagesFromCache(messages, cachedDocs) {
@@ -386,10 +519,24 @@ export function normalizeLabelDefinitions(raw) {
  */
 export async function getUserLabelDefinitions(applierName, legacyDefinitions = null) {
 	if (!mailUserLabelsCollection) return normalizeLabelDefinitions(legacyDefinitions);
+	if (isRedisReady()) {
+		const cached = await getRedis().get(labelDefinitionsCacheKey(applierName)).catch(() => null);
+		if (cached) {
+			try {
+				return normalizeLabelDefinitions(JSON.parse(cached));
+			} catch {
+				await getRedis().del(labelDefinitionsCacheKey(applierName)).catch(() => undefined);
+			}
+		}
+	}
 
 	const doc = await mailUserLabelsCollection.findOne({ applierName });
 	if (doc?.definitions && typeof doc.definitions === 'object') {
-		return normalizeLabelDefinitions(doc.definitions);
+		const definitions = normalizeLabelDefinitions(doc.definitions);
+		if (isRedisReady()) {
+			await getRedis().setEx(labelDefinitionsCacheKey(applierName), 600, JSON.stringify(definitions)).catch(() => undefined);
+		}
+		return definitions;
 	}
 
 	const fromLegacy = normalizeLabelDefinitions(legacyDefinitions);
@@ -416,6 +563,9 @@ export async function saveUserLabelDefinitions(applierName, definitions) {
 		{ $set: { applierName, definitions: normalized, updatedAt } },
 		{ upsert: true },
 	);
+	if (isRedisReady()) {
+		await getRedis().setEx(labelDefinitionsCacheKey(applierName), 600, JSON.stringify(normalized)).catch(() => undefined);
+	}
 	return normalized;
 }
 

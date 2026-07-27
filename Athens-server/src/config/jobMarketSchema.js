@@ -16,7 +16,17 @@ export function excludeExtensionV2JobsFilter() {
 	if (String(process.env.DATABASE_BACKEND || "").trim().toLowerCase() === "firestore") {
 		return { extensionV2: false };
 	}
-	return { version: { $ne: JOB_MARKET_EXTENSION_VERSION_V2 } };
+	return {
+		$and: [
+			{ version: { $ne: JOB_MARKET_EXTENSION_VERSION_V2 } },
+			{ extensionV2: { $ne: true } },
+		],
+	};
+}
+
+/** Accept both persisted provenance shapes during database migrations. */
+export function isExtensionV2Job(job) {
+	return String(job?.version || '') === JOB_MARKET_EXTENSION_VERSION_V2 || job?.extensionV2 === true;
 }
 
 /** Fields scraped by the Extension that are not stored on job_market. */

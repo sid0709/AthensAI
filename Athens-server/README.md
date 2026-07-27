@@ -24,6 +24,43 @@ Backend for **Athens** (NextOffer job search, resume analysis, skill graph, and 
 
 ## Job recommendation (overview)
 
+### Query-time sparse ranking (v2)
+
+The scalable path is opt-in with `RECOMMENDATION_QUERY_TIME_MODE=on`. It stores one
+canonical weighted sparse vector per job in the `jobs_active` Qdrant alias,
+retrieves a bounded candidate set for the current user's manual skills, and
+exact-reranks those candidates with the existing coverage scorer. Redis caches
+only active query results using profile, dictionary, and catalog revisions; it
+does not materialize user-job score rows.
+
+Initial migration:
+
+```bash
+npm run infra:up --prefix ..
+npm run backfill-query-ranking
+# Rebuild only job payloads/vectors after a card schema change:
+npm run backfill-query-ranking -- --skip-dictionary
+npm run test:query-ranking
+# Sample the new path while users still receive legacy results.
+RECOMMENDATION_QUERY_TIME_MODE=shadow
+# Run an exhaustive accuracy check for representative 100/250/500-skill profiles.
+npm run validate-query-ranking -- --applier="Profile name"
+# Against the 1M-job performance dataset, repeat for 100, 250, and 500 skills.
+npm run benchmark-query-ranking -- --applier="Profile name" --expected-skills=100
+# Enable only after recall@100 and NDCG@100 pass the rollout thresholds.
+RECOMMENDATION_QUERY_TIME_MODE=on
+```
+
+New and re-extracted jobs are dual-written to the v2 index. When the flag is
+enabled, the legacy full-catalog score worker is disabled; Qdrant/Redis failures
+return a newest-first result marked with `rankingStatus: fallback` and are never
+reported as fresh v2 rankings.
+
+Keep the legacy score rows and the ability to switch the mode back to `off` for
+seven days after cutover; remove them only after the shadow and live metrics stay healthy.
+
+### Legacy recommendation path
+
 Each applier can have **multiple analyzed resumes** (e.g. Frontend vs Backend). Each resume gets its own embedding in Qdrant.
 
 When Job Search uses **Best match** (`sort=recommended`):
@@ -175,8 +212,12 @@ Copy from [`.env.example`](.env.example). Key groups:
 | `PDF_RENDER_CONCURRENCY` | Max concurrent PDF renders (default **16**) |
 | `PUPPETEER_BROWSER_POOL` | Chromium processes for PDF (default **6**) |
 | `LLM_GLOBAL_CONCURRENCY` | Priority admission cap for all LLM calls (default **48**) |
-| `MAIL_AI_LABEL_CONCURRENCY` | Parallel AI label classify+apply (default **8**) |
+| `MAIL_AI_LABEL_CONCURRENCY` | Parallel AI-label metadata and rare body-fallback preparation (default **8**) |
+| `MAIL_AI_LABEL_AI_CONCURRENCY`, `MAIL_AI_LABEL_GMAIL_CONCURRENCY` | Parallel AI batches and grouped Gmail label writes (default **8** each) |
+| `MAIL_AI_LABEL_SNIPPET_MAX_CHARS`, `MAIL_AI_LABEL_SNIPPET_MAX_BYTES` | Hybrid first-pass text and IMAP download limits (defaults **1000 chars / 2048 bytes**) |
+| `MAIL_AI_LABEL_BODY_MAX_CHARS`, `MAIL_AI_LABEL_BODY_FETCH_MAX_BYTES` | Uncertain-message fallback prompt and IMAP download limits (defaults **4000 chars / 16384 bytes**) |
 | `IMAP_MAX_CONNS_PER_ACCOUNT` | IMAP pool size per Gmail account (default **8**) |
+| `MAIL_UNLABELED_SCAN_BATCH_SIZE`, `MAIL_UNLABELED_SCAN_CONCURRENCY` | Exact Gmail label metadata scan batch size (**2000**) and parallelism (**8**) |
 | `JOB_SKILL_EXTRACT_CONCURRENCY` | Skill-extract fan-out (default **16**) |
 
 All KG tunables are documented in [`.env.example`](.env.example) and loaded via `src/config/graphAndVectorConfig.js`.

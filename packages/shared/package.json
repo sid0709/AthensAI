@@ -14,6 +14,10 @@
     "./skill-compact": "./src/skill-compact.js",
     "./skill-tokens": "./src/skill-tokens.js",
     "./skill-match": "./src/skill-match.js",
+    "./job-status": {
+      "types": "./src/job-status.d.ts",
+      "import": "./src/job-status.js"
+    },
     "./score": "./src/score.js",
     "./secretCrypto": "./src/secretCrypto.js",
     "./profileApiKeys": "./src/profileApiKeys.js",

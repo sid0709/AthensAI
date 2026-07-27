@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * Wait until MongoDB accepts TCP connections. (Redis/Qdrant/Docker are no
- * longer used — the app is Mongo-only.)
- * Also exports probe() for prestart infra checks.
+ * Wait until configured local infrastructure accepts TCP connections.
+ * Also exports probe() for prestart checks.
  */
 import net from 'node:net';
 import { execFile } from 'node:child_process';

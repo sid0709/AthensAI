@@ -172,6 +172,36 @@ export function isMaterializedRecommendationEnabled() {
 	return envString('RECOMMENDATION_MATERIALIZED', 'true') === 'true';
 }
 
+export function getQueryTimeRankingMode() {
+	const explicit = envString('RECOMMENDATION_QUERY_TIME_MODE', '').trim().toLowerCase();
+	if (['on', 'shadow', 'off'].includes(explicit)) return explicit;
+	return envString('RECOMMENDATION_QUERY_TIME', 'false') === 'true' ? 'on' : 'off';
+}
+
+/** Query-time sparse/dense retrieval. Opt-in until the v2 Qdrant index is backfilled. */
+export function isQueryTimeRankingEnabled() {
+	return getQueryTimeRankingMode() === 'on';
+}
+
+/** Initialize and dual-write the v2 index in both shadow and serving modes. */
+export function isQueryTimeRankingIndexEnabled() {
+	return getQueryTimeRankingMode() !== 'off';
+}
+
+export function getQueryTimeShadowSampleRate() {
+	return Math.max(0, Math.min(1, envFloat('RANKING_SHADOW_SAMPLE_RATE', 0.01)));
+}
+
+export function getQueryTimeRankingLimits() {
+	return {
+		sparse: Math.max(100, envInt('RANKING_SPARSE_LIMIT', 2000)),
+		dense: Math.max(0, envInt('RANKING_DENSE_LIMIT', 500)),
+		personalized: Math.max(100, envInt('RANKING_PERSONALIZED_LIMIT', 2000)),
+		maxRetrievalBatches: Math.max(1, envInt('RANKING_MAX_RETRIEVAL_BATCHES', 5)),
+		cacheTtlSec: Math.max(10, envInt('RANKING_CACHE_TTL_SEC', 60)),
+	};
+}
+
 // ── User skill categories & weighted match scoring ──────────────────────────
 
 export const USER_SKILL_CATEGORIES = ['hard', 'soft', 'devops', 'tools', 'domain'];

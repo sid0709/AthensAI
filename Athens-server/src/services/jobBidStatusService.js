@@ -1,5 +1,7 @@
 import { ObjectId } from 'mongodb';
 import { accountInfoCollection, jobsCollection } from '../db/mongo.js';
+import { mutateJobStatus } from './jobStatusProjectionService.js';
+import { mergeJobStatusRows } from '@nextoffer/shared/job-status';
 
 function toObjectId(value) {
 	if (!value) return null;
@@ -33,9 +35,7 @@ export async function resolveApplierId(applierName) {
 
 function findStatusEntry(job, applierId) {
 	if (!job || !Array.isArray(job.status)) return null;
-	return (
-		job.status.find((s) => s && String(s.applier) === String(applierId)) ?? null
-	);
+	return mergeJobStatusRows(job.status, String(applierId));
 }
 
 /**
@@ -47,43 +47,12 @@ export async function upsertJobBidStatus(
 	jobId,
 	{ bidReady = false, bidCompleted = false } = {},
 ) {
-	if (!jobsCollection || !applierName || !jobId) return false;
-	const objectId = toObjectId(jobId);
-	const applierId = await resolveApplierId(applierName);
-	if (!objectId || !applierId) return false;
-
-	const now = new Date().toISOString();
-	const existing = await jobsCollection.findOne(
-		{ _id: objectId, 'status.applier': applierId },
-		{ projection: { status: 1 } },
-	);
-
-	if (!existing) {
-		const entry = { applier: applierId };
-		if (bidReady) entry.bidReadyDate = now;
-		if (bidCompleted) entry.bidCompletedDate = now;
-		await jobsCollection.updateOne({ _id: objectId }, { $push: { status: entry } });
-		return true;
-	}
-
-	const entry = findStatusEntry(existing, applierId);
-	const $set = {};
-	// Preserve the original bid-ready day so Bid Management folders stay stable
-	// across Apply / submit / reject. Only stamp when missing.
-	if (bidReady && !entry?.bidReadyDate) {
-		$set['status.$[elem].bidReadyDate'] = now;
-	}
-	if (bidCompleted && !entry?.bidCompletedDate) {
-		$set['status.$[elem].bidCompletedDate'] = now;
-	}
-	if (!Object.keys($set).length) return true;
-
-	await jobsCollection.updateOne(
-		{ _id: objectId },
-		{ $set },
-		{ arrayFilters: [{ 'elem.applier': applierId }] },
-	);
-	return true;
+	if (!jobsCollection || !applierName || !jobId || (!bidReady && !bidCompleted)) return false;
+	return mutateJobStatus({
+		jobId,
+		applierName,
+		transition: bidCompleted ? 'bid-completed' : 'bid-ready',
+	});
 }
 
 /** Original bid-ready timestamp for stable Bid Management dayKey folders. */
@@ -109,41 +78,7 @@ export async function getJobBidReadyDate(applierName, jobId) {
  */
 export async function clearJobBidStatus(applierName, jobId) {
 	if (!jobsCollection || !applierName || !jobId) return false;
-	const objectId = toObjectId(jobId);
-	const applierId = await resolveApplierId(applierName);
-	if (!objectId || !applierId) return false;
-
-	const job = await jobsCollection.findOne(
-		{ _id: objectId, 'status.applier': applierId },
-		{ projection: { status: 1 } },
-	);
-	if (!job) return false;
-
-	const entry = findStatusEntry(job, applierId);
-	if (!entry) return false;
-
-	const hasPipeline =
-		Boolean(entry.appliedDate) || Boolean(entry.scheduledDate) || Boolean(entry.declinedDate);
-
-	if (!hasPipeline) {
-		await jobsCollection.updateOne(
-			{ _id: objectId },
-			{ $pull: { status: { applier: applierId } } },
-		);
-		return true;
-	}
-
-	await jobsCollection.updateOne(
-		{ _id: objectId },
-		{
-			$unset: {
-				'status.$[elem].bidReadyDate': '',
-				'status.$[elem].bidCompletedDate': '',
-			},
-		},
-		{ arrayFilters: [{ 'elem.applier': applierId }] },
-	);
-	return true;
+	return mutateJobStatus({ jobId, applierName, transition: 'clear-bid' });
 }
 
 /** Find a job_market doc by apply URL (exact, then soft hostname+path match). */

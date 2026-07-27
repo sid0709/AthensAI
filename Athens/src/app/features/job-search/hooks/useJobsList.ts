@@ -6,6 +6,7 @@ import { API_BASE } from "@/lib/api-base";
 import { JobSourceTitles } from '@/app/data/jobs/pub';
 import { JOB_TITLE_SCAN_ROLES } from "@/app/data/jobTitleRoles";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
+import { rescoreJobWithContext, type ProfileMatchContext } from "../../../lib/skill-match";
 import type {
   JobSearchFilterState,
   JobScoreFilters,
@@ -21,11 +22,17 @@ type ListResponse = {
   recommendationWarming?: boolean;
   catalogTotal?: number | null;
   pagination?: { total: number; page: number; limit: number; totalPages: number };
+  rankingVersion?: string | null;
+  rankingStatus?: "fresh" | "warming" | "fallback" | "legacy" | null;
+  catalogRevision?: string | null;
+  personalizedThroughRank?: number | null;
+  statusCounts?: Partial<Record<JobStatusTab, number>> | null;
 };
 
 type CountsResponse = {
   success?: boolean;
   counts?: Partial<Record<JobStatusTab, number>>;
+  warming?: boolean;
 };
 
 const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
@@ -37,6 +44,47 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   scheduled: 0,
   declined: 0,
 };
+
+const JOB_LIST_REQUEST_TIMEOUT_MS = 15_000;
+
+const LIST_CACHE_TTL_MS = 60_000;
+const LIST_CACHE_MAX_ENTRIES = 200;
+const listCache = new Map<string, { response: ListResponse; expiresAt: number }>();
+
+function cacheListResponse(key: string, response: ListResponse) {
+  const now = Date.now();
+  for (const [existingKey, entry] of listCache) {
+    if (entry.expiresAt <= now) listCache.delete(existingKey);
+  }
+  listCache.delete(key);
+  listCache.set(key, { response, expiresAt: now + LIST_CACHE_TTL_MS });
+  while (listCache.size > LIST_CACHE_MAX_ENTRIES) {
+    const oldest = listCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    listCache.delete(oldest);
+  }
+}
+
+function listCacheKey(body: Record<string, unknown>) {
+  return JSON.stringify(body);
+}
+
+async function prefetchJobsPage(body: Record<string, unknown>, rankingRevision: number) {
+  const key = `${rankingRevision}:${listCacheKey(body)}`;
+  const cached = listCache.get(key);
+  if (cached?.expiresAt && cached.expiresAt > Date.now()) return;
+  const url = `${API_BASE.replace(/\/$/, "")}/jobs/list`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) return;
+  const data = (await response.json()) as ListResponse;
+  if (data?.success && Array.isArray(data.data)) {
+    cacheListResponse(key, data);
+  }
+}
 
 function statusTabToApi(statusTab: JobStatusTab): { applied?: boolean; status?: string } {
   if (statusTab === "posted") return { applied: false };
@@ -82,7 +130,7 @@ function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
     return () => clearTimeout(t);
   }, [filters.companyQuery, delayMs]);
 
-  return useMemo(
+  const effectiveFilters = useMemo(
     () => ({
       ...filters,
       jobQuery: debouncedJobQuery,
@@ -90,6 +138,14 @@ function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
     }),
     [filters, debouncedJobQuery, debouncedCompanyQuery],
   );
+
+  return {
+    filters: effectiveFilters,
+    filtersKey: JSON.stringify(effectiveFilters),
+    isDebouncing:
+      filters.jobQuery !== debouncedJobQuery ||
+      filters.companyQuery !== debouncedCompanyQuery,
+  };
 }
 
 export function buildJobsListBody(
@@ -151,25 +207,40 @@ export function buildJobsCountsBody(
   return body;
 }
 
-export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<string> = new Set()) {
-  const { post } = useApi(API_BASE);
+export function useJobsList(
+  filters: JobSearchFilterState,
+  excludeIds: Set<string> = new Set(),
+  rankingRevision = 0,
+) {
+  const { post, request } = useApi(API_BASE);
   const { applier, applierReady } = useApplier();
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [rawJobs, setRawJobs] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [requestInFlight, setRequestInFlight] = useState(false);
+  const [settledKey, setSettledKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [staleResults, setStaleResults] = useState(false);
+  const [retryRevision, setRetryRevision] = useState(0);
+  const [countsLoading, setCountsLoading] = useState(false);
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const [recommendationFallback, setRecommendationFallback] = useState(false);
   const [recommendationReason, setRecommendationReason] = useState<string | null>(null);
   const [recommendationWarming, setRecommendationWarming] = useState(false);
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
+  const [rankingStatus, setRankingStatus] = useState<ListResponse["rankingStatus"]>(null);
+  const rankingWarmRetryCount = useRef(0);
 
-  const hasLoadedOnce = useRef(false);
-
-  const debouncedFilters = useDebouncedTextFilters(filters);
+  const {
+    filters: debouncedFilters,
+    filtersKey: debouncedFiltersKey,
+    isDebouncing,
+  } = useDebouncedTextFilters(filters);
+  const pageFilterKeyRef = useRef(debouncedFiltersKey);
+  const filterChanged = pageFilterKeyRef.current !== debouncedFiltersKey;
+  const requestPage = filterChanged ? 1 : page;
 
   const jobs = useMemo(
     () => rawJobs.filter((job) => !excludeIds.has(job.id)),
@@ -177,17 +248,18 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   );
 
   useEffect(() => {
+    pageFilterKeyRef.current = debouncedFiltersKey;
     setPage(1);
-  }, [debouncedFilters, pageSize]);
+  }, [debouncedFiltersKey, pageSize]);
 
   const listBody = useMemo(
     () =>
       buildJobsListBody(debouncedFilters, {
-        page,
+        page: requestPage,
         limit: pageSize,
         applierName: applier?.name,
       }),
-    [debouncedFilters, page, pageSize, applier?.name],
+    [debouncedFilters, requestPage, pageSize, applier?.name, rankingRevision],
   );
 
   const countsBody = useMemo(
@@ -195,77 +267,143 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     [debouncedFilters, applier?.name],
   );
 
+  const currentQueryKey = `${rankingRevision}:${listCacheKey(listBody)}`;
+  const countsKey = listCacheKey(countsBody);
+  const loading =
+    !applierReady ||
+    isDebouncing ||
+    requestInFlight ||
+    settledKey !== currentQueryKey;
+
   useEffect(() => {
-    if (!applierReady) return;
+    if (!applierReady || isDebouncing) return;
     let cancelled = false;
-    const isInitial = !hasLoadedOnce.current;
-    // Always surface a loading state — including page / page-size changes —
-    // so the UI can swap to skeletons instead of leaving stale cards up.
-    if (isInitial) setLoading(true);
-    else setRefreshing(true);
+    let timedOut = false;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, JOB_LIST_REQUEST_TIMEOUT_MS);
+    const cacheKey = currentQueryKey;
+    const cached = listCache.get(currentQueryKey);
+    const hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
+    const applyResponse = (res: ListResponse) => {
+      if (!res?.success || !Array.isArray(res.data)) return false;
+      setRawJobs(res.data.map((doc) => mapDocToJob(doc, applier)));
+      const responseTotal = res.pagination?.total ?? res.data.length;
+      setTotal(responseTotal);
+      setRecommendationFallback(Boolean(res.recommendationFallback));
+      setRecommendationReason(res.recommendationReason ?? null);
+      setRecommendationWarming(Boolean(res.recommendationWarming));
+      setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
+      setRankingStatus(res.rankingStatus ?? null);
+      if (res.statusCounts) {
+        setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
+      }
+      setSettledKey(currentQueryKey);
+      return true;
+    };
+    setRequestInFlight(true);
+    setError(null);
+    setStaleResults(false);
 
     (async () => {
       try {
-        const res = (await post("/jobs/list", listBody)) as ListResponse;
+        const res = (await request("/jobs/list", {
+          method: "POST",
+          body: listBody,
+          signal: controller.signal,
+        })) as ListResponse;
         if (cancelled) return;
-        if (res?.success && Array.isArray(res.data)) {
-          setRawJobs(res.data.map((doc) => mapDocToJob(doc, applier)));
-          const responseTotal = res.pagination?.total ?? res.data.length;
-          setTotal(responseTotal);
-          // The list response already has the authoritative catalog total.
-          // Surface it immediately instead of leaving the badge at zero while
-          // the optional per-status count request is still warming.
-          setStatusCounts((previous) => ({ ...previous, all: responseTotal }));
-          setRecommendationFallback(Boolean(res.recommendationFallback));
-          setRecommendationReason(res.recommendationReason ?? null);
-          setRecommendationWarming(Boolean(res.recommendationWarming));
-          setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
-          hasLoadedOnce.current = true;
-
-        } else if (isInitial) {
+        if (!applyResponse(res)) throw new Error("The jobs response was incomplete");
+        cacheListResponse(cacheKey, res);
+        const currentPage = Number(listBody.page) || 1;
+        const totalPages = res.pagination?.totalPages ?? 1;
+        for (const adjacent of [currentPage - 1, currentPage + 1]) {
+          if (adjacent >= 1 && adjacent <= totalPages) {
+            void prefetchJobsPage({ ...listBody, page: adjacent }, rankingRevision).catch(() => {});
+          }
+        }
+      } catch (e) {
+        if ((e as Error)?.name === "AbortError" && !timedOut) return;
+        console.error(e);
+        if (hasFreshCache && cached && applyResponse(cached.response)) {
+          setStaleResults(true);
+          setError(timedOut
+            ? "Job refresh took too long. Showing cached results."
+            : "Could not refresh jobs. Showing cached results.");
+        } else {
           setRawJobs([]);
           setTotal(0);
           setRecommendationFallback(false);
           setRecommendationReason(null);
           setCatalogTotal(null);
+          setSettledKey(currentQueryKey);
+          setError(timedOut
+            ? "Job Search took too long to respond. Please try again."
+            : "Could not load jobs. Check the server connection and try again.");
         }
-      } catch (e) {
-        console.error(e);
         toast.error("Failed to load jobs", {
-          description: "Check that Athens-server is running and VITE_API_URL is set.",
+          description: timedOut
+            ? "The request timed out. Please try again."
+            : "Check that Athens-server is running and VITE_API_URL is set.",
         });
-        if (isInitial) {
-          setRawJobs([]);
-          setTotal(0);
-        }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-          setRefreshing(false);
-        }
+        clearTimeout(timeout);
+        if (!cancelled) setRequestInFlight(false);
       }
     })();
     return () => {
       cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
     };
-  }, [listBody, post, applier, applierReady]);
+  }, [currentQueryKey, retryRevision, request, applier, applierReady, isDebouncing]);
 
   useEffect(() => {
-    if (!applierReady) return;
+    if (debouncedFilters.sort !== "matchScore" || !recommendationWarming) {
+      rankingWarmRetryCount.current = 0;
+      return;
+    }
+    if (requestInFlight || rankingWarmRetryCount.current >= 4) return;
+    const timer = setTimeout(() => {
+      rankingWarmRetryCount.current += 1;
+      setRetryRevision((revision) => revision + 1);
+    }, 1_500);
+    return () => clearTimeout(timer);
+  }, [debouncedFilters.sort, recommendationWarming, requestInFlight, retryRevision, currentQueryKey]);
+
+  useEffect(() => {
+    if (!applierReady || isDebouncing) return;
     let cancelled = false;
-    (async () => {
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+    const loadCounts = async (attempt = 0) => {
+      if (!cancelled) setCountsLoading(true);
       try {
-        const res = (await post("/jobs/list/counts", countsBody)) as CountsResponse;
+        const res = (await request("/jobs/list/counts", {
+          method: "POST",
+          body: countsBody,
+          signal: controller.signal,
+        })) as CountsResponse;
         if (cancelled || !res?.success || !res.counts) return;
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
+        if (res.warming && attempt < 4) {
+          retryTimer = setTimeout(() => void loadCounts(attempt + 1), 1_500);
+        }
       } catch {
         /* counts are optional */
+      } finally {
+        if (!cancelled) setCountsLoading(false);
       }
-    })();
+    };
+    void loadCounts();
     return () => {
       cancelled = true;
+      controller.abort();
+      if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [countsBody, applierReady, post]);
+  }, [countsKey, applierReady, request, isDebouncing]);
 
   const setPageSizeAndReset = useCallback((size: number) => {
     setPageSize(size);
@@ -274,6 +412,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
 
   const patchJob = useCallback(
     (updated: Job) => {
+      listCache.clear();
       const statusTab = debouncedFilters.statusTab;
       setRawJobs((prev) => {
         // Drop jobs that no longer match the active status tab (e.g. Apply on New).
@@ -287,7 +426,13 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
           setTotal((t) => Math.max(0, t - (prev.length - next.length)));
           return next;
         }
-        return prev.map((job) => (job.id === updated.id ? updated : job));
+        const exists = prev.some(
+          (job) => job.id === updated.id || job.backendId === updated.backendId,
+        );
+        if (!exists) return [updated, ...prev];
+        return prev.map((job) =>
+          job.id === updated.id || job.backendId === updated.backendId ? updated : job,
+        );
       });
     },
     [debouncedFilters.statusTab],
@@ -305,6 +450,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
 
   const refreshStatusCounts = useCallback(async () => {
     if (!applierReady) return;
+    setCountsLoading(true);
     try {
       const res = (await post("/jobs/list/counts", countsBody)) as CountsResponse;
       if (res?.success && res.counts) {
@@ -312,14 +458,39 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
       }
     } catch {
       /* counts are optional */
+    } finally {
+      setCountsLoading(false);
     }
   }, [applierReady, countsBody, post]);
+
+  const retry = useCallback(() => {
+    setError(null);
+    setStaleResults(false);
+    setRequestInFlight(true);
+    setRetryRevision((revision) => revision + 1);
+  }, []);
+
+  const rescoreVisibleJobs = useCallback((context: ProfileMatchContext) => {
+    setRawJobs((previous) => {
+      const rescored = previous.map((job) => rescoreJobWithContext(job, context));
+      if (debouncedFilters.sort !== "matchScore") return rescored;
+      return rescored.sort((left, right) =>
+        right.scores.overall - left.scores.overall ||
+        right.postedAt.localeCompare(left.postedAt) ||
+        left.id.localeCompare(right.id),
+      );
+    });
+  }, [debouncedFilters.sort]);
 
   return {
     jobs,
     total,
     loading,
-    refreshing,
+    error,
+    staleResults,
+    retry,
+    requestKey: currentQueryKey,
+    countsLoading: loading || countsLoading,
     page,
     pageSize,
     setPage,
@@ -330,9 +501,11 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     recommendationReason,
     recommendationWarming,
     catalogTotal,
+    rankingStatus,
     patchJob,
     removeJobsById,
     refreshStatusCounts,
+    rescoreVisibleJobs,
   };
 }
 
@@ -341,6 +514,13 @@ function recommendationFallbackMessage(reason: string | null): string {
     case "no_profile_skills":
     case "no_analyzed_resumes":
       return "Add your skills via the My skills button in the toolbar before using Best match — scoring is based on that list.";
+    case "ranking_backend_unavailable":
+      return "Best match is temporarily unavailable. Showing the newest jobs instead.";
+    case "ranking_warming":
+      return "Best match is preparing your skill ranking. Showing recent jobs briefly while it finishes.";
+    case "ranking_partial_retrieval":
+    case "ranking_tail_incomplete":
+      return "Personalized ranking is unavailable for this deep filtered page. Showing the newest jobs instead.";
     default:
       return "Personalized ranking is unavailable. Add your skills via the My skills button to enable Best match.";
   }

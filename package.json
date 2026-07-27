@@ -19,8 +19,12 @@
   "scripts": {
     "prestart": "node scripts/prestart.mjs",
     "start": "node scripts/dev-start.mjs",
+    "infra:up": "docker compose up -d --wait redis qdrant",
+    "infra:down": "docker compose down",
+    "infra:status": "docker compose ps",
     "install:all": "npm install && npm install --prefix Athens && npm run build -w ai-bff",
     "backfill-job-skills": "npm run backfill-job-skills -w Athens-server",
+    "normalize-job-statuses": "npm run firebase:normalize-job-statuses -w Athens-server",
     "build:ai": "npm run build -w ai-bff",
     "test:shared": "node --test packages/shared/src/pricing.test.mjs",
     "start:athens-server": "npm run start -w Athens-server",

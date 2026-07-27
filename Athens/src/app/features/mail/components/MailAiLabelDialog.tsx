@@ -3,9 +3,10 @@ import { Check, ChevronDown, ChevronRight, Loader2, Sparkles, X } from "lucide-r
 import {
   fetchMailLabelDefinitions,
   fetchUnlabeledThreads,
-  runMailAiLabel,
+  runMailAiLabelStream,
   saveMailLabelDefinitions,
   type MailAiLabelResult,
+  type MailAiLabelProgress,
   type MailLabelDefinitions,
 } from "@/api/mail";
 import { AthensTextarea } from "../../../components/forms";
@@ -107,9 +108,10 @@ export function MailAiLabelDialog({
   onComplete,
 }: MailAiLabelDialogProps) {
   const [threads, setThreads] = useState<MailThread[]>([]);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] = useState<number | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -126,6 +128,8 @@ export function MailAiLabelDialog({
   const [rowStatus, setRowStatus] = useState<Record<string, RowStatus>>({});
   const [rowResults, setRowResults] = useState<Record<string, MailAiLabelResult>>({});
   const [summary, setSummary] = useState<{ applied: number; skipped: number; failed: number } | null>(null);
+  const [runDetails, setRunDetails] = useState<{ durationMs: number; model?: string } | null>(null);
+  const [runProgress, setRunProgress] = useState<MailAiLabelProgress | null>(null);
 
   const labelTree = useMemo(() => buildLabelTree(labels), [labels]);
   const pageIds = useMemo(() => threads.map((t) => t.id), [threads]);
@@ -138,10 +142,14 @@ export function MailAiLabelDialog({
     if (!applierName) return;
     setLoading(true);
     setLoadError(null);
+    setThreads([]);
+    setTotal(null);
+    setHasMore(false);
     try {
       const threadResult = await fetchUnlabeledThreads(applierName, { page, pageSize });
       setThreads(threadResult.threads);
       setTotal(threadResult.total);
+      setHasMore(threadResult.hasMore);
       setMailboxById((prev) => {
         const next = { ...prev };
         for (const t of threadResult.threads) {
@@ -203,6 +211,8 @@ export function MailAiLabelDialog({
     setRowStatus({});
     setRowResults({});
     setSummary(null);
+    setRunDetails(null);
+    setRunProgress(null);
     setRunError(null);
     setLoadError(null);
     setPage(1);
@@ -222,7 +232,7 @@ export function MailAiLabelDialog({
   };
 
   const handleSaveDefinitions = async () => {
-    if (!applierName) return;
+    if (!applierName) return false;
     setSavingDefinitions(true);
     try {
       const payload = canonicalizeDefinitions(definitions, labels);
@@ -230,8 +240,10 @@ export function MailAiLabelDialog({
       setDefinitions(canonicalizeDefinitions(saved, labels));
       setDefinitionsDirty(false);
       setDefinitionsSaved(true);
+      return true;
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "Failed to save definitions");
+      return false;
     } finally {
       setSavingDefinitions(false);
     }
@@ -262,7 +274,8 @@ export function MailAiLabelDialog({
     if (!applierName || totalSelected === 0 || running) return;
 
     if (definitionsDirty) {
-      await handleSaveDefinitions();
+      const saved = await handleSaveDefinitions();
+      if (!saved) return;
     }
 
     const messages = [...selectedIds]
@@ -278,53 +291,75 @@ export function MailAiLabelDialog({
     setRunning(true);
     setRunError(null);
     setSummary(null);
+    setRunDetails(null);
+    setRunProgress({ phase: "loading_snippets", completed: 0, total: messages.length });
     setRowStatus(Object.fromEntries(messages.map((m) => [String(m.uid), "running"])));
 
     try {
-      const { results } = await runMailAiLabel(applierName, {
-        messages,
-        labelDefinitions: definitions,
-      });
+      const streamedIds = new Set<string>();
+      const recordResult = (result: MailAiLabelResult) => {
+        const id = String(result.uid);
+        if (streamedIds.has(id)) return;
+        streamedIds.add(id);
+        const status: RowStatus = result.applied
+          ? "done"
+          : result.error || (result.reason && result.reason !== "no_match")
+            ? "error"
+            : "skipped";
+        setRowResults((prev) => ({ ...prev, [id]: result }));
+        setRowStatus((prev) => ({ ...prev, [id]: status }));
+        setRunProgress((prev) => prev ? { ...prev, completed: streamedIds.size } : prev);
+        if (result.applied) {
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+          setThreads((prev) => prev.filter((thread) => thread.id !== id));
+          setTotal((prev) => (prev === null ? null : Math.max(0, prev - 1)));
+        }
+      };
 
-      const nextStatus: Record<string, RowStatus> = {};
-      const nextResults: Record<string, MailAiLabelResult> = {};
+      const { results, processing, model } = await runMailAiLabelStream(
+        applierName,
+        { messages, labelDefinitions: definitions },
+        (event, data) => {
+          if (event === "progress") {
+            setRunProgress(data as unknown as MailAiLabelProgress);
+          } else if (event === "result" && data.result) {
+            recordResult(data.result as MailAiLabelResult);
+          }
+        },
+      );
+
       let applied = 0;
       let skipped = 0;
       let failed = 0;
 
       for (const r of results) {
-        const id = String(r.uid);
-        nextResults[id] = r;
+        recordResult(r);
         if (r.applied) {
-          nextStatus[id] = "done";
           applied += 1;
-        } else if (r.label) {
-          nextStatus[id] = "error";
+        } else if (r.error || (r.reason && r.reason !== "no_match")) {
           failed += 1;
         } else {
-          nextStatus[id] = "skipped";
           skipped += 1;
         }
       }
 
-      setRowStatus(nextStatus);
-      setRowResults(nextResults);
       setSummary({ applied, skipped, failed });
-      onComplete?.();
-
-      if (applied > 0) {
-        setSelectedIds((prev) => {
-          const next = new Set(prev);
-          results.filter((r) => r.applied).forEach((r) => next.delete(String(r.uid)));
-          return next;
-        });
-        void loadThreads();
+      if (processing) {
+        setRunDetails({ durationMs: processing.durationMs, model: model?.model });
       }
+      onComplete?.();
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "AI labeling failed");
-      setRowStatus({});
+      setRowStatus((prev) => Object.fromEntries(
+        Object.entries(prev).map(([id, status]) => [id, status === "running" ? "error" : status]),
+      ));
     } finally {
       setRunning(false);
+      setRunProgress(null);
     }
   };
 
@@ -337,8 +372,8 @@ export function MailAiLabelDialog({
             AI Label
           </DialogTitle>
           <DialogDescription>
-            Select inbox emails without custom labels. AI will assign one label using your definitions and profile
-            default model.
+            Select inbox emails without custom labels. AI checks a short preview first, reads more only when needed,
+            and uses your profile default model.
           </DialogDescription>
         </DialogHeader>
 
@@ -419,11 +454,22 @@ export function MailAiLabelDialog({
                   )}
                 </span>
               </label>
-              <span className="text-xs text-muted-foreground tabular-nums">{total} total</span>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {threads.length} loaded on page {page}
+              </span>
             </div>
 
             {loadError && (
-              <div className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">{loadError}</div>
+              <div className="flex items-center justify-between gap-3 text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">
+                <span>{loadError}</span>
+                <button
+                  type="button"
+                  onClick={() => void loadThreads()}
+                  className="shrink-0 rounded-md border border-destructive/30 px-2 py-1 text-xs font-semibold hover:bg-destructive/10"
+                >
+                  Retry
+                </button>
+              </div>
             )}
 
             {loading ? (
@@ -433,7 +479,7 @@ export function MailAiLabelDialog({
                 </span>
                 Loading unlabeled emails…
               </div>
-            ) : threads.length === 0 ? (
+            ) : loadError ? null : threads.length === 0 ? (
               <div className="text-center py-12 text-sm text-muted-foreground">
                 No unlabeled inbox emails found.
               </div>
@@ -500,23 +546,30 @@ export function MailAiLabelDialog({
               </div>
             )}
 
-            {total > pageSize && (
+            {(page > 1 || hasMore || (total !== null && total > pageSize)) && (
               <PaginationBar
                 page={page}
                 pageSize={pageSize}
                 total={total}
+                itemCount={threads.length}
+                hasMore={hasMore}
                 onPageChange={setPage}
                 onPageSizeChange={(size) => {
                   setPageSize(size);
                   setPage(1);
                 }}
-                pageSizeOptions={[10, 25, 50]}
+                pageSizeOptions={[25, 50, 100]}
               />
             )}
 
             {summary && (
               <div className="text-sm rounded-lg bg-secondary/60 border border-border px-3 py-2">
                 Done: {summary.applied} labeled, {summary.skipped} skipped, {summary.failed} failed.
+                {runDetails && (
+                  <span className="text-muted-foreground">
+                    {` ${(runDetails.durationMs / 1000).toFixed(1)}s${runDetails.model ? ` · ${runDetails.model}` : ""}`}
+                  </span>
+                )}
               </div>
             )}
 
@@ -548,7 +601,11 @@ export function MailAiLabelDialog({
                 <Sparkles className="size-4" />
               )}
             </span>
-            <span>{running ? "Labeling…" : `Run AI Label (${totalSelected})`}</span>
+            <span>
+              {running
+                ? `Labeling ${runProgress?.completed ?? 0}/${runProgress?.total ?? totalSelected}…`
+                : `Run AI Label (${totalSelected})`}
+            </span>
           </button>
         </DialogFooter>
       </DialogContent>

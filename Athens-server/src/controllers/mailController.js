@@ -32,7 +32,9 @@ import {
 	loadLabelOrSearchPage,
 	getFolderCounts,
 	prefetchMessageBodies,
+	prefetchMessageSnippets,
 	folderToMailbox,
+	invalidateMailListCaches,
 } from '../services/mail/mailSyncService.js';
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
 import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
@@ -40,9 +42,77 @@ import { runMailAiLabelBatch } from '../services/mail/aiLabelService.js';
 import { runMailAiWrite } from '../services/mail/aiWriteService.js';
 import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
 import { isBetaTier } from '../lib/betaTier.js';
+import { getRedis, isRedisReady } from '../db/redis.js';
 
 const OTP_EMAIL_LIMIT = 10;
 const mailLabelMemoryCache = new Map();
+
+function mailLabelCacheMs() {
+	return Math.max(10_000, Number(process.env.MAIL_LABEL_CACHE_MS || 5 * 60 * 1000));
+}
+
+function mailLabelRedisKey(applierName) {
+	return `mail:v2:gmail-labels:${applierName.trim().toLowerCase()}`;
+}
+
+async function loadCachedGmailLabels(applierName, credentials) {
+	const memoryKey = applierName.trim().toLowerCase();
+	const memoryEntry = mailLabelMemoryCache.get(memoryKey);
+	if (memoryEntry?.expiresAt > Date.now()) {
+		return { ok: true, labels: memoryEntry.labels, cached: true };
+	}
+	if (isRedisReady()) {
+		const cached = await getRedis().get(mailLabelRedisKey(applierName)).catch(() => null);
+		if (cached) {
+			try {
+				const labels = JSON.parse(cached);
+				mailLabelMemoryCache.set(memoryKey, { labels, expiresAt: Date.now() + mailLabelCacheMs() });
+				return { ok: true, labels, cached: true };
+			} catch {
+				await getRedis().del(mailLabelRedisKey(applierName)).catch(() => undefined);
+			}
+		}
+	}
+
+	const state = await getSyncState(applierName);
+	const cacheMs = mailLabelCacheMs();
+	const cachedAt = state?.gmailLabelsUpdatedAt ? new Date(state.gmailLabelsUpdatedAt).getTime() : 0;
+	if (Array.isArray(state?.gmailLabels) && Date.now() - cachedAt < cacheMs) {
+		mailLabelMemoryCache.set(memoryKey, { labels: state.gmailLabels, expiresAt: Date.now() + cacheMs });
+		if (isRedisReady()) {
+			await getRedis().setEx(mailLabelRedisKey(applierName), Math.ceil(cacheMs / 1000), JSON.stringify(state.gmailLabels)).catch(() => undefined);
+		}
+		return { ok: true, labels: state.gmailLabels, cached: true };
+	}
+
+	const creds = credentials || (await resolveMailCredentials(applierName));
+	if (!creds.ok) return creds;
+	try {
+		const labels = await fetchGmailLabelList(creds.email, creds.password);
+		mailLabelMemoryCache.set(memoryKey, { labels, expiresAt: Date.now() + cacheMs });
+		if (isRedisReady()) {
+			await getRedis().setEx(mailLabelRedisKey(applierName), Math.ceil(cacheMs / 1000), JSON.stringify(labels)).catch(() => undefined);
+		}
+		void upsertSyncState(applierName, { gmailLabels: labels, gmailLabelsUpdatedAt: new Date() })
+			.catch((error) => console.warn('[mail] background label cache write failed:', error?.message || error));
+		return { ok: true, labels, cached: false };
+	} catch (error) {
+		if (Array.isArray(state?.gmailLabels)) {
+			mailLabelMemoryCache.set(memoryKey, {
+				labels: state.gmailLabels,
+				expiresAt: Date.now() + Math.min(cacheMs, 60_000),
+			});
+			return { ok: true, labels: state.gmailLabels, cached: true, stale: true };
+		}
+		throw error;
+	}
+}
+
+async function invalidateMailLabelCache(applierName) {
+	mailLabelMemoryCache.delete(applierName.trim().toLowerCase());
+	if (isRedisReady()) await getRedis().del(mailLabelRedisKey(applierName)).catch(() => undefined);
+	await upsertSyncState(applierName, { gmailLabelsUpdatedAt: null });
+}
 
 /** Newest-first slice — index 0 is the most recent message. */
 function takeNewestEmails(docs, limit = OTP_EMAIL_LIMIT) {
@@ -118,16 +188,26 @@ export async function getMailThreads(req, res) {
 			return res.status(500).json({ success: false, error: result.error });
 		}
 
-		if (!cacheOnly) {
+		// The AI dialog intentionally reads its candidate catalog from cache for a
+		// fast open, but should still warm lightweight snippets for the visible page.
+		if (!cacheOnly || unlabeled) {
 			const uids = result.threads.map((t) => Number(t.uid)).filter(Boolean);
 			const mailbox = folderToMailbox(folder);
-			void prefetchMessageBodies(applierName, uids, mailbox);
+			if (unlabeled) {
+				void prefetchMessageSnippets(applierName, uids, mailbox).catch((error) => {
+					console.warn('[mail] background AI snippet prefetch failed:', error?.message || error);
+				});
+			} else {
+				void prefetchMessageBodies(applierName, uids, mailbox);
+			}
 		}
 
 		return res.json({
 			success: true,
 			threads: result.threads,
 			total: result.total,
+			totalExact: result.totalExact ?? true,
+			hasMore: result.hasMore,
 			page: result.page,
 			pageSize: result.pageSize,
 			fromCache: result.fromCache ?? false,
@@ -513,6 +593,9 @@ export async function patchMailMessage(req, res) {
 		}
 
 		const updated = await updateMessageFlags(applierName, uid, patch, mailbox);
+		if (addLabels?.length || removeLabels?.length || folder !== undefined) {
+			await invalidateMailListCaches(applierName);
+		}
 
 		if (seen !== undefined || folder !== undefined) {
 			await upsertSyncState(applierName, { folderCountsUpdatedAt: null });
@@ -529,38 +612,11 @@ export async function getMailLabels(req, res) {
 	try {
 		const applierName = await requireApplier(req, res);
 		if (!applierName) return;
-		const memoryKey = applierName.trim().toLowerCase();
-		const memoryEntry = mailLabelMemoryCache.get(memoryKey);
-		if (memoryEntry && memoryEntry.expiresAt > Date.now()) {
-			return res.json({ success: true, labels: memoryEntry.labels, cached: true });
+		const result = await loadCachedGmailLabels(applierName);
+		if (!result.ok) {
+			return res.status(400).json({ success: false, error: result.error, credentialsMissing: true });
 		}
-
-		const state = await getSyncState(applierName);
-		const cachedAt = state?.gmailLabelsUpdatedAt ? new Date(state.gmailLabelsUpdatedAt).getTime() : 0;
-		const cacheMs = Math.max(10_000, Number(process.env.MAIL_LABEL_CACHE_MS || 5 * 60 * 1000));
-		if (Array.isArray(state?.gmailLabels) && Date.now() - cachedAt < cacheMs) {
-			mailLabelMemoryCache.set(memoryKey, { labels: state.gmailLabels, expiresAt: Date.now() + cacheMs });
-			return res.json({ success: true, labels: state.gmailLabels, cached: true });
-		}
-
-		const creds = await resolveMailCredentials(applierName);
-		if (!creds.ok) {
-			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
-		}
-
-		try {
-			const labels = await fetchGmailLabelList(creds.email, creds.password);
-			mailLabelMemoryCache.set(memoryKey, { labels, expiresAt: Date.now() + cacheMs });
-			void upsertSyncState(applierName, { gmailLabels: labels, gmailLabelsUpdatedAt: new Date() })
-				.catch((error) => console.warn('[mail] background label cache write failed:', error?.message || error));
-			return res.json({ success: true, labels, cached: false });
-		} catch (error) {
-			if (Array.isArray(state?.gmailLabels)) {
-				mailLabelMemoryCache.set(memoryKey, { labels: state.gmailLabels, expiresAt: Date.now() + Math.min(cacheMs, 60_000) });
-				return res.json({ success: true, labels: state.gmailLabels, cached: true, stale: true });
-			}
-			throw error;
-		}
+		return res.json({ success: true, labels: result.labels, cached: result.cached, stale: result.stale });
 	} catch (err) {
 		console.error('GET /api/mail/labels error', err);
 		return res.status(500).json({ success: false, error: err.message });
@@ -590,6 +646,7 @@ export async function postMailLabel(req, res) {
 		}
 
 		const label = await createGmailLabel(creds.email, creds.password, name, parentPath);
+		await invalidateMailLabelCache(applierName);
 		return res.json({ success: true, label });
 	} catch (err) {
 		console.error('POST /api/mail/labels error', err);
@@ -619,6 +676,7 @@ export async function deleteMailLabel(req, res) {
 		}
 
 		await deleteGmailLabel(creds.email, creds.password, label.path || label.name);
+		await invalidateMailLabelCache(applierName);
 		return res.json({ success: true, deleted: label.path || label.name });
 	} catch (err) {
 		console.error('DELETE /api/mail/labels/:labelId error', err);
@@ -697,60 +755,68 @@ export async function putMailLabelDefinitions(req, res) {
 	}
 }
 
+async function prepareMailAiLabelRun(req, res) {
+	if (!mailMessagesCollection) {
+		res.status(503).json({ success: false, error: 'Database not ready' });
+		return null;
+	}
+	const applierName = await requireBetaApplier(req, res);
+	if (!applierName) return null;
+
+	const creds = await resolveMailCredentials(applierName);
+	if (!creds.ok) {
+		res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
+		return null;
+	}
+	const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+	if (!rawMessages.length) {
+		res.status(400).json({ success: false, error: 'messages array required' });
+		return null;
+	}
+	if (rawMessages.length > 50) {
+		res.status(400).json({ success: false, error: 'Maximum 50 messages per batch' });
+		return null;
+	}
+
+	const acc = await findAccountByApplierName(applierName);
+	const profile = await decryptProfileApiKeys(acc?.autoBidProfile || {});
+	const storedDefinitions = await getUserLabelDefinitions(
+		applierName,
+		acc?.autoBidProfile?.mailLabelDefinitions,
+	);
+	const labelDefinitions = normalizeLabelDefinitions(req.body?.labelDefinitions || storedDefinitions);
+	const labelResult = await loadCachedGmailLabels(applierName, creds);
+	const allowedLabels = (labelResult.labels || []).map((label) => label.path || label.name).filter(Boolean);
+	if (!allowedLabels.length) {
+		res.status(400).json({ success: false, error: 'No custom Gmail labels found. Create labels first.' });
+		return null;
+	}
+	const messages = rawMessages
+		.map((message) => ({
+			uid: Number(message.uid),
+			mailbox: typeof message.mailbox === 'string' ? message.mailbox : undefined,
+		}))
+		.filter((message) => Number.isFinite(message.uid));
+	if (!messages.length) {
+		res.status(400).json({ success: false, error: 'No valid message UIDs provided' });
+		return null;
+	}
+	return {
+		applierName,
+		profile,
+		email: creds.email,
+		password: creds.password,
+		messages,
+		allowedLabels,
+		labelDefinitions,
+	};
+}
+
 export async function postMailAiLabel(req, res) {
 	try {
-		if (!mailMessagesCollection) {
-			return res.status(503).json({ success: false, error: 'Database not ready' });
-		}
-
-		const applierName = await requireBetaApplier(req, res);
-		if (!applierName) return;
-
-		const creds = await resolveMailCredentials(applierName);
-		if (!creds.ok) {
-			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
-		}
-
-		const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-		if (!rawMessages.length) {
-			return res.status(400).json({ success: false, error: 'messages array required' });
-		}
-		if (rawMessages.length > 50) {
-			return res.status(400).json({ success: false, error: 'Maximum 50 messages per batch' });
-		}
-
-		const acc = await findAccountByApplierName(applierName);
-		const profile = await decryptProfileApiKeys(acc?.autoBidProfile || {});
-		const storedDefinitions = await getUserLabelDefinitions(
-			applierName,
-			acc?.autoBidProfile?.mailLabelDefinitions,
-		);
-		const labelDefinitions = normalizeLabelDefinitions(
-			req.body?.labelDefinitions || storedDefinitions,
-		);
-
-		const gmailLabels = await fetchGmailLabelList(creds.email, creds.password);
-		const allowedLabels = gmailLabels.map((l) => l.path || l.name).filter(Boolean);
-		if (!allowedLabels.length) {
-			return res.status(400).json({ success: false, error: 'No custom Gmail labels found. Create labels first.' });
-		}
-
-		const messages = rawMessages
-			.map((m) => ({
-				uid: Number(m.uid),
-				mailbox: typeof m.mailbox === 'string' ? m.mailbox : undefined,
-			}))
-			.filter((m) => Number.isFinite(m.uid));
-
-		const result = await runMailAiLabelBatch({
-			applierName,
-			profile,
-			email: creds.email,
-			password: creds.password,
-			messages,
-			allowedLabels,
-			labelDefinitions,
-		});
+		const run = await prepareMailAiLabelRun(req, res);
+		if (!run) return;
+		const result = await runMailAiLabelBatch(run);
 
 		if (!result.ok) {
 			return res.status(400).json({ success: false, error: result.error });
@@ -760,10 +826,63 @@ export async function postMailAiLabel(req, res) {
 			success: true,
 			results: result.results,
 			usage: result.usage,
+			model: result.model,
+			processing: result.processing,
 		});
 	} catch (err) {
 		console.error('POST /api/mail/ai-label error', err);
 		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function postMailAiLabelStream(req, res) {
+	try {
+		const run = await prepareMailAiLabelRun(req, res);
+		if (!run) return;
+
+		res.writeHead(200, {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-cache, no-transform',
+			Connection: 'keep-alive',
+			'X-Accel-Buffering': 'no',
+		});
+		const send = (event, data) => {
+			if (res.writableEnded || res.destroyed) return;
+			res.write(`event: ${event}\n`);
+			res.write(`data: ${JSON.stringify(data)}\n\n`);
+		};
+		const heartbeat = setInterval(() => {
+			if (!res.writableEnded && !res.destroyed) res.write(': keep-alive\n\n');
+		}, 15_000);
+		heartbeat.unref?.();
+
+		let result;
+		try {
+			result = await runMailAiLabelBatch({ ...run, onEvent: send });
+		} finally {
+			clearInterval(heartbeat);
+		}
+		if (!result.ok) {
+			send('error', { error: result.error });
+		} else {
+			send('done', {
+				success: true,
+				results: result.results,
+				usage: result.usage,
+				model: result.model,
+				processing: result.processing,
+			});
+		}
+		if (!res.writableEnded && !res.destroyed) res.end();
+	} catch (err) {
+		console.error('POST /api/mail/ai-label/stream error', err);
+		if (!res.headersSent) {
+			return res.status(500).json({ success: false, error: err.message });
+		}
+		if (!res.writableEnded && !res.destroyed) {
+			res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
+			res.end();
+		}
 	}
 }
 

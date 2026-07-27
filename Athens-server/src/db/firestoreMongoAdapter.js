@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { ObjectId } from "mongodb";
+import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { getFirestoreDb } from "../services/firebase/firebaseAdmin.js";
 import { assertFirestoreDocumentSize } from "../services/firebase/objectStore.js";
 
@@ -68,6 +69,23 @@ function buildNativeQueryPlan(filter = {}) {
 	}
 	visit(filter);
 	return { clauses, complete };
+}
+
+function collectFilterFields(filter = {}, fields = new Set()) {
+	if (!isPlain(filter)) return fields;
+	for (const [field, condition] of Object.entries(filter)) {
+		if ((field === "$and" || field === "$or" || field === "$nor") && Array.isArray(condition)) {
+			for (const child of condition) collectFilterFields(child, fields);
+			continue;
+		}
+		if (field.startsWith("$")) continue;
+		fields.add(field.split(".")[0]);
+	}
+	return fields;
+}
+
+function canTryCompositeQuery(plan) {
+	return plan.clauses.length <= 1 || String(process.env.FIRESTORE_TRY_COMPOSITE_QUERIES || "").toLowerCase() === "true";
 }
 
 function selectBoundingClause(clauses = []) {
@@ -423,6 +441,35 @@ function deterministicId(name, filter) {
 	return uniqueKeySets(name).map((keys) => completeUniqueKey(name, keys, filter)).find(Boolean)?.id.slice(0, 40) || null;
 }
 
+function uniqueLookupsForFilter(name, filter) {
+	for (const keys of uniqueKeySets(name)) {
+		const valueLists = [];
+		let valid = true;
+		for (const key of keys) {
+			const condition = getPath(filter, key);
+			if (isPlain(condition) && Array.isArray(condition.$in)) valueLists.push(condition.$in);
+			else if (!isPlain(condition) && condition !== undefined && condition !== null && condition !== '') valueLists.push([condition]);
+			else { valid = false; break; }
+		}
+		if (!valid) continue;
+		let combinations = [{}];
+		for (let index = 0; index < keys.length; index++) {
+			combinations = combinations.flatMap((entry) =>
+				valueLists[index].map((value) => ({ ...entry, [keys[index]]: value })),
+			);
+			if (combinations.length > 100) { valid = false; break; }
+		}
+		if (!valid) continue;
+		return combinations
+			.map((entry) => {
+				const complete = completeUniqueKey(name, keys, entry);
+				return complete ? { documentId: complete.id.slice(0, 40), reservationId: complete.id } : null;
+			})
+			.filter(Boolean);
+	}
+	return null;
+}
+
 function duplicateKeyError(name, reservation, cause) {
 	const error = new Error(`Duplicate unique key for ${name}: ${reservation?.keys?.join(", ") || "document id"}`);
 	error.code = 11000;
@@ -560,6 +607,33 @@ class FirestoreCollection {
 			const docs = snap.exists ? [decodeDoc(snap.id, snap.data())] : [];
 			return docs.filter((doc) => matches(doc, filter));
 		}
+		const uniqueLookups = uniqueLookupsForFilter(this.collectionName, filter);
+		if (uniqueLookups) {
+			const directSnapshots = await this.db.firestore.getAll(
+				...uniqueLookups.map((lookup) => this.ref.doc(lookup.documentId)),
+			);
+			const directDocs = directSnapshots
+				.filter((snapshot) => snapshot.exists)
+				.map((snapshot) => decodeDoc(snapshot.id, snapshot.data()));
+			const missing = uniqueLookups.filter((_lookup, index) => !directSnapshots[index].exists);
+			let reservedDocs = [];
+			if (missing.length) {
+				const reservations = await this.db.firestore.getAll(
+					...missing.map((lookup) => this.db.firestore.collection('unique_reservations').doc(lookup.reservationId)),
+				);
+				const targetIds = [...new Set(reservations
+					.filter((snapshot) => snapshot.exists && snapshot.data()?.targetId)
+					.map((snapshot) => String(snapshot.data().targetId)))];
+				if (targetIds.length) {
+					const targets = await this.db.firestore.getAll(...targetIds.map((targetId) => this.ref.doc(targetId)));
+					reservedDocs = targets
+						.filter((snapshot) => snapshot.exists)
+						.map((snapshot) => decodeDoc(snapshot.id, snapshot.data()));
+				}
+			}
+			const resolved = [...directDocs, ...reservedDocs].filter((doc) => matches(doc, filter));
+			if (resolved.length || this.collectionName === 'mail_messages') return resolved;
+		}
 		const documentIds = conjunctiveDocumentIds(filter);
 		if (documentIds) {
 			const refs = [...new Set(documentIds)].map((documentId) => this.ref.doc(documentId));
@@ -575,10 +649,11 @@ class FirestoreCollection {
 		const nativeOrderEntries = sortEntries.filter(([field]) => field !== "_id");
 		const projectionEntries = Object.entries(hints.projection || {});
 		const inclusionProjection = projectionEntries.length > 0 && projectionEntries.every(([field, included]) => field === "_id" || Boolean(included));
+		const filterFields = [...collectFilterFields(filter)];
 		const selectedFields = inclusionProjection
 			? [...new Set([
 				...projectionEntries.filter(([field, included]) => field !== "_id" && Boolean(included)).map(([field]) => field),
-				...plan.clauses.map((clause) => clause.field),
+				...filterFields,
 				...nativeOrderEntries.map(([field]) => field),
 			])]
 			: [];
@@ -589,7 +664,7 @@ class FirestoreCollection {
 		// Prefer the exact composite query whenever its index exists. Firestore
 		// returns code 9 while an index is missing/building; only then do we use the
 		// bounded compatibility path below.
-		if (plan.complete && plan.clauses.length > 0 && nativeOrderEntries.length > 0 && indexedSortSupported) {
+		if (plan.complete && (canTryCompositeQuery(plan) || this.collectionName === 'mail_messages') && plan.clauses.length > 0 && nativeOrderEntries.length > 0 && indexedSortSupported) {
 			let indexedQuery = this._queryFromPlan(plan);
 			for (const [field, direction] of nativeOrderEntries) indexedQuery = indexedQuery.orderBy(field, Number(direction) < 0 ? "desc" : "asc");
 			if (selectedFields.length) indexedQuery = indexedQuery.select(...selectedFields);
@@ -609,8 +684,11 @@ class FirestoreCollection {
 		// filters and ordering. Until those indexes are deployed, use one native
 		// equality filter to bound the read and apply the remaining Mongo-shaped
 		// predicates locally.
+		const boundingClause = this.collectionName === 'mail_messages'
+			? plan.clauses.find((clause) => clause.field === 'hasCustomLabels') || selectBoundingClause(plan.clauses)
+			: selectBoundingClause(plan.clauses);
 		const queryPlan = plan.complete && plan.clauses.length > 1
-			? { ...plan, clauses: [selectBoundingClause(plan.clauses)] }
+			? { ...plan, clauses: [boundingClause] }
 			: plan;
 		let query = this._queryFromPlan(queryPlan);
 		if (selectedFields.length) query = query.select(...selectedFields);
@@ -630,7 +708,7 @@ class FirestoreCollection {
 		let orderedMatchedCount = null;
 		let orderedTarget = null;
 		const firstSort = sortEntries.find(([field, direction]) => field !== "_id" && [1, -1].includes(Number(direction)));
-		const orderedLocalFilter = this.sourceCatalog && plan.complete && !nativeSort && firstSort && !inequalityField && hints.limit != null && plan.clauses.length > 0;
+		const orderedLocalFilter = this.sourceCatalog && !nativeSort && firstSort && !inequalityField && hints.limit != null;
 		if (orderedLocalFilter) {
 			// Use the built-in single-field sort index to read the newest candidates,
 			// then apply equality filters locally. Grow the window only when filtering
@@ -667,6 +745,51 @@ class FirestoreCollection {
 		return snapshot.docs.map((doc) => decodeDoc(doc.id, doc.data())).filter((doc) => matches(doc, filter));
 	}
 	find(filter = {}, options = {}) { return new Cursor(this, filter, options); }
+	async *findPaged(filter = {}, options = {}) {
+		const pageSize = Math.max(25, Math.min(2_000, Number(options.pageSize || 500)));
+		const effectiveFilter = this._filterWithCatalog(filter);
+		const plan = buildNativeQueryPlan(effectiveFilter);
+		const projection = options.projection || null;
+		const projectionEntries = Object.entries(projection || {});
+		const inclusionProjection = projectionEntries.length > 0
+			&& projectionEntries.every(([field, included]) => field === "_id" || Boolean(included));
+		const selectedFields = inclusionProjection
+			? [...new Set([
+				...projectionEntries
+					.filter(([field, included]) => field !== "_id" && Boolean(included))
+					.map(([field]) => field),
+				...plan.clauses.map((clause) => clause.field),
+			])]
+			: [];
+		let lastDocument = null;
+		let useNativePlan = plan.complete;
+		for (;;) {
+			let query = useNativePlan ? this._queryFromPlan(plan) : this.ref;
+			query = query.orderBy(FieldPath.documentId());
+			if (selectedFields.length) query = query.select(...selectedFields);
+			if (lastDocument) query = query.startAfter(lastDocument);
+			let snapshot;
+			try {
+				snapshot = await query.limit(pageSize).get();
+			} catch (error) {
+				if (Number(error?.code) !== 9 || !useNativePlan) throw error;
+				// Background scans must not crash the server merely because a new
+				// composite index has not finished deploying. Retry from the start
+				// using document-id pagination and apply the filter locally.
+				useNativePlan = false;
+				lastDocument = null;
+				continue;
+			}
+			if (snapshot.empty) break;
+			for (const document of snapshot.docs) {
+				const decoded = decodeDoc(document.id, document.data());
+				if (!matches(decoded, effectiveFilter)) continue;
+				yield projection ? applyProjection(decoded, projection) : decoded;
+			}
+			lastDocument = snapshot.docs[snapshot.docs.length - 1];
+			if (snapshot.size < pageSize) break;
+		}
+	}
 	async findOne(filter = {}, options = {}) { return (await this.find(filter, options).sort(options.sort || {}).limit(1).toArray())[0] || null; }
 	async insertOne(doc) {
 		const id = String(comparable(doc._id || deterministicId(this.collectionName, doc) || new ObjectId()));
@@ -806,6 +929,7 @@ class FirestoreCollection {
 		if (cached && cached.expiresAt > Date.now()) return cached.promise;
 		const load = async () => {
 			try {
+				if (!canTryCompositeQuery(plan) && this.collectionName !== 'mail_messages') return (await this._read(filter)).length;
 				return (await this._queryFromPlan(plan).count().get()).data().count;
 			} catch (error) {
 				if (Number(error?.code) !== 9) throw error;
@@ -833,6 +957,120 @@ class FirestoreCollection {
 	async estimatedDocumentCount() { return this.countDocuments({}); }
 	async distinct(field, filter = {}) { const values = (await this._read(filter)).flatMap((doc) => valuesAt(doc, field)); return values.filter((value, index) => values.findIndex((item) => equal(item, value)) === index); }
 	aggregate(pipeline) { return { toArray: async () => runPipeline(await this.find({}).toArray(), pipeline, this.db), [Symbol.asyncIterator]: async function* () { for (const item of await this.toArray()) yield item; } }; }
+	/**
+	 * Firestore-native atomic upserts for counter/dictionary workloads. A single
+	 * getAll determines insert-only fields, then FieldValue transforms are
+	 * committed in batches instead of one read transaction per document.
+	 */
+	async atomicBulkUpsert(operations) {
+		const rows = operations.map((operation) => {
+			const spec = operation?.updateOne;
+			const id = spec?.upsert ? deterministicId(this.collectionName, spec.filter) : null;
+			if (!id || !spec?.update || Object.keys(spec.update).some((key) => !['$setOnInsert', '$set', '$inc', '$addToSet'].includes(key))) {
+				throw new Error(`atomicBulkUpsert received an unsupported ${this.collectionName} operation`);
+			}
+			return { spec, ref: this.ref.doc(id) };
+		});
+		let upsertedCount = 0;
+		const chunkSize = 400;
+		for (let offset = 0; offset < rows.length; offset += chunkSize) {
+			const chunk = rows.slice(offset, offset + chunkSize);
+			const snapshots = await this.db.firestore.getAll(...chunk.map((row) => row.ref));
+			const batch = this.db.firestore.batch();
+			for (let index = 0; index < chunk.length; index += 1) {
+				const { spec, ref } = chunk[index];
+				const inserting = !snapshots[index].exists;
+				if (inserting) upsertedCount += 1;
+				const update = spec.update;
+				const data = encode({
+					...(inserting ? update.$setOnInsert || {} : {}),
+					...(update.$set || {}),
+				});
+				for (const [path, amount] of Object.entries(update.$inc || {})) {
+					setPath(data, path, FieldValue.increment(Number(amount) || 0));
+				}
+				for (const [path, value] of Object.entries(update.$addToSet || {})) {
+					const values = isPlain(value) && Array.isArray(value.$each) ? value.$each : [value];
+					if (values.length) setPath(data, path, FieldValue.arrayUnion(...values.map(encode)));
+				}
+				batch.set(ref, data, { merge: true });
+			}
+			await batch.commit();
+		}
+		this._invalidateCaches();
+		return {
+			acknowledged: true,
+			modifiedCount: rows.length - upsertedCount,
+			upsertedCount,
+		};
+	}
+	/** Atomically claim a bounded set of known documents in one transaction. */
+	async atomicClaimMany(ids, expectedFilter, update) {
+		const uniqueIds = [...new Set(ids.map((id) => String(comparable(id))))];
+		if (!uniqueIds.length) return [];
+		if (!update || Object.keys(update).some((key) => !['$set', '$unset'].includes(key))) {
+			throw new Error(`atomicClaimMany received an unsupported ${this.collectionName} update`);
+		}
+		const effectiveFilter = this._filterWithCatalog(expectedFilter || {});
+		const claimed = await this.db.firestore.runTransaction(async (transaction) => {
+			const refs = uniqueIds.map((id) => this.ref.doc(id));
+			const snapshots = await transaction.getAll(...refs);
+			const result = [];
+			for (let index = 0; index < snapshots.length; index += 1) {
+				const snapshot = snapshots[index];
+				if (!snapshot.exists) continue;
+				const current = decodeDoc(snapshot.id, snapshot.data());
+				if (!matches(current, effectiveFilter)) continue;
+				const patch = encode(update.$set || {});
+				for (const path of Object.keys(update.$unset || {})) {
+					setPath(patch, path, FieldValue.delete());
+				}
+				transaction.update(refs[index], patch);
+				result.push(snapshot.id);
+			}
+			return result;
+		});
+		this._invalidateCaches();
+		return claimed;
+	}
+	/** Apply exact-id field patches in one Firestore commit. */
+	async atomicBulkPatch(operations) {
+		const rows = operations.map((operation) => {
+			const spec = operation?.updateOne;
+			const id = spec?.filter?._id;
+			if (!id || !spec?.update || Object.keys(spec.update).some((key) => !['$set', '$unset'].includes(key))) {
+				throw new Error(`atomicBulkPatch received an unsupported ${this.collectionName} operation`);
+			}
+			return { id: String(comparable(id)), update: spec.update };
+		});
+		const chunkSize = this.sourceCatalog ? 200 : 400;
+		const outboxIds = [];
+		for (let offset = 0; offset < rows.length; offset += chunkSize) {
+			const batch = this.db.firestore.batch();
+			for (const row of rows.slice(offset, offset + chunkSize)) {
+				const data = encode(row.update.$set || {});
+				for (const path of Object.keys(row.update.$unset || {})) {
+					setPath(data, path, FieldValue.delete());
+				}
+				batch.update(this.ref.doc(row.id), data);
+				if (this.sourceCatalog) {
+					const outboxRef = this.db.firestore.collection('search_outbox').doc();
+					batch.set(outboxRef, {
+						jobId: row.id,
+						operation: 'upsert',
+						status: 'pending',
+						attempts: 0,
+						createdAt: new Date(),
+					});
+					outboxIds.push(outboxRef.id);
+				}
+			}
+			await batch.commit();
+		}
+		this._invalidateCaches();
+		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
+		return { acknowledged: true, modifiedCount: rows.length };
+	}
 	async bulkWrite(operations) {
 		const totals = { acknowledged: true, insertedCount: 0, modifiedCount: 0, deletedCount: 0, upsertedCount: 0 };
 		// A large write fan-out can monopolize the Firestore HTTP/2 connection and
@@ -866,4 +1104,14 @@ export function createFirestoreMongoAdapter() {
 	return new FirestoreDbAdapter();
 }
 
-export const firestoreAdapterTest = { matches, applyUpdate, runPipeline, evaluate, applyProjection, buildNativeQueryPlan, conjunctiveDocumentIds };
+export const firestoreAdapterTest = {
+	matches,
+	applyUpdate,
+	runPipeline,
+	evaluate,
+	applyProjection,
+	buildNativeQueryPlan,
+	collectFilterFields,
+	canTryCompositeQuery,
+	conjunctiveDocumentIds,
+};
