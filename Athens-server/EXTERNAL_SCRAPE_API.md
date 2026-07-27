@@ -83,7 +83,7 @@ Validation lives in `src/services/scrapedJobIngestService.js` (`validateScrapedJ
 
 ### Single job — duplicate (200)
 
-Duplicates are detected by unique indexes on `jobID` and `jobLink` in `external_scraped_jobs`. No new document is inserted (and `job_market` is not written again).
+Duplicates are detected by the existing `jobID` / `jobLink` protections and by the global job identity policy. Company name and job title are Unicode-normalized, trimmed, whitespace-collapsed, and compared case-insensitively across the exposed API, Extension, and extension-v2. If that identity was accepted by the backend during the preceding 30 days, neither `external_scraped_jobs` nor `job_market` is written.
 
 ```json
 {
@@ -91,7 +91,8 @@ Duplicates are detected by unique indexes on `jobID` and `jobLink` in `external_
   "created": false,
   "duplicate": true,
   "jobID": "linkedin-12345678",
-  "jobLink": "https://boards.greenhouse.io/acme/jobs/123"
+  "jobLink": "https://boards.greenhouse.io/acme/jobs/123",
+  "reason": "Duplicate job with this company and title was added within the last 30 days"
 }
 ```
 
@@ -196,6 +197,12 @@ On create (when `applyLink` is not already present), a market document is insert
 
 Historical backfill runs automatically on server start (`initMongo`). Manual / dry-run: `node src/scripts/migrateExternalScrapedJobsToMarket.js [--dry-run]`
 
+### `job_identity_registry` (global rolling dedupe)
+
+One record per normalized company/title identity stores its latest backend acceptance time. Conditional upserts make the 30-day reservation atomic across clustered API workers. Existing `job_market` rows seed the registry once at startup.
+
+After search infrastructure is ready, a one-time cleanup groups the existing catalog by the same normalized company/title identity, keeps the job with the newest backend-acceptance timestamp, and removes every older row in that group. Match scores, ranking/search points, skill-index entries, and embedding points for removed jobs are cleaned before the database records are deleted.
+
 ---
 
 ## Code map
@@ -206,5 +213,7 @@ Historical backfill runs automatically on server start (`initMongo`). Manual / d
 | `src/controllers/scrapedJobIngestController.js` | HTTP handlers (`postExternalScrapedJob`, `postCheckExternalScrapedJobExists`) |
 | `src/services/scrapedJobIngestService.js` | Validation + insert / dedupe + promote |
 | `src/services/promoteExternalJobToMarket.js` | Map external → market + promote helper |
+| `src/services/jobIdentityDedupe.js` | Global normalized identity claims + historical seed |
+| `src/services/jobIdentityCleanup.js` | One-time historical duplicate removal + dependent index cleanup |
 | `src/scripts/migrateExternalScrapedJobsToMarket.js` | One-time / idempotent historical migration |
 | `src/db/mongo.js` | Collection + indexes |

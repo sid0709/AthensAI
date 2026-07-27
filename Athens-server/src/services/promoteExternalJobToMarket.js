@@ -1,9 +1,27 @@
-import { jobsCollection, externalScrapedJobsCollection } from "../db/mongo.js";
+import {
+	jobsCollection,
+	externalScrapedJobsCollection,
+	jobIdentityRegistryCollection,
+	companiesCollection,
+	companyAliasesCollection,
+} from "../db/mongo.js";
 import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
 import { inferJobSource, SOURCE_MAP_VERSION } from "../config/jobSources.js";
 import { attachStaticScoreFields } from "./jobListPipeline.js";
 import { indexJobInRedis } from "./matching/skillIndex.js";
 import { indexOneJobRanking } from "./matching/jobRankingIndex.js";
+import {
+	claimJobIdentity,
+	finalizeJobIdentityClaim,
+	findRecentJobIdentityDuplicate,
+	releaseJobIdentityClaim,
+	resolveJobAcceptedAt,
+} from "./jobIdentityDedupe.js";
+import {
+	applyCompanyIdentity,
+	deriveCompanyIdentity,
+	resolveCompanyIdentity,
+} from "./companyIdentity.js";
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -76,7 +94,7 @@ export function mapExternalDocToMarketJob(externalDoc) {
 		description,
 		jobDescription,
 		applyLink,
-		companyLink: "",
+		companyLink: clean(externalDoc.companyLink),
 		postedAt,
 		_createdAt: createdAtIso,
 		modelVersion: JOB_MARKET_MODEL_VERSION,
@@ -106,6 +124,7 @@ export function mapExternalDocToMarketJob(externalDoc) {
 	}
 
 	Object.assign(job, attachStaticScoreFields(job));
+	applyCompanyIdentity(job, deriveCompanyIdentity(job, { seed: externalDoc._id || externalDoc.jobID || applyLink }));
 	return job;
 }
 
@@ -116,8 +135,16 @@ export function mapExternalDocToMarketJob(externalDoc) {
  *
  * @returns {{ promoted: boolean, skippedExisting?: boolean, marketId?: import('mongodb').ObjectId, source: string }}
  */
-export async function promoteExternalJobToMarket(externalDoc, { dryRun = false } = {}) {
-	if (!jobsCollection) throw new Error("Database not ready");
+export async function promoteExternalJobToMarket(externalDoc, {
+	dryRun = false,
+	identityClaim = null,
+	marketCollection = jobsCollection,
+	externalCollection = externalScrapedJobsCollection,
+	identityRegistry = jobIdentityRegistryCollection,
+	companyRegistry = companiesCollection,
+	companyAliases = companyAliasesCollection,
+} = {}) {
+	if (!marketCollection) throw new Error("Database not ready");
 	if (!externalDoc?._id) throw new Error("externalDoc._id is required");
 
 	const applyLink = clean(externalDoc.jobLink || externalDoc.applyLink);
@@ -125,25 +152,30 @@ export async function promoteExternalJobToMarket(externalDoc, { dryRun = false }
 
 	const sourceFields = externalSourceFieldsFromLink(applyLink);
 
-	if (!dryRun && externalScrapedJobsCollection) {
-		await externalScrapedJobsCollection.updateOne(
+	if (!dryRun && externalCollection) {
+		await externalCollection.updateOne(
 			{ _id: externalDoc._id },
 			{ $set: { ...sourceFields, updatedAt: new Date() } },
 		);
 	}
 
-	const existing = await jobsCollection.findOne(
+	const existing = await marketCollection.findOne(
 		{ applyLink },
 		{ projection: { _id: 1 } },
 	);
 
 	if (existing) {
-		if (!dryRun && externalScrapedJobsCollection) {
-			await markExternalSkippedDuplicate(externalDoc._id);
+		if (identityClaim?.claimed) {
+			await releaseJobIdentityClaim(identityRegistry, identityClaim);
+		}
+		if (!dryRun && externalCollection) {
+			await markExternalSkippedDuplicate(externalCollection, externalDoc._id);
 		}
 		return {
 			promoted: false,
 			skippedExisting: true,
+			duplicate: true,
+			reason: "Duplicate job URL already exists",
 			marketId: existing._id,
 			source: sourceFields.source,
 		};
@@ -153,33 +185,86 @@ export async function promoteExternalJobToMarket(externalDoc, { dryRun = false }
 		...externalDoc,
 		...sourceFields,
 	});
+	applyCompanyIdentity(marketJob, await resolveCompanyIdentity(marketJob, {
+		companiesCollection: companyRegistry,
+		companyAliasesCollection: companyAliases,
+		seed: externalDoc._id || externalDoc.jobID || applyLink,
+		persist: !dryRun,
+	}));
 
 	if (dryRun) {
+		const duplicate = await findRecentJobIdentityDuplicate(identityRegistry, {
+			companyName: marketJob.company?.name,
+			title: marketJob.title,
+			acceptedAt: resolveJobAcceptedAt(marketJob, new Date()),
+		});
+		if (duplicate) {
+			return {
+				promoted: false,
+				skippedExisting: true,
+				duplicate: true,
+				reason: "Duplicate job with this company and title was added within the last 30 days",
+				source: sourceFields.source,
+			};
+		}
 		return { promoted: true, dryRun: true, source: sourceFields.source };
+	}
+
+	let activeClaim = identityClaim;
+	if (!activeClaim) {
+		activeClaim = await claimJobIdentity(identityRegistry, {
+			companyName: marketJob.company?.name,
+			title: marketJob.title,
+			acceptedAt: resolveJobAcceptedAt(marketJob, new Date()),
+			source: "exposed-api",
+		});
+	}
+	if (activeClaim?.duplicate) {
+		if (externalCollection) {
+			await markExternalSkippedDuplicate(externalCollection, externalDoc._id);
+		}
+		return {
+			promoted: false,
+			skippedExisting: true,
+			duplicate: true,
+			reason: "Duplicate job with this company and title was added within the last 30 days",
+			source: sourceFields.source,
+		};
 	}
 
 	let insertedId;
 	try {
-		const result = await jobsCollection.insertOne(marketJob);
+		const result = await marketCollection.insertOne(marketJob);
 		insertedId = result.insertedId;
 	} catch (err) {
 		if (err?.code === 11000) {
-			const raced = await jobsCollection.findOne(
+			await releaseJobIdentityClaim(identityRegistry, activeClaim);
+			const raced = await marketCollection.findOne(
 				{ applyLink },
 				{ projection: { _id: 1 } },
 			);
-			if (externalScrapedJobsCollection) {
-				await markExternalSkippedDuplicate(externalDoc._id);
+			if (externalCollection) {
+				await markExternalSkippedDuplicate(externalCollection, externalDoc._id);
 			}
 			return {
 				promoted: false,
 				skippedExisting: true,
+				duplicate: true,
+				reason: "Duplicate job URL already exists",
 				marketId: raced?._id,
 				source: sourceFields.source,
 			};
 		}
+		await releaseJobIdentityClaim(identityRegistry, activeClaim);
 		throw err;
 	}
+
+	await finalizeJobIdentityClaim(identityRegistry, activeClaim, {
+		jobId: insertedId,
+		source: "exposed-api",
+	}).catch((error) => {
+		console.warn('[job-identity] finalize external promotion failed:', error?.message || error);
+	});
 
 	if (marketJob.skillsNormalized || marketJob.skillTokens) {
 		void indexJobInRedis(
@@ -190,8 +275,10 @@ export async function promoteExternalJobToMarket(externalDoc, { dryRun = false }
 	}
 	void indexOneJobRanking({ ...marketJob, _id: insertedId }).catch(() => {});
 
-	if (externalScrapedJobsCollection) {
-		await markExternalSkippedDuplicate(externalDoc._id);
+	if (externalCollection) {
+		await markExternalSkippedDuplicate(externalCollection, externalDoc._id).catch((error) => {
+			console.warn('[expose/jobs] failed to mark promoted external row:', error?.message || error);
+		});
 	}
 
 	return {
@@ -201,8 +288,8 @@ export async function promoteExternalJobToMarket(externalDoc, { dryRun = false }
 	};
 }
 
-async function markExternalSkippedDuplicate(externalId) {
-	await externalScrapedJobsCollection.updateOne(
+async function markExternalSkippedDuplicate(collection, externalId) {
+	await collection.updateOne(
 		{ _id: externalId },
 		{
 			$set: {

@@ -8,6 +8,7 @@ import {
   scrollJobRankingPayloads,
   upsertJobRankingPoints,
 } from '../vectorStore/qdrantClient.js';
+import { deriveCompanyIdentity } from '../companyIdentity.js';
 
 const CATALOG_REVISION_KEY = 'ranking:v2:catalog-revision';
 const DATE_TAIL_KEY = 'ranking:v2:date-tail';
@@ -40,7 +41,12 @@ function compactJobCard(job, catalog) {
     company: job?.company,
     companyName: job?.companyName,
     companyIcon: job?.companyIcon,
-    companyLink: job?.companyLink,
+		companyLink: job?.companyLink,
+		companyId: job?.companyId,
+		companyNameNormalized: job?.companyNameNormalized,
+		companyDomain: job?.companyDomain,
+		companyIdentitySource: job?.companyIdentitySource,
+		companyIdentityVersion: job?.companyIdentityVersion,
     applyLink: job?.applyLink,
     jobLink: job?.jobLink,
     source: job?.source,
@@ -90,26 +96,37 @@ export function buildJobRankingPayload(job, { catalog = 'market' } = {}) {
   const aiSkills = Array.isArray(job?.aiSkills) && job.aiSkills.length
     ? job.aiSkills
     : stringArray(job?.skills).map((name) => ({ name, category: 'hard', requirement: 1 }));
+	const companyIdentity = job?.companyId
+		? {
+			companyId: String(job.companyId),
+			companyNameNormalized: text(job.companyNameNormalized),
+			companyDomain: text(job.companyDomain),
+			companyIdentitySource: text(job.companyIdentitySource),
+			companyIdentityVersion: Number(job.companyIdentityVersion) || 1,
+		}
+		: deriveCompanyIdentity(job, { seed: job?._id || job?.jobId });
 
   return {
     active: job?.active !== false,
     catalog,
     title,
     companyName: text(company?.name),
+		companyId: companyIdentity.companyId,
     companyTags: stringArray(company?.tags),
     location: text(details?.position || job?.location),
     workMode: text(details?.remote || job?.workMode),
+		employmentType: text(details?.time || job?.employmentType),
     seniority: stringArray(details?.seniority),
     titleRoles: stringArray(job?.titleScanned),
     source: text(job?.source) || 'Other',
     postedAt,
     extensionV2: isExtensionV2Job(job),
 		version: text(job?.version),
-		rankingSchemaVersion: 3,
+		rankingSchemaVersion: 4,
     aiExtracted: Array.isArray(job?.aiSkills) && job.aiSkills.length > 0,
     aiSkills,
     rankSkills: compactRankingSkills(aiSkills),
-    card: compactJobCard(job, catalog),
+		card: compactJobCard({ ...job, ...companyIdentity }, catalog),
   };
 }
 

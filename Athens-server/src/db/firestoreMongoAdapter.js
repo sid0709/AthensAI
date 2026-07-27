@@ -484,6 +484,10 @@ function seedFromFilter(filter) {
 	return out;
 }
 
+function resolveUpsertDocumentId(name, filter, seed = seedFromFilter(filter)) {
+	return seed._id ?? deterministicId(name, filter) ?? new ObjectId();
+}
+
 function mutateUpdatePath(target, path, arrayFilters, updater) {
 	const parts = String(path).split(".");
 	function visit(node, index) {
@@ -826,12 +830,27 @@ class FirestoreCollection {
 	async updateOne(filter, update, options = {}) {
 		let found = await this.findOne(filter);
 		if (!found && !options.upsert) return { acknowledged: true, matchedCount: 0, modifiedCount: 0 };
-		if (!found) found = { ...seedFromFilter(filter), ...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}), _id: deterministicId(this.collectionName, filter) || new ObjectId() };
+		if (!found) {
+			const seed = seedFromFilter(filter);
+			found = {
+				...seed,
+				...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}),
+				// Exact-id conditional upserts (leases, identity claims, registries)
+				// must target that document. Replacing it with a fresh ObjectId makes
+				// every retry insert a different record and defeats atomic claiming.
+				_id: resolveUpsertDocumentId(this.collectionName, filter, seed),
+			};
+		}
 		const id = String(comparable(found._id));
 		let inserting = false;
 		let matched = false;
 		const outboxRef = this.sourceCatalog ? this.db.firestore.collection("search_outbox").doc() : null;
 		await this.db.firestore.runTransaction(async (transaction) => {
+			// Firestore may rerun this callback after a contention conflict. Reset
+			// attempt-local flags so a retried conditional upsert cannot report the
+			// abandoned first attempt as a successful insert.
+			inserting = false;
+			matched = false;
 			const ref = this.ref.doc(id);
 			const snapshot = await transaction.get(ref);
 			let current;
@@ -918,6 +937,38 @@ class FirestoreCollection {
 		for (const doc of docs) await this.deleteOne({ _id: doc._id });
 		return { acknowledged: true, deletedCount: docs.length };
 	}
+	/** Batch exact-document-id deletes used by one-time maintenance cleanup. */
+	async bulkDeleteByIds(ids) {
+		const uniqueIds = [...new Set(ids.map((id) => String(comparable(id))))];
+		if (!uniqueIds.length) return { acknowledged: true, deletedCount: 0 };
+		let deletedCount = 0;
+		const outboxIds = [];
+		// Keep well below Firestore's 500-write limit: a logical delete may also
+		// remove unique-key reservations and create a search outbox record.
+		for (let offset = 0; offset < uniqueIds.length; offset += 100) {
+			const chunk = uniqueIds.slice(offset, offset + 100);
+			const refs = chunk.map((id) => this.ref.doc(id));
+			const snapshots = await this.db.firestore.getAll(...refs);
+			const batch = this.db.firestore.batch();
+			for (let index = 0; index < snapshots.length; index += 1) {
+				const snapshot = snapshots[index];
+				if (!snapshot.exists) continue;
+				const doc = decodeDoc(snapshot.id, snapshot.data());
+				if (this.sourceCatalog && doc.sourceCatalog !== this.sourceCatalog) continue;
+				batch.delete(refs[index]);
+				for (const reservation of firestoreUniqueReservations(this.collectionName, doc, snapshot.id)) {
+					batch.delete(this.db.firestore.collection("unique_reservations").doc(reservation.id));
+				}
+				const outboxId = this._outbox(batch, snapshot.id, "delete");
+				if (outboxId) outboxIds.push(outboxId);
+				deletedCount += 1;
+			}
+			await batch.commit();
+		}
+		this._invalidateCaches();
+		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
+		return { acknowledged: true, deletedCount };
+	}
 	async countDocuments(filter = {}) {
 		if (filter?._id && !isPlain(filter._id)) return (await this._read(filter)).length;
 		const normalized = this._filterWithCatalog(filter);
@@ -992,6 +1043,53 @@ class FirestoreCollection {
 				for (const [path, value] of Object.entries(update.$addToSet || {})) {
 					const values = isPlain(value) && Array.isArray(value.$each) ? value.$each : [value];
 					if (values.length) setPath(data, path, FieldValue.arrayUnion(...values.map(encode)));
+				}
+				batch.set(ref, data, { merge: true });
+			}
+			await batch.commit();
+		}
+		this._invalidateCaches();
+		return {
+			acknowledged: true,
+			modifiedCount: rows.length - upsertedCount,
+			upsertedCount,
+		};
+	}
+	/** Batch exact-document-id upserts used by one-time maintenance registries. */
+	async bulkUpsertById(operations) {
+		const rows = operations.map((operation) => {
+			const spec = operation?.updateOne;
+			const id = spec?.filter?._id;
+			const exactIdFilter = spec?.filter && Object.keys(spec.filter).length === 1;
+			if (
+				!id || !exactIdFilter || !spec?.upsert || !spec?.update ||
+				Object.keys(spec.update).some((key) => !['$setOnInsert', '$set', '$max'].includes(key))
+			) {
+				throw new Error(`bulkUpsertById received an unsupported ${this.collectionName} operation`);
+			}
+			return { spec, ref: this.ref.doc(String(comparable(id))) };
+		});
+		let upsertedCount = 0;
+		for (let offset = 0; offset < rows.length; offset += 400) {
+			const chunk = rows.slice(offset, offset + 400);
+			const snapshots = await this.db.firestore.getAll(...chunk.map((row) => row.ref));
+			const batch = this.db.firestore.batch();
+			for (let index = 0; index < chunk.length; index += 1) {
+				const { spec, ref } = chunk[index];
+				const snapshot = snapshots[index];
+				const inserting = !snapshot.exists;
+				if (inserting) upsertedCount += 1;
+				const update = spec.update;
+				const data = encode({
+					...(inserting ? update.$setOnInsert || {} : {}),
+					...(update.$set || {}),
+				});
+				const current = snapshot.exists ? decodeFirestoreValue(snapshot.data()) : {};
+				for (const [path, value] of Object.entries(update.$max || {})) {
+					const currentValue = getPath(current, path);
+					if (currentValue == null || comparable(value) > comparable(currentValue)) {
+						setPath(data, path, encode(value));
+					}
 				}
 				batch.set(ref, data, { merge: true });
 			}
@@ -1114,4 +1212,5 @@ export const firestoreAdapterTest = {
 	collectFilterFields,
 	canTryCompositeQuery,
 	conjunctiveDocumentIds,
+	resolveUpsertDocumentId,
 };

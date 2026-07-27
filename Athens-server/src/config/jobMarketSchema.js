@@ -1,5 +1,5 @@
 /** Current job_market document schema version. */
-export const JOB_MARKET_MODEL_VERSION = '2026.07.07';
+export const JOB_MARKET_MODEL_VERSION = '2026.07.27-company-v1';
 
 /**
  * Ingest provenance for jobs uploaded by extension-v2.

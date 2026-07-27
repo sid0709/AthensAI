@@ -88,6 +88,7 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
     must.push({ key: 'postedAt', range });
   }
   if (listBody['details.remote']) must.push(matchKeyword('workMode', listBody['details.remote']));
+	if (listBody['details.time']) must.push(matchKeyword('employmentType', listBody['details.time']));
   if (listBody['details.seniority']) {
     must.push(matchKeyword('seniority', String(listBody['details.seniority']).split(',').map((v) => v.trim()).filter(Boolean)));
   }

@@ -10,6 +10,7 @@ import {
 	dropLegacyUniqueApplyLinkIndex,
 } from "../services/jobMarketIndexes.js";
 import { migrateAllExternalScrapedJobsToMarket } from "../services/promoteExternalJobToMarket.js";
+import { backfillJobIdentityRegistry } from "../services/jobIdentityDedupe.js";
 import { createFirestoreMongoAdapter } from "./firestoreMongoAdapter.js";
 
 let mongoClient;
@@ -48,6 +49,11 @@ let userSkillsCollection;
 let skillDictionaryCollection;
 // 3rd-party scraped jobs ingested via the expose API (separate from job_market).
 let externalScrapedJobsCollection;
+// Canonical employer registry used by grouped Job Search.
+let companiesCollection;
+let companyAliasesCollection;
+// Atomic 30-day company/title reservations shared by every job ingest path.
+let jobIdentityRegistryCollection;
 /** Canonical AI spend ledger written by ai-bff. */
 let aiApiUsageCollection;
 /** @deprecated Alias — prefer aiApiUsageCollection */
@@ -74,6 +80,22 @@ async function ensureExternalScrapedJobsIndexes() {
 		{ matchScoreStatus: 1, createdAt: -1 },
 		{ partialFilterExpression: { matchScoreStatus: "pending" } },
 	);
+}
+
+async function ensureJobIdentityRegistryIndexes() {
+	if (!jobIdentityRegistryCollection) return;
+	await jobIdentityRegistryCollection.createIndex({ acceptedAt: -1 });
+}
+
+async function ensureCompanyIdentityIndexes() {
+	if (companiesCollection) {
+		await companiesCollection.createIndex({ domain: 1 });
+		await companiesCollection.createIndex({ normalizedName: 1 });
+	}
+	if (companyAliasesCollection) {
+		await companyAliasesCollection.createIndex({ companyId: 1 });
+		await companyAliasesCollection.createIndex({ kind: 1, normalizedValue: 1 });
+	}
 }
 
 async function ensureMailCollectionsIndexes() {
@@ -183,10 +205,24 @@ async function initMongo() {
 		userSkillsCollection = db.collection('user_skills');
 		skillDictionaryCollection = db.collection('skill_dictionary');
 		externalScrapedJobsCollection = db.collection('external_scraped_jobs');
+		companiesCollection = db.collection('companies');
+		companyAliasesCollection = db.collection('company_aliases');
+		jobIdentityRegistryCollection = db.collection('job_identity_registry');
 		aiApiUsageCollection = db.collection(AI_API_USAGE_COLLECTION);
 		llmCallLogCollection = aiApiUsageCollection;
 		vendorTasksCollection = db.collection('vendor_tasks');
 		bidReviewEventsCollection = db.collection('bid_review_events');
+		await ensureJobIdentityRegistryIndexes();
+		await ensureCompanyIdentityIndexes();
+		const identityBackfill = await backfillJobIdentityRegistry(
+			jobsCollection,
+			jobIdentityRegistryCollection,
+		);
+		if (!identityBackfill.alreadyComplete) {
+			console.log(
+				`[job-identity] backfilled ${identityBackfill.identities || 0} identities from ${identityBackfill.scanned || 0} jobs`,
+			);
+		}
 		// Prime the most common first paint immediately. If the UI arrives while
 		// this is still in flight, the adapter coalesces it onto the same promise.
 		void Promise.all([
@@ -245,6 +281,9 @@ async function initMongo() {
 	userSkillsCollection = db.collection('user_skills');
 	skillDictionaryCollection = db.collection('skill_dictionary');
 	externalScrapedJobsCollection = db.collection('external_scraped_jobs');
+	companiesCollection = db.collection('companies');
+	companyAliasesCollection = db.collection('company_aliases');
+	jobIdentityRegistryCollection = db.collection('job_identity_registry');
 	aiApiUsageCollection = db.collection(AI_API_USAGE_COLLECTION);
 	llmCallLogCollection = aiApiUsageCollection;
 	try {
@@ -263,6 +302,17 @@ async function initMongo() {
 	await ensureMailCollectionsIndexes();
 	await ensureMatchScoreIndexes();
 	await ensureExternalScrapedJobsIndexes();
+	await ensureJobIdentityRegistryIndexes();
+	await ensureCompanyIdentityIndexes();
+	const identityBackfill = await backfillJobIdentityRegistry(
+		jobsCollection,
+		jobIdentityRegistryCollection,
+	);
+	if (!identityBackfill.alreadyComplete) {
+		console.log(
+			`[job-identity] backfilled ${identityBackfill.identities || 0} identities from ${identityBackfill.scanned || 0} jobs`,
+		);
+	}
 	try {
 		await db.collection('monitor_current_status').createIndex({ component: 1 }, { unique: true });
 		await db.collection('monitor_samples').createIndex({ checkedAt: 1 });
@@ -274,7 +324,7 @@ async function initMongo() {
 		console.warn('[monitoring] index creation failed', err.message);
 	}
 	// applyLink is no longer globally unique: Extension may add a non-v2 copy of
-	// a v2 job, and createJob dedupes URL/content within a 30-day window only.
+	// a v2 job, while URL and global company/title dedupe are time-bounded in code.
 	// Drop the legacy unique index before ensureJobMarketIndexes recreates a
 	// non-unique applyLink index (same key pattern cannot coexist).
 	try {
@@ -376,6 +426,8 @@ async function closeMongo() {
 		mongoCloudClient = null;
 	}
 	accountInfoCloudCollection = null;
+	companiesCollection = null;
+	companyAliasesCollection = null;
 	vendorTasksCollection = null;
 	bidReviewEventsCollection = null;
 	cloudMirrorConfigured = false;
@@ -418,6 +470,9 @@ export {
 	userSkillsCollection,
 	skillDictionaryCollection,
 	externalScrapedJobsCollection,
+	companiesCollection,
+	companyAliasesCollection,
+	jobIdentityRegistryCollection,
 	aiApiUsageCollection,
 	llmCallLogCollection,
 	closeMongo

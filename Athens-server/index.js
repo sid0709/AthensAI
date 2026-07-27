@@ -33,6 +33,7 @@ import {
 	isQueryTimeRankingIndexEnabled,
 } from "./src/config/graphAndVectorConfig.js";
 import { shutdownRankingPool, warmRankingPool } from "./src/services/matching/exactRerankPool.js";
+import { cleanupExistingJobIdentityDuplicates } from "./src/services/jobIdentityCleanup.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -86,6 +87,16 @@ const useCluster = workerCount > 1;
 
 let databaseReady = false;
 
+async function cleanupHistoricalJobDuplicates() {
+	const result = await cleanupExistingJobIdentityDuplicates();
+	if (!result.alreadyComplete) {
+		console.log(
+			`[job-identity] historical cleanup scanned=${result.scanned || 0} ` +
+			`kept=${result.kept || 0} removed=${result.removed || 0}`,
+		);
+	}
+}
+
 function createApp() {
 	const app = express();
 	app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || (process.env.NODE_ENV === "production" ? "10mb" : "100mb") }));
@@ -119,6 +130,14 @@ function createApp() {
 		} catch {
 			return res.status(503).json({ ok: false, databaseReady: false, error: "database unavailable" });
 		}
+	});
+	app.use((req, res, next) => {
+		if (databaseReady) return next();
+		return res.status(503).json({
+			success: false,
+			retryable: true,
+			error: "Athens-server is finishing startup maintenance",
+		});
 	});
 	app.use("/internal/tasks", internalTaskRoutes);
 
@@ -178,6 +197,9 @@ async function startBackgroundWorkers() {
 		await initJobRankingCollection();
 	}
 	databaseReady = true;
+	void cleanupHistoricalJobDuplicates().catch((error) => {
+		console.error("[job-identity] historical cleanup failed:", error?.message || error);
+	});
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
 		startJobAnalysisWorker();
 		if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
@@ -187,6 +209,20 @@ async function startBackgroundWorkers() {
 }
 
 async function startHttpWorker({ clustered }) {
+	const app = createApp();
+	const server = http.createServer(app);
+	if (!clustered) {
+		server.on("error", (err) => {
+			console.error(`[athens] listen error:`, err.message);
+			process.exit(1);
+		});
+		server.listen(port, host, () => {
+			console.log(`Server running on http://${host}:${port} (pid ${process.pid})`);
+			console.log(`Socket.IO on ws://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+			console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
+		});
+	}
+
 	await initMongo();
 	await initRedis({ force: isQueryTimeRankingIndexEnabled() });
 	if (isQueryTimeRankingIndexEnabled()) {
@@ -198,10 +234,13 @@ async function startHttpWorker({ clustered }) {
 		}
 	}
 	databaseReady = true;
+	if (!clustered) {
+		void cleanupHistoricalJobDuplicates().catch((error) => {
+			console.error("[job-identity] historical cleanup failed:", error?.message || error);
+		});
+	}
 	if (!clustered && process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
-	const app = createApp();
-	const server = http.createServer(app);
 	await initSocket(server, { clustered });
 
 	let shuttingDown = false;
@@ -233,18 +272,7 @@ async function startHttpWorker({ clustered }) {
 	process.on("SIGTERM", () => void shutdown("SIGTERM"));
 	process.on("SIGINT", () => void shutdown("SIGINT"));
 
-	if (!clustered) {
-		server.on("error", (err) => {
-			console.error(`[athens] listen error:`, err.message);
-			process.exit(1);
-		});
-		server.listen(port, host, () => {
-			console.log(`Server running on http://${host}:${port} (pid ${process.pid})`);
-			console.log(`Socket.IO on ws://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
-			console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
-		});
-		return;
-	}
+	if (!clustered) return;
 
 	// Sticky worker: the primary owns the listen socket; workers receive handed-off connections.
 	console.log(`[athens] cluster worker ready (pid ${process.pid})`);

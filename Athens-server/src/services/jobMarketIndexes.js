@@ -5,10 +5,11 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 	await Promise.all([
 		jobsCollection.createIndex({ postedAt: -1 }),
 		jobsCollection.createIndex({ url: 1 }),
-		// Non-unique: same applyLink may exist as v2 + non-v2, and again after 30 days.
+		// Non-unique: URL policy remains app-level and time-bounded for extensions.
 		jobsCollection.createIndex({ applyLink: 1 }),
 		jobsCollection.createIndex({ 'status.applier': 1 }),
 		jobsCollection.createIndex({ source: 1, postedAt: -1 }),
+		jobsCollection.createIndex({ companyId: 1, postedAt: -1 }),
 		jobsCollection.createIndex({ version: 1, applyLink: 1 }),
 		// Match-score fan-out worker claims pending jobs; partial index keeps it
 		// tiny (most jobs are 'scored' or lack the field entirely).
@@ -32,7 +33,7 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 
 /**
  * Drop the legacy unique applyLink index so Extension can mirror a v2 job
- * under the same link, and so URL dedupe can be 30-day (app-level) instead of forever.
+ * under the same link, and so URL dedupe can remain app-level instead of forever.
  */
 export async function dropLegacyUniqueApplyLinkIndex(jobsCollection) {
 	if (!jobsCollection) return { dropped: false };
@@ -97,7 +98,7 @@ export async function backfillMissingJobSourceFields(jobsCollection) {
  * Manual/ops helper: remove duplicate jobs sharing the same `applyLink`,
  * keeping only the latest one per link (by postedAt, then _createdAt, then _id).
  * Not run on startup — Extension and extension-v2 may intentionally share an
- * applyLink (v2 vs non-v2), and createJob enforces a 30-day window instead.
+ * applyLink (v2 vs non-v2), and createJob enforces its URL policy in code.
  * Jobs without a non-empty string `applyLink` are left untouched.
  */
 export async function dedupeJobMarketByApplyLink(jobsCollection) {

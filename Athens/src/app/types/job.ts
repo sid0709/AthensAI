@@ -49,6 +49,8 @@ export interface Job {
   id: string;
   /** MongoDB _id when loaded from Athens-server API */
   backendId?: string;
+	/** Stable canonical employer identity used by grouped Job Search. */
+	companyId: string;
   title: string;
   company: string;
   companyUrl: string;
@@ -89,6 +91,19 @@ export interface Job {
   version?: string | null;
   /** Data catalog: job_market (default) or external_scraped_jobs. */
   catalog?: "market" | "external";
+}
+
+export interface CompanyJobGroup {
+	companyId: string;
+	company: {
+		name: string;
+		logoUrl?: string;
+		url?: string;
+	};
+	jobs: Job[];
+	/** Present only for Beta-tier grouped responses. */
+	matchingJobCount?: number;
+	nextMemberOffset?: number | null;
 }
 
 export function isExternalJob(job: Pick<Job, "catalog">): boolean {

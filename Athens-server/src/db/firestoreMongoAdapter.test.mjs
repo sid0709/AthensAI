@@ -11,6 +11,7 @@ const {
 	collectFilterFields,
 	canTryCompositeQuery,
 	conjunctiveDocumentIds,
+	resolveUpsertDocumentId,
 } = firestoreAdapterTest;
 
 test("Firestore compatibility query plan translates bounded indexed filters", () => {
@@ -57,6 +58,16 @@ test("Firestore compatibility extracts Algolia document IDs for authoritative po
 	assert.deepEqual(
 		conjunctiveDocumentIds({ $and: [{ sourceCatalog: "market" }, { _id: { $in: [first, second] } }] }),
 		[first.toHexString(), second.toHexString()],
+	);
+});
+
+test("Firestore compatibility preserves explicit IDs for conditional upserts", () => {
+	assert.equal(
+		resolveUpsertDocumentId("job_identity_registry", {
+			_id: "job_identity_backfill_v1",
+			leaseUntil: { $lt: "2026-07-27T10:00:00.000Z" },
+		}),
+		"job_identity_backfill_v1",
 	);
 });
 

@@ -2,12 +2,18 @@ import React, { useMemo } from "react";
 import { JobCard } from "./JobCard";
 import { cn } from "../../../lib/utils";
 import { alignJobScoreForDisplay } from "../../../lib/skill-match";
-import type { Job } from "../../../types";
+import type { CompanyJobGroup, Job } from "../../../types";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 import { useProfileMatchSkills } from "../hooks/useProfileMatchSkills";
+import { CompanyJobCarousel } from "./CompanyJobCarousel";
 
 type JobListViewProps = {
-  jobs: Job[];
+  groups: CompanyJobGroup[];
+  isBeta?: boolean;
+  activeJobIds?: Record<string, string>;
+  onActiveJobChange?: (companyId: string, jobId: string) => void;
+  onLoadCompanyMembers?: (companyId: string) => void;
+  memberLoadingIds?: Set<string>;
   layout?: "list" | "grid";
   selectedIds?: Set<string>;
   onSelectJob?: (id: string, shiftKey: boolean) => void;
@@ -26,7 +32,12 @@ type JobListViewProps = {
 };
 
 export function JobListView({
-  jobs,
+  groups,
+  isBeta = false,
+  activeJobIds,
+  onActiveJobChange,
+  onLoadCompanyMembers,
+  memberLoadingIds,
   layout = "list",
   selectedIds,
   onSelectJob,
@@ -44,12 +55,15 @@ export function JobListView({
   onGenerateResume,
 }: JobListViewProps) {
   const { matchContext } = useProfileMatchSkills();
-  const displayJobs = useMemo(
-    () => jobs.map((job) => alignJobScoreForDisplay(job, matchContext)),
-    [jobs, matchContext],
+  const displayGroups = useMemo(
+    () => groups.map((group) => ({
+      ...group,
+      jobs: group.jobs.map((job) => alignJobScoreForDisplay(job, matchContext)),
+    })),
+    [groups, matchContext],
   );
 
-  if (displayJobs.length === 0) {
+  if (displayGroups.length === 0) {
     return (
       <div className="py-16 text-center text-muted-foreground text-sm">
         No jobs match your filters.
@@ -66,26 +80,56 @@ export function JobListView({
           : "flex flex-col gap-4",
       )}
     >
-      {displayJobs.map((job) => (
-        <JobCard
-          key={job.id}
-          job={job}
-          selected={selectedIds?.has(job.id)}
-          onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
-          showScores={showScores}
-          bookmarked={bookmarkedIds?.has(job.id)}
-          onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
-          statusPending={isJobPending?.(job.id)}
-          onApply={onApply ? () => onApply(job) : undefined}
-          onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(job) : undefined}
-          onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
-          onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
-          onCancel={onCancel ? () => onCancel(job) : undefined}
-          onJobScoresUpdated={onJobScoresUpdated}
-          resumeState={resumeStates?.[job.id]}
-          onGenerateResume={onGenerateResume ? () => onGenerateResume(job) : undefined}
-        />
-      ))}
+      {displayGroups.map((group) => {
+        const job = group.jobs[0];
+        if (!job) return null;
+        if (isBeta) {
+          return (
+            <CompanyJobCarousel
+              key={group.companyId}
+              group={group}
+              activeJobId={activeJobIds?.[group.companyId]}
+              onActiveJobChange={(jobId) => onActiveJobChange?.(group.companyId, jobId)}
+              selectedIds={selectedIds}
+              onSelectJob={onSelectJob}
+              showScores={showScores}
+              bookmarkedIds={bookmarkedIds}
+              onToggleBookmark={onToggleBookmark}
+              isJobPending={isJobPending}
+              onApply={onApply}
+              onMarkBidReady={onMarkBidReady}
+              onMarkScheduled={onMarkScheduled}
+              onMarkDeclined={onMarkDeclined}
+              onCancel={onCancel}
+              onJobScoresUpdated={onJobScoresUpdated}
+              resumeStates={resumeStates}
+              onGenerateResume={onGenerateResume}
+              onLoadMore={onLoadCompanyMembers}
+              loadingMore={memberLoadingIds?.has(group.companyId)}
+            />
+          );
+        }
+        return (
+          <JobCard
+            key={group.companyId}
+            job={job}
+            selected={selectedIds?.has(job.id)}
+            onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
+            showScores={showScores}
+            bookmarked={bookmarkedIds?.has(job.id)}
+            onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
+            statusPending={isJobPending?.(job.id)}
+            onApply={onApply ? () => onApply(job) : undefined}
+            onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(job) : undefined}
+            onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
+            onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
+            onCancel={onCancel ? () => onCancel(job) : undefined}
+            onJobScoresUpdated={onJobScoresUpdated}
+            resumeState={resumeStates?.[job.id]}
+            onGenerateResume={onGenerateResume ? () => onGenerateResume(job) : undefined}
+          />
+        );
+      })}
     </div>
   );
 }

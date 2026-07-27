@@ -25,6 +25,9 @@ type PaginationBarProps = {
   align?: "left" | "center" | "between";
   detailed?: boolean;
   loading?: boolean;
+  unitLabel?: string;
+  secondaryTotal?: number | null;
+  secondaryLabel?: string;
 };
 
 function pageNumbers(current: number, total: number): (number | "ellipsis")[] {
@@ -52,6 +55,9 @@ export function PaginationBar({
   align = "between",
   detailed = false,
   loading = false,
+  unitLabel = "results",
+  secondaryTotal,
+  secondaryLabel = "matching jobs",
 }: PaginationBarProps) {
   const totalPages = total === null ? null : Math.max(1, Math.ceil(total / pageSize));
   const showingCount =
@@ -84,7 +90,7 @@ export function PaginationBar({
             : total === 0
               ? "No results"
             : detailed
-              ? `Showing ${showingCount} of ${total.toLocaleString()} · Page ${page} / ${totalPages}`
+              ? `Showing ${showingCount} of ${total.toLocaleString()} ${unitLabel}${secondaryTotal == null ? "" : ` · ${secondaryTotal.toLocaleString()} ${secondaryLabel}`} · Page ${page} / ${totalPages}`
               : `${start}–${end} of ${total}`}
         </p>
         {onPageSizeChange && (

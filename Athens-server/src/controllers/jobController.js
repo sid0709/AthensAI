@@ -2,6 +2,9 @@ import { ObjectId } from "mongodb";
 import { mergeJobStatusRows } from "@nextoffer/shared/job-status";
 import {
 	jobsCollection,
+	jobIdentityRegistryCollection,
+	companiesCollection,
+	companyAliasesCollection,
 	externalScrapedJobsCollection,
 	personalInfoCollection,
 	companyCategoryCollection,
@@ -50,7 +53,17 @@ import {
 	readMaterializedJobStatusCounts,
 	mutateJobStatus,
 } from '../services/jobStatusProjectionService.js';
-import { findDuplicateByContent, findDuplicateByUrl } from '../services/jobDuplicateLookup.js';
+import { findDuplicateByUrl } from '../services/jobDuplicateLookup.js';
+import {
+	claimJobIdentity,
+	finalizeJobIdentityClaim,
+	releaseJobIdentityClaim,
+} from '../services/jobIdentityDedupe.js';
+import { applyCompanyIdentity, resolveCompanyIdentity } from '../services/companyIdentity.js';
+import {
+	listCompanyGroupedJobs,
+	listCompanyGroupMembers,
+} from '../services/companyGroupedJobsService.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -199,6 +212,8 @@ const isWithinDuplicateWindow = (existingJob, newPostedAt) => {
 };
 
 export async function createJob(req, res) {
+	let identityClaim = null;
+	let jobInserted = false;
 	try {
 		const job = req.body;
 		if (!job) return res.status(400).json({ error: 'Missing job in request body' });
@@ -226,10 +241,11 @@ export async function createJob(req, res) {
 		const fromExtensionV2 =
 			clientHeader === EXTENSION_V2_CLIENT_HEADER ||
 			incomingVersion === JOB_MARKET_EXTENSION_VERSION_V2;
-		// Extension (non-v2) only dedupes against non-v2 jobs; extension-v2 checks all jobs.
+		// Preserve the legacy URL scope. Company/title identity dedupe below is
+		// intentionally global across Extension, extension-v2, and exposed jobs.
 		const duplicateScope = fromExtensionV2 ? {} : excludeExtensionV2JobsFilter();
 
-		// Duplicate = URL/applyLink equals OR (title ∧ company ∧ JD), within 30 days.
+		// Existing URL protection remains additive to company/title identity dedupe.
 		const urlCandidates = [
 			...new Set(
 				[job.applyLink, job.url]
@@ -243,6 +259,7 @@ export async function createJob(req, res) {
 				return res.status(200).json({
 					success: false,
 					created: false,
+					duplicate: true,
 					reason: 'Job with this URL has been posted within the last 30 days',
 				});
 			}
@@ -250,20 +267,19 @@ export async function createJob(req, res) {
 
 		const companyName = typeof job.company?.name === 'string' ? job.company.name.trim() : '';
 		const description = typeof job.description === 'string' ? job.description.trim() : '';
-		if (companyName && description) {
-			const existingByContent = await findDuplicateByContent(jobsCollection, {
-				duplicateScope,
-				title,
-				companyName,
-				description,
+		identityClaim = await claimJobIdentity(jobIdentityRegistryCollection, {
+			companyName,
+			title,
+			acceptedAt: now,
+			source: fromExtensionV2 ? 'extension-v2' : 'extension',
+		});
+		if (identityClaim.duplicate) {
+			return res.status(200).json({
+				success: false,
+				created: false,
+				duplicate: true,
+				reason: 'Duplicate job with this company and title was added within the last 30 days',
 			});
-			if (existingByContent && isWithinDuplicateWindow(existingByContent, postedAt)) {
-				return res.status(200).json({
-					success: false,
-					created: false,
-					reason: 'Job with this company, title, and description already exists within the last 30 days',
-				});
-			}
 		}
 
 		stripScraperOnlyJobFields(job);
@@ -272,6 +288,18 @@ export async function createJob(req, res) {
 		job.description = description;
 		if (job.company && typeof job.company === 'object') {
 			job.company.name = companyName;
+		}
+		const companyIdentity = await resolveCompanyIdentity(job, {
+			companiesCollection,
+			companyAliasesCollection,
+			seed: job.id || job.applyLink || job.url,
+		});
+		applyCompanyIdentity(job, companyIdentity);
+		if (companyIdentity.companyIdentityConflict) {
+			console.warn('[company-identity] conflicting aliases; trusted domain selected', {
+				companyId: companyIdentity.companyId,
+				company: companyName,
+			});
 		}
 
 		// Never trust arbitrary client versions — only stamp known extension-v2.
@@ -318,8 +346,17 @@ export async function createJob(req, res) {
 		}
 
 		const result = jobsCollection ? await jobsCollection.insertOne(job) : null;
+		jobInserted = Boolean(result?.insertedId);
 
 		if (result?.insertedId) {
+			await finalizeJobIdentityClaim(jobIdentityRegistryCollection, identityClaim, {
+				jobId: result.insertedId,
+				source: fromExtensionV2 ? 'extension-v2' : 'extension',
+			}).catch((error) => {
+				// The acceptedAt claim itself already blocks duplicates; final metadata
+				// is best-effort and must not turn a successful insert into a 500.
+				console.warn('[job-identity] finalize failed:', error?.message || error);
+			});
 			void indexJobInRedis(String(result.insertedId), job.skillsNormalized, job.skillTokens).catch(() => {});
 			void indexOneJobRanking({ ...job, _id: result.insertedId }).catch(() => {});
 		}
@@ -330,6 +367,11 @@ export async function createJob(req, res) {
 			insertedId: result ? result.insertedId : null,
 		});
 	} catch (err) {
+		if (identityClaim?.claimed && !jobInserted) {
+			await releaseJobIdentityClaim(jobIdentityRegistryCollection, identityClaim).catch((releaseError) => {
+				console.warn('[job-identity] release after failed /jobs insert failed:', releaseError?.message || releaseError);
+			});
+		}
 		console.error('POST /api/jobs error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
@@ -468,6 +510,13 @@ export async function getJobs(req, res) {
 	try {
 		if (!jobsCollection) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+		if (req.body.groupBy === 'company' || req.body.groupByCompany === true) {
+			const grouped = await listCompanyGroupedJobs(req.body);
+			if (grouped?.unavailable) {
+				return res.status(503).json({ success: false, error: 'Grouped Job Search is temporarily unavailable' });
+			}
+			if (!grouped?.disabled) return res.json(grouped);
 		}
 		// Status tabs are refreshed by the dedicated /jobs/list/counts request.
 		// Never hold job cards behind a separate Firestore count read.
@@ -661,6 +710,21 @@ export async function getJobs(req, res) {
 
 	} catch (err) {
 		console.error('GET /api/jobs error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function getCompanyGroupMembers(req, res) {
+	try {
+		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
+		const result = await listCompanyGroupMembers(req.body || {});
+		if (result?.disabled) return res.status(404).json({ success: false, error: 'Company grouping is disabled' });
+		if (result?.unavailable) return res.status(503).json({ success: false, error: 'Grouped Job Search is temporarily unavailable' });
+		if (result?.forbidden) return res.status(403).json({ success: false, error: 'Beta tier required', betaRequired: true });
+		if (result?.notFound) return res.status(404).json({ success: false, error: 'Company group not found' });
+		return res.json(result);
+	} catch (err) {
+		console.error('POST /api/jobs/list/company-members error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }

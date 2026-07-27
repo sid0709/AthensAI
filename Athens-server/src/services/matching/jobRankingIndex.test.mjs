@@ -18,7 +18,9 @@ test('ranking payload carries indexed global filter fields', () => {
   assert.equal(payload.card.title, 'Senior Engineer');
   assert.equal(payload.card.company.name, 'Athens');
   assert.equal(payload.card.status, undefined);
-  assert.equal(payload.rankingSchemaVersion, 3);
+  assert.equal(payload.rankingSchemaVersion, 4);
+  assert.match(payload.companyId, /^cmp_/);
+  assert.equal(payload.card.companyId, payload.companyId);
   assert.deepEqual(payload.rankSkills, [['React', 0, 5]]);
 });
 

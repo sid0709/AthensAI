@@ -82,6 +82,8 @@ async function backfillCollection(collection, catalog) {
     projection: {
       title: 1, jobTitle: 1, company: 1, companyName: 1, location: 1, details: 1,
       source: 1, postedAt: 1, createdAt: 1, _createdAt: 1, version: 1, extensionV2: 1,
+			companyId: 1, companyNameNormalized: 1, companyDomain: 1,
+			companyIdentitySource: 1, companyIdentityVersion: 1,
       aiSkills: 1, skills: 1, titleScanned: 1, active: 1, companyIcon: 1, companyLink: 1,
       applyLink: 1, jobLink: 1, sender: 1, postedAgo: 1, tags: 1, applicants: 1,
       skillAnalysis: 1, aiSkillStatus: 1, aiSkillExtractedAt: 1,

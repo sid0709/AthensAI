@@ -27,6 +27,7 @@ type JobListStickyBarProps = {
   page: number;
   pageSize: number;
   total: number;
+  totalJobs?: number | null;
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
   pageSizeOptions?: number[];
@@ -58,6 +59,7 @@ export function JobListStickyBar({
   page,
   pageSize,
   total,
+  totalJobs,
   onPageChange,
   onPageSizeChange,
   pageSizeOptions = [10, 25, 50, 100, 250, 500],
@@ -101,6 +103,8 @@ export function JobListStickyBar({
             onPageSizeChange={onPageSizeChange}
             pageSizeOptions={pageSizeOptions}
             detailed
+            unitLabel="companies"
+            secondaryTotal={totalJobs}
             loading={loading}
             className="py-2 px-0 flex-1 min-w-0"
           />

@@ -5,6 +5,7 @@ import { JOB_TITLE_SCAN_ROLES } from "../data/jobTitleRoles";
 
 export type JobSortKey =
   | "newest"
+  | "oldest"
   | "matchScore"
   | "title";
 
@@ -108,6 +109,8 @@ function sortJobs(jobs: Job[], sort: JobSortKey) {
     switch (sort) {
       case "newest":
         return b.postedAt.localeCompare(a.postedAt);
+      case "oldest":
+        return a.postedAt.localeCompare(b.postedAt);
       case "matchScore":
         return b.scores.overall - a.scores.overall;
       case "title":
