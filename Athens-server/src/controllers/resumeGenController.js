@@ -13,6 +13,7 @@ import {
   resolveDefaultModel,
 } from "../services/llm/llmService.js";
 import { loadDecryptedAutoBidProfile } from "../services/autoBidProfileSecrets.js";
+import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.js";
 import { resumeGenLimiter } from "../utils/concurrency.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import {
@@ -568,8 +569,17 @@ export async function getGeneratorConfig(req, res) {
   try {
     const applierName = cleanString(req.query?.applierName);
     if (!applierName || !resumeGeneratorConfigCollection) return res.json({ success: true, config: null });
-    const doc = await resumeGeneratorConfigCollection.findOne({ applierName });
-    return res.json({ success: true, config: doc?.config ?? null, updatedAt: doc?.updatedAt ?? null });
+    const resolved = await loadGeneratorConfigRecord(applierName);
+    const doc = resolved?.record ?? null;
+    const updatedAt = doc?.updatedAt?.toDate instanceof Function
+      ? doc.updatedAt.toDate().toISOString()
+      : doc?.updatedAt ?? null;
+    return res.json({
+      success: true,
+      config: doc?.config ?? null,
+      updatedAt,
+      source: resolved?.source ?? null,
+    });
   } catch (err) {
     console.warn("GET /api/personal/resume-generator/config error:", err.message);
     return res.json({ success: false, config: null, error: err.message });

@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
+import { retryTransient } from "@/lib/transient-retry";
 import { JobSourceTitles } from '@/app/data/jobs/pub';
 import { JOB_TITLE_SCAN_ROLES } from "@/app/data/jobTitleRoles";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
@@ -58,7 +59,7 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   declined: 0,
 };
 
-const JOB_LIST_REQUEST_TIMEOUT_MS = 15_000;
+const JOB_LIST_REQUEST_TIMEOUT_MS = 30_000;
 
 const LIST_CACHE_TTL_MS = 60_000;
 const LIST_CACHE_MAX_ENTRIES = 200;
@@ -361,11 +362,14 @@ export function useJobsList(
 
     (async () => {
       try {
-        const res = (await request("/jobs/list", {
-          method: "POST",
-          body: listBody,
-          signal: controller.signal,
-        })) as ListResponse;
+        const res = await retryTransient(
+          () => request("/jobs/list", {
+            method: "POST",
+            body: listBody,
+            signal: controller.signal,
+          }) as Promise<ListResponse>,
+          { signal: controller.signal },
+        );
         if (cancelled) return;
         if (!applyResponse(res)) throw new Error("The jobs response was incomplete");
         cacheListResponse(cacheKey, res);
@@ -435,11 +439,14 @@ export function useJobsList(
     const loadCounts = async (attempt = 0) => {
       if (!cancelled) setCountsLoading(true);
       try {
-        const res = (await request("/jobs/list/counts", {
-          method: "POST",
-          body: countsBody,
-          signal: controller.signal,
-        })) as CountsResponse;
+        const res = await retryTransient(
+          () => request("/jobs/list/counts", {
+            method: "POST",
+            body: countsBody,
+            signal: controller.signal,
+          }) as Promise<CountsResponse>,
+          { signal: controller.signal },
+        );
         if (cancelled || !res?.success || !res.counts) return;
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
         if (res.warming && attempt < 4) {

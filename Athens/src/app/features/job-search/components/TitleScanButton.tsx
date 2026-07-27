@@ -67,9 +67,16 @@ export function TitleScanButton() {
     >
       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
       Analyze title
-      {pending != null && pending > 0 && (
-        <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
-          {pending > 999 ? "999+" : pending}
+      {pending != null && (
+        <span
+          className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold tabular-nums ${
+            pending === 0
+              ? "bg-muted text-muted-foreground"
+              : "bg-emerald-600 text-white"
+          }`}
+          aria-label={`${pending} jobs pending title analysis`}
+        >
+          {pending.toLocaleString()}
         </span>
       )}
     </Button>

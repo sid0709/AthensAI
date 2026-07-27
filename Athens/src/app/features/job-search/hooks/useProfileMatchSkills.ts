@@ -2,6 +2,7 @@ import { createContext, createElement, useCallback, useContext, useEffect, useSt
 import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
+import { retryTransient } from "@/lib/transient-retry";
 import {
   buildClientMatchContext,
   rescoreJobWithContext,
@@ -75,12 +76,16 @@ function useProfileMatchSkillsState(enabled = true) {
     if (!name || !enabled) return;
     setLoading(true);
     try {
-      const res = (await get(
-        `/personal/profile-match-skills?applierName=${encodeURIComponent(name)}&compact=1`,
-      )) as MatchSkillsResponse;
+      const res = await retryTransient(
+        () => get(
+          `/personal/profile-match-skills?applierName=${encodeURIComponent(name)}&compact=1`,
+        ) as Promise<MatchSkillsResponse>,
+      );
       if (res?.success) {
         applyProfileResponse(res);
       }
+    } catch (error) {
+      console.error("profile match skills fetch failed", error);
     } finally {
       setLoading(false);
     }

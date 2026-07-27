@@ -3,6 +3,7 @@ import type { DropdownOption } from "../adapters/ui";
 import { useNotify } from "../adapters/notify";
 import { useApi } from "@/api/useApi";
 import { API_BASE } from "@/lib/api-base";
+import { retryTransient } from "@/lib/transient-retry";
 import { useApplier } from "@/context/applier-context";
 import { buildResumeModel } from "../build-resume-model";
 import { templateById } from "../constants/templates";
@@ -408,16 +409,25 @@ export function useGeneratorPage() {
       };
     }
 
-    void get(`/personal/resume-generator/config?applierName=${encodeURIComponent(applierName)}`)
+    void retryTransient(
+      () => get(
+        `/personal/resume-generator/config?applierName=${encodeURIComponent(applierName)}`,
+      ) as Promise<{ success?: boolean; config?: Partial<GeneratorConfig> | null }>,
+    )
       .then((raw) => {
         const dbConfig = (raw as { success?: boolean; config?: Partial<GeneratorConfig> | null })?.config;
+        if (raw?.success === false) throw new Error("Could not load the saved Resume Generator configuration.");
         if (cancelled || externalLoadRef.current || !dbConfig || typeof dbConfig !== "object") return;
         const restored = mergeStoredConfig(dbConfig);
         configSaveRef.current.lastSavedKey = `${applierName}\u0000${JSON.stringify(restored)}`;
         setConfig(restored);
       })
-      .catch(() => undefined)
-      .finally(finishHydration);
+      .then(finishHydration)
+      .catch((error) => {
+        // A failed read must never make the temporary defaults eligible for an
+        // automatic remote save; that would overwrite a migrated config.
+        console.error("resume generator config load failed", error);
+      });
 
     return () => {
       cancelled = true;

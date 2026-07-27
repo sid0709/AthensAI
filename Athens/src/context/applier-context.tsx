@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useAuth } from "@/context/auth-context";
 import { API_BASE } from "@/lib/api-base";
+import { retryTransient } from "@/lib/transient-retry";
 
 export type ApplierAccount = {
   _id: unknown;
@@ -51,9 +52,19 @@ export function ApplierProvider({ children }: { children: ReactNode }) {
     (async () => {
       setApplierReady(false);
       try {
-        const res = await fetch(
-          `${API_BASE.replace(/\/$/, "")}/account_info/by/${encodeURIComponent(user.name)}`,
-        );
+        const res = await retryTransient(async () => {
+          const response = await fetch(
+            `${API_BASE.replace(/\/$/, "")}/account_info/by/${encodeURIComponent(user.name)}`,
+          );
+          if (!response.ok) {
+            const error = new Error(`Account request failed (${response.status})`) as Error & {
+              status?: number;
+            };
+            error.status = response.status;
+            throw error;
+          }
+          return response;
+        });
         const data = (await res.json()) as { success?: boolean; data?: ApplierAccount };
         if (cancelled) return;
         if (data?.success && data.data) {

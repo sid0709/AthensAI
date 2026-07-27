@@ -6,7 +6,11 @@
 import { randomUUID } from 'crypto';
 import { excludeExtensionV2JobsFilter } from '../../config/jobMarketSchema.js';
 import { jobsCollection } from '../../db/dataStore.js';
+import { getRedis, isRedisReady } from '../../db/redis.js';
+import { isBetaTier } from '../../lib/betaTier.js';
+import { getFirestoreDb } from '../firebase/firebaseAdmin.js';
 import { formatCostUsd } from '../llm/llmService.js';
+import { findAccountByApplierName } from '../mail/credentials.js';
 import {
   resolveExtractionAuth,
   extractAndPersistJobBatch,
@@ -30,15 +34,35 @@ const MARKET_CLAIM_PROJECTION = { title: 1, description: 1, jobDescription: 1, a
 let activeSession = null;
 let cancelRequested = false;
 const inflight = new Set();
+const pendingCountCache = new Map();
+const PENDING_COUNT_CACHE_MS = Math.max(
+  5_000,
+  Number(process.env.JOB_SKILL_PENDING_COUNT_CACHE_MS || 30_000),
+);
+const PENDING_COUNT_CACHE_SEC = Math.max(5, Math.ceil(PENDING_COUNT_CACHE_MS / 1_000));
 
-function pendingQuery(includeV2) {
+export function pendingExtractionQuery(includeV2) {
   if (includeV2) return { aiSkillStatus: 'pending' };
   return { aiSkillStatus: 'pending', ...excludeExtensionV2JobsFilter() };
 }
 
 async function countPendingInCollection(collection, includeV2) {
   if (!collection) return 0;
-  return collection.countDocuments(pendingQuery(includeV2));
+  try {
+    let query = getFirestoreDb()
+      .collection('jobs')
+      .where('sourceCatalog', '==', 'market')
+      .where('aiSkillStatus', '==', 'pending');
+    if (!includeV2) query = query.where('extensionV2', '==', false);
+    return (await query.count().get()).data().count;
+  } catch (error) {
+    if (Number(error?.code) !== 9) throw error;
+    // Keep the badge functional while a declared Firestore index is building.
+    return collection
+      .find(pendingExtractionQuery(includeV2), { projection: { _id: 1 } })
+      .toArray()
+      .then((jobs) => jobs.length);
+  }
 }
 
 export async function countPendingExtraction(includeV2 = true) {
@@ -48,6 +72,58 @@ export async function countPendingExtraction(includeV2 = true) {
 export async function countPendingExtractionBreakdown(includeV2 = true) {
   const pendingMarket = await countPendingInCollection(jobsCollection, includeV2);
   return { pending: pendingMarket, pendingMarket, pendingExternal: 0 };
+}
+
+async function countPendingExtractionCached(includeV2) {
+  const key = includeV2 ? 'all' : 'public';
+  const cached = pendingCountCache.get(key);
+  if (cached?.expiresAt > Date.now()) return cached.promise;
+  const redisKey = `jobs:analysis:skill-pending:v1:${key}`;
+  if (isRedisReady()) {
+    const stored = await getRedis().get(redisKey).catch(() => null);
+    const count = stored == null ? NaN : Number(stored);
+    if (Number.isFinite(count) && count >= 0) {
+      const promise = Promise.resolve(count);
+      pendingCountCache.set(key, {
+        promise,
+        expiresAt: Date.now() + PENDING_COUNT_CACHE_MS,
+      });
+      return promise;
+    }
+  }
+  const promise = countPendingExtraction(includeV2)
+    .catch((error) => {
+      pendingCountCache.delete(key);
+      throw error;
+    })
+    .then((count) => {
+      if (isRedisReady()) {
+        void getRedis().setEx(redisKey, PENDING_COUNT_CACHE_SEC, String(count)).catch(() => undefined);
+      }
+      return count;
+    });
+  pendingCountCache.set(key, {
+    promise,
+    expiresAt: Date.now() + PENDING_COUNT_CACHE_MS,
+  });
+  return promise;
+}
+
+function invalidatePendingExtractionCount() {
+  pendingCountCache.clear();
+  if (isRedisReady()) {
+    void getRedis().del(
+      'jobs:analysis:skill-pending:v1:all',
+      'jobs:analysis:skill-pending:v1:public',
+    ).catch(() => undefined);
+  }
+}
+
+async function includeV2JobsForApplier(applierName) {
+  const name = String(applierName || '').trim();
+  if (!name) return false;
+  const account = await findAccountByApplierName(name);
+  return isBetaTier(account?.tier);
 }
 
 export async function claimPendingJobs(collection, jobs, { catalog = 'market', sessionId, claimedAt } = {}) {
@@ -92,7 +168,7 @@ export async function claimPendingJobs(collection, jobs, { catalog = 'market', s
 
 async function claimFromCollection(collection, catalog, projection, n, includeV2, sessionId) {
   if (!collection || n <= 0) return [];
-  const query = pendingQuery(includeV2);
+  const query = pendingExtractionQuery(includeV2);
   // Ordering pending work is not user-visible and would force Firestore to
   // scan an ever-growing prefix of already-extracted jobs. Read directly from
   // the aiSkillStatus index and modestly overfetch for the local tier filter.
@@ -259,6 +335,7 @@ async function runSession(session, auth) {
     } else {
       session.remaining = null;
     }
+    invalidatePendingExtractionCount();
     console.log(
       `[job-skill-extract] ${session.status} — ${session.extracted} extracted, ${session.failed} failed · ` +
         `${session.inputTokens + session.outputTokens} tokens · ${formatCostUsd(session.costUsd)}`,
@@ -307,7 +384,9 @@ export async function getSkillExtractionStatus({ applierName } = {}) {
       pendingKnown: activeSession.remaining != null,
     };
   }
-  return { pending: null, pendingKnown: false, ...getExtractionStatus() };
+  const includeV2Jobs = await includeV2JobsForApplier(applierName);
+  const pending = await countPendingExtractionCached(includeV2Jobs);
+  return { ...getExtractionStatus(), pending, pendingKnown: true };
 }
 
 export async function startSkillExtractionSession({ applierName, limit = null } = {}) {
@@ -349,6 +428,7 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
     startedAt: new Date().toISOString(),
     finishedAt: null,
   };
+  invalidatePendingExtractionCount();
 
   void runSession(activeSession, auth).catch((err) => {
     console.error('[job-skill-extract] session error', err);
