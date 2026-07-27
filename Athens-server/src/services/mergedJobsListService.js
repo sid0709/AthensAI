@@ -156,7 +156,7 @@ export async function listMergedJobs(body) {
 			: (pageNum - 1) * limitNum;
 
 	if (!mergeExternal) {
-		return { mergeExternal: false, marketQuery, scoreFilters, skip, limit: limitNum, pageNum, countsOnly };
+		return { mergeExternal: false, marketQuery, applierId, scoreFilters, skip, limit: limitNum, pageNum, countsOnly };
 	}
 
 	const externalQuery = buildExternalScrapedJobsQuery(body);

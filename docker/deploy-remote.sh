@@ -23,6 +23,10 @@ HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-36}"
 HEALTH_SLEEP_SEC="${HEALTH_SLEEP_SEC:-5}"
 MONITORING_NETWORK="${MONITORING_NETWORK:-athens-monitoring}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://prometheus:9090}"
+RANKING_COMPOSE_FILE="${RANKING_COMPOSE_FILE:-/opt/nextoffer/ranking-compose.yml}"
+RANKING_COMPOSE_PROJECT="${RANKING_COMPOSE_PROJECT:-nextoffer-ranking}"
+RANKING_AUTO_BACKFILL="${RANKING_AUTO_BACKFILL:-true}"
+RANKING_BOOTSTRAP_KEY="${RANKING_BOOTSTRAP_KEY:-nextoffer:ranking-backfill:v3}"
 
 if [[ ! -f "$DEPLOY_ENV" ]]; then
   echo "Missing deploy env file: $DEPLOY_ENV" >&2
@@ -43,6 +47,12 @@ BACKGROUND_WORKERS_MODE="${BACKGROUND_WORKERS_MODE:-local}"
 FIRESTORE_WRITES_ENABLED="${FIRESTORE_WRITES_ENABLED:-false}"
 FIRESTORE_COMPAT_WARN_SCAN="${FIRESTORE_COMPAT_WARN_SCAN:-1000}"
 FIRESTORE_COMPAT_MAX_SCAN="${FIRESTORE_COMPAT_MAX_SCAN:-20000}"
+REDIS_ENABLED="${REDIS_ENABLED:-true}"
+REDIS_URL="${REDIS_URL:-redis://redis:6379}"
+QDRANT_URL="${QDRANT_URL:-http://qdrant:6333}"
+QDRANT_API_KEY="${QDRANT_API_KEY:-}"
+RECOMMENDATION_QUERY_TIME_MODE="${RECOMMENDATION_QUERY_TIME_MODE:-on}"
+RANKING_BACKFILL_BATCH="${RANKING_BACKFILL_BATCH:-200}"
 
 volume_args=()
 if [[ "${DATABASE_BACKEND,,}" == "firestore" ]]; then
@@ -81,6 +91,64 @@ if ! docker network inspect "$MONITORING_NETWORK" >/dev/null 2>&1; then
 fi
 network_args=(--network "$MONITORING_NETWORK")
 
+if docker compose version >/dev/null 2>&1; then
+  compose_cmd=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  compose_cmd=(docker-compose)
+else
+  echo "Docker Compose is required to provision Redis and Qdrant." >&2
+  exit 1
+fi
+
+if [[ ! -f "$RANKING_COMPOSE_FILE" ]]; then
+  echo "Missing ranking infrastructure definition: ${RANKING_COMPOSE_FILE}" >&2
+  exit 1
+fi
+
+ranking_compose=("${compose_cmd[@]}" -p "$RANKING_COMPOSE_PROJECT" -f "$RANKING_COMPOSE_FILE")
+export ATHENS_DOCKER_NETWORK="$MONITORING_NETWORK"
+
+for service in redis qdrant; do
+  if [[ -n "$("${ranking_compose[@]}" ps -q "$service" 2>/dev/null || true)" ]]; then
+    echo "${service} container exists; preserving its persistent volume."
+  else
+    echo "${service} container is missing; Docker Compose will create it."
+  fi
+done
+
+echo "Validating Redis and Qdrant Compose configuration"
+"${ranking_compose[@]}" config >/dev/null
+echo "Pulling Redis and Qdrant images"
+"${ranking_compose[@]}" pull
+echo "Starting Redis and Qdrant"
+"${ranking_compose[@]}" up -d
+
+wait_for_ranking_service() {
+  local service="$1"
+  local id=""
+  local health=""
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    id="$("${ranking_compose[@]}" ps -q "$service" 2>/dev/null || true)"
+    if [[ -n "$id" ]]; then
+      health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
+      if [[ "$health" == "healthy" ]]; then
+        echo "${service} is healthy."
+        return 0
+      fi
+      if [[ "$health" == "unhealthy" || "$health" == "exited" || "$health" == "dead" ]]; then
+        break
+      fi
+    fi
+    sleep 2
+  done
+  echo "${service} failed to become healthy (state: ${health:-missing})." >&2
+  "${ranking_compose[@]}" logs --tail 100 "$service" >&2 || true
+  return 1
+}
+
+wait_for_ranking_service redis
+wait_for_ranking_service qdrant
+
 echo "Recreating container ${CONTAINER_NAME} ..."
 docker stop "$CONTAINER_NAME" 2>/dev/null || true
 docker rm "$CONTAINER_NAME" 2>/dev/null || true
@@ -109,6 +177,12 @@ docker run -d \
   -e "FIRESTORE_WRITES_ENABLED=${FIRESTORE_WRITES_ENABLED}" \
   -e "FIRESTORE_COMPAT_WARN_SCAN=${FIRESTORE_COMPAT_WARN_SCAN}" \
   -e "FIRESTORE_COMPAT_MAX_SCAN=${FIRESTORE_COMPAT_MAX_SCAN}" \
+  -e "REDIS_ENABLED=${REDIS_ENABLED}" \
+  -e "REDIS_URL=${REDIS_URL}" \
+  -e "QDRANT_URL=${QDRANT_URL}" \
+  -e "QDRANT_API_KEY=${QDRANT_API_KEY}" \
+  -e "RECOMMENDATION_QUERY_TIME_MODE=${RECOMMENDATION_QUERY_TIME_MODE}" \
+  -e "RANKING_BACKFILL_BATCH=${RANKING_BACKFILL_BATCH}" \
   -e "SEARCH_OUTBOX_INTERVAL_MS=${SEARCH_OUTBOX_INTERVAL_MS:-5000}" \
   -e "SEARCH_OUTBOX_BATCH_SIZE=${SEARCH_OUTBOX_BATCH_SIZE:-100}" \
   -e "ALGOLIA_APP_ID=${ALGOLIA_APP_ID:-}" \
@@ -170,6 +244,53 @@ for required_url in "$AI_BFF_HEALTH_URL" "$AVALON_HEALTH_URL" "$STATUS_URL"; do
     exit 1
   fi
 done
+
+echo "Verifying application access to Redis and Qdrant"
+docker exec "$CONTAINER_NAME" node --input-type=module -e '
+  import { createClient } from "redis";
+  const redis = createClient({ url: process.env.REDIS_URL });
+  await redis.connect();
+  if (await redis.ping() !== "PONG") throw new Error("Redis ping failed");
+  await redis.quit();
+  const qdrantUrl = `${process.env.QDRANT_URL.replace(/\/+$/, "")}/readyz`;
+  const headers = process.env.QDRANT_API_KEY ? { "api-key": process.env.QDRANT_API_KEY } : {};
+  const response = await fetch(qdrantUrl, { headers, signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new Error(`Qdrant readiness failed: ${response.status}`);
+'
+
+if [[ "${RECOMMENDATION_QUERY_TIME_MODE,,}" == "on" || "${RECOMMENDATION_QUERY_TIME_MODE,,}" == "shadow" ]]; then
+  bootstrap_state="$("${ranking_compose[@]}" exec -T redis redis-cli --raw GET "$RANKING_BOOTSTRAP_KEY" 2>/dev/null || true)"
+  ranking_point_count="$(docker exec "$CONTAINER_NAME" node --input-type=module -e '
+    const base = process.env.QDRANT_URL.replace(/\/+$/, "");
+    const headers = { "Content-Type": "application/json" };
+    if (process.env.QDRANT_API_KEY) headers["api-key"] = process.env.QDRANT_API_KEY;
+    const response = await fetch(`${base}/collections/jobs_active/points/count`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ exact: true }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (response.status === 404) {
+      console.log(0);
+    } else {
+      if (!response.ok) throw new Error(`Qdrant count failed: ${response.status}`);
+      const payload = await response.json();
+      console.log(Number(payload?.result?.count || 0));
+    }
+  ')"
+  if [[ "$bootstrap_state" != "complete" || "$ranking_point_count" -eq 0 ]]; then
+    if [[ "${RANKING_AUTO_BACKFILL,,}" == "true" || "$RANKING_AUTO_BACKFILL" == "1" ]]; then
+      echo "Ranking index is missing or uninitialized; indexing authoritative jobs now."
+      docker exec "$CONTAINER_NAME" npm run backfill-query-ranking -w Athens-server
+      "${ranking_compose[@]}" exec -T redis redis-cli SET "$RANKING_BOOTSTRAP_KEY" complete >/dev/null
+      echo "Initial Redis/Qdrant ranking backfill is complete."
+    else
+      echo "RANKING_AUTO_BACKFILL is disabled; Best Match may use fallback ordering until the ranking backfill is run." >&2
+    fi
+  else
+    echo "Persistent ranking index is already initialized (${ranking_point_count} points); no backfill is needed."
+  fi
+fi
 
 echo "Deploy OK: ${IMAGE_REF}"
 curl -sS "$HEALTH_URL" || true

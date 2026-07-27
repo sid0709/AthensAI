@@ -1,4 +1,5 @@
 import { ObjectId } from 'mongodb';
+import { excludeExtensionV2JobsFilter } from '../../config/jobMarketSchema.js';
 import { JobSourceTitles } from '../../config/jobSources.js';
 import {
   getQueryTimeRankingMode,
@@ -35,7 +36,10 @@ import { rerankInPool } from './exactRerankPool.js';
 import { computeCoverageScore, composeJobScores } from './coverageScore.js';
 import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
 import { incrementCounter, observeHistogram } from '../monitoring/metrics.js';
-import { readProjectedJobStatuses } from '../jobStatusProjectionService.js';
+import {
+  readMaterializedJobStatusIds,
+  readProjectedJobStatuses,
+} from '../jobStatusProjectionService.js';
 
 const rankingBuilds = new Map();
 
@@ -102,7 +106,10 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
   if (queryExcludesExtensionV2Jobs(mongoQuery)) {
     must.push(matchKeyword('extensionV2', false));
   }
-  return { must };
+	const mustNot = queryExcludesExtensionV2Jobs(mongoQuery)
+		? [matchKeyword('version', 'v2')]
+		: [];
+	return { must, ...(mustNot.length ? { must_not: mustNot } : {}) };
 }
 
 export function queryExcludesExtensionV2Jobs(mongoQuery = null) {
@@ -128,7 +135,14 @@ export async function listDateRankedRankingFallback({
 }) {
   let docs;
   let total;
-  if (!includeExternal) {
+  if (!includeExternal && (!isJobRankingReady() || !isRedisReady())) {
+    // Emergency degraded mode: avoid a full Firestore sort + count when the
+    // ranking infrastructure is offline. Return a bounded page immediately;
+    // normal exact pagination resumes as soon as Redis/Qdrant reconnect.
+    docs = await jobsCollection.find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+      .skip(skip).limit(limit).toArray();
+    total = skip + docs.length + (docs.length === limit ? 1 : 0);
+  } else if (!includeExternal) {
     [docs, total] = await Promise.all([
       jobsCollection.find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
         .sort({ postedAt: -1, _id: -1 }).skip(skip).limit(limit).toArray(),
@@ -193,10 +207,27 @@ function hasPersonalStatusFilter(body = {}) {
 }
 
 function requiresAuthoritativeCandidateFilter(body = {}) {
-  return hasPersonalStatusFilter(body)
-    || Boolean(body.q)
+  return Boolean(body.q)
     || Boolean(body['details.time'])
     || Boolean(body['company.tags']);
+}
+
+async function filterEntriesByPersonalStatus(entries, { profileId, listBody } = {}) {
+  if (!hasPersonalStatusFilter(listBody) || !profileId) return entries;
+  if (listBody.applied === false || listBody.applied === 'false') {
+    const excluded = new Set(await readMaterializedJobStatusIds(profileId, 'any'));
+    return entries.filter((entry) => !excluded.has(String(entry.jobId)));
+  }
+  const state = ({
+    Applied: 'applied',
+    Scheduled: 'scheduled',
+    Declined: 'declined',
+    BidReady: 'bid-ready',
+    BidCompleted: 'bid-completed',
+  })[listBody.status];
+  if (!state) return entries;
+  const accepted = new Set(await readMaterializedJobStatusIds(profileId, state));
+  return entries.filter((entry) => accepted.has(String(entry.jobId)));
 }
 
 function profileIdFromQuery(value) {
@@ -252,13 +283,39 @@ function toObjectIds(ids) {
   }).filter(Boolean);
 }
 
-async function hydratePage(entries, profileCtx, { applierName, profileId } = {}) {
+async function hydratePage(entries, profileCtx, {
+  applierName,
+  profileId,
+  skipStatuses = false,
+  excludeExtensionV2 = false,
+} = {}) {
   const rankingPayloads = await getJobRankingPoints(entries.map((entry) => entry.jobId));
   const rankingPayloadById = new Map(rankingPayloads.map((payload) => [String(payload.jobId), payload]));
-  const hydratedEntries = entries.map((entry) => ({
+  let hydratedEntries = entries.map((entry) => ({
     ...entry,
     payload: { ...(entry.payload || {}), ...(rankingPayloadById.get(entry.jobId) || {}) },
   }));
+	if (excludeExtensionV2) {
+		const suspiciousIds = hydratedEntries
+			.filter((entry) =>
+				(entry.catalog || entry.payload?.catalog || 'market') === 'market' &&
+				Number(entry.payload?.rankingSchemaVersion || 0) < 3,
+			)
+			.map((entry) => String(entry.jobId));
+		if (suspiciousIds.length) {
+			const acceptedDocs = await jobsCollection.find({
+				$and: [
+					excludeExtensionV2JobsFilter(),
+					{ _id: { $in: toObjectIds(suspiciousIds) } },
+				],
+			}, { projection: { _id: 1 } }).toArray();
+			const suspicious = new Set(suspiciousIds);
+			const accepted = new Set(acceptedDocs.map((doc) => String(doc._id)));
+			hydratedEntries = hydratedEntries.filter((entry) =>
+				!suspicious.has(String(entry.jobId)) || accepted.has(String(entry.jobId)),
+			);
+		}
+	}
   const catalogOf = (entry) => entry.catalog || entry.payload?.catalog || 'market';
   const marketIds = hydratedEntries.filter((entry) => catalogOf(entry) !== 'external').map((entry) => entry.jobId);
   const externalIds = hydratedEntries.filter((entry) => catalogOf(entry) === 'external').map((entry) => entry.jobId);
@@ -286,7 +343,7 @@ async function hydratePage(entries, profileCtx, { applierName, profileId } = {})
     missingExternalIds.length && externalScrapedJobsCollection
       ? externalScrapedJobsCollection.find({ _id: { $in: toObjectIds(missingExternalIds) } }).toArray()
       : [],
-    readProjectedJobStatuses(resolvedProfileId, marketIds),
+    skipStatuses ? new Map() : readProjectedJobStatuses(resolvedProfileId, marketIds),
   ]);
   const docs = new Map([
     ...cardDocs.map((doc) => [String(doc._id), doc]),
@@ -351,6 +408,27 @@ async function countAuthoritativeJobs({ marketQuery, externalQuery, includeExter
   return marketTotal + externalTotal;
 }
 
+async function countPersonalStatusJobs({ listBody, profileId, rankingFilter }) {
+  const allFiltered = await countJobRankingPoints(rankingFilter);
+  if (!profileId) return allFiltered;
+  if (listBody.applied === false || listBody.applied === 'false') {
+    const statusIds = await readMaterializedJobStatusIds(profileId, 'any');
+    // This is exact for the unfiltered catalog (the common tab path). With
+    // additional global filters it is a conservative total while candidate
+    // membership remains authoritative.
+    return Math.max(0, allFiltered - Math.min(allFiltered, statusIds.length));
+  }
+  const state = ({
+    Applied: 'applied',
+    Scheduled: 'scheduled',
+    Declined: 'declined',
+    BidReady: 'bid-ready',
+    BidCompleted: 'bid-completed',
+  })[listBody.status];
+  if (!state) return allFiltered;
+  return (await readMaterializedJobStatusIds(profileId, state)).length;
+}
+
 async function directStatusRanking({ mongoQuery, profileCtx, scoreFilters, limit }) {
   const docs = await jobsCollection.find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION }).toArray();
   const candidates = docs.map((job) => {
@@ -390,9 +468,7 @@ export async function listQueryTimeRankedJobs({
   if (!serving && !shadowValidation) return null;
   if (!isJobRankingReady() || !isRedisReady()) {
     if (!serving) return null;
-    return listDateRankedRankingFallback({
-      mongoQuery, externalQuery, skip, limit, includeExternal,
-    });
+    throw new Error('Ranking infrastructure is unavailable');
   }
   if (!applierName) return null;
 
@@ -443,17 +519,81 @@ export async function listQueryTimeRankedJobs({
       loadUserSkillDocs(applierName),
     ]);
     profileCtx = loadedProfileCtx;
-    const profileVector = buildUserSkillSparseVector(skillDocs, dictionary.entries);
-    if (!profileVector.indices.length) return null;
+    const profileVector = buildUserSkillSparseVector(skillDocs, dictionary.entries, dictionary.byToken);
     const limits = getQueryTimeRankingLimits();
     const authoritativePostFilter = requiresAuthoritativeCandidateFilter(listBody);
-    const catalogTotalPromise = authoritativePostFilter
-      ? countAuthoritativeJobs({
-          marketQuery: mongoQuery,
-          externalQuery,
-          includeExternal,
-        })
+    const catalogTotalPromise = hasPersonalStatusFilter(listBody)
+      ? countPersonalStatusJobs({ listBody, profileId, rankingFilter: filter })
+      : authoritativePostFilter
+        ? countAuthoritativeJobs({
+            marketQuery: mongoQuery,
+            externalQuery,
+            includeExternal,
+          })
       : countJobRankingPoints(filter);
+    if (!profileVector.indices.length) {
+      if (!serving || !hasPersonalStatusFilter(listBody)) return null;
+      let docs;
+      let catalogTotal;
+      if (listBody.applied === false || listBody.applied === 'false') {
+        const tailBody = { ...listBody };
+        delete tailBody.applied;
+        delete tailBody.status;
+        if (supportsRedisDateTail(tailBody)) {
+          const excludedJobIds = new Set(await readMaterializedJobStatusIds(profileId, 'any'));
+          const [entries, resolvedTotal] = await Promise.all([
+            readDateTailPage({
+              offset: skip,
+              limit,
+              includeExternal: false,
+              excludeExtensionV2: excludesExtensionV2,
+              excludedJobIds,
+            }),
+            catalogTotalPromise,
+          ]);
+          docs = await hydratePage(entries, loadedProfileCtx, {
+				applierName,
+				profileId,
+				skipStatuses: true,
+				excludeExtensionV2: excludesExtensionV2,
+			});
+          catalogTotal = resolvedTotal;
+        } else {
+          [docs, catalogTotal] = await Promise.all([
+            jobsCollection
+              .find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+              .sort({ postedAt: -1, _id: -1 })
+              .skip(skip)
+              .limit(limit)
+              .toArray(),
+            catalogTotalPromise,
+          ]);
+        }
+      } else {
+        [docs, catalogTotal] = await Promise.all([
+          jobsCollection
+            .find(mongoQuery || {}, { projection: JOB_LIST_PROJECTION })
+            .sort({ postedAt: -1, _id: -1 })
+            .skip(skip)
+            .limit(limit)
+            .toArray(),
+          catalogTotalPromise,
+        ]);
+      }
+      return { _directResult: {
+        docs,
+        total: catalogTotal,
+        catalogTotal,
+        recommendationFallback: true,
+        recommendationReason: 'no_profile_skills',
+        recommendationWarming: false,
+        recommendationMaterialized: false,
+        rankingVersion: null,
+        rankingStatus: 'fallback',
+        catalogRevision,
+        personalizedThroughRank: 0,
+      } };
+    }
     let entries;
     if (hasPositiveStatusFilter(listBody)) {
       const rerankStarted = performance.now();
@@ -483,13 +623,14 @@ export async function listQueryTimeRankedJobs({
         });
         sparseHits.push(...page);
         const fused = fuseCandidates(sparseHits, denseHits);
+        const statusFiltered = await filterEntriesByPersonalStatus(fused, { profileId, listBody });
         acceptedCandidates = authoritativePostFilter
-          ? await filterEntriesByAuthoritativeQueries(fused, {
+          ? await filterEntriesByAuthoritativeQueries(statusFiltered, {
               marketQuery: mongoQuery,
               externalQuery,
               includeExternal,
             })
-          : fused;
+          : statusFiltered;
         if (acceptedCandidates.length >= limits.personalized || page.length < limits.sparse) break;
       }
       observeHistogram('athens_job_ranking_phase_seconds', { phase: 'retrieval' }, (performance.now() - retrievalStarted) / 1000);
@@ -523,6 +664,8 @@ export async function listQueryTimeRankedJobs({
     });
     if (!cached) return null;
   }
+
+  if (cached?._directResult) return cached._directResult;
 
   profileCtx ||= await loadProfileMatchContext(applierName);
   let pageEntries = cached.entries.slice(skip, skip + limit);
@@ -561,7 +704,11 @@ export async function listQueryTimeRankedJobs({
     }
   }
   const hydrateStarted = performance.now();
-  const docs = await hydratePage(pageEntries, profileCtx, { applierName, profileId });
+  const docs = await hydratePage(pageEntries, profileCtx, {
+		applierName,
+		profileId,
+		excludeExtensionV2: excludesExtensionV2,
+	});
   timings.hydrateMs = performance.now() - hydrateStarted;
   observeHistogram('athens_job_ranking_phase_seconds', { phase: 'total' }, (performance.now() - requestStarted) / 1000);
   const rankingVersion = `${cached.profileVersion}:${cached.statusRevision ?? 0}:${cached.dictionaryVersion}:${cached.catalogRevision}`;

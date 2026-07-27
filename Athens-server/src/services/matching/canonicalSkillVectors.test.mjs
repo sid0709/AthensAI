@@ -41,3 +41,15 @@ test('user sparse vectors expand asymmetric skill families from the dictionary',
   );
   assert.ok(vector.indices.includes(stableSkillId('react native')));
 });
+
+test('token-indexed alias expansion avoids scanning unrelated dictionary skills', () => {
+	const reactNative = { name: 'React Native', nameCanonical: 'react native', skillId: stableSkillId('react native') };
+	const unrelated = { name: 'COBOL', nameCanonical: 'cobol', skillId: stableSkillId('cobol') };
+	const vector = buildUserSkillSparseVector(
+		[{ name: 'React', level: 5 }],
+		[reactNative, unrelated],
+		new Map([['react', [reactNative]]]),
+	);
+	assert.ok(vector.indices.includes(reactNative.skillId));
+	assert.ok(!vector.indices.includes(unrelated.skillId));
+});

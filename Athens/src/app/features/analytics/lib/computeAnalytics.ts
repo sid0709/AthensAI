@@ -1,6 +1,6 @@
 import type { ApplyRunSummary } from "../../../api/avalonLog";
 import type { DailyApplicationRow, FrequencyDayRow, JobSourceSummaryRow } from "../../../api/reports";
-import { normalizeId } from "../../../lib/job-adapters";
+import { mergeJobStatusRows } from "@nextoffer/shared/job-status";
 import { formatMonthLabel, formatWeekLabel, isWithinRange } from "./dateRange";
 
 export type FunnelItem = { s: string; n: number; p: number };
@@ -52,7 +52,7 @@ type StatusDates = {
 function extractStatusDates(doc: Record<string, unknown>, applierId: string | null): StatusDates | null {
   const statusArr = doc.status as Record<string, unknown>[] | undefined;
   if (!Array.isArray(statusArr) || !applierId) return null;
-  const row = statusArr.find((s) => s && normalizeId(s.applier) === applierId);
+  const row = mergeJobStatusRows(statusArr, applierId);
   if (!row) return null;
   return {
     appliedDate: typeof row.appliedDate === "string" ? row.appliedDate : undefined,

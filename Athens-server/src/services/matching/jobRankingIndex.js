@@ -104,6 +104,8 @@ export function buildJobRankingPayload(job, { catalog = 'market' } = {}) {
     source: text(job?.source) || 'Other',
     postedAt,
     extensionV2: isExtensionV2Job(job),
+		version: text(job?.version),
+		rankingSchemaVersion: 3,
     aiExtracted: Array.isArray(job?.aiSkills) && job.aiSkills.length > 0,
     aiSkills,
     rankSkills: compactRankingSkills(aiSkills),
@@ -170,6 +172,7 @@ export async function readDateTailPage({
   includeExternal = false,
   excludeExtensionV2 = false,
   excludedJobIds = new Set(),
+  direction = 'desc',
 } = {}) {
   if (!isRedisReady()) return [];
   const out = [];
@@ -181,7 +184,12 @@ export async function readDateTailPage({
     : false;
   const dateTailKey = publicTailReady ? PUBLIC_DATE_TAIL_KEY : DATE_TAIL_KEY;
   while (out.length < limit) {
-    const values = await getRedis().zRange(dateTailKey, cursor, cursor + chunkSize - 1, { REV: true });
+    const values = await getRedis().zRange(
+      dateTailKey,
+      cursor,
+      cursor + chunkSize - 1,
+      direction === 'asc' ? undefined : { REV: true },
+    );
     if (!values.length) break;
     cursor += values.length;
     const candidates = [];

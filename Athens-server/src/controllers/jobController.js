@@ -1,4 +1,5 @@
 import { ObjectId } from "mongodb";
+import { mergeJobStatusRows } from "@nextoffer/shared/job-status";
 import {
 	jobsCollection,
 	externalScrapedJobsCollection,
@@ -18,17 +19,20 @@ import {
 	isExtensionV2Job,
 	stripScraperOnlyJobFields,
 } from '../config/jobMarketSchema.js';
+import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import {
 	buildJobsListQuery,
 	STATUS_TABS,
 	JOB_LIST_PROJECTION,
 	JOB_DETAIL_PROJECTION,
+	resolveApplierContext,
 } from '../services/jobListQuery.js';
 import { queueJobAnalysis, getJobAnalysisStatus } from '../services/jobAnalysis/index.js';
 import { listRecommendedJobs } from '../services/matching/matchScoreReader.js';
 import { normalizeExternalScrapedJob } from '../services/externalScrapedJobsListQuery.js';
 import { listMergedJobs, countExternalForStatusTabs } from '../services/mergedJobsListService.js';
+import { countIndexedJobStatuses, listIndexedJobPage } from '../services/matching/indexedJobListService.js';
 import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../services/matching/skillIndex.js';
 import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
 import { indexOneJobRanking, removeJobsFromRanking } from '../services/matching/jobRankingIndex.js';
@@ -38,7 +42,14 @@ import {
 	upsertJobBidStatus,
 } from '../services/jobBidStatusService.js';
 import { isForegroundBusy } from '../services/runtimeLoad.js';
-import { listMaterializedJobStatusPage, readMaterializedJobStatusCounts, syncJobStatusProjection } from '../services/jobStatusProjectionService.js';
+import {
+	invalidateLiveProjectedStatusCount,
+	listMaterializedPostedPage,
+	listMaterializedJobStatusPage,
+	normalizeMaterializedJobStatusCounts,
+	readMaterializedJobStatusCounts,
+	mutateJobStatus,
+} from '../services/jobStatusProjectionService.js';
 import { findDuplicateByContent, findDuplicateByUrl } from '../services/jobDuplicateLookup.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
@@ -47,39 +58,59 @@ const JOB_COUNT_CACHE_MS = Number(process.env.JOB_COUNT_CACHE_MS || 5 * 60 * 100
 const jobCountCache = new Map();
 const jobCountRefreshes = new Map();
 
+function jobForProfile(job, profileId) {
+	if (!job || !profileId) return { ...job, status: [] };
+	const row = mergeJobStatusRows(job.status, String(profileId));
+	if (!row) return { ...job, status: [] };
+	const canonical = { applier: String(profileId) };
+	for (const field of ['appliedDate', 'scheduledDate', 'declinedDate', 'bidReadyDate', 'bidCompletedDate']) {
+		if (!row[field]) continue;
+		const raw = row[field];
+		const date = raw instanceof Date ? raw : typeof raw?.toDate === 'function' ? raw.toDate() : new Date(raw);
+		canonical[field] = Number.isNaN(date.getTime()) ? String(raw) : date.toISOString();
+	}
+	return { ...job, status: [canonical] };
+}
+
+async function jobsForApplier(jobs, applierName) {
+	const name = String(applierName || '').trim();
+	const account = name ? await resolveApplierContext(name) : null;
+	const profileId = account?.id ? String(account.id) : null;
+	return (Array.isArray(jobs) ? jobs : []).map((job) => jobForProfile(job, profileId));
+}
+
 function jobCountCacheKey(body = {}) {
 	return JSON.stringify(Object.fromEntries(Object.entries(body).sort(([left], [right]) => left.localeCompare(right))));
 }
 
-const MATERIALIZED_COUNT_FILTERS = new Set([
-	'q', 'search', 'title', 'company', 'location', 'role', 'level', 'jobType', 'remote',
-	'status', 'applied', 'skills', 'requiredSkills', 'aiExtracted', 'extensionV2',
-	'scoreOverallMin', 'scoreOverallMax', 'scoreSkillMin', 'scoreSkillMax',
-	'scoreSalaryMin', 'scoreSalaryMax', 'scoreBidEstMin', 'scoreBidEstMax',
-	'scoreFreshnessMin', 'scoreFreshnessMax',
-]);
-
 function canUseMaterializedCounts(body = {}) {
-	return ![...MATERIALIZED_COUNT_FILTERS].some((key) => {
-		const value = body[key];
-		if (Array.isArray(value)) return value.length > 0;
-		return value !== undefined && value !== null && value !== '' && value !== false;
+	return Object.entries(body).every(([key, value]) => {
+		if (key === 'applierName') return true;
+		if (key === 'includeExternalScraped') return value !== true && value !== 'true';
+		if (key === 'jobSources') {
+			const selected = new Set(String(value || '').split(',').map((item) => item.trim()).filter(Boolean));
+			return JobSourceTitles.every((source) => selected.has(source));
+		}
+		if (Array.isArray(value)) return value.length === 0;
+		return value === undefined || value === null || value === '' || value === false;
 	});
 }
 
 async function materializedCountsForRequest(body = {}) {
 	if (!canUseMaterializedCounts(body) || !body.applierName) return null;
-	const account = await accountInfoCollection.findOne(
-		{ name: String(body.applierName).trim() },
-		{ projection: { _id: 1, tier: 1 } },
-	);
-	if (!account?._id) return null;
-	// Global materialized counts include beta-only extension-v2 jobs. Use the
-	// authoritative tier-filtered count path for non-beta users.
-	if (!isBetaTier(account.tier)) return null;
-	const stored = await readMaterializedJobStatusCounts(String(account._id));
+	const account = await resolveApplierContext(String(body.applierName).trim());
+	if (!account?.id) return null;
+	// The legacy numeric snapshot predates tier visibility and contains beta-only
+	// rows. Public users always use the exact Qdrant + Redis count path below.
+	if (!account.isBeta) return null;
+	const profileId = String(account.id);
+	const includeExtensionV2 = true;
+	const [stored, authoritativeAll] = await Promise.all([
+		readMaterializedJobStatusCounts(profileId, { includeExtensionV2 }),
+		jobsCollection.countDocuments(includeExtensionV2 ? {} : excludeExtensionV2JobsFilter()),
+	]);
 	if (!stored) return null;
-	return Object.fromEntries(STATUS_TABS.map((tab) => [tab, Number(stored[tab] || 0)]));
+	return normalizeMaterializedJobStatusCounts(stored, authoritativeAll, stored.any);
 }
 
 async function calculateJobStatusCounts(body) {
@@ -327,9 +358,16 @@ export async function getJobsForRule(req, res) {
 			});
 		}
 
-		const jobs = await jobsCollection.find(query).limit(100).toArray(); // Limit to 100 results for now
+		const account = req.query?.applierName
+			? await resolveApplierContext(String(req.query.applierName).trim())
+			: null;
+		const visibleQuery = account?.isBeta
+			? query
+			: { $and: [query, excludeExtensionV2JobsFilter()] };
+		const jobs = await jobsCollection.find(visibleQuery).limit(100).toArray(); // Limit to 100 results for now
+		const responseJobs = await jobsForApplier(jobs, req.query?.applierName);
 
-		res.status(200).json({ success: true, data: jobs });
+		res.status(200).json({ success: true, data: responseJobs });
 
 	} catch (err) {
 		console.error(`GET /api/jobs/rule/${req.params.name} error`, err);
@@ -363,6 +401,7 @@ export async function removeJobsForRule(req, res) {
 
 		const doomed = await jobsCollection.find(query, { projection: { _id: 1 } }).toArray();
 		const result = await jobsCollection.deleteMany(query);
+		invalidateLiveProjectedStatusCount();
 		void deleteScoresForJobs(doomed.map((d) => d._id)).catch(() => {});
 		void removeJobsFromRanking(doomed.map((d) => d._id)).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
@@ -384,9 +423,12 @@ export async function getJobStatusCounts(req, res) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
 		}
 
+		const materialized = await materializedCountsForRequest(req.body);
+		if (materialized) return res.json({ success: true, counts: materialized, materialized: true });
+		const indexed = await countIndexedJobStatuses(req.body);
+		if (indexed) return res.json({ success: true, counts: indexed, indexed: true });
+
 		if (String(process.env.DATABASE_BACKEND || '').toLowerCase() === 'firestore') {
-			const materialized = await materializedCountsForRequest(req.body);
-			if (materialized) return res.json({ success: true, counts: materialized, materialized: true });
 			const key = jobCountCacheKey(req.body);
 			const cached = jobCountCache.get(key);
 			if (cached) {
@@ -431,14 +473,17 @@ export async function getJobs(req, res) {
 		// Never hold job cards behind a separate Firestore count read.
 		const statusCounts = null;
 
-		const materializedStatusPage = req.body.sort === 'recommended'
-			? null
-			: await listMaterializedJobStatusPage(req.body);
+		const requestedSort = String(req.body.sort || 'postedAt_desc');
+		const canUseMaterializedPostedPage = requestedSort === 'postedAt_desc' || requestedSort === 'postedAt_asc';
+		const indexedJobPage = requestedSort === 'recommended' ? null : await listIndexedJobPage(req.body);
+		const materializedStatusPage = indexedJobPage || await listMaterializedJobStatusPage(req.body)
+			|| (canUseMaterializedPostedPage ? await listMaterializedPostedPage(req.body) : null);
 		if (materializedStatusPage) {
 			const recommendedRequested = req.body.sort === 'recommended';
+			const responseDocs = await jobsForApplier(materializedStatusPage.docs, req.body.applierName);
 			return res.json({
 				success: true,
-				data: materializedStatusPage.docs,
+				data: responseDocs,
 				statusCounts,
 				recommendationFallback: recommendedRequested,
 				recommendationReason: recommendedRequested ? 'status_date_order' : null,
@@ -456,9 +501,10 @@ export async function getJobs(req, res) {
 		const mergedResult = await listMergedJobs(req.body);
 		if (mergedResult.mergeExternal) {
 			const { docs, total, pageNum, limitNum, recommendationFallback, recommendationReason, recommendationWarming, catalogTotal } = mergedResult;
+			const responseDocs = await jobsForApplier(docs, req.body.applierName);
 			return res.json({
 				success: true,
-				data: docs,
+				data: responseDocs,
 				statusCounts,
 				recommendationFallback,
 				recommendationReason,
@@ -479,21 +525,17 @@ export async function getJobs(req, res) {
 
 		const {
 			sort,
-			page = 1,
-			limit = 10,
-			skip: skipRaw,
 			applierName,
-			countsOnly,
 		} = req.body;
-
-		const { query, applierId, scoreFilters } = await buildJobsListQuery(req.body);
-
-		const pageNum = Math.max(1, parseInt(page, 10) || 1);
-		const limitNum = Math.max(1, Math.min(5000, parseInt(limit, 10) || 10));
-		const skip =
-			skipRaw !== undefined && skipRaw !== null && skipRaw !== ''
-				? Math.max(0, parseInt(skipRaw, 10) || 0)
-				: (pageNum - 1) * limitNum;
+		const {
+			marketQuery: query,
+			applierId,
+			scoreFilters,
+			skip,
+			limit: limitNum,
+			pageNum,
+			countsOnly,
+		} = mergedResult;
 
 		if (countsOnly === true || countsOnly === 'true') {
 			const total = await jobsCollection.countDocuments(query);
@@ -522,6 +564,14 @@ export async function getJobs(req, res) {
 		const useRecommendation = sort === 'recommended' && applierName;
 
 		if (useRecommendation) {
+			// Start the lightweight date page alongside personalization. It is
+			// discarded when Best Match wins, but makes cold/no-skills fallback
+			// latency the max of the two reads instead of their sum.
+			const indexedFallbackPage = listIndexedJobPage({ ...req.body, sort: 'postedAt_desc' })
+				.catch((error) => {
+					console.warn('[jobs] indexed recommendation fallback failed:', error?.message || error);
+					return null;
+				});
 			const result = await listRecommendedJobs({
 				applierName,
 				profileId: applierId ? String(applierId) : null,
@@ -530,32 +580,38 @@ export async function getJobs(req, res) {
 				listBody: req.body,
 				skip,
 				limit: limitNum,
+				fastFallback: async () => {
+					const page = await indexedFallbackPage;
+					if (!page) return null;
+					return {
+						docs: page.docs,
+						total: page.total,
+						catalogTotal: page.total,
+						recommendationFallback: true,
+						recommendationReason: 'ranking_backend_unavailable',
+						recommendationWarming: false,
+						recommendationMaterialized: false,
+						rankingVersion: null,
+						rankingStatus: 'fallback',
+						catalogRevision: null,
+						personalizedThroughRank: 0,
+					};
+				},
 			});
-			if (!result.recommendationFallback) {
-				docs = result.docs;
-				total = result.total;
-				catalogTotal = result.catalogTotal ?? total;
-				recommendationWarming = Boolean(result.recommendationWarming);
-				rankingVersion = result.rankingVersion ?? null;
-				rankingStatus = result.rankingStatus ?? (recommendationWarming ? 'warming' : 'legacy');
-				catalogRevision = result.catalogRevision ?? null;
-				personalizedThroughRank = result.personalizedThroughRank ?? null;
-			} else {
-				recommendationFallback = true;
-				recommendationReason = result.recommendationReason || result.reason || 'unknown';
-				rankingStatus = result.rankingStatus ?? 'fallback';
-				const sortOption = { postedAt: -1, _id: -1 };
-				[docs, total] = await Promise.all([
-					jobsCollection
-						.find(query, { projection: JOB_LIST_PROJECTION })
-						.sort(sortOption)
-						.skip(skip)
-						.limit(limitNum)
-						.toArray(),
-					jobsCollection.countDocuments(query),
-				]);
-				catalogTotal = result.catalogTotal ?? total;
-			}
+			docs = result.docs || [];
+			total = result.total ?? docs.length;
+			catalogTotal = result.catalogTotal ?? total;
+			recommendationFallback = Boolean(result.recommendationFallback);
+			recommendationReason = recommendationFallback
+				? result.recommendationReason || result.reason || 'unknown'
+				: null;
+			recommendationWarming = Boolean(result.recommendationWarming);
+			rankingVersion = result.rankingVersion ?? null;
+			rankingStatus = result.rankingStatus ?? (
+				recommendationFallback ? 'fallback' : recommendationWarming ? 'warming' : 'legacy'
+			);
+			catalogRevision = result.catalogRevision ?? null;
+			personalizedThroughRank = result.personalizedThroughRank ?? null;
 		} else {
 			const sortOption = {};
 			if (sort && typeof sort === 'string') {
@@ -582,9 +638,10 @@ export async function getJobs(req, res) {
 			]);
 		}
 
+		const responseDocs = await jobsForApplier(docs, applierName);
 		return res.json({
 			success: true,
-			data: docs,
+			data: responseDocs,
 			statusCounts,
 			recommendationFallback,
 			recommendationReason,
@@ -612,56 +669,20 @@ export async function applyToJob(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const { id } = req.params;
-		const { applierName = 'Jeffrey Yuan' } = req.body;
-
-		let objectId;
-		try {
-			objectId = new ObjectId(id);
-		} catch {
-			return res.status(400).json({ success: false, error: 'Invalid id' });
-		}
-
-		const applier = await accountInfoCollection.findOne({ name: applierName });
-		if (!applier) {
-			return res.status(404).json({ success: false, error: `User ${applierName} not found` });
-		}
-
-		const existingJob = await jobsCollection.findOne({ _id: objectId, "status.applier": applier._id });
-		const now = new Date().toISOString();
-
-		if (existingJob) {
-			const entry = (Array.isArray(existingJob.status) ? existingJob.status : []).find(
-				(s) => s && String(s.applier) === String(applier._id),
-			);
-			if (entry?.appliedDate) {
-				return res.json({ success: true, data: existingJob, message: "User has already applied" });
-			}
-
-			await jobsCollection.updateOne(
-				{ _id: objectId },
-				{ $set: { "status.$[elem].appliedDate": now } },
-				{ arrayFilters: [{ "elem.applier": applier._id }] },
-			);
-			await syncJobStatusProjection(objectId, applier._id);
-			jobCountCache.clear();
-			const updatedJob = await jobsCollection.findOne({ _id: objectId });
-			return res.json({ success: true, data: updatedJob });
-		}
-
-		const newApplication = {
-			applier: applier._id,
-			appliedDate: now,
-		};
-
-		await jobsCollection.updateOne({ _id: objectId }, { $push: { status: newApplication } });
-		await syncJobStatusProjection(objectId, applier._id);
+		const { applierName } = req.body;
+		const result = await mutateJobStatus({ jobId: id, applierName, transition: 'apply' });
 		jobCountCache.clear();
-		const updatedJob = await jobsCollection.findOne({ _id: objectId });
-
-		return res.json({ success: true, data: updatedJob });
+		return res.json({
+			success: true,
+			data: jobForProfile(result.job, result.profileId),
+			...(result.changed ? {} : { message: 'User has already applied' }),
+		});
 	} catch (err) {
 		console.error('POST /api/jobs/:id/apply error', err);
-		return res.status(500).json({ success: false, error: err.message });
+		const status = err.message === 'Invalid job id' || err.message === 'applierName is required'
+			? 400
+			: err.message === 'Job not found' || /^User .+ not found$/.test(err.message) ? 404 : 500;
+		return res.status(status).json({ success: false, error: err.message });
 	}
 }
 
@@ -669,57 +690,20 @@ export async function updateJobStatus(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const { id } = req.params;
-		const { status, applierName = 'Jeffrey Yuan' } = req.body;
-
-		let objectId;
-		try {
-			objectId = new ObjectId(id);
-		} catch {
-			return res.status(400).json({ success: false, error: 'Invalid id' });
-		}
-
-		const applier = await accountInfoCollection.findOne({ name: applierName });
-		if (!applier) {
-			return res.status(404).json({ success: false, error: `User ${applierName} not found` });
-		}
-
-		const now = new Date().toISOString();
-		let update;
-
-		if (status === 'Declined') {
-			update = {
-				$set: { 'status.$[elem].declinedDate': now },
-				$unset: { 'status.$[elem].scheduledDate': "" }
-			};
-		} else if (status === 'Scheduled') {
-			update = {
-				$set: { 'status.$[elem].scheduledDate': now },
-				$unset: { 'status.$[elem].declinedDate': "" }
-			};
-		} else if (status === 'Applied') { // This is our "Cancel" action
-			update = {
-				$unset: {
-					'status.$[elem].declinedDate': "",
-					'status.$[elem].scheduledDate': ""
-				}
-			};
-		} else {
+		const { status, applierName } = req.body;
+		const transition = ({ Declined: 'declined', Scheduled: 'scheduled', Applied: 'applied' })[status];
+		if (!transition) {
 			return res.status(400).json({ success: false, error: 'Invalid status' });
 		}
-
-		const options = {
-			arrayFilters: [{ "elem.applier": applier._id }]
-		};
-
-		await jobsCollection.updateOne({ _id: objectId }, update, options);
-		await syncJobStatusProjection(objectId, applier._id);
+		const result = await mutateJobStatus({ jobId: id, applierName, transition });
 		jobCountCache.clear();
-		const updatedJob = await jobsCollection.findOne({ _id: objectId });
-
-		return res.json({ success: true, data: updatedJob });
+		return res.json({ success: true, data: jobForProfile(result.job, result.profileId) });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/status error', err);
-		return res.status(500).json({ success: false, error: err.message });
+		const statusCode = err.message === 'Invalid job id' || err.message === 'applierName is required'
+			? 400
+			: err.message === 'Job not found' || /^User .+ not found$/.test(err.message) ? 404 : 500;
+		return res.status(statusCode).json({ success: false, error: err.message });
 	}
 }
 
@@ -738,6 +722,7 @@ export async function removeJobs(req, res) {
 		}).filter(Boolean);
 
 		const result = await jobsCollection.deleteMany({ _id: { $in: objectIds } });
+		invalidateLiveProjectedStatusCount();
 		void deleteScoresForJobs(objectIds).catch(() => {});
 		void removeJobsFromRanking(objectIds).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
@@ -751,33 +736,16 @@ export async function unapplyFromJob(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const { id } = req.params;
-		const { applierName = 'Jeffrey Yuan' } = req.body;
-
-		let objectId;
-		try {
-			objectId = new ObjectId(id);
-		} catch {
-			return res.status(400).json({ success: false, error: 'Invalid id' });
-		}
-
-		const applier = await accountInfoCollection.findOne({ name: applierName });
-		if (!applier) {
-			return res.status(404).json({ success: false, error: `User ${applierName} not found` });
-		}
-
-		const update = {
-			$pull: { status: { applier: applier._id } }
-		};
-
-		await jobsCollection.updateOne({ _id: objectId }, update);
-		await syncJobStatusProjection(objectId, applier._id);
+		const { applierName } = req.body;
+		const result = await mutateJobStatus({ jobId: id, applierName, transition: 'unapply' });
 		jobCountCache.clear();
-		const updatedJob = await jobsCollection.findOne({ _id: objectId });
-
-		return res.json({ success: true, data: updatedJob });
+		return res.json({ success: true, data: jobForProfile(result.job, result.profileId) });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/unapply error', err);
-		return res.status(500).json({ success: false, error: err.message });
+		const status = err.message === 'Invalid job id' || err.message === 'applierName is required'
+			? 400
+			: err.message === 'Job not found' || /^User .+ not found$/.test(err.message) ? 404 : 500;
+		return res.status(status).json({ success: false, error: err.message });
 	}
 }
 
@@ -806,38 +774,42 @@ export async function updateJobBidStatus(req, res) {
 			return res.status(400).json({ success: false, error: 'Invalid id' });
 		}
 
-		const job = await jobsCollection.findOne({ _id: objectId });
-		if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
-
+		let updatedJob;
+		let updatedProfileId;
 		if (status === 'clear') {
-			await clearJobBidStatus(applierName, id);
+			const result = await clearJobBidStatus(applierName, id);
+			updatedJob = result.job;
+			updatedProfileId = result.profileId;
 			const tasks = getVendorTasksCollection();
-			if (tasks) await tasks.deleteMany({ applierName, jobId: id });
+			if (tasks) void tasks.deleteMany({ applierName, jobId: id }).catch((error) => {
+				console.warn('[jobs] deferred vendor task removal failed:', error?.message || error);
+			});
 		} else if (status === 'BidReady') {
+			const result = await upsertJobBidStatus(applierName, id, { bidReady: true });
+			updatedJob = result.job;
+			updatedProfileId = result.profileId;
 			const tasks = getVendorTasksCollection();
 			const now = new Date();
 			const company =
-				job.company && typeof job.company === 'object'
-					? String(job.company.name || '')
-					: String(job.companyName || '');
+				updatedJob.company && typeof updatedJob.company === 'object'
+					? String(updatedJob.company.name || '')
+					: String(updatedJob.companyName || '');
 			const vendorPayload = {
 				applierName,
 				jobId: id,
-				title: String(job.title || 'Untitled role'),
+				title: String(updatedJob.title || 'Untitled role'),
 				company,
-				applyUrl: String(job.applyLink || job.jobLink || '') || null,
-				source: String(job.source || ''),
-				location: String(job.details?.position || ''),
-				workMode: String(job.details?.remote || ''),
+				applyUrl: String(updatedJob.applyLink || updatedJob.jobLink || '') || null,
+				source: String(updatedJob.source || ''),
+				location: String(updatedJob.details?.position || ''),
+				workMode: String(updatedJob.details?.remote || ''),
 				matchScore: null,
 				status: 'pending',
 				addedAt: now,
 				updatedAt: now,
 				completedAt: null,
 			};
-			// Run job_market + vendor_tasks writes together (was sequential).
-			await Promise.all([
-				upsertJobBidStatus(applierName, id, { bidReady: true }),
+			void (
 				tasks
 					? tasks.updateOne(
 							{ applierName, jobId: id },
@@ -862,21 +834,23 @@ export async function updateJobBidStatus(req, res) {
 							},
 							{ upsert: true },
 						)
-					: Promise.resolve(),
-			]);
+					: Promise.resolve()
+			).catch((error) => {
+				console.warn('[jobs] deferred vendor task sync failed:', error?.message || error);
+			});
 		} else {
-			await upsertJobBidStatus(applierName, id, { bidReady: true, bidCompleted: true });
+			const result = await upsertJobBidStatus(applierName, id, { bidReady: true, bidCompleted: true });
+			updatedJob = result.job;
+			updatedProfileId = result.profileId;
 		}
 		jobCountCache.clear();
-
-		const updatedJob = await jobsCollection.findOne(
-			{ _id: objectId },
-			{ projection: JOB_DETAIL_PROJECTION },
-		);
-		return res.json({ success: true, data: updatedJob });
+		return res.json({ success: true, data: jobForProfile(updatedJob, updatedProfileId) });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/bid-status error', err);
-		return res.status(500).json({ success: false, error: err.message });
+		const statusCode = err.message === 'Invalid job id' || err.message === 'applierName is required'
+			? 400
+			: err.message === 'Job not found' || /^User .+ not found$/.test(err.message) ? 404 : 500;
+		return res.status(statusCode).json({ success: false, error: err.message });
 	}
 }
 
@@ -910,21 +884,18 @@ export async function getJobById(req, res) {
 			{ projection: JOB_DETAIL_PROJECTION },
 		);
 		if (doc) {
+			const applierName = String(req.query.applierName || '').trim();
+			const account = applierName ? await resolveApplierContext(applierName) : null;
 			if (isExtensionV2Job(doc)) {
-				const applierName = String(req.query.applierName || '').trim();
-				let canView = false;
-				if (applierName && accountInfoCollection) {
-					const acc = await accountInfoCollection.findOne(
-						{ name: applierName },
-						{ projection: { tier: 1 } },
-					);
-					canView = isBetaTier(acc?.tier);
-				}
+				const canView = Boolean(account?.isBeta);
 				if (!canView) {
 					return res.status(404).json({ success: false, error: 'Job not found' });
 				}
 			}
-			return res.json({ success: true, data: doc });
+			return res.json({
+				success: true,
+				data: jobForProfile(doc, account?.id ? String(account.id) : null),
+			});
 		}
 
 		if (externalScrapedJobsCollection) {

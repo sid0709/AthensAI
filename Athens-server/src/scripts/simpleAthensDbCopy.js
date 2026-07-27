@@ -3,7 +3,14 @@ import "dotenv/config";
 import { createHash } from "node:crypto";
 import { MongoClient, ObjectId } from "mongodb";
 import { getFirestoreDb, getStorageBucket } from "../services/firebase/firebaseAdmin.js";
-import { stateOf, statesOf, statusContribution } from "../services/jobStatusProjectionService.js";
+import {
+  buildStatusProjectionData,
+  jobStatusProjectionId,
+  stateOf,
+  statesOf,
+  statusContribution,
+} from "../services/jobStatusProjectionService.js";
+import { normalizeCanonicalJobStatuses } from "../services/canonicalJobStatus.js";
 import { assertAuthoritativeAthensDb, DAVID_MOLL_ID, TEMP_ACCOUNT_ID } from "./firebaseResetSupport.js";
 
 const sourceUrl = process.env.MONGO_SOURCE_URL || "mongodb://127.0.0.1:27017";
@@ -69,6 +76,15 @@ async function externalizeLargeMailBody(doc, id) {
 
 function destinationName(source) { return JOB_SOURCES.has(source) ? "jobs" : source; }
 
+function profileResolver(profileIds) {
+  const known = new Set([...profileIds.values()].map(String));
+  known.add(TEMP_ACCOUNT_ID);
+  return (value) => {
+    const raw = String(value?._bsontype === "ObjectId" ? value.toHexString() : value || "").trim();
+    return known.has(raw) ? raw : profileIds.get(raw.toLowerCase()) || null;
+  };
+}
+
 async function transform(sourceName, source, profileIds) {
   const id = String(source._id);
   const doc = scalar(source);
@@ -76,7 +92,10 @@ async function transform(sourceName, source, profileIds) {
   if (sourceName === "job_market") {
     doc.sourceCatalog = "market";
     doc.extensionV2 = String(doc.version || "") === "v2";
-    doc.statusProfileIds = [...new Set((Array.isArray(doc.status) ? doc.status : []).map((row) => String(row?.applier || "")).filter(Boolean))];
+    const normalized = normalizeCanonicalJobStatuses(doc.status, profileResolver(profileIds));
+    if (normalized.issues.length) throw new Error(`Job ${id} has invalid status data: ${JSON.stringify(normalized.issues)}`);
+    doc.status = normalized.statuses;
+    delete doc.statusProfileIds;
   } else if (sourceName === "external_scraped_jobs") {
     doc.sourceCatalog = "external";
   }
@@ -146,7 +165,7 @@ async function copyRemaining(db, firestore, profileIds) {
 
 function emptyStatusCounts(profileId, totalJobs) {
   return {
-    profileId, all: totalJobs, posted: totalJobs, any: 0, rawApplied: 0,
+    schemaVersion: 2, profileId, all: totalJobs, posted: totalJobs, any: 0, rawApplied: 0,
     applied: 0, scheduled: 0, declined: 0, "bid-ready": 0,
     "bid-completed": 0, other: 0, jobIdsByState: {},
   };
@@ -164,37 +183,36 @@ async function rebuildJobStatuses(db, firestore, totalJobs) {
   const counts = new Map([...knownProfileIds].map((profileId) => [profileId, emptyStatusCounts(profileId, totalJobs)]));
   const rows = [];
 
-  for await (const source of db.collection("job_market").find({}, { projection: { status: 1, postedAt: 1, createdAt: 1 } })) {
-    const grouped = new Map();
-    for (const rawStatus of Array.isArray(source.status) ? source.status : []) {
-      const profileId = String(rawStatus?.applier || "");
-      if (!profileId) continue;
-      if (!knownProfileIds.has(profileId)) throw new Error(`Job ${source._id} references unknown account id ${profileId}`);
-      const list = grouped.get(profileId) || [];
-      list.push(scalar(rawStatus));
-      grouped.set(profileId, list);
-    }
+  for await (const source of db.collection("job_market").find({}, { projection: { status: 1, postedAt: 1, createdAt: 1, version: 1, extensionV2: 1 } })) {
+    const normalized = normalizeCanonicalJobStatuses(source.status, (value) => {
+      const profileId = String(value?._bsontype === "ObjectId" ? value.toHexString() : value || "");
+      return knownProfileIds.has(profileId) ? profileId : null;
+    });
+    if (normalized.issues.length) throw new Error(`Job ${source._id} has invalid status data: ${JSON.stringify(normalized.issues)}`);
 
-    for (const [profileId, statuses] of grouped) {
-      const contribution = statusContribution(statuses);
-      const states = statesOf(statuses);
-      const row = counts.get(profileId);
+	for (const statusRow of normalized.statuses) {
+		const profileId = statusRow.applier;
+		const statuses = [statusRow];
+		const contribution = statusContribution(statusRow);
+		const states = statesOf(statusRow);
+		const row = counts.get(profileId);
       row.any += 1;
       for (const [field, value] of Object.entries(contribution)) row[field] += Number(value || 0);
       if (!states.length) row.other += 1;
-      rows.push({
-        id: sha(`${profileId}\0${source._id}`),
-        doc: {
-          profileId,
-          jobId: String(source._id),
-          state: states[0] || stateOf(statuses[0] || {}),
-          states,
-          contribution,
-          sourceCatalog: "market",
-          postedAt: scalar(source.postedAt || source.createdAt || null),
-          updatedAt: new Date(),
-        },
-      });
+		rows.push({
+			id: jobStatusProjectionId(profileId, String(source._id)),
+			doc: buildStatusProjectionData({
+				profileId,
+				jobId: String(source._id),
+				job: {
+					sourceCatalog: "market",
+					postedAt: scalar(source.postedAt || source.createdAt || null),
+					version: source.version || null,
+					extensionV2: Boolean(source.extensionV2) || String(source.version || "") === "v2",
+				},
+				statuses,
+			}),
+		});
     }
   }
 
@@ -226,12 +244,12 @@ async function verify(firestore, expectedCounts) {
     if (actual !== expected) throw new Error(`${collection} count mismatch: expected ${expected}, found ${actual}`);
   }
   const david = (await firestore.collection("job_status_counts").doc(DAVID_MOLL_ID).get()).data();
-  const expectedDavid = { all: 15835, posted: 14442, applied: 1382, scheduled: 8, "bid-completed": 3 };
+  const expectedDavid = { all: 14813, posted: 13420, applied: 1382, scheduled: 8, "bid-completed": 3 };
   for (const [key, expected] of Object.entries(expectedDavid)) {
     if (Number(david?.[key]) !== expected) throw new Error(`David ${key} mismatch: expected ${expected}, found ${david?.[key]}`);
   }
   const jimmy = (await firestore.collection("job_status_counts").doc(JIMMY_SAMBUO_ID).get()).data();
-  const expectedJimmy = { all: 15835, posted: 14133, applied: 1668, scheduled: 0, "bid-ready": 25, "bid-completed": 9 };
+  const expectedJimmy = { all: 14813, posted: 13111, applied: 1668, scheduled: 0, "bid-ready": 25, "bid-completed": 9 };
   for (const [key, expected] of Object.entries(expectedJimmy)) {
     if (Number(jimmy?.[key]) !== expected) throw new Error(`Jimmy ${key} mismatch: expected ${expected}, found ${jimmy?.[key]}`);
   }
@@ -257,12 +275,14 @@ async function main() {
     if (mode === "statuses") {
       const totalJobs = (await firestore.collection("jobs").count().get()).data().count;
       if (totalJobs !== 15835) throw new Error(`Status rebuild requires 15835 jobs, found ${totalJobs}`);
-      const rebuilt = await rebuildJobStatuses(db, firestore, totalJobs);
+      const marketJobs = (await firestore.collection("jobs").where("sourceCatalog", "==", "market").count().get()).data().count;
+      const rebuilt = await rebuildJobStatuses(db, firestore, marketJobs);
       await verify(firestore, new Map([["jobs", totalJobs], ["job_statuses", rebuilt.projections], ["job_status_counts", rebuilt.accounts]]));
       return;
     }
     const expected = await copyRemaining(db, firestore, profileIds);
-    const rebuilt = await rebuildJobStatuses(db, firestore, expected.get("jobs") || 0);
+    const marketJobs = await db.collection("job_market").countDocuments({});
+    const rebuilt = await rebuildJobStatuses(db, firestore, marketJobs);
     expected.set("job_statuses", rebuilt.projections);
     expected.set("job_status_counts", rebuilt.accounts);
     expected.set("account_info", 35);

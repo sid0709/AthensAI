@@ -14,24 +14,22 @@ import {
 import { isBetaTier } from "../../lib/beta";
 import { JobExportDialog } from "./components/JobExportDialog";
 import { JobListSkeleton } from "./components/JobListSkeleton";
+import { JobListErrorState } from "./components/JobListErrorState";
 import { JobListStickyBar } from "./components/JobListStickyBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
+import { runWithConcurrency } from "./lib/run-with-concurrency";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { isExternalJob } from "../../types/job";
-import { ProfileMatchSkillsProvider, useProfileMatchSkills } from "./hooks/useProfileMatchSkills";
+import { useProfileMatchSkills } from "./hooks/useProfileMatchSkills";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 500];
 
 export function JobSearchPage() {
-  return (
-    <ProfileMatchSkillsProvider>
-      <JobSearchPageContent />
-    </ProfileMatchSkillsProvider>
-  );
+  return <JobSearchPageContent />;
 }
 
 function JobSearchPageContent() {
@@ -54,7 +52,7 @@ function JobSearchPageContent() {
   const [exportBusy, setExportBusy] = useState(false);
   const { profileVersion, matchContext } = useProfileMatchSkills();
 
-  const { jobs, total, loading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts, rescoreVisibleJobs } =
+  const { jobs, total, loading, error, staleResults, retry, requestKey, countsLoading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts, rescoreVisibleJobs } =
     useJobsList(filters, removedIds, profileVersion);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
   const {
@@ -88,7 +86,7 @@ function JobSearchPageContent() {
 
   useEffect(() => {
     clearSelection();
-  }, [filters, page, clearSelection]);
+  }, [filters, page, pageSize, profileVersion, requestKey, clearSelection]);
 
   useEffect(() => {
     if (matchContext) rescoreVisibleJobs(matchContext);
@@ -121,7 +119,7 @@ function JobSearchPageContent() {
       toast.message("External scraped jobs open in a new tab only — nothing to mark as applied.");
       return;
     }
-    await Promise.all(marketJobs.map((job) => applyToJob(job, { openUrl: false })));
+    await runWithConcurrency(marketJobs, (job) => applyToJob(job, { openUrl: false }));
   };
 
   const downloadSelected = () => {
@@ -198,6 +196,7 @@ function JobSearchPageContent() {
         filters={filters}
         onChange={setFilters}
         statusCounts={statusCounts}
+        countsLoading={countsLoading}
         showScoresOnCards={showScoresOnCards}
         onShowScoresOnCardsChange={setShowScoresOnCards}
         matchScoreHint={matchScoreHint}
@@ -255,6 +254,7 @@ function JobSearchPageContent() {
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         showGrid={showGrid}
         onToggleGrid={() => setShowGrid((g) => !g)}
+        loading={loading}
       />
 
       <JobExportDialog
@@ -266,11 +266,22 @@ function JobSearchPageContent() {
         busy={exportBusy}
       />
 
+      {!loading && staleResults && error ? (
+        <div role="status" className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
+          {error}
+          <button type="button" className="ml-2 font-semibold underline underline-offset-2" onClick={retry}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+
       {loading ? (
         <JobListSkeleton
           count={Math.min(pageSize, 8)}
           layout={showGrid ? "grid" : "list"}
         />
+      ) : error && !staleResults ? (
+        <JobListErrorState message={error} onRetry={retry} />
       ) : (
         <TabTransition tabKey={showGrid ? "grid" : "list"}>
           <JobListView
@@ -304,6 +315,7 @@ function JobSearchPageContent() {
         onPageSizeChange={setPageSize}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         detailed
+        loading={loading}
         className="mt-2"
       />
     </PageShell>

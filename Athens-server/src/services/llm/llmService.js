@@ -207,7 +207,9 @@ export async function chatCompletion({
   jsonMode = false,
   cacheKey,
   reasoningEffort,
+  maxTokens,
   timeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
+  retries = 4,
   runId,
   feature = 'resume-analysis',
   applierName,
@@ -232,6 +234,10 @@ export async function chatCompletion({
   if (cacheKey) body.prompt_cache_key = cacheKey;
   if (p.id === 'openai' && isReasoningModel(model) && reasoningEffort && reasoningEffort !== 'default') {
     body.reasoning_effort = reasoningEffort;
+  }
+  if (Number.isFinite(maxTokens) && maxTokens > 0) {
+    if (p.id === 'openai' && isReasoningModel(model)) body.max_completion_tokens = Math.floor(maxTokens);
+    else body.max_tokens = Math.floor(maxTokens);
   }
 
   const promptChars = messages.reduce((sum, m) => sum + String(m?.content || '').length, 0);
@@ -288,13 +294,14 @@ export async function chatCompletion({
           },
           body: JSON.stringify(body),
         },
-        { timeoutMs, signal },
+        { timeoutMs, retries, signal },
       );
 
       const data = await response.json().catch(() => ({}));
       const elapsedMs = Date.now() - startedAt;
       if (!response.ok) {
-        const err = new Error(data?.error?.message || `${p.label} request failed (${response.status})`);
+        const providerMessage = typeof data?.error === 'string' ? data.error : data?.error?.message;
+        const err = new Error(providerMessage || `${p.label} request failed (${response.status})`);
         err.status = response.status;
         err.provider = p.id;
         log.error('llm', 'chat failed', {

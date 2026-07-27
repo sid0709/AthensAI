@@ -60,12 +60,6 @@ async function resolveApplierId(applierName) {
 	return doc?._id || null;
 }
 
-export async function countPendingTitleScan(applierName) {
-	if (!jobsCollection) return 0;
-	const applierId = await resolveApplierId(applierName);
-	return jobsCollection.countDocuments(pendingQuery(applierId));
-}
-
 async function claimBatch(applierId, n) {
 	if (!jobsCollection || n <= 0) return [];
 	const jobs = await jobsCollection
@@ -127,7 +121,9 @@ async function processBatch(session, auth, jobs) {
 	} finally {
 		inflight.delete(controller);
 		session.processed += jobs.length;
-		session.remaining = Math.max(0, session.total - session.processed);
+		session.remaining = session.total == null
+			? null
+			: Math.max(0, session.total - session.processed);
 	}
 }
 
@@ -176,7 +172,7 @@ async function runSession(session) {
 		session.running = false;
 		session.finishedAt = new Date().toISOString();
 		session.status = cancelRequested ? 'cancelled' : 'completed';
-		session.remaining = await countPendingTitleScan(session.applierName);
+		session.remaining = cancelRequested ? null : 0;
 		console.log(
 			`[job-title-scan] ${session.status} — ${session.classified} classified, ${session.failed} failed · ` +
 				`${session.inputTokens + session.outputTokens} tokens · ${formatCostUsd(session.costUsd)}`,
@@ -210,8 +206,12 @@ export function getTitleScanStatus() {
 }
 
 export async function getTitleScanSessionStatus(applierName) {
-	const pending = await countPendingTitleScan(applierName);
-	return { pending, ...getTitleScanStatus() };
+	const status = getTitleScanStatus();
+	const sameApplier = activeSession?.applierName === String(applierName || '').trim();
+	const pending = sameApplier
+		? activeSession?.remaining ?? null
+		: null;
+	return { pending, pendingKnown: pending != null, ...status };
 }
 
 export async function startTitleScanSession({ applierName, limit = null } = {}) {
@@ -225,15 +225,7 @@ export async function startTitleScanSession({ applierName, limit = null } = {}) 
 	await recoverStuckScanning();
 
 	const applierId = await resolveApplierId(name);
-	const pending = await countPendingTitleScan(name);
-	if (pending === 0) {
-		return {
-			sessionId: null,
-			pending: 0,
-			started: false,
-			message: 'No New jobs pending title analysis',
-		};
-	}
+	const parsedLimit = limit != null ? Math.max(1, Number(limit) || 1) : null;
 
 	cancelRequested = false;
 	activeSession = {
@@ -242,12 +234,12 @@ export async function startTitleScanSession({ applierName, limit = null } = {}) 
 		applierId,
 		running: true,
 		status: 'running',
-		total: limit != null ? Math.min(pending, Number(limit)) : pending,
-		limit: limit != null ? Number(limit) : null,
+		total: parsedLimit,
+		limit: parsedLimit,
 		processed: 0,
 		classified: 0,
 		failed: 0,
-		remaining: pending,
+		remaining: parsedLimit,
 		lastJob: null,
 		provider: null,
 		model: null,
@@ -269,7 +261,7 @@ export async function startTitleScanSession({ applierName, limit = null } = {}) 
 
 	return {
 		sessionId: activeSession.id,
-		pending,
+		pending: null,
 		started: true,
 	};
 }

@@ -107,9 +107,10 @@ export function MailAiLabelDialog({
   onComplete,
 }: MailAiLabelDialogProps) {
   const [threads, setThreads] = useState<MailThread[]>([]);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] = useState<number | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -126,6 +127,7 @@ export function MailAiLabelDialog({
   const [rowStatus, setRowStatus] = useState<Record<string, RowStatus>>({});
   const [rowResults, setRowResults] = useState<Record<string, MailAiLabelResult>>({});
   const [summary, setSummary] = useState<{ applied: number; skipped: number; failed: number } | null>(null);
+  const [runDetails, setRunDetails] = useState<{ durationMs: number; model?: string } | null>(null);
 
   const labelTree = useMemo(() => buildLabelTree(labels), [labels]);
   const pageIds = useMemo(() => threads.map((t) => t.id), [threads]);
@@ -138,10 +140,14 @@ export function MailAiLabelDialog({
     if (!applierName) return;
     setLoading(true);
     setLoadError(null);
+    setThreads([]);
+    setTotal(null);
+    setHasMore(false);
     try {
       const threadResult = await fetchUnlabeledThreads(applierName, { page, pageSize });
       setThreads(threadResult.threads);
       setTotal(threadResult.total);
+      setHasMore(threadResult.hasMore);
       setMailboxById((prev) => {
         const next = { ...prev };
         for (const t of threadResult.threads) {
@@ -203,6 +209,7 @@ export function MailAiLabelDialog({
     setRowStatus({});
     setRowResults({});
     setSummary(null);
+    setRunDetails(null);
     setRunError(null);
     setLoadError(null);
     setPage(1);
@@ -222,7 +229,7 @@ export function MailAiLabelDialog({
   };
 
   const handleSaveDefinitions = async () => {
-    if (!applierName) return;
+    if (!applierName) return false;
     setSavingDefinitions(true);
     try {
       const payload = canonicalizeDefinitions(definitions, labels);
@@ -230,8 +237,10 @@ export function MailAiLabelDialog({
       setDefinitions(canonicalizeDefinitions(saved, labels));
       setDefinitionsDirty(false);
       setDefinitionsSaved(true);
+      return true;
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "Failed to save definitions");
+      return false;
     } finally {
       setSavingDefinitions(false);
     }
@@ -262,7 +271,8 @@ export function MailAiLabelDialog({
     if (!applierName || totalSelected === 0 || running) return;
 
     if (definitionsDirty) {
-      await handleSaveDefinitions();
+      const saved = await handleSaveDefinitions();
+      if (!saved) return;
     }
 
     const messages = [...selectedIds]
@@ -278,10 +288,11 @@ export function MailAiLabelDialog({
     setRunning(true);
     setRunError(null);
     setSummary(null);
+    setRunDetails(null);
     setRowStatus(Object.fromEntries(messages.map((m) => [String(m.uid), "running"])));
 
     try {
-      const { results } = await runMailAiLabel(applierName, {
+      const { results, processing, model } = await runMailAiLabel(applierName, {
         messages,
         labelDefinitions: definitions,
       });
@@ -298,7 +309,7 @@ export function MailAiLabelDialog({
         if (r.applied) {
           nextStatus[id] = "done";
           applied += 1;
-        } else if (r.label) {
+        } else if (r.error || (r.reason && r.reason !== "no_match")) {
           nextStatus[id] = "error";
           failed += 1;
         } else {
@@ -310,15 +321,20 @@ export function MailAiLabelDialog({
       setRowStatus(nextStatus);
       setRowResults(nextResults);
       setSummary({ applied, skipped, failed });
+      if (processing) {
+        setRunDetails({ durationMs: processing.durationMs, model: model?.model });
+      }
       onComplete?.();
 
       if (applied > 0) {
+        const appliedIds = new Set(results.filter((r) => r.applied).map((r) => String(r.uid)));
         setSelectedIds((prev) => {
           const next = new Set(prev);
-          results.filter((r) => r.applied).forEach((r) => next.delete(String(r.uid)));
+          appliedIds.forEach((id) => next.delete(id));
           return next;
         });
-        void loadThreads();
+        setThreads((prev) => prev.filter((thread) => !appliedIds.has(thread.id)));
+        setTotal((prev) => (prev === null ? null : Math.max(0, prev - appliedIds.size)));
       }
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "AI labeling failed");
@@ -419,11 +435,22 @@ export function MailAiLabelDialog({
                   )}
                 </span>
               </label>
-              <span className="text-xs text-muted-foreground tabular-nums">{total} total</span>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {threads.length} loaded on page {page}
+              </span>
             </div>
 
             {loadError && (
-              <div className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">{loadError}</div>
+              <div className="flex items-center justify-between gap-3 text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">
+                <span>{loadError}</span>
+                <button
+                  type="button"
+                  onClick={() => void loadThreads()}
+                  className="shrink-0 rounded-md border border-destructive/30 px-2 py-1 text-xs font-semibold hover:bg-destructive/10"
+                >
+                  Retry
+                </button>
+              </div>
             )}
 
             {loading ? (
@@ -433,7 +460,7 @@ export function MailAiLabelDialog({
                 </span>
                 Loading unlabeled emails…
               </div>
-            ) : threads.length === 0 ? (
+            ) : loadError ? null : threads.length === 0 ? (
               <div className="text-center py-12 text-sm text-muted-foreground">
                 No unlabeled inbox emails found.
               </div>
@@ -500,23 +527,30 @@ export function MailAiLabelDialog({
               </div>
             )}
 
-            {total > pageSize && (
+            {(page > 1 || hasMore || (total !== null && total > pageSize)) && (
               <PaginationBar
                 page={page}
                 pageSize={pageSize}
                 total={total}
+                itemCount={threads.length}
+                hasMore={hasMore}
                 onPageChange={setPage}
                 onPageSizeChange={(size) => {
                   setPageSize(size);
                   setPage(1);
                 }}
-                pageSizeOptions={[10, 25, 50]}
+                pageSizeOptions={[25, 50, 100]}
               />
             )}
 
             {summary && (
               <div className="text-sm rounded-lg bg-secondary/60 border border-border px-3 py-2">
                 Done: {summary.applied} labeled, {summary.skipped} skipped, {summary.failed} failed.
+                {runDetails && (
+                  <span className="text-muted-foreground">
+                    {` ${(runDetails.durationMs / 1000).toFixed(1)}s${runDetails.model ? ` · ${runDetails.model}` : ""}`}
+                  </span>
+                )}
               </div>
             )}
 
@@ -548,7 +582,7 @@ export function MailAiLabelDialog({
                 <Sparkles className="size-4" />
               )}
             </span>
-            <span>{running ? "Labeling…" : `Run AI Label (${totalSelected})`}</span>
+            <span>{running ? `Labeling ${totalSelected} in batches…` : `Run AI Label (${totalSelected})`}</span>
           </button>
         </DialogFooter>
       </DialogContent>

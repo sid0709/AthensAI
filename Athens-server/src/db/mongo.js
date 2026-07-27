@@ -90,6 +90,7 @@ async function ensureMailCollectionsIndexes() {
 		);
 		await mailMessagesCollection.createIndex({ applierName: 1, date: -1 });
 		await mailMessagesCollection.createIndex({ applierName: 1, folder: 1, date: -1 });
+		await mailMessagesCollection.createIndex({ applierName: 1, folder: 1, hasCustomLabels: 1, date: -1 });
 	}
 	if (mailSyncStateCollection) {
 		await mailSyncStateCollection.createIndex({ applierName: 1 }, { unique: true });

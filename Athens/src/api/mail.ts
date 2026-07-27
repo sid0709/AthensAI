@@ -45,6 +45,16 @@ export type MailThreadsResult = {
   fromCache?: boolean;
 };
 
+export type UnlabeledThreadsResult = {
+  threads: MailThread[];
+  total: number | null;
+  totalExact: boolean;
+  hasMore: boolean;
+  page: number;
+  pageSize: number;
+  fromCache?: boolean;
+};
+
 export async function fetchMailThreads(
   applierName: string,
   opts: {
@@ -211,13 +221,26 @@ export type MailAiLabelResult = {
   uid: number;
   label: string | null;
   applied: boolean;
+  reason?: "applied" | "no_match" | "body_error" | "classification_error" | "gmail_error";
   error?: string;
+};
+
+export type MailAiLabelResponse = {
+  results: MailAiLabelResult[];
+  usage?: Record<string, unknown>;
+  model?: { provider: string; model: string };
+  processing?: {
+    durationMs: number;
+    messages: number;
+    aiRequests: number;
+    gmailWriteBatches: number;
+  };
 };
 
 export async function fetchUnlabeledThreads(
   applierName: string,
   opts: { page?: number; pageSize?: number } = {},
-): Promise<MailThreadsResult> {
+): Promise<UnlabeledThreadsResult> {
   const query = qs({
     applierName,
     folder: "inbox",
@@ -226,10 +249,12 @@ export async function fetchUnlabeledThreads(
     pageSize: opts.pageSize,
     cacheOnly: "true",
   });
-  const data = await mailFetch<MailThreadsResult>(`mail/threads${query}`);
+  const data = await mailFetch<UnlabeledThreadsResult>(`mail/threads${query}`);
   return {
     threads: data.threads,
-    total: data.total,
+    total: typeof data.total === "number" ? data.total : null,
+    totalExact: data.totalExact === true,
+    hasMore: data.hasMore === true,
     page: data.page,
     pageSize: data.pageSize,
     fromCache: data.fromCache,
@@ -262,8 +287,20 @@ export async function runMailAiLabel(
     labelDefinitions: MailLabelDefinitions;
   },
 ) {
-  return mailFetch<{ results: MailAiLabelResult[]; usage?: Record<string, unknown> }>("mail/ai-label", {
-    method: "POST",
-    body: JSON.stringify({ applierName, ...payload }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  try {
+    return await mailFetch<MailAiLabelResponse>("mail/ai-label", {
+      method: "POST",
+      body: JSON.stringify({ applierName, ...payload }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("AI labeling timed out. Retry the failed messages or use a smaller selection.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }

@@ -5,6 +5,7 @@ import { verifyKey, getProvider } from "../services/llm/llmService.js";
 import { toCanonical } from "../services/skillNormalize.js";
 import { emptyResumeCatalog, validateResumeCatalog } from "../services/resumeCatalogService.js";
 import { decryptProfileApiKeys, encryptProfileApiKeys } from "../services/autoBidProfileSecrets.js";
+import { invalidateMailAccountCache } from "../services/mail/credentials.js";
 
 /** Build personal skill document with normalized canonical id. */
 async function buildPersonalSkillDoc(name) {
@@ -249,15 +250,22 @@ function defaultCareerEntry() {
 }
 
 /** Shape returned in GET `profile` (stored or empty). */
-function buildAutoBidProfileResponse(p) {
+function buildAutoBidProfileResponse(p, accountName = "") {
 	const educationRaw = Array.isArray(p.education) ? p.education : [];
 	const careersRaw = Array.isArray(p.careers) ? p.careers : [];
 	const education = educationRaw.length ? educationRaw : [defaultEducationEntry()];
 	const careers = careersRaw.length ? careersRaw : [defaultCareerEntry()];
+	const storedFullName = String(p.fullName || "").trim();
+	const storedFirstName = String(p.firstName || "").trim();
+	const storedLastName = String(p.lastName || "").trim();
+	const fullName = storedFullName || [storedFirstName, storedLastName].filter(Boolean).join(" ") || String(accountName || "").trim();
+	const nameParts = fullName.split(/\s+/).filter(Boolean);
+	const firstName = storedFirstName || nameParts[0] || "";
+	const lastName = storedLastName || nameParts.slice(1).join(" ");
 	return {
-		fullName: p.fullName || "",
-		firstName: p.firstName || "",
-		lastName: p.lastName || "",
+		fullName,
+		firstName,
+		lastName,
 		age: p.age != null ? String(p.age) : "",
 		address: p.address || "",
 		city: p.city || "",
@@ -325,7 +333,7 @@ export async function getAutoBidProfile(req, res) {
 				accountExists: false,
 				vendorAllowed: false,
 				vendorPasswordSet: false,
-				profile: buildAutoBidProfileResponse({}),
+				profile: buildAutoBidProfileResponse({}, name),
 			});
 		}
 		const p = await decryptProfileApiKeys(acc.autoBidProfile || {});
@@ -334,7 +342,7 @@ export async function getAutoBidProfile(req, res) {
 			accountExists: true,
 			vendorAllowed: Boolean(acc.vendorAllowed),
 			vendorPasswordSet: Boolean(acc.vendorPassword),
-			profile: buildAutoBidProfileResponse(p),
+			profile: buildAutoBidProfileResponse(p, acc.name),
 		});
 	} catch (err) {
 		console.error("GET /api/personal/auto-bid-profile error", err);
@@ -372,6 +380,7 @@ export async function upsertAutoBidProfile(req, res) {
 				error: `No account named "${name}". Add it under Applier accounts in the sidebar (or POST /api/account_info) before saving the profile.`,
 			});
 		}
+		await invalidateMailAccountCache(acc.name);
 		return res.json({
 			success: true,
 			profile: await decryptProfileApiKeys(autoBidProfile),
@@ -422,6 +431,7 @@ export async function setDefaultModel(req, res) {
 			},
 		});
 		if (r.matchedCount === 0) return res.status(404).json({ success: false, error: `No account named "${name}".` });
+		await invalidateMailAccountCache(acc.name);
 
 		return res.json({ success: true, valid: true, provider, model, message: `Default set to ${provider} · ${model}` });
 	} catch (err) {

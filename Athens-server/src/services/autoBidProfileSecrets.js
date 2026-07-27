@@ -28,6 +28,16 @@ async function decryptValue(value) {
 	return isEncryptedSecret(text) ? decryptLegacy(text) : text;
 }
 
+/** Encrypt a non-profile account secret with the same KMS/legacy policy. */
+export async function encryptAccountSecret(value) {
+	return encryptValue(value);
+}
+
+/** Decrypt a non-profile account secret with the same KMS/legacy policy. */
+export async function decryptAccountSecret(value) {
+	return decryptValue(value);
+}
+
 export async function encryptProfileApiKeys(profile) {
 	if (!profile || typeof profile !== 'object') return profile;
 	const out = { ...profile };

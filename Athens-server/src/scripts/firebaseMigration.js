@@ -10,6 +10,13 @@ import { encryptProfileApiKeys, rewrapProfileSecretsWithKms } from "../services/
 import { firestoreUniqueReservations } from "../db/firestoreMongoAdapter.js";
 import { applyLegacyCredentialPolicy, includesFirebaseAuth } from "./firebaseMigrationMode.js";
 import {
+	buildStatusProjectionData,
+	jobStatusProjectionId,
+	statesOf,
+	statusContribution,
+} from "../services/jobStatusProjectionService.js";
+import { normalizeCanonicalJobStatuses } from "../services/canonicalJobStatus.js";
+import {
 	ATHENS_DB_NAME,
 	DAVID_MOLL_ID,
 	EXPECTED_PROJECT_ID,
@@ -26,7 +33,7 @@ const sourceUrl = process.env.MONGO_SOURCE_URL || "mongodb://127.0.0.1:27017";
 const sourceDbName = process.env.MONGO_SOURCE_DB || "";
 const outputDir = path.resolve(process.env.MIGRATION_OUTPUT_DIR || "migration-output");
 const MAX_FIRESTORE_BYTES = 900 * 1024;
-const TRANSFORMATION_VERSION = 4;
+const TRANSFORMATION_VERSION = 5;
 const MIGRATION_CONCURRENCY = Math.min(64, Math.max(1, Number.parseInt(process.env.MIGRATION_CONCURRENCY || "16", 10) || 16));
 const SECRET_ENCRYPTION_MODE = String(process.env.MIGRATION_SECRET_ENCRYPTION || "kms").trim().toLowerCase();
 const INCLUDE_FIREBASE_AUTH = includesFirebaseAuth();
@@ -232,9 +239,17 @@ async function transformDocument(db, sourceCollection, source, profileIds = new 
 	if (sourceCollection === "job_market") {
 		doc.sourceCatalog = "market";
 		doc.extensionV2 = String(doc.version || "") === "v2";
-		doc.statusProfileIds = [...new Set((Array.isArray(doc.status) ? doc.status : [])
-			.map((entry) => String(entry?.applier || "").trim())
-			.filter(Boolean))];
+		const knownProfileIds = new Set([...profileIds.values()].map(String));
+		knownProfileIds.add(TEMP_ACCOUNT_ID);
+		const normalized = normalizeCanonicalJobStatuses(doc.status, (value) => {
+			const raw = String(value || "").trim();
+			return knownProfileIds.has(raw) ? raw : profileIds.get(raw.toLowerCase()) || null;
+		});
+		if (normalized.issues.length) {
+			throw new Error(`Job ${sourceId} has invalid status data: ${JSON.stringify(normalized.issues)}`);
+		}
+		doc.status = normalized.statuses;
+		delete doc.statusProfileIds;
 	}
 	if (sourceCollection === "external_scraped_jobs") doc.sourceCatalog = "external";
 	const profileName = String(
@@ -488,28 +503,15 @@ async function migrate(db) {
 	console.log(`Migration complete: ${processed} processed (${migrated} migrated, ${skipped} skipped)`);
 }
 
-function statusState(status = {}) {
-	if (status.bidCompletedDate) return "bid-completed";
-	if (status.scheduledDate) return "scheduled";
-	if (status.declinedDate) return "declined";
-	if (status.appliedDate) return "applied";
-	if (status.bidReadyDate) return "bid-ready";
-	return "other";
-}
-
-function statusContribution(status = {}) {
-	const applied = Boolean(status.appliedDate);
-	const scheduled = Boolean(status.scheduledDate);
-	const declined = Boolean(status.declinedDate);
-	const bidCompleted = Boolean(status.bidCompletedDate) && !applied && !scheduled && !declined;
-	const bidReady = Boolean(status.bidReadyDate) && !status.bidCompletedDate && !applied && !scheduled && !declined;
-	return { rawApplied: Number(applied), scheduled: Number(scheduled), declined: Number(declined), "bid-completed": Number(bidCompleted), "bid-ready": Number(bidReady) };
-}
-
 async function rebuildJobStatusProjections(firestore) {
 	await firestore.recursiveDelete(firestore.collection("job_statuses"));
 	await firestore.recursiveDelete(firestore.collection("job_status_counts"));
 	const counts = new Map();
+	const accounts = await firestore.collection("account_info").get();
+	const knownProfileIds = new Set(accounts.docs.map((doc) => String(doc.data()._id || doc.id)));
+	for (const profileId of knownProfileIds) {
+		counts.set(profileId, { any: 0, rawApplied: 0, applied: 0, scheduled: 0, declined: 0, "bid-ready": 0, "bid-completed": 0, other: 0 });
+	}
 	let lastId = null;
 	let processed = 0;
 	while (true) {
@@ -520,46 +522,47 @@ async function rebuildJobStatusProjections(firestore) {
 		const writer = firestore.bulkWriter();
 		for (const jobDoc of snapshot.docs) {
 			const job = jobDoc.data();
-			const seen = new Set();
-			for (const status of Array.isArray(job.status) ? job.status : []) {
-				const profileId = String(status?.applier || "").trim();
-				if (!profileId || seen.has(profileId)) continue;
-				seen.add(profileId);
-				const state = statusState(status);
-				const id = sha(`${profileId}\0${jobDoc.id}`);
-				writer.set(firestore.collection("job_statuses").doc(id), {
-					profileId,
-					jobId: jobDoc.id,
-					state,
-					sourceCatalog: job.sourceCatalog || "market",
-					postedAt: job.postedAt || job.createdAt || null,
-					appliedDate: status.appliedDate || null,
-					scheduledDate: status.scheduledDate || null,
-					declinedDate: status.declinedDate || null,
-					bidReadyDate: status.bidReadyDate || null,
-					bidCompletedDate: status.bidCompletedDate || null,
-				});
-				const row = counts.get(profileId) || { any: 0, rawApplied: 0, scheduled: 0, declined: 0, "bid-ready": 0, "bid-completed": 0, other: 0 };
-				row.any += 1;
-				const contribution = statusContribution(status);
-				for (const [key, amount] of Object.entries(contribution)) row[key] += amount;
-				if (state === "other") row.other += 1;
-				counts.set(profileId, row);
+			const normalized = normalizeCanonicalJobStatuses(job.status, (value) => {
+				const raw = String(value || "").trim();
+				return knownProfileIds.has(raw) ? raw : null;
+			});
+			if (normalized.issues.length) {
+				throw new Error(`Job ${jobDoc.id} has invalid status data: ${JSON.stringify(normalized.issues)}`);
+			}
+			for (const status of normalized.statuses) {
+				const profileId = status.applier;
+				const states = statesOf(status);
+				const id = jobStatusProjectionId(profileId, jobDoc.id);
+				writer.set(
+					firestore.collection("job_statuses").doc(id),
+					buildStatusProjectionData({
+						profileId,
+						jobId: jobDoc.id,
+						job,
+						statuses: [status],
+					}),
+				);
+				if (job.sourceCatalog === "market") {
+					const row = counts.get(profileId);
+					row.any += 1;
+					const contribution = statusContribution(status);
+					for (const [key, amount] of Object.entries(contribution)) row[key] += amount;
+					if (!states.length) row.other += 1;
+				}
 			}
 		}
 		await writer.close();
 		processed += snapshot.size;
 		lastId = snapshot.docs.at(-1).id;
 	}
-	const total = (await firestore.collection("jobs").count().get()).data().count;
+	const total = (await firestore.collection("jobs").where("sourceCatalog", "==", "market").count().get()).data().count;
 	const writer = firestore.bulkWriter();
 	for (const [profileId, row] of counts) {
-		const applied = Math.max(0, row.rawApplied - row.scheduled - row.declined - row["bid-completed"]);
 		writer.set(firestore.collection("job_status_counts").doc(profileId), {
+			schemaVersion: 2,
 			profileId,
 			all: total,
-			posted: total - row.rawApplied,
-			applied,
+			posted: Math.max(0, total - row.any),
 			...row,
 			updatedAt: new Date(),
 		});

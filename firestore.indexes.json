@@ -13,6 +13,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
         { "fieldPath": "extensionV2", "order": "ASCENDING" },
         { "fieldPath": "postedAt", "order": "DESCENDING" }
       ]
@@ -49,6 +57,15 @@
         { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
         { "fieldPath": "source", "order": "ASCENDING" },
         { "fieldPath": "postedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "source", "order": "ASCENDING" },
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "ASCENDING" }
       ]
     },
     {
@@ -201,6 +218,16 @@
       ]
     },
     {
+      "collectionGroup": "mail_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "applierName", "order": "ASCENDING" },
+        { "fieldPath": "folder", "order": "ASCENDING" },
+        { "fieldPath": "hasCustomLabels", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "user_skills",
       "queryScope": "COLLECTION",
       "fields": [
@@ -283,6 +310,16 @@
         { "fieldPath": "state", "order": "ASCENDING" },
         { "fieldPath": "postedAt", "order": "DESCENDING" },
         { "fieldPath": "jobId", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "job_statuses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "profileId", "order": "ASCENDING" },
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "ASCENDING" },
+        { "fieldPath": "jobId", "order": "ASCENDING" }
       ]
     },
     {

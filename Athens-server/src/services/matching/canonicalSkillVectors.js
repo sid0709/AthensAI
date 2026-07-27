@@ -49,7 +49,7 @@ export function buildJobSkillSparseVector(aiSkills = []) {
 }
 
 /** Deduplicate profile aliases and keep the highest proficiency for each canonical skill. */
-export function buildUserSkillSparseVector(skillDocs = [], dictionaryEntries = []) {
+export function buildUserSkillSparseVector(skillDocs = [], dictionaryEntries = [], dictionaryByToken = null) {
   const byId = new Map();
   const names = [];
   const tokenWeights = {};
@@ -70,14 +70,17 @@ export function buildUserSkillSparseVector(skillDocs = [], dictionaryEntries = [
     }
   }
 
-  if (dictionaryEntries.length && names.length) {
+	if (dictionaryEntries.length && names.length) {
     const ctx = {
       profileTokens: buildProfileTokens(names),
       profileCompacts: buildProfileCompacts(names),
       tokenWeights,
       compactWeights: [...compactWeightMap].map(([c, w]) => ({ c, w })),
     };
-    for (const entry of dictionaryEntries) {
+		const candidateEntries = dictionaryByToken instanceof Map
+			? [...new Set(names.flatMap((name) => skillTokens(name).flatMap((token) => dictionaryByToken.get(token) || [])))]
+			: dictionaryEntries;
+		for (const entry of candidateEntries) {
       const name = String(entry.name || entry.nameCanonical || '').trim();
       const id = Number(entry.skillId) || stableSkillId(entry.nameCanonical || name);
       if (!name || id == null) continue;

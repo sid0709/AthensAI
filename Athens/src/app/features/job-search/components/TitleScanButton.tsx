@@ -17,20 +17,23 @@ export function TitleScanButton() {
   if (!isBeta) return null;
 
   if (isRunning) {
-    const total = session.total ?? 0;
+    const total = session.total ?? null;
     const processed = session.processed ?? 0;
-    const pct = total ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+    const pct = total ? Math.min(100, Math.round((processed / total) * 100)) : null;
     return (
       <div className="flex items-center gap-2 shrink-0">
         <div className="flex flex-col gap-0.5 min-w-[128px]">
           <div className="flex items-center justify-between text-[11px] text-muted-foreground">
             <span>Analyzing titles…</span>
             <span className="font-mono tabular-nums">
-              {processed}/{total}
+              {total ? `${processed}/${total}` : `${processed} done`}
             </span>
           </div>
           <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
-            <div className="h-full bg-emerald-600 transition-all" style={{ width: `${pct}%` }} />
+            <div
+              className={`h-full bg-emerald-600 transition-all ${pct == null ? "w-1/3 animate-pulse" : ""}`}
+              style={pct == null ? undefined : { width: `${pct}%` }}
+            />
           </div>
         </div>
         <Button
@@ -57,12 +60,14 @@ export function TitleScanButton() {
       title={
         pending === 0
           ? "All New jobs already have a title role"
-          : `Classify ${pending} New job title(s) with AI`
+          : pending == null
+            ? "Classify unprocessed New job titles with AI"
+            : `Classify ${pending} New job title(s) with AI`
       }
     >
       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
       Analyze title
-      {pending > 0 && (
+      {pending != null && pending > 0 && (
         <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
           {pending > 999 ? "999+" : pending}
         </span>

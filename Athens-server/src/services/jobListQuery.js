@@ -157,7 +157,7 @@ function applierCacheKey(name) {
 }
 
 /** Resolve applier Mongo id + beta tier (cached briefly). */
-async function resolveApplierContext(applierName) {
+export async function resolveApplierContext(applierName) {
 	if (!applierName || !accountInfoCollection) {
 		return { id: null, isBeta: false };
 	}
@@ -223,7 +223,7 @@ const SCORE_FILTER_KEYS = new Set([
  * Build a Mongo filter for POST /jobs/list from the request body.
  * Pass statusTab to override applied/status: all | posted | bid-ready | bid-completed | applied | scheduled | declined
  */
-export async function buildJobsListQuery(body, { statusTab } = {}) {
+export async function buildJobsListQuery(body, { statusTab, includePersonalStatus = true } = {}) {
 	const {
 		q,
 		postedAtFrom,
@@ -361,7 +361,9 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 		}
 	}
 
-	applyStatusFilter(query, { appliedBool, status: statusFilter, applierId });
+	if (includePersonalStatus) {
+		applyStatusFilter(query, { appliedBool, status: statusFilter, applierId });
+	}
 
 	if (postedAtFrom || postedAtTo) {
 		const postedAtQuery = {};

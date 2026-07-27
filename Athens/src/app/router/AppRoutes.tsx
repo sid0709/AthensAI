@@ -7,6 +7,7 @@ import { AppLayout } from "./AppLayout";
 import { ProtectedRoute } from "./ProtectedRoute";
 import { AdminRoute } from "./AdminRoute";
 import { StatusPage } from "../features/status/StatusPage";
+import { BetaRoute } from "./BetaRoute";
 
 const {
   dashboard: DashboardPage,
@@ -17,6 +18,7 @@ const {
   agents: AgentsPage,
   mail: MailPage,
   calendar: CalendarPage,
+  notion: NotionPage,
   interviews: InterviewPrepPage,
   reports: AnalyticsPage,
   "ai-usage": AiUsagePage,
@@ -48,7 +50,8 @@ export function AppRoutes() {
         <Route path={PATHS.copilot.slice(1)} element={<CopilotPage />} />
         <Route path={PATHS.agents.slice(1)} element={<AgentsPage />} />
         <Route path={`${PATHS.mail.slice(1)}/:threadId?`} element={<MailPage />} />
-        <Route path={`${PATHS.calendar.slice(1)}/:view?`} element={<CalendarPage />} />
+        <Route path={`${PATHS.calendar.slice(1)}/:view?`} element={<BetaRoute><CalendarPage /></BetaRoute>} />
+        <Route path={PATHS.notion.slice(1)} element={<BetaRoute><NotionPage /></BetaRoute>} />
         <Route path={PATHS.interviews.slice(1)} element={<InterviewPrepPage />} />
         <Route path={`${PATHS.reports.slice(1)}/:tab?`} element={<AnalyticsPage />} />
         <Route

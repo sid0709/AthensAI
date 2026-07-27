@@ -60,8 +60,12 @@ function canAccessAccount(req, doc) {
 async function sanitizeAccount(doc, { includeSecrets = false } = {}) {
 	if (!doc) return doc;
 	const { password, vendorPassword, ...rest } = doc;
-	if (includeSecrets) return decryptAccountDoc(rest);
-	const safe = { ...rest };
+	const safe = includeSecrets ? await decryptAccountDoc(rest) : { ...rest };
+	if (safe.notionIntegration && typeof safe.notionIntegration === "object") {
+		safe.notionIntegration = { ...safe.notionIntegration };
+		delete safe.notionIntegration.accessToken;
+	}
+	if (includeSecrets) return safe;
 	if (safe.autoBidProfile && typeof safe.autoBidProfile === "object") {
 		safe.autoBidProfile = { ...safe.autoBidProfile };
 		for (const field of ["openaiApiKey", "deepseekApiKey", "gmailPassword", "gmailAppPassword", "defaultPassword"]) delete safe.autoBidProfile[field];

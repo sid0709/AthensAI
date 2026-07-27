@@ -17,6 +17,7 @@ import { BidManagementPage } from "../features/bid-management/BidManagementPage"
 import { AppsPluginsPage } from "../features/apps-plugins/AppsPluginsPage";
 import { ChangelogPage } from "../features/changelog/ChangelogPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
+import { NotionPage } from "../features/notion/NotionPage";
 
 export const VIEW_COMPONENTS: Record<View, ComponentType> = {
   dashboard: DashboardPage,
@@ -27,6 +28,7 @@ export const VIEW_COMPONENTS: Record<View, ComponentType> = {
   agents: AgentsPage,
   mail: MailPage,
   calendar: CalendarPage,
+  notion: NotionPage,
   interviews: InterviewPrepPage,
   reports: AnalyticsPage,
   "ai-usage": AiUsagePage,

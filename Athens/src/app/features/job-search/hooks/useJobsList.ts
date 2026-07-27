@@ -32,6 +32,7 @@ type ListResponse = {
 type CountsResponse = {
   success?: boolean;
   counts?: Partial<Record<JobStatusTab, number>>;
+  warming?: boolean;
 };
 
 const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
@@ -43,6 +44,8 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   scheduled: 0,
   declined: 0,
 };
+
+const JOB_LIST_REQUEST_TIMEOUT_MS = 15_000;
 
 const LIST_CACHE_TTL_MS = 60_000;
 const LIST_CACHE_MAX_ENTRIES = 200;
@@ -127,7 +130,7 @@ function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
     return () => clearTimeout(t);
   }, [filters.companyQuery, delayMs]);
 
-  return useMemo(
+  const effectiveFilters = useMemo(
     () => ({
       ...filters,
       jobQuery: debouncedJobQuery,
@@ -135,6 +138,14 @@ function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
     }),
     [filters, debouncedJobQuery, debouncedCompanyQuery],
   );
+
+  return {
+    filters: effectiveFilters,
+    filtersKey: JSON.stringify(effectiveFilters),
+    isDebouncing:
+      filters.jobQuery !== debouncedJobQuery ||
+      filters.companyQuery !== debouncedCompanyQuery,
+  };
 }
 
 export function buildJobsListBody(
@@ -208,8 +219,12 @@ export function useJobsList(
   const [pageSize, setPageSize] = useState(25);
   const [rawJobs, setRawJobs] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [requestInFlight, setRequestInFlight] = useState(false);
+  const [settledKey, setSettledKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [staleResults, setStaleResults] = useState(false);
+  const [retryRevision, setRetryRevision] = useState(0);
+  const [countsLoading, setCountsLoading] = useState(false);
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const [recommendationFallback, setRecommendationFallback] = useState(false);
   const [recommendationReason, setRecommendationReason] = useState<string | null>(null);
@@ -217,9 +232,14 @@ export function useJobsList(
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
   const [rankingStatus, setRankingStatus] = useState<ListResponse["rankingStatus"]>(null);
 
-  const hasLoadedOnce = useRef(false);
-
-  const debouncedFilters = useDebouncedTextFilters(filters);
+  const {
+    filters: debouncedFilters,
+    filtersKey: debouncedFiltersKey,
+    isDebouncing,
+  } = useDebouncedTextFilters(filters);
+  const pageFilterKeyRef = useRef(debouncedFiltersKey);
+  const filterChanged = pageFilterKeyRef.current !== debouncedFiltersKey;
+  const requestPage = filterChanged ? 1 : page;
 
   const jobs = useMemo(
     () => rawJobs.filter((job) => !excludeIds.has(job.id)),
@@ -227,17 +247,18 @@ export function useJobsList(
   );
 
   useEffect(() => {
+    pageFilterKeyRef.current = debouncedFiltersKey;
     setPage(1);
-  }, [debouncedFilters, pageSize]);
+  }, [debouncedFiltersKey, pageSize]);
 
   const listBody = useMemo(
     () =>
       buildJobsListBody(debouncedFilters, {
-        page,
+        page: requestPage,
         limit: pageSize,
         applierName: applier?.name,
       }),
-    [debouncedFilters, page, pageSize, applier?.name, rankingRevision],
+    [debouncedFilters, requestPage, pageSize, applier?.name, rankingRevision],
   );
 
   const countsBody = useMemo(
@@ -245,20 +266,31 @@ export function useJobsList(
     [debouncedFilters, applier?.name],
   );
 
+  const currentQueryKey = `${rankingRevision}:${listCacheKey(listBody)}`;
+  const countsKey = listCacheKey(countsBody);
+  const loading =
+    !applierReady ||
+    isDebouncing ||
+    requestInFlight ||
+    settledKey !== currentQueryKey;
+
   useEffect(() => {
-    if (!applierReady) return;
+    if (!applierReady || isDebouncing) return;
     let cancelled = false;
+    let timedOut = false;
     const controller = new AbortController();
-    const isInitial = !hasLoadedOnce.current;
-    const cacheKey = `${rankingRevision}:${listCacheKey(listBody)}`;
-    const cached = listCache.get(cacheKey);
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, JOB_LIST_REQUEST_TIMEOUT_MS);
+    const cacheKey = currentQueryKey;
+    const cached = listCache.get(currentQueryKey);
     const hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
     const applyResponse = (res: ListResponse) => {
       if (!res?.success || !Array.isArray(res.data)) return false;
       setRawJobs(res.data.map((doc) => mapDocToJob(doc, applier)));
       const responseTotal = res.pagination?.total ?? res.data.length;
       setTotal(responseTotal);
-      setStatusCounts((previous) => ({ ...previous, all: responseTotal }));
       setRecommendationFallback(Boolean(res.recommendationFallback));
       setRecommendationReason(res.recommendationReason ?? null);
       setRecommendationWarming(Boolean(res.recommendationWarming));
@@ -267,12 +299,12 @@ export function useJobsList(
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
       }
-      hasLoadedOnce.current = true;
+      setSettledKey(currentQueryKey);
       return true;
     };
-    if (hasFreshCache && cached) applyResponse(cached.response);
-    if (isInitial && !hasFreshCache) setLoading(true);
-    else setRefreshing(true);
+    setRequestInFlight(true);
+    setError(null);
+    setStaleResults(false);
 
     (async () => {
       try {
@@ -282,61 +314,82 @@ export function useJobsList(
           signal: controller.signal,
         })) as ListResponse;
         if (cancelled) return;
-        if (applyResponse(res)) {
-          cacheListResponse(cacheKey, res);
-          const currentPage = Number(listBody.page) || 1;
-          const totalPages = res.pagination?.totalPages ?? 1;
-          for (const adjacent of [currentPage - 1, currentPage + 1]) {
-            if (adjacent >= 1 && adjacent <= totalPages) {
-              void prefetchJobsPage({ ...listBody, page: adjacent }, rankingRevision).catch(() => {});
-            }
+        if (!applyResponse(res)) throw new Error("The jobs response was incomplete");
+        cacheListResponse(cacheKey, res);
+        const currentPage = Number(listBody.page) || 1;
+        const totalPages = res.pagination?.totalPages ?? 1;
+        for (const adjacent of [currentPage - 1, currentPage + 1]) {
+          if (adjacent >= 1 && adjacent <= totalPages) {
+            void prefetchJobsPage({ ...listBody, page: adjacent }, rankingRevision).catch(() => {});
           }
-        } else if (isInitial && !hasFreshCache) {
+        }
+      } catch (e) {
+        if ((e as Error)?.name === "AbortError" && !timedOut) return;
+        console.error(e);
+        if (hasFreshCache && cached && applyResponse(cached.response)) {
+          setStaleResults(true);
+          setError(timedOut
+            ? "Job refresh took too long. Showing cached results."
+            : "Could not refresh jobs. Showing cached results.");
+        } else {
           setRawJobs([]);
           setTotal(0);
           setRecommendationFallback(false);
           setRecommendationReason(null);
           setCatalogTotal(null);
+          setSettledKey(currentQueryKey);
+          setError(timedOut
+            ? "Job Search took too long to respond. Please try again."
+            : "Could not load jobs. Check the server connection and try again.");
         }
-      } catch (e) {
-        if ((e as Error)?.name === "AbortError") return;
-        console.error(e);
         toast.error("Failed to load jobs", {
-          description: "Check that Athens-server is running and VITE_API_URL is set.",
+          description: timedOut
+            ? "The request timed out. Please try again."
+            : "Check that Athens-server is running and VITE_API_URL is set.",
         });
-        if (isInitial) {
-          setRawJobs([]);
-          setTotal(0);
-        }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-          setRefreshing(false);
-        }
+        clearTimeout(timeout);
+        if (!cancelled) setRequestInFlight(false);
       }
     })();
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [currentQueryKey, retryRevision, request, applier, applierReady, isDebouncing]);
+
+  useEffect(() => {
+    if (!applierReady || isDebouncing) return;
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+    const loadCounts = async (attempt = 0) => {
+      if (!cancelled) setCountsLoading(true);
+      try {
+        const res = (await request("/jobs/list/counts", {
+          method: "POST",
+          body: countsBody,
+          signal: controller.signal,
+        })) as CountsResponse;
+        if (cancelled || !res?.success || !res.counts) return;
+        setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
+        if (res.warming && attempt < 4) {
+          retryTimer = setTimeout(() => void loadCounts(attempt + 1), 1_500);
+        }
+      } catch {
+        /* counts are optional */
+      } finally {
+        if (!cancelled) setCountsLoading(false);
+      }
+    };
+    void loadCounts();
     return () => {
       cancelled = true;
       controller.abort();
+      if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [listBody, rankingRevision, request, applier, applierReady]);
-
-  useEffect(() => {
-    if (!applierReady) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = (await post("/jobs/list/counts", countsBody)) as CountsResponse;
-        if (cancelled || !res?.success || !res.counts) return;
-        setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
-      } catch {
-        /* counts are optional */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [countsBody, applierReady, post]);
+  }, [countsKey, applierReady, request, isDebouncing]);
 
   const setPageSizeAndReset = useCallback((size: number) => {
     setPageSize(size);
@@ -359,7 +412,13 @@ export function useJobsList(
           setTotal((t) => Math.max(0, t - (prev.length - next.length)));
           return next;
         }
-        return prev.map((job) => (job.id === updated.id ? updated : job));
+        const exists = prev.some(
+          (job) => job.id === updated.id || job.backendId === updated.backendId,
+        );
+        if (!exists) return [updated, ...prev];
+        return prev.map((job) =>
+          job.id === updated.id || job.backendId === updated.backendId ? updated : job,
+        );
       });
     },
     [debouncedFilters.statusTab],
@@ -377,6 +436,7 @@ export function useJobsList(
 
   const refreshStatusCounts = useCallback(async () => {
     if (!applierReady) return;
+    setCountsLoading(true);
     try {
       const res = (await post("/jobs/list/counts", countsBody)) as CountsResponse;
       if (res?.success && res.counts) {
@@ -384,8 +444,17 @@ export function useJobsList(
       }
     } catch {
       /* counts are optional */
+    } finally {
+      setCountsLoading(false);
     }
   }, [applierReady, countsBody, post]);
+
+  const retry = useCallback(() => {
+    setError(null);
+    setStaleResults(false);
+    setRequestInFlight(true);
+    setRetryRevision((revision) => revision + 1);
+  }, []);
 
   const rescoreVisibleJobs = useCallback((context: ProfileMatchContext) => {
     setRawJobs((previous) => {
@@ -403,7 +472,11 @@ export function useJobsList(
     jobs,
     total,
     loading,
-    refreshing,
+    error,
+    staleResults,
+    retry,
+    requestKey: currentQueryKey,
+    countsLoading: loading || countsLoading,
     page,
     pageSize,
     setPage,

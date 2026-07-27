@@ -28,6 +28,9 @@ export function isValidJson(text: string): boolean {
 
 export function identityFromProfile(profile: Record<string, unknown>): Identity {
   const location = [str(profile.city).trim(), str(profile.state).trim()].filter(Boolean).join(", ");
+  const fullName =
+    str(profile.fullName).trim() ||
+    [str(profile.firstName).trim(), str(profile.lastName).trim()].filter(Boolean).join(" ");
   const careersRaw = Array.isArray(profile.careers) ? profile.careers : [];
   const careers: CareerEntry[] = [...careersRaw]
     .sort(byNewestFirst)
@@ -58,7 +61,7 @@ export function identityFromProfile(profile: Record<string, unknown>): Identity 
     .filter((e) => e.school || e.degree);
 
   return {
-    fullName: str(profile.fullName).trim(),
+    fullName,
     location,
     email: str(profile.email).trim(),
     phone: str(profile.phone).trim(),

@@ -32,6 +32,7 @@ type JobListStickyBarProps = {
   pageSizeOptions?: number[];
   showGrid: boolean;
   onToggleGrid: () => void;
+  loading?: boolean;
   className?: string;
 };
 
@@ -62,6 +63,7 @@ export function JobListStickyBar({
   pageSizeOptions = [10, 25, 50, 100, 250, 500],
   showGrid,
   onToggleGrid,
+  loading = false,
   className,
 }: JobListStickyBarProps) {
   return (
@@ -86,6 +88,7 @@ export function JobListStickyBar({
           resumeRemoving={resumeRemoving}
           hasSelectedResumes={hasSelectedResumes}
           resumeProgress={resumeProgress}
+          loading={loading}
           embedded
         />
 
@@ -98,6 +101,7 @@ export function JobListStickyBar({
             onPageSizeChange={onPageSizeChange}
             pageSizeOptions={pageSizeOptions}
             detailed
+            loading={loading}
             className="py-2 px-0 flex-1 min-w-0"
           />
           <button

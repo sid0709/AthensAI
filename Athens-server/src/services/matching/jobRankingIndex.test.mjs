@@ -18,6 +18,7 @@ test('ranking payload carries indexed global filter fields', () => {
   assert.equal(payload.card.title, 'Senior Engineer');
   assert.equal(payload.card.company.name, 'Athens');
   assert.equal(payload.card.status, undefined);
+  assert.equal(payload.rankingSchemaVersion, 3);
   assert.deepEqual(payload.rankSkills, [['React', 0, 5]]);
 });
 
@@ -39,10 +40,12 @@ test('retrieval filter includes industry, extraction, and non-beta clauses', () 
   assert.ok(filter.must.some((clause) => clause.key === 'companyTags'));
   assert.ok(filter.must.some((clause) => clause.key === 'aiExtracted'));
   assert.ok(filter.must.some((clause) => clause.key === 'extensionV2'));
+  assert.ok(filter.must_not.some((clause) => clause.key === 'version' && clause.match?.value === 'v2'));
 });
 
 test('ranking payload marks both v2 provenance shapes as beta-only', () => {
   assert.equal(buildJobRankingPayload({ version: 'v2' }).extensionV2, true);
+  assert.equal(buildJobRankingPayload({ version: 'v2' }).version, 'v2');
   assert.equal(buildJobRankingPayload({ extensionV2: true }).extensionV2, true);
   assert.equal(buildJobRankingPayload({ version: 'v1' }).extensionV2, false);
 });

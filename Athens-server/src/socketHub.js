@@ -42,12 +42,34 @@ export async function initSocket(httpServer, opts = {}) {
 		io.adapter(createClusterAdapter());
 		setupWorker(io);
 	} else if (String(process.env.REDIS_URL || '').trim()) {
-		const pubClient = createClient({ url: process.env.REDIS_URL.trim() });
+		const pubClient = createClient({
+			url: process.env.REDIS_URL.trim(),
+			socket: {
+				connectTimeout: Math.max(250, Number(process.env.REDIS_CONNECT_TIMEOUT_MS || 1000)),
+				reconnectStrategy: false,
+			},
+		});
 		const subClient = pubClient.duplicate();
-		await Promise.all([pubClient.connect(), subClient.connect()]);
-		io.adapter(createRedisAdapter(pubClient, subClient, { key: "athens-api" }));
-		io.redisClients = [pubClient, subClient];
-		console.log('[socket] Redis adapter connected');
+		const logRedisError = (error) => {
+			console.warn('[socket] Redis adapter error:', error?.message || error);
+		};
+		pubClient.on('error', logRedisError);
+		subClient.on('error', logRedisError);
+		try {
+			await Promise.all([pubClient.connect(), subClient.connect()]);
+			io.adapter(createRedisAdapter(pubClient, subClient, { key: "athens-api" }));
+			io.redisClients = [pubClient, subClient];
+			console.log('[socket] Redis adapter connected');
+		} catch (error) {
+			await Promise.all([
+				pubClient.isOpen ? pubClient.disconnect().catch(() => undefined) : Promise.resolve(),
+				subClient.isOpen ? subClient.disconnect().catch(() => undefined) : Promise.resolve(),
+			]);
+			console.warn(
+				'[socket] Redis unavailable; continuing with the in-process adapter:',
+				error?.message || error,
+			);
+		}
 	}
 
 	io.use(requireFirebaseSocket);

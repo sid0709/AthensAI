@@ -45,6 +45,7 @@ import ruleRoutes from "./src/routes/ruleRoutes.js";
 import vendorMonitorRoutes from "./src/routes/vendorMonitorRoutes.js";
 import mailRoutes from "./src/routes/mailRoutes.js";
 import settingsRoutes from "./src/routes/settingsRoutes.js";
+import notionRoutes from "./src/routes/notionRoutes.js";
 import agentRoutes from "./src/routes/agentRoutes.js";
 import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
@@ -136,6 +137,7 @@ function createApp() {
 	app.use("/api", vendorMonitorRoutes);
 	app.use("/api", mailRoutes);
 	app.use("/api", settingsRoutes);
+	app.use("/api", notionRoutes);
 	app.use("/api/agents", agentRoutes);
 	app.use("/api", scrapedJobIngestRoutes);
 	app.use("/api", aiUsageRoutes);

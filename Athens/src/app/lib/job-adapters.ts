@@ -1,4 +1,5 @@
 import { inferJobSource } from '@/app/data/jobs/pub';
+import { resolveJobStatusState } from '@nextoffer/shared/job-status';
 import type { ApplierAccount } from "@/context/applier-context";
 import type { Job, JobStatus, WorkMode } from "../types/job";
 
@@ -16,41 +17,6 @@ export function normalizeId(value: unknown): string {
     return String((value as { $oid: string }).$oid);
   }
   return String(value);
-}
-
-type ResolvedApplierStatus =
-  | "applied"
-  | "scheduled"
-  | "declined"
-  | "bid-ready"
-  | "bid-completed"
-  | "none";
-
-function resolveStatusForApplier(
-  statusArr: unknown[] | undefined,
-  applierId: string | null,
-): ResolvedApplierStatus {
-  if (!Array.isArray(statusArr) || !applierId) return "none";
-  for (const s of statusArr) {
-    if (!s || typeof s !== "object") continue;
-    const row = s as Record<string, unknown>;
-    if (normalizeId(row.applier) !== applierId) continue;
-    if (row.declinedDate) return "declined";
-    if (row.scheduledDate) return "scheduled";
-    if (row.appliedDate) return "applied";
-    if (row.bidCompletedDate) return "bid-completed";
-    if (row.bidReadyDate) return "bid-ready";
-  }
-  return "none";
-}
-
-function mapApiStatusToJob(st: ResolvedApplierStatus): JobStatus {
-  if (st === "declined") return "declined";
-  if (st === "scheduled") return "scheduled";
-  if (st === "applied") return "applied";
-  if (st === "bid-completed") return "bid-completed";
-  if (st === "bid-ready") return "bid-ready";
-  return "posted";
 }
 
 function parseWorkMode(remote: string): WorkMode {
@@ -83,8 +49,9 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
 
   const industries = Array.isArray(company.tags) ? company.tags.map(String) : isExternal ? [] : ["General"];
   const applierId = applier?._id != null ? normalizeId(applier._id) : null;
-  const st = isExternal ? "none" : resolveStatusForApplier(doc.status as unknown[] | undefined, applierId);
-  const status = mapApiStatusToJob(st);
+  const status = (isExternal || !applierId
+    ? "posted"
+    : resolveJobStatusState(doc.status as unknown[] | undefined, applierId)) as JobStatus;
 
   const location = String(details.position || (isAnalyzedExternal ? "—" : isExternal ? "—" : "—"));
   const workMode = isAnalyzedExternal

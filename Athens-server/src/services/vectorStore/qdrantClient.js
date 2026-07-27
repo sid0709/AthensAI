@@ -26,6 +26,10 @@ async function qdrantFetch(path, { method = 'GET', body } = {}) {
 	const url = `${baseUrl()}${path}`;
 	const headers = { 'Content-Type': 'application/json' };
 	const apiKey = getQdrantApiKey();
+	const configuredTimeout = Number.parseInt(String(process.env.QDRANT_REQUEST_TIMEOUT_MS || ''), 10);
+	const timeoutMs = Number.isFinite(configuredTimeout)
+		? Math.max(250, Math.min(60_000, configuredTimeout))
+		: 10_000;
 	if (apiKey) {
 		headers['api-key'] = apiKey;
 	}
@@ -34,6 +38,7 @@ async function qdrantFetch(path, { method = 'GET', body } = {}) {
 		method,
 		headers,
 		body: body !== undefined ? JSON.stringify(body) : undefined,
+		signal: AbortSignal.timeout(timeoutMs),
 	});
 
 	if (!res.ok) {
@@ -140,6 +145,7 @@ const RANKING_PAYLOAD_INDEXES = [
 	{ field_name: 'seniority', field_schema: 'keyword' },
 	{ field_name: 'titleRoles', field_schema: 'keyword' },
 	{ field_name: 'extensionV2', field_schema: 'bool' },
+	{ field_name: 'version', field_schema: 'keyword' },
 	{ field_name: 'title', field_schema: 'text' },
 	{ field_name: 'companyName', field_schema: 'text' },
 	{ field_name: 'location', field_schema: 'text' },
@@ -370,6 +376,9 @@ export async function scrollJobRankingPayloads({
 	offset = null,
 	limit = 1_000,
 	payloadInclude = ['jobId', 'catalog', 'postedAt', 'extensionV2'],
+	filter = null,
+	orderBy = null,
+	startFrom = null,
 } = {}) {
 	if (!isJobRankingReady()) return { payloads: [], nextOffset: null };
 	const body = {
@@ -379,13 +388,24 @@ export async function scrollJobRankingPayloads({
 			: true,
 		with_vector: false,
 	};
+	if (filter) body.filter = filter;
+	if (orderBy?.key) {
+		body.order_by = {
+			key: orderBy.key,
+			direction: orderBy.direction === 'asc' ? 'asc' : 'desc',
+			...(startFrom !== null && startFrom !== undefined ? { start_from: startFrom } : {}),
+		};
+	}
 	if (offset !== null && offset !== undefined) body.offset = offset;
 	const data = await qdrantFetch(`/collections/${encodeURIComponent(JOB_RANKINGS_ALIAS)}/points/scroll`, {
 		method: 'POST',
 		body,
 	});
 	return {
-		payloads: (data?.result?.points || []).map((point) => point.payload || {}),
+		payloads: (data?.result?.points || []).map((point) => ({
+			...(point.payload || {}),
+			_qdrantOrderValue: point.order_value ?? null,
+		})),
 		nextOffset: data?.result?.next_page_offset ?? null,
 	};
 }

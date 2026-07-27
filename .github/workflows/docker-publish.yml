@@ -321,6 +321,11 @@ jobs:
             set_env FIREBASE_AUTH_REQUIRED false
             set_env BACKGROUND_WORKERS_MODE local
             set_env FIRESTORE_WRITES_ENABLED true
+            set_env REDIS_ENABLED true
+            set_env REDIS_URL redis://redis:6379
+            set_env QDRANT_URL http://qdrant:6333
+            set_env RECOMMENDATION_QUERY_TIME_MODE on
+            set_env RANKING_AUTO_BACKFILL true
 
       - name: Sync deploy script to VPS
         uses: appleboy/scp-action@v0.1.7
@@ -329,7 +334,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
-          source: docker/deploy-remote.sh
+          source: docker/deploy-remote.sh,docker/ranking-compose.yml
           target: /opt/nextoffer/
           strip_components: 1
 
@@ -356,6 +361,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
           envs: SLACK_WEBHOOK_URL,GRAFANA_ADMIN_PASSWORD
+          command_timeout: 45m
           script: |
             set -eu
             echo "Preparing Athens monitoring and deployment"
@@ -538,5 +544,6 @@ jobs:
             echo ""
             echo "Health: Athens readiness, AI BFF, Avalon, and public status checks run on the VPS."
             echo "Monitoring: Prometheus/Grafana/Alertmanager are maintained by the same SSH deploy."
+            echo "Ranking: Redis/Qdrant are created when missing and reuse persistent Docker volumes."
             echo "Rollback: \`ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '/opt/nextoffer/deploy.sh sha-<old>'\`"
           } >> "$GITHUB_STEP_SUMMARY"

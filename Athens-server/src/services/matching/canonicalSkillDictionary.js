@@ -1,6 +1,7 @@
 import { skillDictionaryCollection } from '../../db/mongo.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { dictionaryVersionFor, stableSkillId } from './canonicalSkillVectors.js';
+import { skillTokens } from '@nextoffer/shared/skill-tokens';
 
 const SNAPSHOT_TTL_MS = 5 * 60_000;
 const DICTIONARY_REVISION_KEY = 'ranking:v2:dictionary-revision';
@@ -66,9 +67,10 @@ async function readDictionaryDocuments() {
 }
 
 function buildSnapshot(docs, revision, knownVersion = null) {
-  const byName = new Map();
-  const byId = new Map();
-  const entries = [];
+	const byName = new Map();
+	const byId = new Map();
+	const byToken = new Map();
+	const entries = [];
   for (const doc of docs) {
     const canonical = String(doc.nameCanonical || '').trim();
     if (!canonical) continue;
@@ -79,15 +81,21 @@ function buildSnapshot(docs, revision, knownVersion = null) {
     }
     byName.set(canonical, id);
     byId.set(id, canonical);
-    entries.push({
-      name: doc.name || canonical,
-      nameCanonical: canonical,
-      skillId: id,
-    });
-  }
-  return {
-    byName,
-    byId,
+		const entry = {
+			name: doc.name || canonical,
+			nameCanonical: canonical,
+			skillId: id,
+		};
+		entries.push(entry);
+		for (const token of skillTokens(entry.name)) {
+			if (!byToken.has(token)) byToken.set(token, []);
+			byToken.get(token).push(entry);
+		}
+	}
+	return {
+		byName,
+		byId,
+		byToken,
     version: knownVersion || dictionaryVersionFor(entries),
     entries,
     revision,

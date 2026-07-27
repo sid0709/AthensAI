@@ -152,6 +152,41 @@ export async function fetchRecentEnvelopes(email, password, count, applierName) 
 }
 
 /**
+ * Query Gmail for inbox messages that have no user-created labels and fetch one
+ * metadata-only page. Gmail performs the filtering; message bodies are not read.
+ */
+export async function fetchUnlabeledInboxEnvelopes(
+	email,
+	password,
+	{ page = 1, pageSize = 50, applierName } = {},
+) {
+	return withMailboxPath(email, password, 'INBOX', async (client) => {
+		const matches = await client.search({ gmraw: 'in:inbox has:nouserlabels' }, { uid: true });
+		const newestUids = [...(matches || [])].map(Number).filter(Number.isFinite).sort((a, b) => b - a);
+		const start = (Math.max(1, page) - 1) * pageSize;
+		const pageUids = newestUids.slice(start, start + pageSize);
+		if (!pageUids.length) {
+			return { messages: [], hasMore: false };
+		}
+
+		const messages = [];
+		for await (const message of client.fetch(pageUids, {
+			envelope: true,
+			flags: true,
+			uid: true,
+			labels: true,
+		})) {
+			messages.push(messageToDoc(message, applierName, 'INBOX'));
+		}
+		messages.sort((a, b) => b.uid - a.uid);
+		return {
+			messages,
+			hasMore: newestUids.length > start + pageSize,
+		};
+	});
+}
+
+/**
  * Fetch the most recent `count` INBOX messages WITH fully-parsed bodies, straight
  * from Gmail — no Mongo cache. Used for time-critical reads (e.g. an emailed OTP
  * code) where the synced cache may lag or hold a not-yet-materialized body for a
@@ -503,10 +538,20 @@ export async function deleteGmailLabel(email, password, labelPath) {
 }
 
 export async function addLabelsToMessage(email, password, uid, labelNames, mailboxPath = ALL_MAIL_PATH) {
+	return addLabelsToMessages(email, password, [uid], labelNames, mailboxPath);
+}
+
+/**
+ * Add the same Gmail label(s) to many messages with one IMAP STORE command.
+ * ImapFlow accepts a comma-delimited UID sequence, which avoids one network
+ * round trip per message while preserving the single-message API above.
+ */
+export async function addLabelsToMessages(email, password, uids, labelNames, mailboxPath = ALL_MAIL_PATH) {
 	const tokens = (labelNames || []).map(toImapLabelToken).filter(Boolean);
-	if (!tokens.length) return;
+	const uidSet = [...new Set((uids || []).map(Number).filter(Number.isFinite))].join(',');
+	if (!tokens.length || !uidSet) return;
 	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		await client.messageFlagsAdd(String(uid), tokens, { uid: true, useLabels: true });
+		await client.messageFlagsAdd(uidSet, tokens, { uid: true, useLabels: true });
 	});
 }
 
