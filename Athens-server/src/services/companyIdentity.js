@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { incrementCounter } from "./monitoring/metrics.js";
 
 export const COMPANY_IDENTITY_VERSION = 1;
 
@@ -213,13 +214,13 @@ export async function resolveCompanyIdentity(job, {
 	if (domain) await createAlias(companyAliasesCollection, { kind: "domain", value: domain, companyId, now });
 	if (normalizedName) await createAlias(companyAliasesCollection, { kind: "name", value: normalizedName, companyId, now });
 
+	const conflict = Boolean(domainAlias && nameAlias && domainAlias.companyId !== nameAlias.companyId);
+	if (conflict) incrementCounter("athens_job_company_identity_conflicts_total", { kind: "domain_name" });
 	return {
 		...derived,
 		companyId,
 		companyIdentitySource: source,
-		...(domainAlias && nameAlias && domainAlias.companyId !== nameAlias.companyId
-			? { companyIdentityConflict: true }
-			: {}),
+		...(conflict ? { companyIdentityConflict: true } : {}),
 	};
 }
 

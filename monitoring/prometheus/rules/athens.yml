@@ -16,6 +16,12 @@ groups:
         expr: avg_over_time(probe_success{job="public-http"}[5m])
       - record: athens:http_5xx_rate:ratio
         expr: sum(rate(athens_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(athens_http_requests_total[5m])), 1)
+      - record: athens:redis_cache_hit_rate:ratio
+        expr: sum(rate(redis_keyspace_hits_total[5m])) / clamp_min(sum(rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m])), 1)
+      - record: athens:qdrant_error_rate:ratio
+        expr: sum(rate(rest_responses_failures_total[5m])) / clamp_min(sum(rate(rest_responses_total[5m])), 1)
+      - record: athens:qdrant_p95_latency_seconds
+        expr: histogram_quantile(0.95, sum by (le) (rate(rest_responses_duration_seconds_bucket[5m])))
 
   - name: athens-alerts
     rules:
@@ -99,3 +105,123 @@ groups:
         annotations:
           summary: Athens HTTP error rate is high
           description: More than five percent of requests are returning 5xx responses.
+      - alert: AthensMonitoringCycleMissing
+        expr: absent(athens_monitor_cycle_timestamp_seconds)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Athens monitoring cycle is missing
+          description: Prometheus has not received a monitoring-cycle timestamp.
+      - alert: AthensMonitoringCycleStale
+        expr: time() - athens_monitor_cycle_timestamp_seconds > 120
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Athens monitoring cycle is stale
+          description: The application has not completed dependency checks within 120 seconds.
+      - alert: AthensStatusPersistenceFailed
+        expr: athens_monitor_persistence_success == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firestore status snapshot persistence is failing
+          description: Health remains visible in Prometheus, but the public fallback snapshot is not updating.
+      - alert: AthensApplicationMetricsDown
+        expr: up{job="athens-server"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Cluster-wide application metrics are unavailable
+          description: Prometheus cannot scrape the private Athens metrics listener on port 9101.
+      - alert: AthensRedisExporterDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis metrics are unavailable
+          description: Prometheus cannot scrape redis-exporter.
+      - alert: AthensQdrantExporterDown
+        expr: up{job="qdrant"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Qdrant metrics are unavailable
+          description: Prometheus cannot scrape Qdrant's native metrics endpoint.
+      - alert: AthensGoogleCloudExporterDown
+        expr: up{job="google-cloud"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firebase and Storage metrics are unavailable
+          description: Prometheus cannot scrape the read-only Google Cloud metrics exporter.
+      - alert: AthensFirestoreSyntheticFailure
+        expr: athens_health_status{component="firestore"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Firestore synthetic check is failing
+          description: The production application cannot read Firestore.
+      - alert: AthensStorageSyntheticFailure
+        expr: athens_health_status{component="storage"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Cloud Storage synthetic check is failing
+          description: The production application cannot read Cloud Storage metadata.
+      - alert: AthensRedisUnavailable
+        expr: athens_health_status{component="redis"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis is unavailable
+          description: Ranking and cache fallbacks are active.
+      - alert: AthensRedisEvictions
+        expr: rate(redis_evicted_keys_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis is evicting keys
+          description: Redis memory pressure is causing key evictions.
+      - alert: AthensRedisPersistenceFailure
+        expr: redis_aof_last_bgrewrite_status == 0 or redis_rdb_last_bgsave_status == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis persistence is unhealthy
+          description: Redis reported a failed AOF rewrite or RDB save.
+      - alert: AthensQdrantUnavailable
+        expr: athens_health_status{component="qdrant"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Qdrant is unavailable
+          description: Vector-search fallbacks are active.
+      - alert: AthensQdrantHighErrorRate
+        expr: athens:qdrant_error_rate:ratio > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Qdrant error rate is high
+          description: More than five percent of Qdrant REST requests are failing.
+      - alert: AthensQdrantHighLatency
+        expr: athens:qdrant_p95_latency_seconds > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Qdrant latency is high
+          description: Qdrant p95 REST response latency is above one second.

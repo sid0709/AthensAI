@@ -1069,16 +1069,19 @@ class FirestoreCollection {
 			}
 			return { spec, ref: this.ref.doc(String(comparable(id))) };
 		});
-		let upsertedCount = 0;
+		const chunks = [];
 		for (let offset = 0; offset < rows.length; offset += 400) {
-			const chunk = rows.slice(offset, offset + 400);
+			chunks.push(rows.slice(offset, offset + 400));
+		}
+		const writeChunk = async (chunk) => {
 			const snapshots = await this.db.firestore.getAll(...chunk.map((row) => row.ref));
 			const batch = this.db.firestore.batch();
+			let chunkUpsertedCount = 0;
 			for (let index = 0; index < chunk.length; index += 1) {
 				const { spec, ref } = chunk[index];
 				const snapshot = snapshots[index];
 				const inserting = !snapshot.exists;
-				if (inserting) upsertedCount += 1;
+				if (inserting) chunkUpsertedCount += 1;
 				const update = spec.update;
 				const data = encode({
 					...(inserting ? update.$setOnInsert || {} : {}),
@@ -1094,6 +1097,12 @@ class FirestoreCollection {
 				batch.set(ref, data, { merge: true });
 			}
 			await batch.commit();
+			return chunkUpsertedCount;
+		};
+		let upsertedCount = 0;
+		for (let offset = 0; offset < chunks.length; offset += 4) {
+			const counts = await Promise.all(chunks.slice(offset, offset + 4).map(writeChunk));
+			upsertedCount += counts.reduce((sum, count) => sum + count, 0);
 		}
 		this._invalidateCaches();
 		return {

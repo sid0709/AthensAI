@@ -53,7 +53,7 @@ function JobSearchPageContent() {
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
   const { profileVersion, matchContext } = useProfileMatchSkills();
 
-  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, countsLoading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, removeJobsById, refreshStatusCounts, rescoreVisibleJobs, loadCompanyMembers, memberLoadingIds } =
+  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, countsLoading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, removeJobsById, refreshStatusCounts, rescoreVisibleJobs, loadCompanyMembers, memberLoadingIds, groupedBeta } =
     useJobsList(filters, removedIds, profileVersion);
 
   useEffect(() => {
@@ -321,7 +321,7 @@ function JobSearchPageContent() {
         <TabTransition tabKey={showGrid ? "grid" : "list"}>
           <JobListView
             groups={groups}
-            isBeta={isBeta}
+            isBeta={groupedBeta}
             activeJobIds={activeJobIds}
             onActiveJobChange={handleActiveJobChange}
             onLoadCompanyMembers={(companyId) => void loadCompanyMembers(companyId)}

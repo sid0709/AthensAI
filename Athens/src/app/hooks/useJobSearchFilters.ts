@@ -320,7 +320,7 @@ export function useJobSearchFilters(
   status: string,
   source: string,
   location: string,
-  sort: JobSortKey,
+  sort: JobSortKey | "posted",
 ) {
   const filters: JobSearchFilterState = {
     ...DEFAULT_JOB_FILTERS,

@@ -5,7 +5,7 @@ import {
   companyGroupedJobsTest,
 } from './companyGroupedJobsService.js';
 
-const { addStatusFilter, groupedPage, groupPayloads, orderRecommended, statusTab } = companyGroupedJobsTest;
+const { addStatusFilter, groupedPage, groupPayloads, orderRecommended, scoreMatches, sortPayloads, statusTab } = companyGroupedJobsTest;
 
 function payload(jobId, companyId, postedAt = '2026-07-01T00:00:00.000Z') {
   return {
@@ -30,6 +30,16 @@ test('best-match order uses the highest-ranked company member', () => {
   const rows = [payload('acme-low', 'acme'), payload('beta-high', 'beta'), payload('acme-high', 'acme')];
   const ordered = orderRecommended(rows, ['acme-high', 'beta-high', 'acme-low'], false);
   assert.deepEqual(groupPayloads(ordered).map((group) => group.companyId), ['acme', 'beta']);
+});
+
+test('newest, oldest, and title sorts order members before grouping', () => {
+  const rows = [
+    { ...payload('new', 'acme', '2026-07-02T00:00:00.000Z'), card: { title: 'Zebra', company: { name: 'Acme' } } },
+    { ...payload('old', 'acme', '2026-07-01T00:00:00.000Z'), card: { title: 'Alpha', company: { name: 'Acme' } } },
+  ];
+  assert.deepEqual(sortPayloads(rows, 'postedAt_desc').map((row) => row.jobId), ['new', 'old']);
+  assert.deepEqual(sortPayloads(rows, 'postedAt_asc').map((row) => row.jobId), ['old', 'new']);
+  assert.deepEqual(sortPayloads(rows, 'title_asc').map((row) => row.jobId), ['old', 'new']);
 });
 
 test('company pagination never repeats a group across pages', () => {
@@ -71,6 +81,11 @@ test('status filters apply at job level before grouping', () => {
   assert.deepEqual(addStatusFilter(base, 'posted', ['job-1']).must_not.at(-1).has_id.length, 1);
 });
 
+test('score filters are evaluated before grouping', () => {
+  assert.equal(scoreMatches(75, { overallScore: { min: 70, max: 80 }, skillMatch: { min: 50, max: 100 } }), true);
+  assert.equal(scoreMatches(49, { skillMatch: { min: 50, max: null } }), false);
+});
+
 test('directory cache separates filters, tier, catalog, ranking, and status revisions', () => {
   const base = {
     body: { q: 'react', sort: 'recommended' },
@@ -90,4 +105,3 @@ test('directory cache separates filters, tier, catalog, ranking, and status revi
     assert.notEqual(companyGroupDirectoryCacheKey({ ...base, ...changed }), key);
   }
 });
-

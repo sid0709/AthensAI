@@ -114,6 +114,19 @@ resource "google_service_account" "vps_runtime" {
   display_name = "Athens VPS data runtime"
 }
 
+# Read-only identity used by stackdriver-exporter and Grafana. It cannot read
+# Firestore documents or Storage objects; it can only query Cloud Monitoring.
+resource "google_service_account" "monitoring_reader" {
+  account_id   = "athens-monitoring-reader"
+  display_name = "Athens monitoring metrics reader"
+}
+
+resource "google_project_iam_member" "monitoring_reader" {
+  project = var.project_id
+  role    = "roles/monitoring.viewer"
+  member  = "serviceAccount:${google_service_account.monitoring_reader.email}"
+}
+
 resource "google_project_iam_member" "vps_runtime_firestore" {
   project = var.project_id
   role    = "roles/datastore.user"

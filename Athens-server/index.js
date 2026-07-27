@@ -24,7 +24,7 @@ import { shutdownPool as shutdownImapPool } from "./src/services/mail/imapPool.j
 import { shutdownPdfPool } from "./src/services/pdf/pdfRenderPool.js";
 import statusRoutes from "./src/routes/statusRoutes.js";
 import statusAdminRoutes from "./src/routes/statusAdminRoutes.js";
-import { metricsMiddleware, renderMetrics } from "./src/services/monitoring/metrics.js";
+import { metricsMiddleware, renderMetrics, startAggregateMetricsServer, stopAggregateMetricsServer } from "./src/services/monitoring/metrics.js";
 import { startMonitoringLoop } from "./src/services/monitoring/monitorLoop.js";
 import { markForegroundActivity } from "./src/services/runtimeLoad.js";
 import { initJobRankingCollection, initQdrantCollections } from "./src/services/vectorStore/qdrantClient.js";
@@ -86,6 +86,12 @@ const workerCount = resolveWorkerCount();
 const useCluster = workerCount > 1;
 
 let databaseReady = false;
+
+function isCompanyGroupingEnabled() {
+	return !["0", "false", "no", "off"].includes(
+		String(process.env.JOB_COMPANY_GROUPING_ENABLED ?? "true").trim().toLowerCase(),
+	);
+}
 
 async function cleanupHistoricalJobDuplicates() {
 	const result = await cleanupExistingJobIdentityDuplicates();
@@ -191,8 +197,9 @@ function createApp() {
 
 async function startBackgroundWorkers() {
 	await initMongo();
-	await initRedis({ force: isQueryTimeRankingIndexEnabled() });
-	if (isQueryTimeRankingIndexEnabled()) {
+	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled();
+	await initRedis({ force: rankingIndexNeeded });
+	if (rankingIndexNeeded) {
 		await initQdrantCollections();
 		await initJobRankingCollection();
 	}
@@ -235,6 +242,7 @@ async function startHttpWorker({ clustered }) {
 	}
 	databaseReady = true;
 	if (!clustered) {
+		startAggregateMetricsServer();
 		void cleanupHistoricalJobDuplicates().catch((error) => {
 			console.error("[job-identity] historical cleanup failed:", error?.message || error);
 		});
@@ -261,6 +269,7 @@ async function startHttpWorker({ clustered }) {
 			await shutdownPdfPool();
 			await shutdownImapPool();
 			await shutdownRankingPool();
+			if (!clustered) await stopAggregateMetricsServer();
 			await closeRedis();
 			await closeMongo();
 		} catch (err) {
@@ -279,6 +288,7 @@ async function startHttpWorker({ clustered }) {
 }
 
 async function startPrimary() {
+	startAggregateMetricsServer();
 	const httpServer = http.createServer();
 	setupMaster(httpServer, {
 		loadBalancingMethod: "least-connection",
@@ -319,6 +329,7 @@ async function startPrimary() {
 		force.unref?.();
 		try {
 			await shutdownImapPool();
+			await stopAggregateMetricsServer();
 			await closeRedis();
 			await closeMongo();
 			await new Promise((resolve) => httpServer.close(() => resolve()));

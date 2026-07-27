@@ -10,4 +10,4 @@ route:
 
 receivers:
   - name: noop
-    # The deployment workflow replaces this with Slack when configured.
+    # Alerts remain visible in Prometheus/Grafana; no outbound receiver is configured.

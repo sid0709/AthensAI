@@ -345,8 +345,10 @@ export async function backfillJobIdentityRegistry(jobsCollection, registryCollec
 			},
 		}));
 		if (typeof registryCollection.bulkUpsertById === "function") {
-			await registryCollection.bulkUpsertById(operations);
-			await refreshBackfillLease(registryCollection, lease.token);
+			for (let offset = 0; offset < operations.length; offset += 1_600) {
+				await registryCollection.bulkUpsertById(operations.slice(offset, offset + 1_600));
+				await refreshBackfillLease(registryCollection, lease.token);
+			}
 		} else {
 			for (let offset = 0; offset < operations.length; offset += 50) {
 				await registryCollection.bulkWrite(

@@ -10,6 +10,8 @@ import { getCatalogRevision } from './matching/jobRankingIndex.js';
 import { buildJobRankingFilter } from './matching/jobRankingService.js';
 import { listRecommendedJobs } from './matching/matchScoreReader.js';
 import { getProfileRankingVersion } from './matching/matchScoreStore.js';
+import { loadProfileMatchContext } from './matching/profileSkills.js';
+import { computeCoverageScore } from './matching/coverageScore.js';
 import { getStatusRevision, rankingFilterHash } from './matching/rankingCache.js';
 import {
   getJobRankingPoints,
@@ -17,7 +19,8 @@ import {
   scrollJobRankingPayloads,
   toPointId,
 } from './vectorStore/qdrantClient.js';
-import { incrementCounter, observeHistogram } from './monitoring/metrics.js';
+import { incrementCounter, observeHistogram, setGauge } from './monitoring/metrics.js';
+import { isQueryTimeRankingEnabled } from '../config/graphAndVectorConfig.js';
 
 const DIRECTORY_TTL_SEC = Math.max(30, Number(process.env.JOB_COMPANY_GROUP_CACHE_TTL_SEC || 300));
 const PREVIEW_SIZE = 2;
@@ -33,6 +36,12 @@ const LOCAL_MAX = 200;
 function enabled() {
   return !['0', 'false', 'no', 'off'].includes(
     String(process.env.JOB_COMPANY_GROUPING_ENABLED ?? 'true').trim().toLowerCase(),
+  );
+}
+
+function publicEnabled() {
+  return !['0', 'false', 'no', 'off'].includes(
+    String(process.env.JOB_COMPANY_GROUPING_PUBLIC_ENABLED ?? 'true').trim().toLowerCase(),
   );
 }
 
@@ -69,6 +78,26 @@ function addStatusFilter(filter, tab, ids) {
 
 function hasScoreFilters(scoreFilters = {}) {
   return Object.keys(scoreFilters).length > 0;
+}
+
+function scoreMatches(score, scoreFilters = {}) {
+  return Object.values(scoreFilters).every((bounds) =>
+    (bounds.min == null || score >= bounds.min) &&
+    (bounds.max == null || score <= bounds.max),
+  );
+}
+
+async function filterPayloadsByScore(payloads, applierName, scoreFilters) {
+  if (!hasScoreFilters(scoreFilters)) return payloads;
+  const context = await loadProfileMatchContext(applierName);
+  const proficiencyCache = new Map();
+  return payloads.filter((payload) => {
+    const skills = Array.isArray(payload.aiSkills) && payload.aiSkills.length
+      ? payload.aiSkills
+      : payload.card?.skills || [];
+    const score = computeCoverageScore(skills, context, proficiencyCache).matchScore;
+    return scoreMatches(score, scoreFilters);
+  });
 }
 
 function stableKey(parts) {
@@ -128,17 +157,14 @@ async function writeCached(key, value) {
   if (isRedisReady()) await getRedis().setEx(key, DIRECTORY_TTL_SEC, JSON.stringify(value));
 }
 
-async function scrollAllPayloads(filter, { direction = 'desc' } = {}) {
+async function scrollAllPayloads(filter) {
   const payloads = [];
   let offset = null;
-  let startFrom = null;
   const seen = new Set();
   do {
     const page = await scrollJobRankingPayloads({
       filter,
-      offset: direction === 'none' ? offset : null,
-      orderBy: direction === 'none' ? null : { key: 'postedAt', direction },
-      startFrom: direction === 'none' ? null : startFrom,
+      offset,
       limit: 5_000,
       payloadInclude: PAYLOAD_FIELDS,
     });
@@ -150,15 +176,25 @@ async function scrollAllPayloads(filter, { direction = 'desc' } = {}) {
         payloads.push(payload);
       }
     }
-    if (direction === 'none') offset = page.nextOffset;
-    else {
-      const next = page.payloads.at(-1)?.postedAt || null;
-      if (!next || next === startFrom) break;
-      startFrom = next;
-      if (page.payloads.length < 2) break;
-    }
-  } while (direction === 'none' ? offset != null : true);
+    offset = page.nextOffset;
+  } while (offset != null);
   return payloads;
+}
+
+function sortPayloads(payloads, sort) {
+  const rows = [...payloads];
+  if (sort === 'title_asc') {
+    return rows.sort((left, right) =>
+      String(left.title || left.card?.title || '').localeCompare(String(right.title || right.card?.title || ''), undefined, { sensitivity: 'base' }) ||
+      String(left.jobId || '').localeCompare(String(right.jobId || '')),
+    );
+  }
+  const direction = sort === 'postedAt_asc' ? 1 : -1;
+  return rows.sort((left, right) => {
+    const leftTime = Date.parse(left.postedAt || left.card?.postedAt || '') || 0;
+    const rightTime = Date.parse(right.postedAt || right.card?.postedAt || '') || 0;
+    return direction * (leftTime - rightTime || String(left.jobId || '').localeCompare(String(right.jobId || '')));
+  });
 }
 
 function identityOf(payload) {
@@ -239,12 +275,12 @@ function orderRecommended(payloads, rankedIds, onlyRanked) {
 
 async function buildDirectory(body, account, filter, scoreFilters) {
   const sort = String(body.sort || 'postedAt_desc');
-  let payloads = await scrollAllPayloads(filter, {
-    direction: sort === 'postedAt_asc' ? 'asc' : sort === 'title_asc' ? 'none' : 'desc',
-  });
+  let payloads = sortPayloads(await scrollAllPayloads(filter), sort);
+
+  payloads = await filterPayloadsByScore(payloads, body.applierName, scoreFilters);
 
   let recommendation = null;
-  if ((sort === 'recommended' || hasScoreFilters(scoreFilters)) && body.applierName) {
+  if (sort === 'recommended' && body.applierName && isQueryTimeRankingEnabled()) {
     const { query, applierId } = await buildJobsListQuery(body);
     recommendation = await listRecommendedJobs({
       applierName: body.applierName,
@@ -254,24 +290,38 @@ async function buildDirectory(body, account, filter, scoreFilters) {
       listBody: body,
       skip: 0,
       limit: 1,
+      fastFallback: async () => ({
+        docs: [],
+        total: payloads.length,
+        catalogTotal: payloads.length,
+        _candidateJobIds: [],
+      }),
     });
-    if (hasScoreFilters(scoreFilters)) {
-      const accepted = new Set((recommendation?._candidateJobIds || []).map(String));
-      payloads = payloads.filter((payload) => accepted.has(String(payload.jobId || '')));
-    }
+  } else if (sort === 'recommended') {
+    recommendation = {
+      recommendationFallback: true,
+      recommendationReason: 'ranking_backend_unavailable',
+      recommendationWarming: false,
+      rankingStatus: 'fallback',
+    };
   }
 
-  if (sort === 'title_asc') {
-    payloads.sort((left, right) =>
-      String(left.title || left.card?.title || '').localeCompare(String(right.title || right.card?.title || ''), undefined, { sensitivity: 'base' }) ||
-      String(right.jobId || '').localeCompare(String(left.jobId || '')),
-    );
-  } else if (sort === 'recommended' && body.applierName) {
-    payloads = orderRecommended(payloads, recommendation?._candidateJobIds || [], hasScoreFilters(scoreFilters));
+  if (sort === 'recommended' && body.applierName) {
+    payloads = orderRecommended(payloads, recommendation?._candidateJobIds || [], false);
   }
 
+  const groups = groupPayloads(payloads);
+  const distribution = new Map();
+  for (const group of groups) {
+    const size = group.memberJobIds.length;
+    const bucket = size === 1 ? '1' : size <= 5 ? '2-5' : size <= 10 ? '6-10' : size <= 25 ? '11-25' : '26+';
+    distribution.set(bucket, (distribution.get(bucket) || 0) + 1);
+  }
+  for (const [bucket, count] of distribution) {
+    incrementCounter('athens_job_company_group_directory_groups_total', { bucket }, count);
+  }
   return {
-    groups: groupPayloads(payloads),
+    groups,
     totalJobs: payloads.length,
     computedAt: new Date().toISOString(),
     beta: Boolean(account?.isBeta),
@@ -292,6 +342,7 @@ async function resolveDirectory(body) {
   const account = listBody.applierName
 		? await resolveApplierContext(String(listBody.applierName).trim())
     : { id: null, isBeta: false };
+  if (!account?.isBeta && !publicEnabled()) return { disabled: true };
   const profileId = account?.id ? String(account.id) : null;
   const tab = statusTab(listBody);
   const state = statusState(listBody);
@@ -370,7 +421,7 @@ export async function listCompanyGroupedJobs(body = {}) {
   const previewIds = pageGroups.flatMap((group) => group.memberJobIds.slice(0, previewSize));
   const jobs = await hydrateJobs(previewIds, resolved.profileId);
   const byId = new Map(jobs.map((job) => [String(job._id), job]));
-  return groupedPage({
+  const response = groupedPage({
     groups,
     page,
     limit,
@@ -385,6 +436,10 @@ export async function listCompanyGroupedJobs(body = {}) {
     rankingStatus: resolved.directory.rankingStatus ?? null,
     },
   });
+  setGauge('athens_job_company_group_response_bytes', {
+    tier: resolved.account?.isBeta ? 'beta' : 'public',
+  }, Buffer.byteLength(JSON.stringify(response)));
+  return response;
 }
 
 export async function listCompanyGroupMembers(body = {}) {
@@ -415,5 +470,7 @@ export const companyGroupedJobsTest = {
   groupedPage,
   groupPayloads,
   orderRecommended,
+  scoreMatches,
+  sortPayloads,
   statusTab,
 };

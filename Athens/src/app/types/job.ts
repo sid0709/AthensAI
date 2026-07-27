@@ -81,6 +81,7 @@ export interface Job {
   skillAnalysis?: SkillAnalysis;
   /** Tech stack of the resume that best matched this job (recommendation API). */
   bestResumeTechStack?: string;
+  bestResumeId?: string;
   /** Per-skill match flags for UI (from list-time Best Match scoring). */
   skillHighlights?: { name: string; matched: boolean }[];
   /** AI-detected skills with category + requirement (1-5), when analyzed. */

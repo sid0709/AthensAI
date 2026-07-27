@@ -30,6 +30,7 @@ type ListResponse = {
   pagination?: { total: number; totalJobs?: number; unit?: "companies"; page: number; limit: number; totalPages: number };
   rankingVersion?: string | null;
   rankingStatus?: "fresh" | "warming" | "fallback" | "legacy" | null;
+  beta?: boolean;
   catalogRevision?: string | null;
   personalizedThroughRank?: number | null;
   statusCounts?: Partial<Record<JobStatusTab, number>> | null;
@@ -276,6 +277,7 @@ export function useJobsList(
   const [recommendationWarming, setRecommendationWarming] = useState(false);
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
   const [rankingStatus, setRankingStatus] = useState<ListResponse["rankingStatus"]>(null);
+  const [groupedBeta, setGroupedBeta] = useState(false);
   const rankingWarmRetryCount = useRef(0);
 
   const {
@@ -346,6 +348,7 @@ export function useJobsList(
       setRecommendationWarming(Boolean(res.recommendationWarming));
       setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
       setRankingStatus(res.rankingStatus ?? null);
+      setGroupedBeta(res.beta === true);
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
       }
@@ -387,6 +390,7 @@ export function useJobsList(
 			setTotalJobs(0);
           setRecommendationFallback(false);
           setRecommendationReason(null);
+          setGroupedBeta(false);
           setCatalogTotal(null);
           setSettledKey(currentQueryKey);
           setError(timedOut
@@ -627,6 +631,7 @@ export function useJobsList(
     removeJobsById,
 		loadCompanyMembers,
 		memberLoadingIds,
+    groupedBeta,
     refreshStatusCounts,
     rescoreVisibleJobs,
   };

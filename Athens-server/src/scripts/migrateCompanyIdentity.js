@@ -25,6 +25,13 @@ function companyName(job = {}) {
   return typeof job.company === 'string' ? job.company : job.company?.name || job.companyName || '';
 }
 
+// Reporting only. Suggested legal-suffix variants are never auto-merged.
+function aliasSuggestionKey(normalizedName) {
+  return String(normalizedName || '')
+    .replace(/\s+(inc|incorporated|llc|ltd|limited|corp|corporation|plc|gmbh)$/u, '')
+    .trim();
+}
+
 function identityFor(job, domainsByName, jobId) {
   const canonicalName = String(companyName(job)).trim();
   const normalizedName = normalizeCompanyName(canonicalName);
@@ -98,18 +105,35 @@ async function main() {
   const identities = rows.map((row) => ({ row, identity: identityFor(row, domainsByName, row.id) }));
   const ambiguous = identities.filter(({ identity }) => identity.companyIdentityConflict);
   const unknown = identities.filter(({ identity }) => identity.companyIdentitySource === 'unknown');
+  const suggestionGroups = new Map();
+  for (const { identity } of identities) {
+    const normalized = identity.companyNameNormalized;
+    const key = aliasSuggestionKey(normalized);
+    if (!key) continue;
+    if (!suggestionGroups.has(key)) suggestionGroups.set(key, new Set());
+    suggestionGroups.get(key).add(normalized);
+  }
+  const possibleAliases = [...suggestionGroups.entries()]
+    .filter(([, names]) => names.size > 1)
+    .slice(0, 250)
+    .map(([suggestedCanonical, names]) => ({ suggestedCanonical, names: [...names].sort() }));
   const report = {
     mode: APPLY ? 'apply' : 'dry-run',
     scanned: rows.length,
     companies: new Set(identities.map(({ identity }) => identity.companyId)).size,
     ambiguous: ambiguous.length,
     ambiguousExamples: ambiguous.slice(0, 100).map(({ row, identity }) => ({ jobId: row.id, company: companyName(row), companyId: identity.companyId })),
+    possibleAliases,
     unknown: unknown.length,
     resumeAfter: RESUME_AFTER || null,
   };
 
   if (APPLY) {
     const existingAliases = new Map();
+    const existingCompanies = new Set();
+    for await (const company of db.collection('companies').select('identityVersion').stream()) {
+      existingCompanies.add(company.id);
+    }
     for await (const alias of db.collection('company_aliases').stream()) {
       existingAliases.set(alias.id, alias.data().companyId);
     }
@@ -120,13 +144,21 @@ async function main() {
       const chunk = identities.slice(offset, offset + BATCH_SIZE);
       for (const { row, identity } of chunk) {
         const { canonicalName, ...jobPatch } = identity;
+        const now = new Date();
+        const companyIsNew = !existingCompanies.has(identity.companyId);
+        existingCompanies.add(identity.companyId);
+        const logoUrl = typeof row.company?.logo === 'string' ? row.company.logo.trim() : '';
+        const websiteUrl = typeof row.companyLink === 'string' ? row.companyLink.trim() : '';
         writer.set(db.collection('jobs').doc(row.id), jobPatch, { merge: true });
         writer.set(db.collection('companies').doc(identity.companyId), {
           canonicalName,
           normalizedName: identity.companyNameNormalized,
           ...(identity.companyDomain ? { domain: identity.companyDomain } : {}),
+          ...(websiteUrl ? { websiteUrl } : {}),
+          ...(logoUrl ? { logoUrl } : {}),
           identityVersion: COMPANY_IDENTITY_VERSION,
-          updatedAt: new Date(),
+          ...(companyIsNew ? { createdAt: now } : {}),
+          updatedAt: now,
         }, { merge: true });
         for (const [kind, value] of [['domain', identity.companyDomain], ['name', identity.companyNameNormalized]]) {
           if (!value) continue;
@@ -136,12 +168,14 @@ async function main() {
             aliasConflicts += 1;
             continue;
           }
+          const aliasIsNew = !existing;
           existingAliases.set(aliasId, identity.companyId);
           writer.set(db.collection('company_aliases').doc(aliasId), {
             companyId: identity.companyId,
             kind,
             normalizedValue: value,
-            updatedAt: new Date(),
+            ...(aliasIsNew ? { createdAt: now } : {}),
+            updatedAt: now,
           }, { merge: true });
         }
       }

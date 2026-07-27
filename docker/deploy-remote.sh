@@ -189,6 +189,7 @@ docker run -d \
   -e "ALGOLIA_ADMIN_API_KEY=${ALGOLIA_ADMIN_API_KEY:-}" \
   -e "ALGOLIA_JOBS_INDEX=${ALGOLIA_JOBS_INDEX:-athens_jobs}" \
   -e "PROMETHEUS_URL=${PROMETHEUS_URL}" \
+  -e "METRICS_PORT=9101" \
   "$IMAGE_REF"
 
 echo "Verifying private Prometheus and node-exporter connectivity"
@@ -257,6 +258,57 @@ docker exec "$CONTAINER_NAME" node --input-type=module -e '
   const response = await fetch(qdrantUrl, { headers, signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error(`Qdrant readiness failed: ${response.status}`);
 '
+
+echo "Waiting for the complete monitoring signal"
+monitoring_ok=0
+for ((i = 1; i <= 36; i++)); do
+  if docker exec "$CONTAINER_NAME" node --input-type=module -e '
+    const requiredComponents = ["athens-web", "athens-api", "ai-bff", "avalon-relay", "firestore", "storage", "redis", "qdrant", "vps", "public-api"];
+    const response = await fetch("http://127.0.0.1:8979/api/status/current", { signal: AbortSignal.timeout(5000) });
+    const payload = await response.json();
+    const byId = new Map((payload.components || []).map((item) => [item.component, item]));
+    const now = Date.now();
+    if (!response.ok || !requiredComponents.every((id) => byId.has(id))) process.exit(1);
+    if (!requiredComponents.every((id) => byId.get(id).lastCheckedAt && now - new Date(byId.get(id).lastCheckedAt).getTime() < 180000)) process.exit(1);
+  ' >/dev/null 2>&1; then
+    monitoring_ok=1
+    break
+  fi
+  sleep 5
+done
+if [[ "$monitoring_ok" -ne 1 ]]; then
+  echo "The complete v2 monitoring signal did not become fresh." >&2
+  docker logs --tail 120 "$CONTAINER_NAME" || true
+  exit 1
+fi
+
+echo "Verifying Prometheus targets and v2 Firestore snapshot"
+targets_ok=0
+for ((i = 1; i <= 24; i++)); do
+  if docker exec "$CONTAINER_NAME" node --input-type=module -e '
+    const base = process.env.PROMETHEUS_URL.replace(/\/+$/, "");
+    const url = new URL("/api/v1/query", `${base}/`);
+    url.searchParams.set("query", "up{job=~\"athens-server|redis|qdrant|google-cloud|node\"}");
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const payload = await response.json();
+    const rows = payload?.data?.result || [];
+    const jobs = new Map(rows.map((row) => [row.metric?.job, row.value?.[1]]));
+    for (const job of ["athens-server", "redis", "qdrant", "google-cloud", "node"]) {
+      if (jobs.get(job) !== "1") process.exit(1);
+    }
+    const { getFirestoreDb } = await import("./Athens-server/src/services/firebase/firebaseAdmin.js");
+    const snapshot = await getFirestoreDb().collection("monitor_status_v2").doc("production").get();
+    if (!snapshot.exists || snapshot.data()?.version !== 2) process.exit(1);
+  ' >/dev/null 2>&1; then
+    targets_ok=1
+    break
+  fi
+  sleep 5
+done
+if [[ "$targets_ok" -ne 1 ]]; then
+  echo "A required Prometheus target or the Firestore v2 snapshot is unavailable." >&2
+  exit 1
+fi
 
 if [[ "${RECOMMENDATION_QUERY_TIME_MODE,,}" == "on" || "${RECOMMENDATION_QUERY_TIME_MODE,,}" == "shadow" ]]; then
   bootstrap_state="$("${ranking_compose[@]}" exec -T redis redis-cli --raw GET "$RANKING_BOOTSTRAP_KEY" 2>/dev/null || true)"

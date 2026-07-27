@@ -33,6 +33,10 @@ test("mapExternalDocToMarketJob maps flat external schema", () => {
 	assert.equal(market.title, "Engineer");
 	assert.equal(market.company.name, "Acme");
 	assert.equal(market.company.logo, "https://example.com/logo.png");
+	assert.match(market.companyId, /^cmp_/);
+	assert.equal(market.companyNameNormalized, "acme");
+	assert.equal(market.companyIdentitySource, "name");
+	assert.equal(market.companyIdentityVersion, 1);
 	assert.equal(market.applyLink, "https://boards.greenhouse.io/acme/jobs/99");
 	assert.equal(market.source, "Greenhouse");
 	assert.equal(market.aiSkillStatus, "pending");
