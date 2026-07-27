@@ -1,5 +1,5 @@
-import { rulesCollection } from '../db/mongo.js';
-import { buildMongoCaseInsensitiveRegexFilter } from './safeRegex.js';
+import { rulesCollection } from '../db/dataStore.js';
+import { buildCaseInsensitiveRegexFilter } from './safeRegex.js';
 
 const MATCH_NONE_QUERY = Object.freeze({ _id: { $exists: false } });
 
@@ -129,16 +129,16 @@ export async function isJobBlocked(job) {
 	}
 }
 
-export function buildMongoQueryForRule(ruleSet) {
+export function buildQueryForRule(ruleSet) {
     const { rules, logicalOperators } = ruleSet;
     if (!rules || rules.length === 0) {
         return {};
     }
 
-    const mongoOperatorMap = {
+    const queryOperatorMap = {
         AND: '$and',
         OR: '$or',
-        XOR: '$xor', // Note: MongoDB doesn't have a direct $xor query operator for general queries. This will be tricky.
+        XOR: '$xor', // The compatibility query layer has no direct general-purpose XOR operator.
         NOR: '$nor',
     };
 
@@ -150,12 +150,12 @@ export function buildMongoQueryForRule(ruleSet) {
         switch (operator) {
             case 'equals':
                 {
-                    const filter = buildMongoCaseInsensitiveRegexFilter(value, { exact: true });
+                    const filter = buildCaseInsensitiveRegexFilter(value, { exact: true });
                     return filter ? { [fieldName]: filter } : MATCH_NONE_QUERY;
                 }
             case 'contains':
                 {
-                    const filter = buildMongoCaseInsensitiveRegexFilter(value);
+                    const filter = buildCaseInsensitiveRegexFilter(value);
                     return filter ? { [fieldName]: filter } : MATCH_NONE_QUERY;
                 }
             case 'pattern':
@@ -164,7 +164,7 @@ export function buildMongoQueryForRule(ruleSet) {
                     return MATCH_NONE_QUERY;
                 }
                 try {
-                    // Validate the regex before sending it to MongoDB
+                    // Validate the regex before sending it to the query adapter.
                     new RegExp(value, 'i');
                 } catch (error) {
                     console.warn(`Invalid regex pattern in rule: ${value}`, error);
@@ -183,18 +183,18 @@ export function buildMongoQueryForRule(ruleSet) {
 
     // Handling complex logical operators is more involved.
     // A simple approach for AND/OR/NOR is to group them.
-    // MongoDB's query structure is nested, e.g., { $or: [ { condition1 }, { condition2 } ] }
+    // The compatibility query structure is nested, e.g., { $or: [ { condition1 }, { condition2 } ] }
     // A mix of operators like A AND B OR C is ambiguous without parentheses.
     // The current UI implies sequential evaluation: (A op B) op C.
-    // MongoDB queries don't work like that. They take an array of conditions for $and, $or, $nor.
+    // Queries take an array of conditions for $and, $or, and $nor.
     //
     // Let's assume for now that all logical operators in a rule set are the SAME.
     // e.g., A AND B AND C, or A OR B OR C. This is a reasonable simplification.
     const firstOperator = logicalOperators[0];
     const allOperatorsAreTheSame = logicalOperators.every(op => op === firstOperator);
 
-    if (allOperatorsAreTheSame && mongoOperatorMap[firstOperator]) {
-        const operator = mongoOperatorMap[firstOperator];
+    if (allOperatorsAreTheSame && queryOperatorMap[firstOperator]) {
+        const operator = queryOperatorMap[firstOperator];
          if (operator === '$xor') {
               // XOR is not supported like this. We can't build a simple query.
               // We'd have to fetch and filter in memory, which defeats the purpose of a DB query.
@@ -205,9 +205,9 @@ export function buildMongoQueryForRule(ruleSet) {
          return { [operator]: conditions };
      }
 
-     // If operators are mixed, we cannot reliably build a mongo query.
+     // If operators are mixed, we cannot reliably build a data query.
      // For now, we will return a query that finds nothing if the rule is too complex.
      // A proper implementation would require a parser to build an Abstract Syntax Tree.
-     console.warn(`Cannot build mongo query for rule set with mixed logical operators: ${ruleSet.name}`);
+     console.warn(`Cannot build data query for rule set with mixed logical operators: ${ruleSet.name}`);
      return MATCH_NONE_QUERY; // Return a query that finds nothing
 }

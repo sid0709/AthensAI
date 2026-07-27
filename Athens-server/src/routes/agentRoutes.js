@@ -26,7 +26,7 @@ router.get("/models", getAgentModels);
 router.post("/chat", postAgentChat);
 router.post("/deploy", postAgentDeploy);
 
-// Avalon apply-run debug logging (local JSONL file + MongoDB history).
+// Avalon apply-run debug logging (Cloud Storage JSONL + Firestore history).
 router.post("/apply-log", postApplyLog);
 router.get("/apply-runs", getApplyRuns);
 router.get("/apply-runs/:runId", getApplyRunById);

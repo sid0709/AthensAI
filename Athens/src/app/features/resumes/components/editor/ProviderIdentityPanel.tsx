@@ -48,7 +48,7 @@ export function ProviderIdentityPanel({
         </button>
       </div>
       <p className="text-xs text-muted-foreground">
-        The model comes from your default in Settings → Profile. Identity loads from your MongoDB profile.
+        The model comes from your default in Settings → Profile. Identity loads from your Firestore profile.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <AthensSelect label="Reasoning" value={draft.reasoningEffort} onChange={onReasoningChange} options={REASONING} />

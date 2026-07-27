@@ -65,7 +65,7 @@ export type GenStep = {
   /** JSON schema text — only used/required when kind === "final". */
   schema: string;
   /**
-   * Skip this step when generating for a structured (MongoDB) job — i.e. the
+   * Skip this step when generating for a structured catalog job — i.e. the
    * Job Search page and the Agent pipeline, where the job already carries fetched
    * skills (available via the {job_skills} token). Ignored for free-text
    * generation on the Resume Generator page, where the step always runs.
@@ -142,7 +142,7 @@ export function isUploadedTemplateId(templateId: string) {
   return templateId.startsWith("upload:");
 }
 
-export function uploadedTemplateMongoId(templateId: string) {
+export function uploadedTemplateDocumentId(templateId: string) {
   return templateId.replace(/^upload:/, "");
 }
 

@@ -1,6 +1,6 @@
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import { randomUUID } from "node:crypto";
-import { jobsCollection, accountInfoCollection } from "../db/mongo.js";
+import { jobsCollection, accountInfoCollection } from "../db/dataStore.js";
 import { JobSource } from "../config/jobSources.js";
 import { DEEPSEEK_MODELS, listOpenAiModels } from "@nextoffer/shared/models";
 import { createAsyncHandler } from "../utils/http.js";
@@ -12,8 +12,8 @@ import { getServiceAuthHeaders } from "../services/googleServiceAuth.js";
 const AI_BFF_URL = (process.env.AI_BFF_URL || "http://127.0.0.1:3920").replace(/\/$/, "");
 
 function toOid(id) {
-  if (!id || !ObjectId.isValid(id)) return null;
-  return new ObjectId(id);
+  if (!id || !DocumentId.isValid(id)) return null;
+  return new DocumentId(id);
 }
 
 function postedFilter(applierOid) {
@@ -39,9 +39,9 @@ function postedFilter(applierOid) {
 async function resolveOpenAiKey(profileId) {
   const envKey = process.env.OPENAI_API_KEY?.trim();
   if (!profileId || !accountInfoCollection) return envKey || null;
-  if (!ObjectId.isValid(profileId)) return envKey || null;
+  if (!DocumentId.isValid(profileId)) return envKey || null;
   const doc = await accountInfoCollection.findOne(
-    { _id: new ObjectId(profileId) },
+    { _id: new DocumentId(profileId) },
     { projection: { "autoBidProfile.openaiApiKey": 1 } },
   );
   return String((await decryptProfileApiKeys(doc?.autoBidProfile || {}))?.openaiApiKey || '').trim() || envKey || null;
@@ -50,7 +50,7 @@ async function resolveOpenAiKey(profileId) {
 export const getAgentHealth = createAsyncHandler(async (_req, res) => {
   res.json({
     ok: true,
-    database: String(process.env.DATABASE_BACKEND || "mongodb").toLowerCase(),
+    database: "firestore",
   });
 });
 

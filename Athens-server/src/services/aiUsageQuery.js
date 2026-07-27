@@ -4,7 +4,7 @@ export function parseAiUsageDate(value) {
   return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
-/** Build Mongo match filter from ai-usage query params. */
+/** Build a match filter from ai-usage query params. */
 export function buildAiUsageMatch(query = {}) {
   const applierName = String(query.applierName || "").trim() || undefined;
   const runId = String(query.runId || "").trim() || undefined;

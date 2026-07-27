@@ -12,14 +12,14 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import {
-  initMongo,
-  closeMongo,
+  initDataStore,
+  closeDataStore,
   jobsCollection,
   userSkillsCollection,
   jobMatchScoresCollection,
   matchProfileStateCollection,
   skillDictionaryCollection,
-} from '../db/mongo.js';
+} from '../db/dataStore.js';
 const BATCH = 5000;
 
 async function batchUnsetJobSkills() {
@@ -59,8 +59,8 @@ async function batchUnsetJobSkills() {
 }
 
 async function main() {
-  await initMongo();
-  if (!jobsCollection) throw new Error('MongoDB not ready');
+  await initDataStore();
+  if (!jobsCollection) throw new Error('Firestore not ready');
 
   console.log('[reset-skills] wiping job skill fields (batched)…');
   const jobsReset = await batchUnsetJobSkills();
@@ -80,7 +80,7 @@ async function main() {
     dictionaryDeleted: dict?.deletedCount ?? 0,
   });
 
-  await closeMongo?.();
+  await closeDataStore?.();
   process.exit(0);
 }
 

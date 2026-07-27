@@ -5,7 +5,7 @@ export const SAMPLE_SUMMARY =
 export const SAMPLE_SKILL_GROUPS: { category: string; items: string[] }[] = [
   { category: "Programming Languages", items: ["TypeScript", "JavaScript", "Python", "Go"] },
   { category: "Frameworks", items: ["React", "Node.js", "Next.js", "Express"] },
-  { category: "Databases", items: ["PostgreSQL", "MongoDB", "Redis"] },
+  { category: "Databases", items: ["PostgreSQL", "Firestore", "Redis"] },
   { category: "Cloud & DevOps", items: ["AWS", "Docker", "CI/CD", "Terraform"] },
 ];
 export const SAMPLE_BULLETS = [

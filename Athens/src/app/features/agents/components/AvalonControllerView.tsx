@@ -905,7 +905,7 @@ export function AvalonControllerView({
             onClick={() => void relay.markActiveJobApplied()}
             disabled={!activeJob || relay.applying}
             className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-500 disabled:opacity-40"
-            title="Mark this job Applied in MongoDB with the current profile"
+            title="Mark this job Applied in Firestore with the current profile"
           >
             <CheckCircle2 className="w-4 h-4" />
             Mark as Applied

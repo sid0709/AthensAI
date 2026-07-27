@@ -6,7 +6,7 @@ import {
 	stopTitleScanSession,
 } from '../services/jobTitleScan/titleScanSession.js';
 
-/** Title scan is Beta-only — resolve applier from Mongo tier, never trust client flags. */
+/** Title scan is Beta-only — resolve applier from the Firestore tier, never trust client flags. */
 async function requireBetaApplierName(applierNameRaw, res) {
 	const applierName = String(applierNameRaw || '').trim();
 	if (!applierName) {

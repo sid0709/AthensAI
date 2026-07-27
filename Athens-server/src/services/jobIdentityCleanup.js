@@ -1,7 +1,7 @@
 import {
 	jobIdentityRegistryCollection,
 	jobsCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { removeJobEmbedding } from "./embeddings/embeddingIngest.js";
 import { invalidateLiveProjectedStatusCount } from "./jobStatusProjectionService.js";
 import { deleteScoresForJobs } from "./matching/matchScoreStore.js";
@@ -18,8 +18,15 @@ const CLEANUP_CHUNK_SIZE = 100;
 async function acquireCleanupLease(registryCollection) {
 	const token = randomUUID();
 	for (;;) {
-		const marker = await registryCollection.findOne({ _id: CLEANUP_MARKER_ID });
+		const marker = await registryCollection.findOne(
+			{ _id: CLEANUP_MARKER_ID },
+			{ bypassCache: true },
+		);
 		if (marker?.completedAt) return { completed: true, marker };
+		const activeLeaseUntil = marker?.leaseUntil ? new Date(marker.leaseUntil).getTime() : 0;
+		if (marker?.token && Number.isFinite(activeLeaseUntil) && activeLeaseUntil > Date.now()) {
+			return { completed: false, busy: true, marker };
+		}
 
 		const now = new Date();
 		let result = null;
@@ -101,6 +108,14 @@ export async function cleanupExistingJobIdentityDuplicates({
 			alreadyComplete: true,
 		};
 	}
+	if (lease.busy) {
+		return {
+			scanned: Number(lease.marker?.scanned || 0),
+			kept: Number(lease.marker?.kept || 0),
+			removed: Number(lease.marker?.removed || 0),
+			inProgress: true,
+		};
+	}
 
 	let scanned = 0;
 	try {
@@ -115,7 +130,7 @@ export async function cleanupExistingJobIdentityDuplicates({
 			postedAt: 1,
 		};
 		const rows = typeof marketCollection.findPaged === "function"
-			? marketCollection.findPaged({}, { projection, pageSize: 2_000 })
+			? marketCollection.findPaged({}, { projection, pageSize: 500 })
 			: marketCollection.find({}, { projection });
 		for await (const job of rows) {
 			jobs.push(job);
@@ -127,8 +142,15 @@ export async function cleanupExistingJobIdentityDuplicates({
 		for (let offset = 0; offset < duplicates.length; offset += CLEANUP_CHUNK_SIZE) {
 			const chunk = duplicates.slice(offset, offset + CLEANUP_CHUNK_SIZE);
 			const ids = chunk.map((job) => job._id);
-			await deleteScores(ids);
+			await refreshCleanupLease(registryCollection, lease.token);
+			// Firestore supports at most 30 values in an `in` query. Keep score
+			// cleanup native-indexed instead of falling back to a collection scan.
+			for (let scoreOffset = 0; scoreOffset < ids.length; scoreOffset += 25) {
+				await deleteScores(ids.slice(scoreOffset, scoreOffset + 25));
+				await refreshCleanupLease(registryCollection, lease.token);
+			}
 			await removeRanking(ids);
+			await refreshCleanupLease(registryCollection, lease.token);
 			await runLimited(ids, 10, removeSkillIndex);
 			await runLimited(ids, 10, removeEmbedding);
 			if (typeof marketCollection.bulkDeleteByIds === "function") {

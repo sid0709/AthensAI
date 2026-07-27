@@ -2,7 +2,7 @@ import {
 	externalScrapedJobsCollection,
 	jobIdentityRegistryCollection,
 	jobsCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
 import {
 	externalSourceFieldsFromLink,

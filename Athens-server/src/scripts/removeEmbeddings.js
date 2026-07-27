@@ -1,6 +1,6 @@
 /**
- * Remove all embedding data stored in MongoDB (the app no longer uses Qdrant /
- * Ollama embeddings). Unsets the `embedding` field on jobs and the
+ * Remove obsolete inline embedding fields from Firestore. Current ranking uses
+ * Qdrant, so the document copies are unnecessary. Unsets `embedding` on jobs and
  * `embedding` / `profileEmbedding` fields on resumes. Batched so large
  * collections stay responsive.
  *
@@ -9,7 +9,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { initMongo, closeMongo, jobsCollection, userResumesCollection } from '../db/mongo.js';
+import { initDataStore, closeDataStore, jobsCollection, userResumesCollection } from '../db/dataStore.js';
 
 const BATCH = 5000;
 
@@ -34,8 +34,8 @@ async function batchUnset(collection, filter, unset, label) {
 }
 
 async function main() {
-  await initMongo();
-  if (!jobsCollection) throw new Error('MongoDB not ready');
+  await initDataStore();
+  if (!jobsCollection) throw new Error('Firestore not ready');
 
   console.log('[remove-embeddings] clearing job embeddings…');
   const jobs = await batchUnset(jobsCollection, { embedding: { $exists: true } }, { embedding: '' }, 'jobs');
@@ -49,7 +49,7 @@ async function main() {
   );
 
   console.log('[remove-embeddings] done:', { jobsCleared: jobs, resumesCleared: resumes });
-  await closeMongo?.();
+  await closeDataStore?.();
   process.exit(0);
 }
 

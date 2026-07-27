@@ -1,5 +1,5 @@
-import { ObjectId } from 'mongodb';
-import { jobsCollection } from '../../db/mongo.js';
+import { DocumentId } from '@nextoffer/shared/document-id';
+import { jobsCollection } from '../../db/dataStore.js';
 import { attachStaticScoreFields } from '../jobListPipeline.js';
 import { indexJobInRedis, jobSkillTokens } from '../matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
@@ -13,27 +13,27 @@ const BATCH_SIZE = Number(process.env.SKILL_JOB_ANALYSIS_BATCH_SIZE || 2);
 export async function queueJobAnalysis(jobId, applierName) {
 	if (!jobsCollection) throw new Error('Database not ready');
 
-	let objectId;
+	let documentId;
 	try {
-		objectId = new ObjectId(jobId);
+		documentId = new DocumentId(jobId);
 	} catch {
 		throw new Error('Invalid job id');
 	}
 
-	const job = await jobsCollection.findOne({ _id: objectId });
+	const job = await jobsCollection.findOne({ _id: documentId });
 	if (!job) throw new Error('Job not found');
 
 	if (TERMINAL.has(job.skillAnalysis?.status)) {
-		return { status: 'analyzed', alreadyAnalyzed: true, jobId: String(objectId) };
+		return { status: 'analyzed', alreadyAnalyzed: true, jobId: String(documentId) };
 	}
 
 	if (job.skillAnalysis?.status === 'queued' || job.skillAnalysis?.status === 'analyzing') {
-		return { status: job.skillAnalysis.status, jobId: String(objectId) };
+		return { status: job.skillAnalysis.status, jobId: String(documentId) };
 	}
 
 	const now = new Date().toISOString();
 	await jobsCollection.updateOne(
-		{ _id: objectId },
+		{ _id: documentId },
 		{
 			$set: {
 				skillAnalysis: {
@@ -45,29 +45,29 @@ export async function queueJobAnalysis(jobId, applierName) {
 			},
 		},
 	);
-	await enqueueJobAnalysisTask(String(objectId));
+	await enqueueJobAnalysisTask(String(documentId));
 
-	return { status: 'queued', jobId: String(objectId), queuedAt: now };
+	return { status: 'queued', jobId: String(documentId), queuedAt: now };
 }
 
 export async function getJobAnalysisStatus(jobId) {
 	if (!jobsCollection) throw new Error('Database not ready');
 
-	let objectId;
+	let documentId;
 	try {
-		objectId = new ObjectId(jobId);
+		documentId = new DocumentId(jobId);
 	} catch {
 		throw new Error('Invalid job id');
 	}
 
 	const job = await jobsCollection.findOne(
-		{ _id: objectId },
+		{ _id: documentId },
 		{ projection: { skillAnalysis: 1, skills: 1, skillsNormalized: 1 } },
 	);
 	if (!job) throw new Error('Job not found');
 
 	return {
-		jobId: String(objectId),
+		jobId: String(documentId),
 		skillAnalysis: job.skillAnalysis || { status: 'pending' },
 		skills: job.skills || [],
 		skillsNormalized: job.skillsNormalized || [],

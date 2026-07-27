@@ -135,7 +135,7 @@ export async function dedupeJobMarketByApplyLink(jobsCollection) {
 
 	const result = await jobsCollection.deleteMany({ _id: { $in: idsToRemove } });
 	// Cascade: drop materialized match scores for the removed duplicates. Lazy
-	// import — mongo.js imports this module, so a top-level import would cycle.
+	// import — the data-store module imports this module, so a top-level import would cycle.
 	try {
 		const { deleteScoresForJobs } = await import('./matching/matchScoreStore.js');
 		await deleteScoresForJobs(idsToRemove);

@@ -120,7 +120,7 @@ export interface RefinementStep {
   prompt: string;
   schema?: string;
   /**
-   * Skip this step for structured (MongoDB) jobs — Job Search + Agent runs, where
+   * Skip this step for structured catalog jobs — Job Search + Agent runs, where
    * the job's pre-fetched skills are injected via the {job_skills} token. Free-text
    * generation on the Resume Generator page always runs the step.
    */

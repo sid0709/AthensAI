@@ -20,9 +20,9 @@ RUN apt-get update \
 
 COPY . .
 
-RUN npm install \
- && npm install --prefix Athens \
- && cd project-avalon && npm install --ignore-scripts \
+RUN npm ci \
+ && npm ci --prefix Athens \
+ && cd project-avalon && npm ci --ignore-scripts \
  && npm run build -w @avalon/shared \
  && cd .. \
  && npm run build -w ai-bff
@@ -50,18 +50,13 @@ RUN chmod +x /app/docker/pack-extensions.sh \
  && /app/docker/pack-extensions.sh
 
 
-FROM mongo:7.0 AS mongodb
-
 FROM node:20-bookworm
 
 ENV NODE_ENV=production \
-    MONGO_URL=mongodb://127.0.0.1:27017 \
-    MONGO_DB=AthensDB \
     HOST=0.0.0.0 \
     PORT=8979 \
     AI_BFF_URL=http://127.0.0.1:3920 \
     CORS_ORIGIN=* \
-    EMBEDDED_MONGO=auto \
     PUPPETEER_CACHE_DIR=/data/puppeteer
 
 # libreoffice-writer-nogui + poppler-utils: uploaded resume template preview
@@ -92,8 +87,6 @@ RUN apt-get update \
     xdg-utils \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=mongodb /usr/bin/mongod /usr/local/bin/mongod
-
 WORKDIR /app
 
 COPY --from=builder /app/package.json /app/package-lock.json ./
@@ -116,9 +109,9 @@ COPY docker/entrypoint.sh /app/docker/entrypoint.sh
 RUN chmod +x /app/docker/entrypoint.sh \
  && find /app -name '.env' -delete \
  && find /app -name '.env.*' ! -name '.env.example' -delete \
- && mkdir -p /data/db /data/puppeteer /var/log/mongodb /var/log/nginx
+ && mkdir -p /data/puppeteer /var/log/nginx
 
-VOLUME ["/data/db", "/data/puppeteer"]
+VOLUME ["/data/puppeteer"]
 
 EXPOSE 80 3920 8979 3847 9101
 

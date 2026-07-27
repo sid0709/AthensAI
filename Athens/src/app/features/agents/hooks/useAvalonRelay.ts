@@ -51,7 +51,7 @@ import { postApplyLog, type ApplyLogEvent } from "../../../api/avalonLog";
 import { requestVerificationCode } from "../../../api/mail";
 import { setAgentRunContext, clearAgentRunContext } from "../avalon/ai/run-context";
 
-/** Short unique id for one apply run (used to correlate the debug log file + Mongo doc). */
+/** Short unique id for one apply run (used to correlate the debug log file + Firestore record). */
 function newRunId(): string {
   return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -145,7 +145,7 @@ interface SubmissionKitCache {
   file: AttachedFile;
 }
 
-/** Manual/link-only jobs have no Mongo id or JD, so no tailored résumé is generated. */
+/** Manual/link-only jobs have no document id or JD, so no tailored résumé is generated. */
 function isManualJob(job: QueuedJob): boolean {
   return job.source === "manual" || job.id.startsWith("manual:");
 }
@@ -413,7 +413,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       ? `Extension not on your profile (id "${profileIdRef.current || 'default'}") + session "${sessionId || DEFAULT_SESSION_ID}". Install the Avalon extension, sign in, and match the session ID.`
       : null;
 
-  /** Flush buffered run-log events to the backend (local JSONL + Mongo). */
+  /** Flush buffered run-log events to the backend (local JSONL + Firestore). */
   const flushRunLog = useCallback(
     (extra?: { status?: string; finished?: boolean }) => {
       const runId = runIdRef.current;
@@ -579,7 +579,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
   const resetJobUsage = useCallback(() => setUsageRequests([]), []);
 
-  /** Begin a new debug run (starts a JSONL file + Mongo doc via the meta event). */
+  /** Begin a new debug run (starts a JSONL file + Firestore record via the meta event). */
   const startRunLog = useCallback(
     (job: QueuedJob, meta: Record<string, unknown>) => {
       const runId = newRunId();
@@ -1061,7 +1061,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         return;
       }
       if (isManualJob(job)) {
-        pushLog(`"${job.title}" is manual — résumé generation needs a MongoDB job with description`, false);
+        pushLog(`"${job.title}" is manual — résumé generation needs a catalog job with description`, false);
         return;
       }
       // Only burn an LLM regenerate when we actually have an in-memory PDF to
@@ -1145,7 +1145,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             [job.id]: { ...EMPTY_PIPELINE, ...prev[job.id], resumeReady: true },
           }));
         } catch {
-          /* draft PDF not on disk yet — ensureJobResume will still reuse Mongo content */
+          /* draft PDF not on disk yet — ensureJobResume will still reuse Firestore content */
         }
       });
     })();
@@ -1408,7 +1408,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
     const job = getActiveQueuedJob();
     if (!job || isManualJob(job)) {
-      pushLog("Select a queued MongoDB job with a drafted résumé", false);
+      pushLog("Select a queued catalog job with a drafted résumé", false);
       return;
     }
 
@@ -2173,7 +2173,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     waitBeforeVerify,
   ]);
 
-  /** Explicitly mark the active queued job Applied to MongoDB with the current profile. */
+  /** Explicitly mark the active queued job Applied to Firestore with the current profile. */
   const markActiveJobApplied = useCallback(async () => {
     const job = getActiveQueuedJob();
     if (!job) {
@@ -2246,7 +2246,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       return;
     }
     if (isManualJob(job)) {
-      pushLog(`"${job.title}" is manual — auto-run needs a MongoDB job with tailored résumé`, false);
+      pushLog(`"${job.title}" is manual — auto-run needs a catalog job with tailored résumé`, false);
       return;
     }
 

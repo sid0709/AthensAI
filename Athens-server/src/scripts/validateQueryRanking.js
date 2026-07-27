@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { initMongo, closeMongo, jobsCollection } from '../db/mongo.js';
+import { initDataStore, closeDataStore, jobsCollection } from '../db/dataStore.js';
 import { initRedis, closeRedis } from '../db/redis.js';
 import { initJobRankingCollection } from '../services/vectorStore/qdrantClient.js';
 import { JobSourceTitles } from '../config/jobSources.js';
@@ -64,14 +64,14 @@ async function exhaustiveTop(applierName, limit = 100, trackedIds = new Set()) {
 async function main() {
   const applierName = argument('applier');
   if (!applierName) throw new Error('Usage: npm run validate-query-ranking -- --applier="Name"');
-  await initMongo();
+  await initDataStore();
   await initRedis();
   if (!await initJobRankingCollection()) throw new Error('Qdrant ranking collection is unavailable');
 
   const actual = await listQueryTimeRankedJobs({
     applierName,
     listBody: { sort: 'recommended', jobSources: JobSourceTitles.join(',') },
-    mongoQuery: {},
+    dataQuery: {},
     scoreFilters: {},
     skip: 0,
     limit: 100,
@@ -128,5 +128,5 @@ try {
 } finally {
   await shutdownRankingPool();
   await closeRedis();
-  await closeMongo();
+  await closeDataStore();
 }

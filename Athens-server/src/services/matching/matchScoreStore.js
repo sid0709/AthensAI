@@ -1,10 +1,10 @@
-import { ObjectId } from 'mongodb';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import crypto from 'node:crypto';
 import {
   jobMatchScoresCollection,
   matchProfileStateCollection,
   jobsCollection,
-} from '../../db/mongo.js';
+} from '../../db/dataStore.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { enqueueMatchScoreTask } from '../cloudTasks.js';
 import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
@@ -20,7 +20,7 @@ import { computeCoverageScore } from './coverageScore.js';
  * stamped with an older version are stale (job deleted or dropped below the
  * threshold) and get swept by deleteStaleScores.
  *
- * This module must stay dependency-light (mongo + shared scorer only) — it is
+ * This module must stay dependency-light (data adapter + shared scorer only) — it is
  * imported from profileSkills.js, so importing profileSkills here would cycle.
  */
 
@@ -91,8 +91,8 @@ export async function deleteScoresForJobs(jobIds) {
   if (!jobMatchScoresCollection || !jobIds?.length) return { deleted: 0 };
   const ids = jobIds
     .map((id) => {
-      if (id instanceof ObjectId) return id;
-      try { return new ObjectId(String(id)); } catch { return null; }
+      if (id instanceof DocumentId) return id;
+      try { return new DocumentId(String(id)); } catch { return null; }
     })
     .filter(Boolean);
   if (!ids.length) return { deleted: 0 };
@@ -181,8 +181,8 @@ export async function markJobsPendingScore(jobIds) {
   if (!jobsCollection || !jobIds?.length) return { updated: 0 };
   const ids = jobIds
     .map((id) => {
-      if (id instanceof ObjectId) return id;
-      try { return new ObjectId(String(id)); } catch { return null; }
+      if (id instanceof DocumentId) return id;
+      try { return new DocumentId(String(id)); } catch { return null; }
     })
     .filter(Boolean);
   if (!ids.length) return { updated: 0 };

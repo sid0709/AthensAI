@@ -3,7 +3,7 @@
  * Triggered from Job Search "Start embedding" button.
  */
 import { randomUUID } from 'crypto';
-import { jobsCollection } from '../../db/mongo.js';
+import { jobsCollection } from '../../db/dataStore.js';
 import { initQdrantCollections, isQdrantReady } from '../vectorStore/qdrantClient.js';
 import { upsertJobEmbedding } from './embeddingIngest.js';
 

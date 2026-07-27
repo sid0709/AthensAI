@@ -7,6 +7,9 @@ export type DependencyMetricSeries = {
   updatedAt: string | null;
   current: DependencyMetricPoint | null;
   points: DependencyMetricPoint[];
+  source?: "prometheus" | "google-cloud-monitoring";
+  delayed?: boolean;
+  expectedDelaySeconds?: number;
 };
 export type DependencyMetrics = {
   redis: DependencyMetricSeries;
@@ -84,8 +87,7 @@ function value(point: DependencyMetricPoint | null, key: string) {
 
 function MetricCard({ definition, series }: { definition: (typeof cards)[number]; series: DependencyMetricSeries | undefined }) {
   const chartMetrics = definition.metrics.filter((metric) => definition.chart.includes(metric.key));
-  const sourceAge = series?.updatedAt ? Date.now() - new Date(series.updatedAt).getTime() : null;
-  const delayed = definition.cloud && (sourceAge == null || sourceAge > 120_000);
+  const delayed = Boolean(definition.cloud && (series?.delayed ?? true));
   const Icon = definition.Icon;
   return (
     <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
@@ -107,7 +109,7 @@ function MetricCard({ definition, series }: { definition: (typeof cards)[number]
           </AreaChart></ResponsiveContainer>
         )}
       </div>
-      <p className="border-t border-slate-100 px-5 py-2.5 text-[10px] text-slate-500">Source timestamp: {series?.updatedAt ? new Date(series.updatedAt).toLocaleString() : "not available"}{definition.cloud ? " · Google Cloud Monitoring normally arrives several minutes late" : ""}</p>
+      <p className="border-t border-slate-100 px-5 py-2.5 text-[10px] text-slate-500">Telemetry sampled: {series?.updatedAt ? new Date(series.updatedAt).toLocaleString() : "not available"}{definition.cloud ? ` · Google Cloud Monitoring source data normally trails by about ${Math.round((series?.expectedDelaySeconds || 300) / 60)} minutes` : ""}</p>
     </article>
   );
 }

@@ -84,15 +84,15 @@ function rememberPage(key, result) {
 }
 
 /**
- * Read one folder page from MongoDB cache only (instant).
+ * Read one folder page from the Firestore cache only (instant).
  */
 export async function loadCachedFolderPage(applierName, folder, page, pageSize) {
 	const mailbox = folderToMailbox(folder);
 	const state = await getSyncState(applierName);
 	const cachedTotal = state?.[`folderTotal_${folder}`];
-	const mongoCount = await countMessages(applierName, { folder, mailbox });
+	const cachedCount = await countMessages(applierName, { folder, mailbox });
 	const total =
-		typeof cachedTotal === 'number' && cachedTotal > 0 ? cachedTotal : mongoCount;
+		typeof cachedTotal === 'number' && cachedTotal > 0 ? cachedTotal : cachedCount;
 
 	const docs = await listMessages(applierName, { folder, mailbox, page, pageSize });
 	return {
@@ -109,17 +109,16 @@ export async function loadCachedFolderPage(applierName, folder, page, pageSize) 
  * Fetch one folder page from Gmail if not fully cached; returns threads + total.
  *
  * Smart cache policy:
- *  - If MongoDB has data AND the folder was refreshed < CACHE_STALE_MS ago →
+ *  - If Firestore has data AND the folder was refreshed < CACHE_STALE_MS ago →
  *    serve from cache immediately, no IMAP call — unless the page is underfilled.
- *  - If MongoDB has data but cache is stale → serve from cache immediately, then
+ *  - If Firestore has data but cache is stale → serve from cache immediately, then
  *    fire-and-forget an IMAP refresh in the background (unless underfilled → sync IMAP).
- *  - If MongoDB has NO data (first load) OR forceRefresh is true → hit IMAP
+ *  - If Firestore has NO data (first load) OR forceRefresh is true → hit IMAP
  *    synchronously.
  *  - If cache returns fewer rows than expected for the page while more messages
  *    exist, fall through to synchronous IMAP for the requested page/size.
  */
 export async function loadFolderPage(applierName, folder, page, pageSize, { forceRefresh = false } = {}) {
-	const firestoreRuntime = String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() === 'firestore';
 	const memoryKey = pageCacheKey(applierName, folder, page, pageSize);
 	const memoryEntry = pageMemoryCache.get(memoryKey);
 	if (!forceRefresh && memoryEntry?.expiresAt > Date.now()) return { ...memoryEntry.result, fromCache: true };
@@ -140,7 +139,7 @@ export async function loadFolderPage(applierName, folder, page, pageSize, { forc
 		return expectedOnPage > 0 && cached.threads.length < expectedOnPage;
 	};
 
-	// If cache is fresh AND not forced → try MongoDB first
+	// If cache is fresh AND not forced, try Firestore first.
 	if (!forceRefresh && hasCachedData && cacheIsFresh) {
 		const cached = await loadCachedFolderPage(applierName, folder, page, pageSize);
 		if (!cacheUnderfilled(cached)) {
@@ -174,42 +173,23 @@ export async function loadFolderPage(applierName, folder, page, pageSize, { forc
 			applierName,
 		);
 
-		if (firestoreRuntime) {
-			// The live IMAP page is already complete enough to render. Persist it in
-			// the background so Firestore network latency cannot turn a successful
-			// Gmail request into an HTTP timeout.
-			void (async () => {
-				if (messages.length) await upsertMessages(messages);
-				await upsertSyncState(applierName, {
-					[`folderTotal_${folder}`]: total,
-					[lastRefreshKey]: new Date(),
-				});
-			})().catch((error) => console.warn('[mail] background Firestore cache write failed:', error?.message || error));
-			return rememberPage(memoryKey, {
-				ok: true,
-				threads: messages.map((doc) => messageToThread(doc, { includeBody: false })),
-				total,
-				page,
-				pageSize,
-				fromCache: false,
+		// The live IMAP page is already complete enough to render. Persist it in
+		// the background so Firestore network latency cannot turn a successful
+		// Gmail request into an HTTP timeout.
+		void (async () => {
+			if (messages.length) await upsertMessages(messages);
+			await upsertSyncState(applierName, {
+				[`folderTotal_${folder}`]: total,
+				[lastRefreshKey]: new Date(),
 			});
-		}
-
-		if (messages.length) await upsertMessages(messages);
-		await upsertSyncState(applierName, {
-			[`folderTotal_${folder}`]: total,
-			[lastRefreshKey]: new Date(),
-		});
-		const uids = messages.map((m) => m.uid);
-		const cachedDocs = uids.length ? await getMessagesByUids(applierName, uids, mailboxPath) : [];
-		const enriched = enrichMessagesFromCache(messages, cachedDocs);
-
+		})().catch((error) => console.warn('[mail] background Firestore cache write failed:', error?.message || error));
 		return rememberPage(memoryKey, {
 			ok: true,
-			threads: enriched.map((doc) => messageToThread(doc, { includeBody: false })),
+			threads: messages.map((doc) => messageToThread(doc, { includeBody: false })),
 			total,
 			page,
 			pageSize,
+			fromCache: false,
 		});
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
@@ -219,7 +199,7 @@ export async function loadFolderPage(applierName, folder, page, pageSize, { forc
 
 /**
  * Background IMAP refresh — fetches the latest page from Gmail and upserts into
- * MongoDB. Errors are silently swallowed (the UI already has cached data).
+ * Firestore. Errors are silently swallowed (the UI already has cached data).
  */
 async function refreshFolderInBackground(applierName, folder, pageSize) {
 	try {
@@ -364,7 +344,7 @@ export async function loadLabelOrSearchPage(applierName, { folder, label, search
 }
 
 /**
- * Get folder counts. Serves from cache sync state (instant MongoDB read) unless
+ * Get folder counts. Serves from cache sync state (instant Firestore read) unless
  * the cache is older than 5 minutes or force=true. Only then does it hit IMAP.
  */
 export async function getFolderCounts(applierName, { force = false } = {}) {
@@ -485,7 +465,7 @@ export async function ensureMessageBody(applierName, uid, mailbox) {
 	const mailboxPath = mailbox || ALL_MAIL_PATH;
 	const existing = await getMessage(applierName, uid, mailboxPath);
 
-	// Mongo cache hit — skip IMAP entirely (mailbox-scoped keys prevent wrong-body reuse).
+	// Firestore cache hit — skip IMAP entirely (mailbox-scoped keys prevent wrong-body reuse).
 	if (existing?.hasBody && (existing.bodyHtml || existing.bodyText)) {
 		return { ok: true, message: existing, fromCache: true };
 	}

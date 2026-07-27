@@ -57,3 +57,11 @@ test('public dependency queries exclude inventory totals and user identifiers', 
 		assert.equal(serialized.includes(forbidden), false);
 	}
 });
+
+test('Qdrant queries match the native v1.15 response metrics and status labels', () => {
+	const serialized = JSON.stringify(DEPENDENCY_QUERIES.qdrant);
+	for (const metric of ['rest_responses_total', 'rest_responses_duration_seconds_bucket', 'memory_active_bytes', '4..|5..']) {
+		assert.equal(serialized.includes(metric), true);
+	}
+	assert.equal(serialized.includes('rest_responses_failures_total'), false);
+});

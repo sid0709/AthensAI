@@ -66,19 +66,26 @@ export function metricsMiddleware(req, res, next) {
 	next();
 }
 
-function writeSamples(lines, items, type) {
+function writeSamples(lines, items, type, declared) {
 	for (const item of items) {
-		lines.push(`# TYPE ${item.name} ${type}`);
+		if (!declared.has(item.name)) {
+			lines.push(`# TYPE ${item.name} ${type}`);
+			declared.add(item.name);
+		}
 		lines.push(`${item.name}${labelsText(item.labels)} ${item.value}`);
 	}
 }
 
 export function renderMetrics(service = 'athens-server') {
 	const lines = ['# HELP athens_metrics_exporter_info Athens application metrics exporter.', '# TYPE athens_metrics_exporter_info gauge', `athens_metrics_exporter_info{service="${service}"} 1`];
-	writeSamples(lines, [...counters.values()], 'counter');
-	writeSamples(lines, [...gauges.values()], 'gauge');
+	const declared = new Set(['athens_metrics_exporter_info']);
+	writeSamples(lines, [...counters.values()], 'counter', declared);
+	writeSamples(lines, [...gauges.values()], 'gauge', declared);
 	for (const item of histograms.values()) {
-		lines.push(`# TYPE ${item.name} histogram`);
+		if (!declared.has(item.name)) {
+			lines.push(`# TYPE ${item.name} histogram`);
+			declared.add(item.name);
+		}
 		for (const bucket of item.buckets) lines.push(`${item.name}_bucket${labelsText({ ...item.labels, le: bucket.le })} ${bucket.value}`);
 		lines.push(`${item.name}_bucket${labelsText({ ...item.labels, le: '+Inf' })} ${item.count}`);
 		lines.push(`${item.name}_sum${labelsText(item.labels)} ${item.sum}`);
@@ -120,7 +127,10 @@ export function startAggregateMetricsServer({
 		res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
 		res.end(renderMetrics('athens-server-cluster'));
 	});
-	aggregateServer.listen(port, host, () => console.log(`[monitoring] private aggregate metrics listening on ${host}:${port}`));
+	aggregateServer.listen(port, host, () => {
+		const address = aggregateServer?.address();
+		console.log(`[monitoring] private aggregate metrics listening on ${host}:${typeof address === 'object' && address ? address.port : port}`);
+	});
 	aggregateServer.on('error', (error) => console.error('[monitoring] aggregate metrics listener failed:', error.message));
 	return aggregateServer;
 }

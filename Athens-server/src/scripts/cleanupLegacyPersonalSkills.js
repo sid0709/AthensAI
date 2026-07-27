@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestoreDb } from '../services/firebase/firebaseAdmin.js';
-import { firestoreUniqueReservations } from '../db/firestoreMongoAdapter.js';
+import { firestoreUniqueReservations } from '../db/firestoreDataAdapter.js';
 import { closeRedis, getRedis, initRedis } from '../db/redis.js';
 
 const MIGRATION_TAG = 'personal_info';

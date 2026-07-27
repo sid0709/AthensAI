@@ -1,5 +1,5 @@
 import bcrypt from "bcrypt";
-import { accountInfoCollection } from "../db/mongo.js";
+import { accountInfoCollection } from "../db/dataStore.js";
 import { updateAccountInfoById } from "../services/accountInfoStore.js";
 import { findAccountForDelete, wipeAccountData } from "../services/deleteAccountService.js";
 import { getFirebaseAuth } from "../services/firebase/firebaseAdmin.js";

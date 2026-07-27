@@ -24,7 +24,6 @@ import {
 } from "./ProfileCards";
 import { CareerTimeline } from "./CareerTimeline";
 import { DefaultModelCard } from "./DefaultModelCard";
-import { MongoBackupCard } from "./MongoBackupCard";
 
 export function ProfileTab() {
   const { applier, applierReady, setApplier } = useApplier();
@@ -333,7 +332,6 @@ export function ProfileTab() {
         </div>
       )}
 
-      {isAdmin && applier?.name ? <MongoBackupCard applierName={applier.name} /> : null}
 
       {loading ? (
         <div className="rounded-xl border border-border bg-card p-10 text-sm text-muted-foreground text-center flex items-center justify-center gap-2">

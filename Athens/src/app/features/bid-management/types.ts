@@ -52,7 +52,7 @@ export type BidResult = {
   id: string;
   /** vendor_tasks id (or jobId) used for PATCH /bid-results/:id */
   taskId?: string | null;
-  /** Mongo job id when linked to Job Search / Bid ready. */
+  /** Persisted job id when linked to Job Search / Bid ready. */
   jobId: string | null;
   /** Calendar day key YYYY-MM-DD used for folder grouping (pooled date). */
   dayKey: string;

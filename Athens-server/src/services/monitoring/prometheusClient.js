@@ -24,8 +24,8 @@ export const DEPENDENCY_QUERIES = {
 		evictionsPerSecond: 'sum(rate(redis_evicted_keys_total[5m]))',
 	},
 	qdrant: {
-		requestsPerSecond: 'sum(rate(rest_responses_total[5m]))',
-		errorRatePercent: '100 * sum(rate(rest_responses_failures_total[5m])) / clamp_min(sum(rate(rest_responses_total[5m])), 1)',
+		requestsPerSecond: 'sum(rate(rest_responses_total[5m])) or vector(0)',
+		errorRatePercent: '100 * (sum(rate(rest_responses_total{status=~"4..|5.."}[5m])) or vector(0)) / clamp_min((sum(rate(rest_responses_total[5m])) or vector(0)), 1)',
 		p95LatencyMs: '1000 * histogram_quantile(0.95, sum by (le) (rate(rest_responses_duration_seconds_bucket[5m])))',
 		memoryBytes: 'max(memory_active_bytes)',
 	},
@@ -295,6 +295,11 @@ export async function readPrometheusDependencyMetrics(minutes = 60, options = {}
 			updatedAt: points.at(-1)?.timestamp || null,
 			current: points.at(-1) || null,
 			points,
+			...(dependency === 'firestore' || dependency === 'storage' ? {
+				source: 'google-cloud-monitoring',
+				delayed: true,
+				expectedDelaySeconds: 300,
+			} : { source: 'prometheus', delayed: false, expectedDelaySeconds: 0 }),
 		}];
 	}));
 	return Object.fromEntries(entries);

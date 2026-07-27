@@ -13,7 +13,7 @@ import cors from "cors";
 import { setupMaster } from "@socket.io/sticky";
 import { setupPrimary } from "@socket.io/cluster-adapter";
 
-import { initMongo, closeMongo, getMongoDb } from "./src/db/mongo.js";
+import { initDataStore, closeDataStore, getDataStore } from "./src/db/dataStore.js";
 import { initRedis, closeRedis, isRedisReady } from "./src/db/redis.js";
 import { loadCanonicalSkillDictionary } from "./src/services/matching/canonicalSkillDictionary.js";
 import { initSocket, closeSocket } from "./src/socketHub.js";
@@ -50,7 +50,6 @@ import notionRoutes from "./src/routes/notionRoutes.js";
 import agentRoutes from "./src/routes/agentRoutes.js";
 import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
-import backupRoutes from "./src/routes/backupRoutes.js";
 import firebaseRoutes from "./src/routes/firebaseRoutes.js";
 import bidResultsRoutes from "./src/routes/bidResultsRoutes.js";
 import jobAnalyzeRoutes from "./src/routes/jobAnalyzeRoutes.js";
@@ -114,9 +113,13 @@ function createApp() {
 		if (req.path !== "/healthz" && req.path !== "/readyz" && req.path !== "/metrics") markForegroundActivity();
 		next();
 	});
-	app.get("/metrics", (_req, res) => {
-		res.type("text/plain; version=0.0.4").send(renderMetrics("athens-server"));
-	});
+	// Production metrics are available only on the private cluster-wide
+	// listener (:9101) attached to the monitoring Docker network.
+	if (process.env.NODE_ENV !== "production" || process.env.LEGACY_METRICS_ENDPOINT === "true") {
+		app.get("/metrics", (_req, res) => {
+			res.type("text/plain; version=0.0.4").send(renderMetrics("athens-server"));
+		});
+	}
 
 	app.get("/healthz", (_req, res) => {
 		res.json({
@@ -129,9 +132,9 @@ function createApp() {
 	});
 
 	app.get("/readyz", async (_req, res) => {
-		if (!databaseReady || !getMongoDb()) return res.status(503).json({ ok: false, databaseReady: false });
+		if (!databaseReady || !getDataStore()) return res.status(503).json({ ok: false, databaseReady: false });
 		try {
-			await getMongoDb().command({ ping: 1 });
+			await getDataStore().command({ ping: 1 });
 			return res.json({ ok: true, databaseReady: true });
 		} catch {
 			return res.status(503).json({ ok: false, databaseReady: false, error: "database unavailable" });
@@ -166,7 +169,6 @@ function createApp() {
 	app.use("/api/agents", agentRoutes);
 	app.use("/api", scrapedJobIngestRoutes);
 	app.use("/api", aiUsageRoutes);
-	app.use("/api", backupRoutes);
 	app.use("/api", firebaseRoutes);
 	app.use("/api", bidResultsRoutes);
 	app.use("/api", jobAnalyzeRoutes);
@@ -196,7 +198,7 @@ function createApp() {
 }
 
 async function startBackgroundWorkers() {
-	await initMongo();
+	await initDataStore();
 	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled();
 	await initRedis({ force: rankingIndexNeeded });
 	if (rankingIndexNeeded) {
@@ -230,7 +232,7 @@ async function startHttpWorker({ clustered }) {
 		});
 	}
 
-	await initMongo();
+	await initDataStore();
 	await initRedis({ force: isQueryTimeRankingIndexEnabled() });
 	if (isQueryTimeRankingIndexEnabled()) {
 		await initQdrantCollections();
@@ -271,7 +273,7 @@ async function startHttpWorker({ clustered }) {
 			await shutdownRankingPool();
 			if (!clustered) await stopAggregateMetricsServer();
 			await closeRedis();
-			await closeMongo();
+			await closeDataStore();
 		} catch (err) {
 			console.error(`[athens] worker shutdown error:`, err.message);
 		}
@@ -331,7 +333,7 @@ async function startPrimary() {
 			await shutdownImapPool();
 			await stopAggregateMetricsServer();
 			await closeRedis();
-			await closeMongo();
+			await closeDataStore();
 			await new Promise((resolve) => httpServer.close(() => resolve()));
 		} catch (err) {
 			console.error(`[athens] primary shutdown error:`, err.message);

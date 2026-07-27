@@ -1,5 +1,5 @@
 /**
- * Per-job agent résumé drafts on disk (Node fs). Each Mongo job id gets a stable
+ * Per-job agent résumé drafts on disk (Node fs). Each document id gets a stable
  * `draft.pdf` path so the Agent UI can stream/preview without re-embedding huge base64.
  *
  * Drafts are keyed by a render fingerprint (templateId + theme + layout + renderer
@@ -30,7 +30,7 @@ export const AGENT_PDF_RENDER_VERSION = 2;
 const safe = (s) => String(s || "").replace(/[^\w.\- ]+/g, "_").slice(0, 80);
 
 function useCloudDrafts() {
-  return String(process.env.DATABASE_BACKEND || "").toLowerCase() === "firestore" || process.env.NODE_ENV === "production";
+  return process.env.NODE_ENV === "production" || Boolean(process.env.FIREBASE_STORAGE_BUCKET?.trim());
 }
 
 function cloudDraftPrefix(applierName, jobId) {

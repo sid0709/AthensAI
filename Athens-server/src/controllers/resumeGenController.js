@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import { accountInfoCollection, resumeGeneratorConfigCollection, resumeGenerationsCollection } from "../db/mongo.js";
+import { DocumentId } from "@nextoffer/shared/document-id";
+import { accountInfoCollection, resumeGeneratorConfigCollection, resumeGenerationsCollection } from "../db/dataStore.js";
 import { syncGeneratedResumeAfterRun, deleteGenerationRun } from "../services/generatedResumeService.js";
 import { renderAgentResumePdf } from "../services/agentResumePdf.js";
 import {
@@ -108,7 +108,7 @@ export function formatCompanyToken(c) {
 // from the candidate profile + JD. `{career}` is a newline-joined summary of all
 // roles; `{companyN}` is a natural-sentence summary of the Nth career (N is
 // 1-based, by order stored on the profile). `{job_skills}` are the skills
-// already extracted for a structured (MongoDB) job — empty for free-text generation.
+// already extracted for a structured catalog job — empty for free-text generation.
 export function buildTokenMap(identity, jobDescription, jobSkills) {
   const careers = Array.isArray(identity?.careers) ? identity.careers : [];
   const field = (v) => cleanString(v);
@@ -181,7 +181,7 @@ export async function prepareGeneration(body) {
   const bad = Object.entries(finalsByPurpose).find(([, n]) => n !== 1);
   if (bad) return { ok: false, status: 400, error: `${bad[0]} must have exactly one final step (found ${bad[1]}).` };
 
-  // Beta entitlement from Mongo account_info.tier only — ignore any client-supplied flag.
+  // Beta entitlement from Firestore account_info.tier only — ignore any client-supplied flag.
   const isBeta = isBetaTier(await resolveAccountTier(body.applierName));
 
   return { ok: true, providerId, model, steps, apiKey, isBeta };
@@ -639,7 +639,7 @@ const LIST_PROJECTION = {
   "sections.experience": 0,
 };
 
-/** Build Mongo filter for resume generation history (search + filters). */
+/** Build compatibility filter for resume generation history (search + filters). */
 function buildGenerationsFilter(query, applierName) {
   const filter = { applierName };
 
@@ -802,7 +802,7 @@ export async function getGeneration(req, res) {
     if (!resumeGenerationsCollection || !id) return res.status(400).json({ success: false, error: "id is required" });
     let _id;
     try {
-      _id = new ObjectId(id);
+      _id = new DocumentId(id);
     } catch {
       return res.status(400).json({ success: false, error: "invalid id" });
     }
@@ -828,7 +828,7 @@ export async function renderGenerationPdf(req, res) {
     if (!resumeGenerationsCollection || !id) return res.status(400).json({ success: false, error: "id is required" });
     let _id;
     try {
-      _id = new ObjectId(id);
+      _id = new DocumentId(id);
     } catch {
       return res.status(400).json({ success: false, error: "invalid id" });
     }

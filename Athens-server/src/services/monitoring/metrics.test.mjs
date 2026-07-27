@@ -18,3 +18,10 @@ test('cluster aggregation consumes metric deltas from multiple workers', () => {
 	assert.ok(output.includes('cluster_test_total{worker="all"} 5'));
 	assert.ok(output.includes('cluster_test_gauge 7'));
 });
+
+test('metrics exporter declares each metric type only once across label sets', () => {
+	incrementCounter('type_once_total', { status: '200' });
+	incrementCounter('type_once_total', { status: '500' });
+	const declarations = renderMetrics('type-test').split('\n').filter((line) => line === '# TYPE type_once_total counter');
+	assert.equal(declarations.length, 1);
+});

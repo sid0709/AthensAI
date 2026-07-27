@@ -6,7 +6,7 @@ import {
 	getEmbeddingProvider,
 	getOllamaUrl as getConfiguredOllamaUrl,
 } from '../../config/graphAndVectorConfig.js';
-import { accountInfoCollection } from '../../db/mongo.js';
+import { accountInfoCollection } from '../../db/dataStore.js';
 import { getProvider } from '../llm/llmService.js';
 import { decryptProfileApiKeys } from '../autoBidProfileSecrets.js';
 

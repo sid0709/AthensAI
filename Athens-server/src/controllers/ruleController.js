@@ -1,4 +1,4 @@
-import { rulesCollection } from '../db/mongo.js';
+import { rulesCollection } from '../db/dataStore.js';
 import { invalidateRulesCache } from '../utils/ruleMatcher.js';
 
 export async function getRules(req, res) {

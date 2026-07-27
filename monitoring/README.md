@@ -6,7 +6,7 @@ Prometheus is the source of current and time-series status data. Athens-server w
 
 ## Credentials
 
-`athens-monitoring-reader@drwretail-bm.iam.gserviceaccount.com` has only `roles/monitoring.viewer`. Its JSON key must be installed at `/opt/athens-monitoring/secrets/monitoring-reader.json` with mode `600`. The deployment workflow's `bootstrap_firebase_runtime` option creates and installs this key together with the application runtime key. No credential belongs in Git.
+`athens-monitoring-reader@drwretail-bm.iam.gserviceaccount.com` has only `roles/monitoring.viewer`. Its JSON key is installed at `/opt/athens-monitoring/secrets/monitoring-reader.json`, owned by the exporter's `65534:65534` user with mode `400`. The deployment workflow's `bootstrap_firebase_runtime` option creates and installs this key together with the application runtime key. No credential belongs in Git.
 
 The read-only key is used by:
 
@@ -18,7 +18,9 @@ The read-only key is used by:
 ```bash
 mkdir -p /opt/athens-monitoring/secrets
 cp monitoring/.env.example /opt/athens-monitoring/.env
-chmod 600 /opt/athens-monitoring/.env /opt/athens-monitoring/secrets/monitoring-reader.json
+chmod 600 /opt/athens-monitoring/.env
+chown 65534:65534 /opt/athens-monitoring/secrets/monitoring-reader.json
+chmod 400 /opt/athens-monitoring/secrets/monitoring-reader.json
 docker compose --env-file /opt/athens-monitoring/.env -f /opt/athens-monitoring/docker-compose.yml up -d
 ```
 

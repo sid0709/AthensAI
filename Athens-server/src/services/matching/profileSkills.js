@@ -1,4 +1,4 @@
-import { userSkillsCollection } from '../../db/mongo.js';
+import { userSkillsCollection } from '../../db/dataStore.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { normalizeSkillSet } from '@nextoffer/shared/skill-normalize';
 import { buildProfileCompacts } from '@nextoffer/shared/skill-match';

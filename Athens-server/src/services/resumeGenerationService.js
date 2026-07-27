@@ -1,5 +1,5 @@
 import { DEEPSEEK_MODELS } from "@nextoffer/shared/models";
-import { resumeGeneratorConfigCollection } from "../db/mongo.js";
+import { resumeGeneratorConfigCollection } from "../db/dataStore.js";
 import { defaultGeneratorConfig, stepsToPlan } from "../config/resumeGeneratorDefaults.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
 import { getProvider, PROVIDERS } from "./llm/llmService.js";
@@ -30,7 +30,7 @@ export function resolveResumeModel(provider, savedModel) {
   return cleanString(defaultGeneratorConfig().model) || "gpt-5-nano";
 }
 
-/** Merge a partial saved config (MongoDB) onto defaults with validated provider/model. */
+/** Merge a partial saved Firestore config onto defaults with validated provider/model. */
 export function mergeStoredConfig(saved) {
   const base = defaultGeneratorConfig();
   if (!saved || typeof saved !== "object") return base;
@@ -78,7 +78,7 @@ export function buildGenerationRequestFromSavedConfig({
   const reasoningEffort =
     config.reasoningEffort === "default" || !config.reasoningEffort ? undefined : config.reasoningEffort;
 
-  // For structured (MongoDB) jobs, drop steps the user marked "skip for structured
+  // For structured catalog jobs, drop steps the user marked "skip for structured
   // jobs" — e.g. the AI skill-fetch step, since those skills come from the job doc.
   const steps = structuredJob
     ? (Array.isArray(config.steps) ? config.steps : []).filter((s) => !s?.skipForStructuredJobs)

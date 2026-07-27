@@ -1,4 +1,4 @@
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import {
   accountInfoCollection,
   externalScrapedJobsCollection,
@@ -6,7 +6,7 @@ import {
   resumeGeneratorConfigCollection,
   resumeGenerationsCollection,
   userResumesCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { syncGeneratedResumeAfterRun, deleteGenerationRun } from "./generatedResumeService.js";
 import { deleteUserResume } from "./userResumeService.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
@@ -238,15 +238,15 @@ function profileToKitSections(identity, account) {
 }
 
 /**
- * Load the skills already extracted for a structured (MongoDB) job. These feed
+ * Load the skills already extracted for a structured catalog job. These feed
  * the `{job_skills}` prompt token so the pipeline can skip its AI skill-fetch
  * step for agent/job-search runs. Returns [] when the job or its skills are absent.
  */
 async function findJobSkills(jobId) {
   const id = cleanString(jobId);
-  if (!id || !ObjectId.isValid(id)) return [];
+  if (!id || !DocumentId.isValid(id)) return [];
   const projection = { skills: 1 };
-  const oid = { _id: new ObjectId(id) };
+  const oid = { _id: new DocumentId(id) };
   const job =
     (jobsCollection && (await jobsCollection.findOne(oid, { projection }))) ||
     (externalScrapedJobsCollection &&
@@ -315,7 +315,7 @@ export async function findExistingAgentJobResume(applierName, jobId, expectedTit
       if (resume.generationId && resumeGenerationsCollection) {
         try {
           generation = await resumeGenerationsCollection.findOne({
-            _id: new ObjectId(String(resume.generationId)),
+            _id: new DocumentId(String(resume.generationId)),
             applierName: name,
             status: "completed",
           });
@@ -343,7 +343,7 @@ export async function findExistingAgentJobResume(applierName, jobId, expectedTit
     let resume = null;
     if (generation.libraryResumeId && userResumesCollection) {
       try {
-        resume = await userResumesCollection.findOne({ _id: new ObjectId(String(generation.libraryResumeId)) });
+        resume = await userResumesCollection.findOne({ _id: new DocumentId(String(generation.libraryResumeId)) });
       } catch {
         /* invalid id */
       }

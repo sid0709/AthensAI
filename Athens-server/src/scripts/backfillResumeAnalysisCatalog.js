@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { initMongo, userResumesCollection, accountInfoCollection } from '../db/mongo.js';
+import { initDataStore, userResumesCollection, accountInfoCollection } from '../db/dataStore.js';
 import { updateAccountInfoById } from '../services/accountInfoStore.js';
 
 function escapeRegExp(value) {
@@ -50,7 +50,7 @@ async function findAccountByOwnerName(ownerName) {
 }
 
 async function main() {
-  await initMongo();
+  await initDataStore();
 
   if (!userResumesCollection || !accountInfoCollection) {
     console.error('Database not ready');

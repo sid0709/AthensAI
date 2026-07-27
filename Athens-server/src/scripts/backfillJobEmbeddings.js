@@ -1,12 +1,12 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { initMongo, jobsCollection } from '../db/mongo.js';
+import { initDataStore, jobsCollection } from '../db/dataStore.js';
 import { initQdrantCollections } from '../services/vectorStore/qdrantClient.js';
 import { upsertJobEmbedding } from '../services/embeddings/embeddingIngest.js';
 
 async function main() {
-	await initMongo();
+	await initDataStore();
 	await initQdrantCollections();
 
 	if (!jobsCollection) {

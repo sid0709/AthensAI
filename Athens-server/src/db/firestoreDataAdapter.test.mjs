@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ObjectId } from "mongodb";
-import { firestoreAdapterTest, firestoreUniqueReservations } from "./firestoreMongoAdapter.js";
+import { DocumentId } from "@nextoffer/shared/document-id";
+import { firestoreAdapterTest, firestoreUniqueReservations } from "./firestoreDataAdapter.js";
 
 const {
 	matches,
@@ -53,8 +53,8 @@ test("Firestore compatibility does not probe undeployed multi-field indexes by d
 });
 
 test("Firestore compatibility extracts Algolia document IDs for authoritative point reloads", () => {
-	const first = new ObjectId();
-	const second = new ObjectId();
+	const first = new DocumentId();
+	const second = new DocumentId();
 	assert.deepEqual(
 		conjunctiveDocumentIds({ $and: [{ sourceCatalog: "market" }, { _id: { $in: [first, second] } }] }),
 		[first.toHexString(), second.toHexString()],
@@ -71,16 +71,16 @@ test("Firestore compatibility preserves explicit IDs for conditional upserts", (
 	);
 });
 
-test("Firestore compatibility filter handles ObjectIds, arrays, regex, and elemMatch", () => {
-	const id = new ObjectId();
+test("Firestore compatibility filter handles document IDs, arrays, regex, and elemMatch", () => {
+	const id = new DocumentId();
 	const doc = { _id: id, title: "Senior React Engineer", tags: ["React", "TypeScript"], status: [{ applier: id, appliedDate: "2026-07-23" }] };
 	assert.equal(matches(doc, { _id: id, title: /react/i, tags: { $all: [/react/i, "TypeScript"] }, status: { $elemMatch: { applier: id, appliedDate: { $exists: true } } } }), true);
 	assert.equal(matches(doc, { title: /python/i }), false);
 });
 
 test("Firestore compatibility update applies array filters atomically-shaped", () => {
-	const a = new ObjectId();
-	const b = new ObjectId();
+	const a = new DocumentId();
+	const b = new DocumentId();
 	const doc = { status: [{ applier: a, state: "ready" }, { applier: b, state: "ready" }] };
 	const next = applyUpdate(doc, { $set: { "status.$[elem].state": "done" } }, false, [{ "elem.applier": a }]);
 	assert.deepEqual(next.status.map((item) => item.state), ["done", "ready"]);
@@ -100,7 +100,7 @@ test("Firestore compatibility aggregation supports reporting groups and facets",
 	assert.deepEqual(result[0].bySource, [{ _id: "Indeed", count: 1, cost: 4 }, { _id: "LinkedIn", count: 2, cost: 5 }]);
 });
 
-test("unique reservations preserve Mongo partial unique keys independently of document IDs", () => {
+test("unique reservations preserve conditional unique keys independently of document IDs", () => {
 	const reservations = firestoreUniqueReservations("vendor_tasks", {
 		applierName: "Owner One",
 		jobId: "job-1",

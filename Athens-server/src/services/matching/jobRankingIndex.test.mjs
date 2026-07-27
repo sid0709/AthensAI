@@ -38,7 +38,7 @@ test('retrieval filter includes industry, extraction, and non-beta clauses', () 
   const filter = buildJobRankingFilter({
     'company.tags': 'SaaS',
     aiExtracted: true,
-  }, { mongoQuery: { $and: [{ version: { $ne: 'v2' } }] } });
+  }, { dataQuery: { $and: [{ version: { $ne: 'v2' } }] } });
   assert.ok(filter.must.some((clause) => clause.key === 'companyTags'));
   assert.ok(filter.must.some((clause) => clause.key === 'aiExtracted'));
   assert.ok(filter.must.some((clause) => clause.key === 'extensionV2'));
@@ -66,7 +66,7 @@ test('non-beta date tail fails closed for v2 and missing ranking payloads', () =
   assert.deepEqual(filterDateTailCandidates(candidates, payloads), candidates);
 });
 
-test('v2 exclusion is detected in Firestore and MongoDB query shapes', () => {
+test('v2 exclusion is detected in indexed and compatibility query shapes', () => {
   assert.equal(queryExcludesExtensionV2Jobs({ extensionV2: false }), true);
   assert.equal(queryExcludesExtensionV2Jobs({ $and: [{ version: { $ne: 'v2' } }] }), true);
   assert.equal(queryExcludesExtensionV2Jobs({ $and: [{ extensionV2: { $ne: true } }] }), true);

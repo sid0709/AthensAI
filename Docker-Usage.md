@@ -30,7 +30,7 @@ Repo **Settings → Secrets and variables → Actions**:
 
 Optional: `VPS_SSH_PORT` (default `22`), repo variable `DOCKER_IMAGE` (default `omnimuh730/nextoffer`).
 
-App secrets (Mongo, encryption key, Firebase) live only on the VPS in `/opt/nextoffer/deploy.env` — see [`docker/deploy.env.example`](docker/deploy.env.example). Do not put them in GitHub Actions.
+App secrets (Firebase credentials and the encryption key) live only on the VPS in `/opt/nextoffer/deploy.env` — see [`docker/deploy.env.example`](docker/deploy.env.example). Do not put them in GitHub Actions.
 
 ### Rollback
 

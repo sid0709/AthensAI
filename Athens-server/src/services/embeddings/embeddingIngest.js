@@ -1,6 +1,6 @@
-import { ObjectId } from 'mongodb';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import { getEmbeddingModel } from '../../config/graphAndVectorConfig.js';
-import { jobsCollection, userResumesCollection } from '../../db/mongo.js';
+import { jobsCollection, userResumesCollection } from '../../db/dataStore.js';
 import { PROFILE_GRAPH_ID } from '../userKnowledgeGraph/index.js';
 import { normalizeResumeSkillEntry } from '../resumeSkillEntry.js';
 import {
@@ -55,14 +55,14 @@ async function aggregateProfileSkills(ownerName) {
 export async function upsertJobEmbedding(jobId, { applierName } = {}) {
 	if (!jobsCollection || !isQdrantReady()) return { skipped: true, reason: 'qdrant_not_ready' };
 
-	let objectId;
+	let documentId;
 	try {
-		objectId = new ObjectId(jobId);
+		documentId = new DocumentId(jobId);
 	} catch {
 		return { skipped: true, reason: 'invalid_id' };
 	}
 
-	const job = await jobsCollection.findOne({ _id: objectId });
+	const job = await jobsCollection.findOne({ _id: documentId });
 	if (!job) return { skipped: true, reason: 'not_found' };
 
 	const enriched = enrichJobSkillsFromTitle(job);
@@ -80,7 +80,7 @@ export async function upsertJobEmbedding(jobId, { applierName } = {}) {
 		await indexOneJobRanking(job, { semanticDense: vector }).catch(() => {});
 
 		await jobsCollection.updateOne(
-			{ _id: objectId },
+			{ _id: documentId },
 			{
 				$set: {
 					embedding: {
@@ -106,15 +106,15 @@ export async function upsertJobEmbedding(jobId, { applierName } = {}) {
 export async function upsertResumeEmbedding(resumeId, ownerName, { applierName } = {}) {
 	if (!userResumesCollection || !isQdrantReady()) return { skipped: true, reason: 'qdrant_not_ready' };
 
-	let objectId;
+	let documentId;
 	try {
-		objectId = new ObjectId(resumeId);
+		documentId = new DocumentId(resumeId);
 	} catch {
 		return { skipped: true, reason: 'invalid_id' };
 	}
 
 	const name = String(ownerName || '').trim();
-	const doc = await userResumesCollection.findOne({ _id: objectId, ownerName: name });
+	const doc = await userResumesCollection.findOne({ _id: documentId, ownerName: name });
 	if (!doc) return { skipped: true, reason: 'not_found' };
 	if (!doc.analyzed || !Array.isArray(doc.skillProfile) || !doc.skillProfile.length) {
 		return { skipped: true, reason: 'not_analyzed' };
@@ -136,7 +136,7 @@ export async function upsertResumeEmbedding(resumeId, ownerName, { applierName }
 		});
 
 		await userResumesCollection.updateOne(
-			{ _id: objectId },
+			{ _id: documentId },
 			{
 				$set: {
 					embedding: {

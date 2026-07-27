@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import { userResumesCollection, accountInfoCollection, resumeGenerationsCollection } from "../db/mongo.js";
+import { DocumentId } from "@nextoffer/shared/document-id";
+import { userResumesCollection, accountInfoCollection, resumeGenerationsCollection } from "../db/dataStore.js";
 import { deleteUserResume, storeUserResumeContent } from "./userResumeService.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import {
@@ -81,7 +81,7 @@ export async function syncGeneratedResumeAfterRun({
     });
   }
 
-  const resumeId = targetResume?._id || new ObjectId();
+  const resumeId = targetResume?._id || new DocumentId();
   const stored = await storeUserResumeContent({
     resumeId,
     ownerName,
@@ -129,7 +129,6 @@ export async function syncGeneratedResumeAfterRun({
           titlePolicyFingerprint: fingerprint ?? targetResume.titlePolicyFingerprint ?? null,
           titlePolicyVersion: policyVersion ?? targetResume.titlePolicyVersion ?? null,
         },
-        $unset: { gridFsId: "" },
       },
     );
   } else {
@@ -140,7 +139,7 @@ export async function syncGeneratedResumeAfterRun({
 
   if (generationId && resumeGenerationsCollection) {
     await resumeGenerationsCollection.updateOne(
-      { _id: new ObjectId(String(generationId)) },
+      { _id: new DocumentId(String(generationId)) },
       {
         $set: {
           skillProfile: profile,
@@ -184,7 +183,7 @@ export async function deleteGenerationRun(id, ownerName) {
 
   let _id;
   try {
-    _id = new ObjectId(id);
+    _id = new DocumentId(id);
   } catch {
     throw new Error("Invalid generation id");
   }

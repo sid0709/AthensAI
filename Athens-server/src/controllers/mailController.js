@@ -23,7 +23,7 @@ import {
 	saveUserLabelDefinitions,
 	normalizeLabelDefinitions,
 } from '../services/mail/mailStore.js';
-import { mailMessagesCollection, mailUserLabelsCollection } from '../db/mongo.js';
+import { mailMessagesCollection, mailUserLabelsCollection } from '../db/dataStore.js';
 import {
 	ensureMessageBody,
 	runIncrementalSync,
@@ -340,7 +340,7 @@ export async function getVerificationCode(req, res) {
 		}
 
 		// Read the newest INBOX emails DIRECTLY from Gmail. An OTP code MUST come from
-		// the live mailbox: the synced Mongo cache can lag or hold a stale/empty body
+		// the live mailbox: the synced Firestore cache can lag or hold a stale/empty body
 		// for a just-arrived message, and typing a wrong/old code is worse than
 		// reporting "not found". So there is intentionally NO cache fallback here — if
 		// the live IMAP read fails, we return no code and let the caller retry.

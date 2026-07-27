@@ -50,9 +50,9 @@ async function qdrantFetch(path, { method = 'GET', body } = {}) {
 	return res.json();
 }
 
-/** Deterministic UUID from Mongo id string for Qdrant point ids. */
-export function toPointId(mongoId) {
-	const hash = crypto.createHash('sha256').update(String(mongoId)).digest('hex');
+/** Deterministic UUID from a document id string for Qdrant point ids. */
+export function toPointId(documentId) {
+	const hash = crypto.createHash('sha256').update(String(documentId)).digest('hex');
 	return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
 }
 

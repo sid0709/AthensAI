@@ -1,5 +1,5 @@
-import { ObjectId } from 'mongodb';
-import { jobsCollection } from '../../db/mongo.js';
+import { DocumentId } from '@nextoffer/shared/document-id';
+import { jobsCollection } from '../../db/dataStore.js';
 import { isRedisReady } from '../../db/redis.js';
 import { JOB_LIST_PROJECTION } from '../jobListQuery.js';
 import { loadProfileMatchContext, invalidateProfileSkillCache } from './profileSkills.js';
@@ -24,7 +24,7 @@ const MAX_CANDIDATES = 50000;
  */
 export async function matchJobsForApplier({
   applierName,
-  mongoQuery,
+  dataQuery,
   scoreFilters,
   skip = 0,
   limit = 25,
@@ -43,7 +43,7 @@ export async function matchJobsForApplier({
     return { docs: [], total: 0, recommendationFallback: true, reason: 'db_not_ready' };
   }
 
-  const catalogTotal = await jobsCollection.countDocuments(mongoQuery || {});
+  const catalogTotal = await jobsCollection.countDocuments(dataQuery || {});
   const hasScoreFilter = !!(scoreFilters && Object.keys(scoreFilters).length);
 
   let scoredRows = [];
@@ -58,12 +58,12 @@ export async function matchJobsForApplier({
 
   if (candidateIds.size) {
     const idList = [...candidateIds].slice(0, MAX_CANDIDATES);
-    const objectIds = idList.map((id) => {
-      try { return new ObjectId(id); } catch { return null; }
+    const documentIds = idList.map((id) => {
+      try { return new DocumentId(id); } catch { return null; }
     }).filter(Boolean);
 
     const jobs = await jobsCollection
-      .find({ $and: [mongoQuery || {}, { _id: { $in: objectIds } }] })
+      .find({ $and: [dataQuery || {}, { _id: { $in: documentIds } }] })
       .project(JOB_LIST_PROJECTION)
       .toArray();
 
@@ -82,8 +82,8 @@ export async function matchJobsForApplier({
       });
     }
   } else if (!isRedisReady()) {
-    scoredRows = await scoreViaMongoScan({
-      mongoQuery: mongoQuery || {},
+    scoredRows = await scoreViaFirestoreScan({
+      dataQuery: dataQuery || {},
       profileCtx,
       maxScan: MAX_CANDIDATES,
     });
@@ -128,7 +128,7 @@ export async function matchJobsForApplier({
     const dateSkip = Math.max(0, skip - scoredRows.length);
     const dateDocs = await jobsCollection
       .find(
-        { $and: [mongoQuery || {}, { _id: { $nin: rankedIds } }] },
+        { $and: [dataQuery || {}, { _id: { $nin: rankedIds } }] },
         { projection: JOB_LIST_PROJECTION },
       )
       .sort({ postedAt: -1, _id: -1 })
@@ -154,13 +154,13 @@ export async function matchJobsForApplier({
   };
 }
 
-async function scoreViaMongoScan({ mongoQuery, profileCtx, maxScan }) {
+async function scoreViaFirestoreScan({ dataQuery, profileCtx, maxScan }) {
   const rows = [];
   const profileSkills = profileCtx.exactSet;
   const cursor = jobsCollection
     .find({
       $and: [
-        mongoQuery,
+        dataQuery,
         {
           $or: [
             { skillsNormalized: { $in: [...profileSkills] } },

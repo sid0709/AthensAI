@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { ObjectId } from 'mongodb';
-import { jobsCollection, externalScrapedJobsCollection } from '../db/mongo.js';
+import { DocumentId } from '@nextoffer/shared/document-id';
+import { jobsCollection, externalScrapedJobsCollection } from '../db/dataStore.js';
 import { getRedis, isRedisReady } from '../db/redis.js';
 import { deriveCompanyIdentity } from './companyIdentity.js';
 import { normalizeExternalScrapedJob } from './externalScrapedJobsListQuery.js';
@@ -285,7 +285,7 @@ async function buildDirectory(body, account, filter, scoreFilters) {
     recommendation = await listRecommendedJobs({
       applierName: body.applierName,
       profileId: applierId ? String(applierId) : null,
-      mongoQuery: query,
+      dataQuery: query,
       scoreFilters,
       listBody: body,
       skip: 0,
@@ -350,7 +350,7 @@ async function resolveDirectory(body) {
     ? await readMaterializedJobStatusIds(profileId, tab === 'posted' ? 'any' : state)
     : [];
   const { query, scoreFilters } = await buildJobsListQuery(listBody, { includePersonalStatus: false });
-  let filter = buildJobRankingFilter(listBody, { includeExternal: false, mongoQuery: query });
+  let filter = buildJobRankingFilter(listBody, { includeExternal: false, dataQuery: query });
   filter = addStatusFilter(filter, tab, statusIds);
   if (!filter) return { account, profileId, directory: { groups: [], totalJobs: 0 } };
 
@@ -373,7 +373,7 @@ async function resolveDirectory(body) {
 }
 
 function toDatabaseIds(ids) {
-  return ids.map((id) => ObjectId.isValid(id) ? new ObjectId(id) : id);
+  return ids.map((id) => DocumentId.isValid(id) ? new DocumentId(id) : id);
 }
 
 async function hydrateJobs(ids, profileId) {

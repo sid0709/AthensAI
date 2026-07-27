@@ -77,7 +77,7 @@ export function normalizeSkillSet(skills = []) {
   return out;
 }
 
-/** Merge runtime aliases from Mongo (optional). */
+/** Merge optional runtime aliases from the persisted skill dictionary. */
 export function mergeAliases(aliasDocs = []) {
   for (const doc of aliasDocs) {
     const canonical = toCanonical(doc.canonical || doc.canonicalId || '');

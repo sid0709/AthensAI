@@ -21,7 +21,7 @@ export function newestDuplicate(candidates = []) {
 }
 
 /**
- * Keep Firestore queries indexable: Mongo-style $or forces the compatibility
+ * Keep Firestore queries indexable: a broad `$or` forces the compatibility
  * adapter to scan the entire collection. Two exact lookups stay bounded.
  */
 export async function findDuplicateByUrl(collection, urlCandidates, duplicateScope = {}) {

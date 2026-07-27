@@ -47,7 +47,7 @@ export interface JobScores {
 
 export interface Job {
   id: string;
-  /** MongoDB _id when loaded from Athens-server API */
+  /** Firestore _id when loaded from Athens-server API */
   backendId?: string;
 	/** Stable canonical employer identity used by grouped Job Search. */
 	companyId: string;

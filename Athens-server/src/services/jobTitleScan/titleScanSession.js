@@ -3,7 +3,7 @@
  * Batches many titles per LLM call and runs multiple batches in parallel.
  */
 import { randomUUID } from 'crypto';
-import { jobsCollection, accountInfoCollection } from '../../db/mongo.js';
+import { jobsCollection, accountInfoCollection } from '../../db/dataStore.js';
 import { formatCostUsd } from '../llm/llmService.js';
 import {
 	TITLE_SCAN_BATCH_SIZE,

@@ -40,8 +40,6 @@ set +a
 
 : "${API_KEYS_ENCRYPTION_KEY:?API_KEYS_ENCRYPTION_KEY must be set in $DEPLOY_ENV}"
 
-DATABASE_BACKEND="${DATABASE_BACKEND:-mongo}"
-EMBEDDED_MONGO="${EMBEDDED_MONGO:-false}"
 FIREBASE_AUTH_REQUIRED="${FIREBASE_AUTH_REQUIRED:-false}"
 BACKGROUND_WORKERS_MODE="${BACKGROUND_WORKERS_MODE:-local}"
 FIRESTORE_WRITES_ENABLED="${FIRESTORE_WRITES_ENABLED:-false}"
@@ -54,27 +52,20 @@ QDRANT_API_KEY="${QDRANT_API_KEY:-}"
 RECOMMENDATION_QUERY_TIME_MODE="${RECOMMENDATION_QUERY_TIME_MODE:-on}"
 RANKING_BACKFILL_BATCH="${RANKING_BACKFILL_BATCH:-200}"
 
-volume_args=()
-if [[ "${DATABASE_BACKEND,,}" == "firestore" ]]; then
-  : "${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID must be set in $DEPLOY_ENV}"
-  : "${FIREBASE_STORAGE_BUCKET:?FIREBASE_STORAGE_BUCKET must be set in $DEPLOY_ENV}"
-  : "${GOOGLE_APPLICATION_CREDENTIALS:?GOOGLE_APPLICATION_CREDENTIALS must be set in $DEPLOY_ENV}"
-  : "${FIREBASE_SECRET_HOST_PATH:?FIREBASE_SECRET_HOST_PATH must be set in $DEPLOY_ENV}"
-  : "${KMS_KEY_NAME:?KMS_KEY_NAME must be set in $DEPLOY_ENV}"
-  if [[ ! -f "$FIREBASE_SECRET_HOST_PATH" ]]; then
-    echo "Missing Firebase secret file: $FIREBASE_SECRET_HOST_PATH" >&2
-    exit 1
-  fi
-  if [[ "${GOOGLE_APPLICATION_CREDENTIALS}" != "/run/secrets/firebase-service-account.json" ]]; then
-    echo "GOOGLE_APPLICATION_CREDENTIALS must be /run/secrets/firebase-service-account.json" >&2
-    exit 1
-  fi
-  volume_args=(-v "${FIREBASE_SECRET_HOST_PATH}:/run/secrets/firebase-service-account.json:ro")
-  EMBEDDED_MONGO=false
-else
-  : "${MONGO_URL:?MONGO_URL must be set in $DEPLOY_ENV when DATABASE_BACKEND=mongo}"
-  : "${MONGO_DB:?MONGO_DB must be set in $DEPLOY_ENV when DATABASE_BACKEND=mongo}"
+: "${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID must be set in $DEPLOY_ENV}"
+: "${FIREBASE_STORAGE_BUCKET:?FIREBASE_STORAGE_BUCKET must be set in $DEPLOY_ENV}"
+: "${GOOGLE_APPLICATION_CREDENTIALS:?GOOGLE_APPLICATION_CREDENTIALS must be set in $DEPLOY_ENV}"
+: "${FIREBASE_SECRET_HOST_PATH:?FIREBASE_SECRET_HOST_PATH must be set in $DEPLOY_ENV}"
+: "${KMS_KEY_NAME:?KMS_KEY_NAME must be set in $DEPLOY_ENV}"
+if [[ ! -f "$FIREBASE_SECRET_HOST_PATH" ]]; then
+  echo "Missing Firebase secret file: $FIREBASE_SECRET_HOST_PATH" >&2
+  exit 1
 fi
+if [[ "${GOOGLE_APPLICATION_CREDENTIALS}" != "/run/secrets/firebase-service-account.json" ]]; then
+  echo "GOOGLE_APPLICATION_CREDENTIALS must be /run/secrets/firebase-service-account.json" >&2
+  exit 1
+fi
+volume_args=(-v "${FIREBASE_SECRET_HOST_PATH}:/run/secrets/firebase-service-account.json:ro")
 
 if [[ "$TAG_OR_REF" == *:* ]]; then
   IMAGE_REF="$TAG_OR_REF"
@@ -163,10 +154,6 @@ docker run -d \
   -p 3920:3920 \
   -v nextoffer-puppeteer:/data/puppeteer \
   "${volume_args[@]}" \
-  -e "DATABASE_BACKEND=${DATABASE_BACKEND}" \
-  -e "EMBEDDED_MONGO=${EMBEDDED_MONGO}" \
-  -e "MONGO_URL=${MONGO_URL:-}" \
-  -e "MONGO_DB=${MONGO_DB:-AthensDB}" \
   -e "API_KEYS_ENCRYPTION_KEY=${API_KEYS_ENCRYPTION_KEY}" \
   -e "FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}" \
   -e "FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}" \

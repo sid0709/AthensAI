@@ -4,7 +4,7 @@ import {
 	jobIdentityRegistryCollection,
 	companiesCollection,
 	companyAliasesCollection,
-} from "../db/mongo.js";
+} from "../db/dataStore.js";
 import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
 import { inferJobSource, SOURCE_MAP_VERSION } from "../config/jobSources.js";
 import { attachStaticScoreFields } from "./jobListPipeline.js";
@@ -133,7 +133,7 @@ export function mapExternalDocToMarketJob(externalDoc) {
  * Updates external source from the link and marks it skipped_duplicate when
  * a market row exists or is created.
  *
- * @returns {{ promoted: boolean, skippedExisting?: boolean, marketId?: import('mongodb').ObjectId, source: string }}
+ * @returns {{ promoted: boolean, skippedExisting?: boolean, marketId?: import('@nextoffer/shared/document-id').DocumentId, source: string }}
  */
 export async function promoteExternalJobToMarket(externalDoc, {
 	dryRun = false,

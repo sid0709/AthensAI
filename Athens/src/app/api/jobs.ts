@@ -65,7 +65,7 @@ export async function removeJobs(ids: string[]): Promise<{ success?: boolean; de
   return parseJson(res);
 }
 
-/** Fetch a job's full detail (incl. description) by Mongo id. Returns "" if unavailable. */
+/** Fetch a job's full detail (incl. description) by document id. Returns "" if unavailable. */
 export async function fetchJobDescription(
   jobId: string,
   signal?: AbortSignal,

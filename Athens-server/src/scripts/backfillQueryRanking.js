@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import {
-  initMongo,
-  closeMongo,
-  getMongoDb,
+  initDataStore,
+  closeDataStore,
+  getDataStore,
   jobsCollection,
   externalScrapedJobsCollection,
   skillDictionaryCollection,
-} from '../db/mongo.js';
+} from '../db/dataStore.js';
 import { initRedis, closeRedis, isRedisReady } from '../db/redis.js';
 import {
   activateJobRankingCollection,
@@ -49,7 +49,7 @@ async function backfillDictionaryIds() {
     if (!Number(doc.skillId)) assignments.push({ id: String(doc._id), skillId });
   }
 
-  const nativeFirestore = getMongoDb()?.firestore;
+  const nativeFirestore = getDataStore()?.firestore;
   if (assignments.length && nativeFirestore) {
     const writer = nativeFirestore.bulkWriter();
     for (const assignment of assignments) {
@@ -122,7 +122,7 @@ async function backfillCollection(collection, catalog) {
 }
 
 async function main() {
-  await initMongo();
+  await initDataStore();
   await initRedis({ force: true });
   if (!isRedisReady()) throw new Error('Redis is required for the ranking backfill');
   const legacyReady = await initQdrantCollections();
@@ -162,5 +162,5 @@ main()
   })
   .finally(async () => {
     await closeRedis();
-    await closeMongo();
+    await closeDataStore();
   });

@@ -1,4 +1,4 @@
-import { skillDictionaryCollection } from '../../db/mongo.js';
+import { skillDictionaryCollection } from '../../db/dataStore.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { dictionaryVersionFor, stableSkillId } from './canonicalSkillVectors.js';
 import { skillTokens } from '@nextoffer/shared/skill-tokens';

@@ -10,7 +10,7 @@ export function normalizeSearchText(value, { maxLength = 200 } = {}) {
 	return trimmed;
 }
 
-export function buildMongoCaseInsensitiveRegexFilter(value, { exact = false, maxLength = 200 } = {}) {
+export function buildCaseInsensitiveRegexFilter(value, { exact = false, maxLength = 200 } = {}) {
 	const normalized = normalizeSearchText(value, { maxLength });
 	if (!normalized) return null;
 	const escaped = escapeRegexLiteral(normalized);

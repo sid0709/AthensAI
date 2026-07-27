@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTodayTimelines, getComponentDefinitions, markStaleComponent, overallStatus, prepareStatusResults, recordChecks, stabilizeStatus, STATUS_V2_COLLECTIONS, summarizeLiveSamples } from './statusStore.js';
+import { buildTodayTimelines, getComponentDefinitions, markStaleComponent, overallStatus, prepareStatusResults, readCurrentStatus, recordChecks, stabilizeStatus, STATUS_V2_COLLECTIONS, summarizeLiveSamples } from './statusStore.js';
 
 test('overall status prioritizes outages over degraded and unknown components', () => {
 	assert.equal(overallStatus([{ status: 'operational' }, { status: 'unknown' }]), 'unknown');
@@ -132,4 +132,22 @@ test('status persistence writes one v2 snapshot and never raw sample documents',
 	assert.equal(current.version, 2);
 	assert.equal(current.components.length, 1);
 	assert.equal([...db.documents.keys()].some((key) => key.startsWith('monitor_samples/')), false);
+});
+
+test('current status falls back to the compact Firestore snapshot when Prometheus is unavailable', async () => {
+	const db = fakeFirestore();
+	const now = new Date();
+	await recordChecks([{ component: 'firestore', name: 'Cloud Firestore', ok: true, status: 'operational', rawStatus: 'operational', statusStreak: 1, message: 'Operating normally.', latencyMs: 9 }], { db, now });
+	const components = await readCurrentStatus({ db, prometheusOptions: { fetchImpl: async () => { throw new Error('Prometheus unavailable'); } } });
+	const firestore = components.find((item) => item.component === 'firestore');
+	assert.equal(firestore.status, 'operational');
+	assert.equal(firestore.latencyMs, 9);
+	assert.equal(Object.hasOwn(firestore, 'metrics'), false);
+});
+
+test('confirmed failures create v2 incidents without touching legacy collections', async () => {
+	const db = fakeFirestore();
+	await recordChecks([{ component: 'firestore', name: 'Cloud Firestore', ok: false, status: 'major_outage', rawStatus: 'major_outage', statusStreak: 4, message: 'Unavailable.' }], { db, now: new Date('2026-07-27T12:00:00Z') });
+	assert.equal([...db.documents.keys()].some((key) => key.startsWith(`${STATUS_V2_COLLECTIONS.incidents}/`)), true);
+	assert.equal([...db.documents.keys()].some((key) => key.startsWith('monitor_incidents/')), false);
 });

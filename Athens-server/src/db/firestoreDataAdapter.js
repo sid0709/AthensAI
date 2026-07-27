@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { getFirestoreDb } from "../services/firebase/firebaseAdmin.js";
 import { assertFirestoreDocumentSize } from "../services/firebase/objectStore.js";
@@ -27,12 +27,12 @@ const FIRESTORE_OPERATORS = new Map([
 	["$in", "in"],
 ]);
 
-// Some Mongo partial unique indexes have alternative business keys. The first
+// Some conditional uniqueness rules have alternative business keys. The first
 // complete key set is also used for deterministic IDs on newly inserted rows;
 // every complete key set gets a reservation document.
 
 function isPlain(value) {
-	return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof ObjectId);
+	return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof DocumentId);
 }
 
 function buildNativeQueryPlan(filter = {}) {
@@ -49,7 +49,7 @@ function buildNativeQueryPlan(filter = {}) {
 				complete = false;
 				continue;
 			}
-			if (!isPlain(condition) || condition instanceof Date || condition instanceof ObjectId) {
+			if (!isPlain(condition) || condition instanceof Date || condition instanceof DocumentId) {
 				clauses.push({ field, operator: "==", value: encode(condition) });
 				continue;
 			}
@@ -112,7 +112,7 @@ function conjunctiveDocumentIds(filter = {}) {
 }
 
 function encode(value) {
-	if (value instanceof ObjectId) return value.toHexString();
+	if (value instanceof DocumentId) return value.toHexString();
 	if (value instanceof Date) return value;
 	if (value instanceof RegExp) return value;
 	if (Array.isArray(value)) return value.map(encode);
@@ -135,12 +135,12 @@ function decodeFirestoreValue(value) {
 
 function decodeDoc(id, data) {
 	const decoded = decodeFirestoreValue(data);
-	decoded._id = /^[a-f0-9]{24}$/i.test(id) ? new ObjectId(id) : id;
+	decoded._id = /^[a-f0-9]{24}$/i.test(id) ? new DocumentId(id) : id;
 	return decoded;
 }
 
 function comparable(value) {
-	if (value instanceof ObjectId) return value.toHexString();
+	if (value instanceof DocumentId) return value.toHexString();
 	if (value instanceof Date) return value.getTime();
 	if (value?.toDate instanceof Function) return value.toDate().getTime();
 	return value;
@@ -217,7 +217,7 @@ function matchesCondition(values, condition, vars) {
 		if (operator === "$elemMatch" && !list.some((v) => Array.isArray(v) && v.some((item) => matches(item, operand, vars)))) return false;
 		if (operator === "$not" && matchesCondition(list, operand, vars)) return false;
 		if (operator === "$type") {
-			const ok = list.some((v) => operand === "string" ? typeof v === "string" : operand === "array" ? Array.isArray(v) : operand === "number" ? typeof v === "number" : operand === "objectId" ? v instanceof ObjectId || /^[a-f0-9]{24}$/i.test(String(v)) : v != null);
+			const ok = list.some((v) => operand === "string" ? typeof v === "string" : operand === "array" ? Array.isArray(v) : operand === "number" ? typeof v === "number" : operand === "documentId" ? v instanceof DocumentId || /^[a-f0-9]{24}$/i.test(String(v)) : v != null);
 			if (!ok) return false;
 		}
 	}
@@ -308,7 +308,7 @@ function applyProjection(doc, spec = {}) {
 		return out;
 	}
 	const out = structuredClone(encode(doc));
-	if (doc._id instanceof ObjectId) out._id = doc._id;
+	if (doc._id instanceof DocumentId) out._id = doc._id;
 	for (const [field, value] of Object.entries(spec)) if (value === 0) unsetPath(out, field);
 	return out;
 }
@@ -485,7 +485,7 @@ function seedFromFilter(filter) {
 }
 
 function resolveUpsertDocumentId(name, filter, seed = seedFromFilter(filter)) {
-	return seed._id ?? deterministicId(name, filter) ?? new ObjectId();
+	return seed._id ?? deterministicId(name, filter) ?? new DocumentId();
 }
 
 function mutateUpdatePath(target, path, arrayFilters, updater) {
@@ -548,7 +548,10 @@ class Cursor {
 	limit(count) { this.limitCount = count; return this; }
 	project(spec) { this.projection = spec; return this; }
 	async toArray() {
-		let docs = await this.collection._readCached(this.filter, {
+		const read = this.options.bypassCache
+			? this.collection._read.bind(this.collection)
+			: this.collection._readCached.bind(this.collection);
+		let docs = await read(this.filter, {
 			sort: this.sortSpec,
 			skip: this.skipCount,
 			limit: this.limitCount,
@@ -582,7 +585,7 @@ class FirestoreCollection {
 		if (!ttl) return this._read(filter, hints);
 		const key = JSON.stringify({ filter, hints }, (_key, value) => {
 			if (value instanceof RegExp) return { $regex: value.source, $flags: value.flags };
-			if (value instanceof ObjectId) return value.toHexString();
+			if (value instanceof DocumentId) return value.toHexString();
 			return value;
 		});
 		const cached = this.readCache.get(key);
@@ -686,7 +689,7 @@ class FirestoreCollection {
 
 		// Firestore needs a composite index for most combinations of multiple
 		// filters and ordering. Until those indexes are deployed, use one native
-		// equality filter to bound the read and apply the remaining Mongo-shaped
+		// equality filter to bound the read and apply the remaining compatibility
 		// predicates locally.
 		const boundingClause = this.collectionName === 'mail_messages'
 			? plan.clauses.find((clause) => clause.field === 'hasCustomLabels') || selectBoundingClause(plan.clauses)
@@ -796,7 +799,7 @@ class FirestoreCollection {
 	}
 	async findOne(filter = {}, options = {}) { return (await this.find(filter, options).sort(options.sort || {}).limit(1).toArray())[0] || null; }
 	async insertOne(doc) {
-		const id = String(comparable(doc._id || deterministicId(this.collectionName, doc) || new ObjectId()));
+		const id = String(comparable(doc._id || deterministicId(this.collectionName, doc) || new DocumentId()));
 		const data = encode({
 			...doc,
 			...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}),
@@ -824,7 +827,7 @@ class FirestoreCollection {
 		}
 		this._invalidateCaches();
 		this._kickOutbox(outboxId);
-		return { acknowledged: true, insertedId: /^[a-f0-9]{24}$/i.test(id) ? new ObjectId(id) : id };
+		return { acknowledged: true, insertedId: /^[a-f0-9]{24}$/i.test(id) ? new DocumentId(id) : id };
 	}
 	async insertMany(docs) { const ids = []; for (const doc of docs) ids.push((await this.insertOne(doc)).insertedId); return { acknowledged: true, insertedCount: ids.length, insertedIds: Object.fromEntries(ids.map((id, i) => [i, id])) }; }
 	async updateOne(filter, update, options = {}) {
@@ -836,7 +839,7 @@ class FirestoreCollection {
 				...seed,
 				...(this.sourceCatalog ? { sourceCatalog: this.sourceCatalog } : {}),
 				// Exact-id conditional upserts (leases, identity claims, registries)
-				// must target that document. Replacing it with a fresh ObjectId makes
+				// must target that document. Replacing it with a fresh DocumentId makes
 				// every retry insert a different record and defeats atomic claiming.
 				_id: resolveUpsertDocumentId(this.collectionName, filter, seed),
 			};
@@ -934,8 +937,7 @@ class FirestoreCollection {
 	}
 	async deleteMany(filter) {
 		const docs = await this._read(filter);
-		for (const doc of docs) await this.deleteOne({ _id: doc._id });
-		return { acknowledged: true, deletedCount: docs.length };
+		return this.bulkDeleteByIds(docs.map((doc) => doc._id));
 	}
 	/** Batch exact-document-id deletes used by one-time maintenance cleanup. */
 	async bulkDeleteByIds(ids) {
@@ -1207,7 +1209,7 @@ class FirestoreDbAdapter {
 	listCollections() { return { toArray: async () => (await this.firestore.listCollections()).map((ref) => ({ name: ref.id })) }; }
 }
 
-export function createFirestoreMongoAdapter() {
+export function createFirestoreDataAdapter() {
 	return new FirestoreDbAdapter();
 }
 

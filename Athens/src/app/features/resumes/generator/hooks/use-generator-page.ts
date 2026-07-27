@@ -40,7 +40,7 @@ import type {
   UploadedTemplateManifest,
   UsageBreakdown,
 } from "../types";
-import { isUploadedTemplateId, PURPOSES, SECTION_LABEL, uploadedTemplateMongoId } from "../types";
+import { isUploadedTemplateId, PURPOSES, SECTION_LABEL, uploadedTemplateDocumentId } from "../types";
 import { applyHistoryRun } from "./load-history-run";
 import type { FullRun } from "../history/history-types";
 
@@ -309,7 +309,7 @@ export function useGeneratorPage() {
       setUploadedTemplates(templates);
       setConfig((c) => {
         if (!isUploadedTemplateId(c.templateId)) return c;
-        const id = uploadedTemplateMongoId(c.templateId);
+        const id = uploadedTemplateDocumentId(c.templateId);
         const match = templates.find((t) => t.id === id);
         return match ? { ...c, uploadedTemplate: match } : c;
       });
@@ -379,7 +379,7 @@ export function useGeneratorPage() {
     }
   };
 
-  // Restore saved config: localStorage first, then MongoDB (authoritative).
+  // Restore saved config: localStorage first, then Firestore (authoritative).
   useEffect(() => {
     externalLoadRef.current = false;
     setConfigHydratedFor(null);

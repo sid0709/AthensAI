@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import { getMongoDb, resumeTemplatesCollection } from "../db/mongo.js";
+import { DocumentId } from "@nextoffer/shared/document-id";
+import { resumeTemplatesCollection } from "../db/dataStore.js";
 import { parseTemplateDocx } from "./parseTemplateDocx.js";
 import { fillTemplateDocx } from "./fillTemplateDocx.js";
 import { renderDocxPreviewImages } from "./renderDocxPreviewImages.js";
@@ -27,11 +27,11 @@ function toManifest(doc) {
 }
 
 async function readContent(doc) {
-  return readStoredObject(doc, { collection: resumeTemplatesCollection, legacyDb: getMongoDb(), legacyBucketName: "resume_template_files" });
+  return readStoredObject(doc);
 }
 
 async function deleteStoredContent(doc) {
-  return deleteStoredObject(doc, { collection: resumeTemplatesCollection, legacyDb: getMongoDb(), legacyBucketName: "resume_template_files" });
+  return deleteStoredObject(doc);
 }
 
 export async function listResumeTemplates(ownerName) {
@@ -46,13 +46,13 @@ export async function getResumeTemplate(id, ownerName) {
   if (!resumeTemplatesCollection) throw new Error("Database not ready");
   const name = cleanString(ownerName);
   if (!name) throw new Error("ownerName is required");
-  let objectId;
+  let documentId;
   try {
-    objectId = new ObjectId(id);
+    documentId = new DocumentId(id);
   } catch {
     throw new Error("Invalid template id");
   }
-  const doc = await resumeTemplatesCollection.findOne({ _id: objectId, ownerName: name });
+  const doc = await resumeTemplatesCollection.findOne({ _id: documentId, ownerName: name });
   if (!doc) return null;
   return toManifest(doc);
 }
@@ -74,7 +74,7 @@ export async function createResumeTemplate(payload) {
   if (!buffer.length) throw new Error("Empty file content");
 
   const parsed = parseTemplateDocx(buffer, identity);
-  const _id = new ObjectId();
+  const _id = new DocumentId();
   const stored = await putBinaryObject({
     buffer,
     objectPath: `resume-templates/${storageSlug(ownerName)}/${String(_id)}/content`,
@@ -111,19 +111,19 @@ export async function deleteResumeTemplate(id, ownerName) {
   const name = cleanString(ownerName);
   if (!name) throw new Error("ownerName is required");
 
-  let objectId;
+  let documentId;
   try {
-    objectId = new ObjectId(id);
+    documentId = new DocumentId(id);
   } catch {
     throw new Error("Invalid template id");
   }
 
-  const doc = await resumeTemplatesCollection.findOne({ _id: objectId, ownerName: name });
+  const doc = await resumeTemplatesCollection.findOne({ _id: documentId, ownerName: name });
   if (!doc) throw new Error("Template not found");
 
   await deleteStoredContent(doc);
-  await resumeTemplatesCollection.deleteOne({ _id: objectId });
-  return { deleted: true, id: String(objectId) };
+  await resumeTemplatesCollection.deleteOne({ _id: documentId });
+  return { deleted: true, id: String(documentId) };
 }
 
 export async function fillResumeTemplate({ templateId, ownerName, sections }) {
@@ -131,14 +131,14 @@ export async function fillResumeTemplate({ templateId, ownerName, sections }) {
   const name = cleanString(ownerName);
   if (!name) throw new Error("ownerName is required");
 
-  let objectId;
+  let documentId;
   try {
-    objectId = new ObjectId(templateId);
+    documentId = new DocumentId(templateId);
   } catch {
     throw new Error("Invalid template id");
   }
 
-  const doc = await resumeTemplatesCollection.findOne({ _id: objectId, ownerName: name });
+  const doc = await resumeTemplatesCollection.findOne({ _id: documentId, ownerName: name });
   if (!doc) throw new Error("Template not found");
 
   const buffer = await readContent(doc);

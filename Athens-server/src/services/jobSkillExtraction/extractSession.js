@@ -5,7 +5,7 @@
  */
 import { randomUUID } from 'crypto';
 import { excludeExtensionV2JobsFilter } from '../../config/jobMarketSchema.js';
-import { jobsCollection } from '../../db/mongo.js';
+import { jobsCollection } from '../../db/dataStore.js';
 import { formatCostUsd } from '../llm/llmService.js';
 import {
   resolveExtractionAuth,

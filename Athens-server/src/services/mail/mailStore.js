@@ -2,7 +2,7 @@ import {
 	mailMessagesCollection,
 	mailSyncStateCollection,
 	mailUserLabelsCollection,
-} from '../../db/mongo.js';
+} from '../../db/dataStore.js';
 import { createHash } from 'node:crypto';
 import { ALL_MAIL_PATH, extractCustomLabels } from './folderMapper.js';
 import { deleteStoredObject, putBinaryObject, readStoredObject, storageSlug } from '../firebase/objectStore.js';
@@ -207,7 +207,7 @@ export async function bulkUpdateMessageFlags(applierName, updates) {
 	if (!ops.length) return { updated: 0 };
 
 	// Firestore can patch known document IDs in one commit. Falling back to the
-	// Mongo-shaped bulk writer here would run a read transaction for every
+	// A compatibility bulk writer here would run a read transaction for every
 	// message and can keep the interactive AI-label request open for minutes.
 	const exactIdOps = ops.filter((operation) => operation.updateOne.filter._id);
 	const lookupOps = ops.filter((operation) => !operation.updateOne.filter._id);
@@ -286,14 +286,6 @@ export async function getMessage(applierName, uid, mailbox) {
 	if (!mailMessagesCollection) return null;
 	if (mailbox) {
 		let doc = await mailMessagesCollection.findOne(messageFilter(applierName, uid, mailbox));
-		if (!doc && String(process.env.DATABASE_BACKEND || '').trim().toLowerCase() !== 'firestore') {
-			// Legacy rows keyed only by uid (pre-mailbox migration)
-			doc = await mailMessagesCollection.findOne({
-				applierName,
-				uid: Number(uid),
-				$or: [{ mailbox: { $exists: false } }, { mailbox: null }, { mailbox: '' }],
-			});
-		}
 		return hydrateMailBody(doc);
 	}
 	// Legacy fallback: prefer INBOX over All Mail when ambiguous
@@ -343,7 +335,7 @@ export async function countMessages(applierName, { folder, label, search, unlabe
 	if (!mailMessagesCollection) return 0;
 	const filter = buildMessageFilter(applierName, { folder, label, search, unlabeled, beforeDate, mailbox });
 	if (unlabeled) {
-		// The Firestore compatibility adapter cannot aggregate Mongo's `$size`.
+		// The Firestore compatibility adapter cannot aggregate `$size`.
 		// A projected native query avoids downloading email bodies while an index
 		// is being created and remains fast after the marker index is available.
 		return (await mailMessagesCollection.find(filter).project({ _id: 1 }).toArray()).length;

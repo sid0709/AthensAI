@@ -251,7 +251,7 @@ export async function fetchUnlabeledInboxEnvelopes(
 
 /**
  * Fetch the most recent `count` INBOX messages WITH fully-parsed bodies, straight
- * from Gmail — no Mongo cache. Used for time-critical reads (e.g. an emailed OTP
+ * from Gmail — no Firestore cache. Used for time-critical reads (e.g. an emailed OTP
  * code) where the synced cache may lag or hold a not-yet-materialized body for a
  * just-arrived message. Returns newest-first.
  */

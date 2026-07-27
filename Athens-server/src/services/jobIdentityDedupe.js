@@ -44,8 +44,8 @@ export function resolveJobAcceptedAt(job, fallback = null) {
 		if (date) return date;
 	}
 	if (typeof job?._id?.getTimestamp === "function") {
-		const objectIdDate = toValidDate(job._id.getTimestamp());
-		if (objectIdDate) return objectIdDate;
+		const documentIdDate = toValidDate(job._id.getTimestamp());
+		if (documentIdDate) return documentIdDate;
 	}
 	return toValidDate(fallback);
 }
@@ -113,7 +113,7 @@ export async function findRecentJobIdentityDuplicate(
 	if (!registryCollection || !identity) return null;
 	const existing = await registryCollection.findOne(
 		{ _id: identity.key },
-		{ projection: { acceptedAt: 1, jobId: 1 } },
+		{ projection: { acceptedAt: 1, jobId: 1 }, bypassCache: true },
 	);
 	return existing && isWithinJobIdentityWindow(existing.acceptedAt, acceptedAt)
 		? duplicateResult(identity, existing)
@@ -122,7 +122,7 @@ export async function findRecentJobIdentityDuplicate(
 
 /**
  * Atomically reserve one company/title identity for its rolling 30-day window.
- * The conditional upsert works in MongoDB and in the Firestore compatibility
+ * The conditional upsert is implemented by the Firestore compatibility
  * adapter: a recent document either produces a duplicate-key conflict or a
  * zero-row update, while an expired/missing document is claimed by one caller.
  */
@@ -140,7 +140,10 @@ export async function claimJobIdentity(
 	const cutoffIso = new Date(accepted.getTime() - JOB_IDENTITY_LOOKBACK_MS).toISOString();
 	const previous = await registryCollection.findOne(
 		{ _id: identity.key },
-		{ projection: { acceptedAt: 1, jobId: 1, source: 1, pending: 1, claimToken: 1, claimExpiresAt: 1 } },
+		{
+			projection: { acceptedAt: 1, jobId: 1, source: 1, pending: 1, claimToken: 1, claimExpiresAt: 1 },
+			bypassCache: true,
+		},
 	);
 	if (previous && isWithinJobIdentityWindow(previous.acceptedAt, accepted)) {
 		const claimExpired = previous.pending &&
@@ -255,7 +258,10 @@ export async function releaseJobIdentityClaim(registryCollection, claim) {
 async function acquireBackfillLease(registryCollection) {
 	const token = randomUUID();
 	for (;;) {
-		const marker = await registryCollection.findOne({ _id: BACKFILL_MARKER_ID });
+		const marker = await registryCollection.findOne(
+			{ _id: BACKFILL_MARKER_ID },
+			{ bypassCache: true },
+		);
 		if (marker?.completedAt) return { completed: true };
 
 		const now = new Date();

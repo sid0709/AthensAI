@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import { getStorageBucket } from "./firebaseAdmin.js";
 
 const LOCAL_INLINE_LIMIT = 8 * 1024 * 1024;
@@ -20,11 +20,7 @@ export function storageSlug(value) {
 }
 
 function requiresCloudStorage() {
-	return (
-		String(process.env.DATABASE_BACKEND || "").toLowerCase() === "firestore" ||
-		process.env.NODE_ENV === "production" ||
-		Boolean(process.env.FIREBASE_STORAGE_BUCKET?.trim())
-	);
+	return process.env.NODE_ENV === "production" || Boolean(process.env.FIREBASE_STORAGE_BUCKET?.trim());
 }
 
 function gcsObjectFromDoc(doc) {
@@ -103,7 +99,7 @@ export async function putBinaryObject({ buffer, objectPath, mimeType, metadata =
 	};
 }
 
-export async function readStoredObject(doc, { collection, legacyDb, legacyBucketName } = {}) {
+export async function readStoredObject(doc) {
 	const object = gcsObjectFromDoc(doc);
 	if (object) {
 		const bucket = getStorageBucket();
@@ -122,24 +118,10 @@ export async function readStoredObject(doc, { collection, legacyDb, legacyBucket
 		return Buffer.from(doc.contentBase64, "base64");
 	}
 
-	// Read-only compatibility for pre-migration Mongo documents. Firestore
-	// runtime documents never enter this path.
-	if (doc?.storage === "gridfs" && doc.gridFsId && collection && legacyBucketName) {
-		const db = legacyDb || collection.db || collection.s?.db;
-		if (!db) throw new Error("Legacy GridFS database is unavailable");
-		const { GridFSBucket } = await import("mongodb");
-		const bucket = new GridFSBucket(db, { bucketName: legacyBucketName });
-		const id = doc.gridFsId instanceof ObjectId ? doc.gridFsId : new ObjectId(String(doc.gridFsId));
-		const chunks = [];
-		await new Promise((resolve, reject) => {
-			bucket.openDownloadStream(id).on("data", (chunk) => chunks.push(chunk)).on("error", reject).on("end", resolve);
-		});
-		return Buffer.concat(chunks);
-	}
 	return null;
 }
 
-export async function deleteStoredObject(doc, { collection, legacyDb, legacyBucketName } = {}) {
+export async function deleteStoredObject(doc) {
 	const object = gcsObjectFromDoc(doc);
 	if (object) {
 		const bucket = getStorageBucket();
@@ -147,25 +129,12 @@ export async function deleteStoredObject(doc, { collection, legacyDb, legacyBuck
 		return "gcs";
 	}
 
-	if (doc?.storage === "gridfs" && doc.gridFsId && collection && legacyBucketName) {
-		const db = legacyDb || collection.db || collection.s?.db;
-		if (!db) return null;
-		const { GridFSBucket } = await import("mongodb");
-		const bucket = new GridFSBucket(db, { bucketName: legacyBucketName });
-		const id = doc.gridFsId instanceof ObjectId ? doc.gridFsId : new ObjectId(String(doc.gridFsId));
-		try {
-			await bucket.delete(id);
-		} catch (error) {
-			if (Number(error?.code) !== 26) throw error;
-		}
-		return "gridfs";
-	}
 	return null;
 }
 
 export function firestoreDocumentBytes(value) {
 	return Buffer.byteLength(JSON.stringify(value, (_key, child) => {
-		if (child instanceof ObjectId) return child.toHexString();
+		if (child instanceof DocumentId) return child.toHexString();
 		if (child instanceof Date) return child.toISOString();
 		if (Buffer.isBuffer(child)) return { byteCount: child.length };
 		return child;

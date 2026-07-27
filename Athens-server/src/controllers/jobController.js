@@ -1,4 +1,4 @@
-import { ObjectId } from "mongodb";
+import { DocumentId } from "@nextoffer/shared/document-id";
 import { mergeJobStatusRows } from "@nextoffer/shared/job-status";
 import {
 	jobsCollection,
@@ -11,8 +11,8 @@ import {
 	accountInfoCollection,
 	rulesCollection,
 	getVendorTasksCollection,
-} from "../db/mongo.js";
-import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
+} from "../db/dataStore.js";
+import { isJobBlocked, buildQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
 import { attachStaticScoreFields } from '../services/jobListPipeline.js';
 import {
 	EXTENSION_V2_CLIENT_HEADER,
@@ -389,7 +389,7 @@ export async function getJobsForRule(req, res) {
 			return res.status(404).json({ error: 'Rule not found' });
 		}
 
-		const query = buildMongoQueryForRule(ruleSet);
+		const query = buildQueryForRule(ruleSet);
 
 		// A query that finds nothing
 		if (isMatchNoneQuery(query)) {
@@ -433,7 +433,7 @@ export async function removeJobsForRule(req, res) {
 			return res.status(404).json({ success: false, error: 'Rule not found' });
 		}
 
-		const query = buildMongoQueryForRule(ruleSet);
+		const query = buildQueryForRule(ruleSet);
 		if (isMatchNoneQuery(query)) {
 			return res.status(400).json({
 				success: false,
@@ -470,36 +470,27 @@ export async function getJobStatusCounts(req, res) {
 		const indexed = await countIndexedJobStatuses(req.body);
 		if (indexed) return res.json({ success: true, counts: indexed, indexed: true });
 
-		if (String(process.env.DATABASE_BACKEND || '').toLowerCase() === 'firestore') {
-			const key = jobCountCacheKey(req.body);
-			const cached = jobCountCache.get(key);
-			if (cached) {
-				if (cached.expiresAt <= Date.now()) refreshJobStatusCountsWhenIdle(key, { ...req.body });
-				return res.json({ success: true, counts: cached.counts, cached: true });
-			}
-
-			const [{ query: allQuery }, externalCounts] = await Promise.all([
-				buildJobsListQuery(req.body, { statusTab: 'all' }),
-				countExternalForStatusTabs(req.body),
-			]);
-			const marketTotal = await jobsCollection.countDocuments(allQuery);
-			const all = marketTotal + externalCounts.all;
-			const counts = Object.fromEntries(STATUS_TABS.map((tab) => [tab, 0]));
-			counts.all = all;
-			// Until exact legacy-array counts are warmed, treating the catalog as
-			// posted is preferable to hiding jobs or blocking the first paint.
-			counts.posted = all;
-			jobCountCache.set(key, { counts, expiresAt: 0 });
-			refreshJobStatusCountsWhenIdle(key, { ...req.body });
-			return res.json({ success: true, counts, cached: false, warming: true });
+		const key = jobCountCacheKey(req.body);
+		const cached = jobCountCache.get(key);
+		if (cached) {
+			if (cached.expiresAt <= Date.now()) refreshJobStatusCountsWhenIdle(key, { ...req.body });
+			return res.json({ success: true, counts: cached.counts, cached: true });
 		}
 
-		const counts = await calculateJobStatusCounts(req.body);
-
-		return res.json({
-			success: true,
-			counts,
-		});
+		const [{ query: allQuery }, externalCounts] = await Promise.all([
+			buildJobsListQuery(req.body, { statusTab: 'all' }),
+			countExternalForStatusTabs(req.body),
+		]);
+		const marketTotal = await jobsCollection.countDocuments(allQuery);
+		const all = marketTotal + externalCounts.all;
+		const counts = Object.fromEntries(STATUS_TABS.map((tab) => [tab, 0]));
+		counts.all = all;
+		// Until exact array counts are warmed, treating the catalog as posted is
+		// preferable to hiding jobs or blocking the first paint.
+		counts.posted = all;
+		jobCountCache.set(key, { counts, expiresAt: 0 });
+		refreshJobStatusCountsWhenIdle(key, { ...req.body });
+		return res.json({ success: true, counts, cached: false, warming: true });
 	} catch (err) {
 		console.error('POST /api/jobs/list/counts error', err);
 		return res.status(500).json({ success: false, error: err.message });
@@ -624,7 +615,7 @@ export async function getJobs(req, res) {
 			const result = await listRecommendedJobs({
 				applierName,
 				profileId: applierId ? String(applierId) : null,
-				mongoQuery: query,
+				dataQuery: query,
 				scoreFilters,
 				listBody: req.body,
 				skip,
@@ -777,18 +768,18 @@ export async function removeJobs(req, res) {
 		const { ids } = req.body;
 		if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ success: false, error: 'Missing ids array' });
 
-		const objectIds = ids.map(id => {
+		const documentIds = ids.map(id => {
 			try {
-				return new ObjectId(id);
+				return new DocumentId(id);
 			} catch {
 				return null;
 			}
 		}).filter(Boolean);
 
-		const result = await jobsCollection.deleteMany({ _id: { $in: objectIds } });
+		const result = await jobsCollection.deleteMany({ _id: { $in: documentIds } });
 		invalidateLiveProjectedStatusCount();
-		void deleteScoresForJobs(objectIds).catch(() => {});
-		void removeJobsFromRanking(objectIds).catch(() => {});
+		void deleteScoresForJobs(documentIds).catch(() => {});
+		void removeJobsFromRanking(documentIds).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
 	} catch (err) {
 		console.error('POST /api/jobs/remove error', err);
@@ -831,9 +822,9 @@ export async function updateJobBidStatus(req, res) {
 			return res.status(400).json({ success: false, error: 'status must be BidReady, BidCompleted, or clear' });
 		}
 
-		let objectId;
+		let documentId;
 		try {
-			objectId = new ObjectId(id);
+			documentId = new DocumentId(id);
 		} catch {
 			return res.status(400).json({ success: false, error: 'Invalid id' });
 		}
@@ -940,11 +931,11 @@ export async function getJobById(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const { id } = req.params;
-		if (!id || !ObjectId.isValid(id)) {
+		if (!id || !DocumentId.isValid(id)) {
 			return res.status(400).json({ success: false, error: 'Invalid job id' });
 		}
 		const doc = await jobsCollection.findOne(
-			{ _id: new ObjectId(id) },
+			{ _id: new DocumentId(id) },
 			{ projection: JOB_DETAIL_PROJECTION },
 		);
 		if (doc) {
@@ -963,7 +954,7 @@ export async function getJobById(req, res) {
 		}
 
 		if (externalScrapedJobsCollection) {
-			const externalDoc = await externalScrapedJobsCollection.findOne({ _id: new ObjectId(id) });
+			const externalDoc = await externalScrapedJobsCollection.findOne({ _id: new DocumentId(id) });
 			if (externalDoc) {
 				return res.json({ success: true, data: normalizeExternalScrapedJob(externalDoc) });
 			}

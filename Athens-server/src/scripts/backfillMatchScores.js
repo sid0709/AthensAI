@@ -13,22 +13,22 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import {
-  initMongo,
-  closeMongo,
+  initDataStore,
+  closeDataStore,
   jobsCollection,
   accountInfoCollection,
   matchProfileStateCollection,
-} from '../db/mongo.js';
+} from '../db/dataStore.js';
 import { requestUserRescore, countScoresForApplier } from '../services/matching/matchScoreStore.js';
 import { rescoreUser } from '../services/matching/matchScoreWorker.js';
 
 const force = process.argv.includes('--force');
 
 async function main() {
-  await initMongo();
+  await initDataStore();
 
   if (!jobsCollection || !accountInfoCollection || !matchProfileStateCollection) {
-    throw new Error('MongoDB not ready');
+    throw new Error('Firestore not ready');
   }
 
   const accounts = await accountInfoCollection
@@ -75,7 +75,7 @@ async function main() {
   console.log(
     `[backfill-match-scores] rescored ${done} user(s); marked ${marked.modifiedCount} job(s) scored`,
   );
-  await closeMongo?.();
+  await closeDataStore?.();
   process.exit(0);
 }
 

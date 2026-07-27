@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { externalScrapedJobsCollection } from "../../db/mongo.js";
+import { externalScrapedJobsCollection } from "../../db/dataStore.js";
 import { chatCompletion } from "../llm/llmService.js";
 import { EXTERNAL_JOB_ENRICHMENT_PROMPT } from "../../config/externalJobEnrichmentPrompt.js";
 import { JOB_MARKET_MODEL_VERSION } from "../../config/jobMarketSchema.js";

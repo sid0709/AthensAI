@@ -54,6 +54,45 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install validation dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix Athens --ignore-scripts
+
+      - name: Enforce Firestore-only architecture
+        run: npm run verify:firestore-only
+
+      - name: Test data and monitoring layers
+        run: |
+          node --test packages/shared/src/document-id.test.mjs
+          npm run test:firestore-adapter -w Athens-server
+          npm run test:monitoring -w Athens-server
+          npm run test:firestore-status -w Athens-server
+
+      - name: Build application services
+        run: |
+          npm run build -w ai-bff
+          npm run build --prefix Athens
+
+      - name: Validate deployment and monitoring configuration
+        env:
+          GRAFANA_ADMIN_PASSWORD: ci-validation-only
+          GCP_MONITORING_CREDENTIALS_PATH: /tmp/monitoring-reader.json
+        run: |
+          bash -n docker/entrypoint.sh docker/deploy-remote.sh
+          docker compose -f docker/ranking-compose.yml config >/dev/null
+          docker compose -f monitoring/docker-compose.yml config >/dev/null
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v2.54.1 \
+            check config /etc/prometheus/prometheus.yml
+
       - name: Validate Google Cloud deployment identity
         if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_firebase_runtime
         uses: google-github-actions/auth@v2
@@ -312,8 +351,8 @@ jobs:
             test -f "${monitoring_incoming}"
             as_root install -d -m 700 "${secret_dir}"
             as_root install -m 600 "${incoming}" "${installed}"
-            as_root install -d -m 700 /opt/athens-monitoring/secrets
-            as_root install -m 600 "${monitoring_incoming}" /opt/athens-monitoring/secrets/monitoring-reader.json
+            as_root install -d -m 711 /opt/athens-monitoring/secrets
+            as_root install -o 65534 -g 65534 -m 400 "${monitoring_incoming}" /opt/athens-monitoring/secrets/monitoring-reader.json
             rm -rf /tmp/athens-vps-runtime
             as_root cp "${deploy_env}" "${deploy_env}.pre-firestore"
 
@@ -331,8 +370,6 @@ jobs:
               rm -f "${tmp}"
             }
 
-            set_env DATABASE_BACKEND firestore
-            set_env EMBEDDED_MONGO false
             set_env FIREBASE_PROJECT_ID drwretail-bm
             set_env FIREBASE_STORAGE_BUCKET drwretail-bm.firebasestorage.app
             set_env GOOGLE_APPLICATION_CREDENTIALS /run/secrets/firebase-service-account.json
@@ -453,10 +490,10 @@ jobs:
             echo "Deploy script staged from ${deploy_source}"
             echo "Preparing monitoring directories"
             as_root install -d -m 750 /opt/athens-monitoring/alertmanager \
-              /opt/athens-monitoring/secrets \
               /opt/athens-monitoring/data/prometheus \
               /opt/athens-monitoring/data/grafana \
               /opt/athens-monitoring/data/alertmanager
+            as_root install -d -m 711 /opt/athens-monitoring/secrets
             echo "Monitoring directories are ready"
             if [ "$(id -u)" -eq 0 ]; then
               chown 65534:65534 /opt/athens-monitoring/data/prometheus /opt/athens-monitoring/data/alertmanager
@@ -491,9 +528,9 @@ jobs:
             fi
             grafana_password="${grafana_password:-$(openssl rand -hex 24)}"
             alertmanager_config_file=alertmanager.yml
-            gcp_project_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_id"])' "${monitoring_credential}")"
-            gcp_client_email="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["client_email"])' "${monitoring_credential}")"
-            gcp_private_key="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["private_key"], end="")' "${monitoring_credential}")"
+            gcp_project_id="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_id"])' "${monitoring_credential}")"
+            gcp_client_email="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["client_email"])' "${monitoring_credential}")"
+            gcp_private_key="$(as_root python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["private_key"], end="")' "${monitoring_credential}")"
             umask 077
             monitoring_env_tmp="$(mktemp)"
             printf 'GRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\nGRAFANA_ROOT_URL=http://127.0.0.1:3000\nALERTMANAGER_CONFIG_FILE=%s\nGCP_PROJECT_ID=%s\nGCP_MONITORING_CREDENTIALS_PATH=%s\nGCP_MONITORING_CLIENT_EMAIL=%s\n' \
@@ -535,17 +572,13 @@ jobs:
             echo "Starting Athens application deploy"
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 
-            backend="$(docker inspect nextoffer --format '{{range .Config.Env}}{{println .}}{{end}}' | awk -F= '$1 == "DATABASE_BACKEND" {print $2}')"
-            if [ "${backend}" != firestore ]; then
-              echo "Expected Firestore backend after deployment, got: ${backend:-unset}" >&2
-              exit 1
-            fi
             docker logs nextoffer 2>&1 | tail -200 | grep -q 'Connected to native Firestore database'
-            if docker logs nextoffer 2>&1 | tail -200 | grep -q 'Connected to MongoDB'; then
-              echo 'MongoDB connection detected after Firestore cutover.' >&2
-              exit 1
-            fi
-            echo "Verified Firestore backend with no MongoDB connection."
+            docker exec nextoffer node --input-type=module -e '
+              const response = await fetch("http://127.0.0.1:8979/readyz", { signal: AbortSignal.timeout(5000) });
+              const payload = await response.json();
+              if (!response.ok || !payload.databaseReady) process.exit(1);
+            '
+            echo "Verified Firestore readiness."
 
       - name: Summary
         shell: bash

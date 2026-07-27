@@ -1,6 +1,6 @@
 # External scrape ingestion API
 
-Third-party scrapers can push job listings into Athens via a dedicated HTTP endpoint. Ingested jobs are stored in MongoDB collection **`external_scraped_jobs`** for dedupe (`jobID` / `jobLink`), and **also promoted into `job_market`**, which is the single source of truth for Job Search, Agent Queue, and skill extraction.
+Third-party scrapers can push job listings into Athens via a dedicated HTTP endpoint. Ingested jobs are stored in the Firestore **`external_scraped_jobs`** collection for dedupe (`jobID` / `jobLink`), and are also promoted into `job_market`, the source of truth for Job Search, Agent Queue, and skill extraction.
 
 Base URL (local default): `http://{SERVER_IP}:8979/api`
 
@@ -73,11 +73,11 @@ Validation lives in `src/services/scrapedJobIngestService.js` (`validateScrapedJ
 {
   "success": true,
   "created": true,
-  "id": "<mongodb ObjectId>",
+  "id": "<document id>",
   "jobID": "linkedin-12345678",
   "jobLink": "https://boards.greenhouse.io/acme/jobs/123",
   "source": "Greenhouse",
-  "marketId": "<job_market ObjectId>"
+  "marketId": "<job_market document id>"
 }
 ```
 
@@ -171,7 +171,7 @@ curl -X POST http://{SERVER_IP}/api/expose/jobs/check \
 
 ---
 
-## Storage (MongoDB)
+## Storage (Firestore)
 
 ### `external_scraped_jobs` (dedupe / provenance)
 
@@ -181,7 +181,7 @@ Each document stores the normalized job fields (`sender`, `jobID`, `companyName`
 - `createdAt` / `updatedAt`
 - After successful promote into `job_market`, `aiSkillStatus` is set to `skipped_duplicate` so skill extraction does not run on this catalog
 
-Indexes:
+Indexed and transactionally reserved keys:
 
 | Index | Purpose |
 |-------|---------|
@@ -195,7 +195,7 @@ Indexes:
 
 On create (when `applyLink` is not already present), a market document is inserted with the standard market shape, `source` from `inferJobSource(applyLink)`, and `externalRef: { sender, jobID, id }` for provenance.
 
-Historical backfill runs automatically on server start (`initMongo`). Manual / dry-run: `node src/scripts/migrateExternalScrapedJobsToMarket.js [--dry-run]`
+For a manual historical repair or dry run: `node src/scripts/migrateExternalScrapedJobsToMarket.js [--dry-run]`.
 
 ### `job_identity_registry` (global rolling dedupe)
 
@@ -216,4 +216,5 @@ After search infrastructure is ready, a one-time cleanup groups the existing cat
 | `src/services/jobIdentityDedupe.js` | Global normalized identity claims + historical seed |
 | `src/services/jobIdentityCleanup.js` | One-time historical duplicate removal + dependent index cleanup |
 | `src/scripts/migrateExternalScrapedJobsToMarket.js` | One-time / idempotent historical migration |
-| `src/db/mongo.js` | Collection + indexes |
+| `src/db/dataStore.js` | Firestore collections |
+| `src/db/firestoreDataAdapter.js` | Firestore query/update adapter and uniqueness reservations |

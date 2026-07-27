@@ -2,7 +2,7 @@
  * Bid job page + Remote/Clearance analysis for Bid-Monitor.
  * AI reads full page innerText (+ optional form hints) and profile JSON — no hardcoded answers.
  */
-import { accountInfoCollection } from "../db/mongo.js";
+import { accountInfoCollection } from "../db/dataStore.js";
 import {
 	compressResumeCatalog,
 	resolveCatalogKey,
@@ -328,7 +328,7 @@ export async function analyzeJobPage({ pageContext, applierName, sessionContext,
 		return {
 			result: {
 				isJobPage: false,
-				summary: "No autoBidProfile found for this applier in MongoDB.",
+				summary: "No autoBidProfile found for this applier in Firestore.",
 				formAnswers: [],
 				formCount: 0,
 				answeredCount: 0,

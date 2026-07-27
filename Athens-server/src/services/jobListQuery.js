@@ -1,9 +1,9 @@
-import { accountInfoCollection } from '../db/mongo.js';
-import { ObjectId } from 'mongodb';
+import { accountInfoCollection } from '../db/dataStore.js';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import { excludeExtensionV2JobsFilter } from '../config/jobMarketSchema.js';
 import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
-import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
+import { buildCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
 import { searchJobIds } from './search/algoliaJobs.js';
 import { getRedis, isRedisReady } from '../db/redis.js';
 import { createHash } from 'node:crypto';
@@ -156,7 +156,7 @@ function applierCacheKey(name) {
 	return `jobs:applier-context:${digest}`;
 }
 
-/** Resolve applier Mongo id + beta tier (cached briefly). */
+/** Resolve applier document id + beta tier (cached briefly). */
 export async function resolveApplierContext(applierName) {
 	if (!applierName || !accountInfoCollection) {
 		return { id: null, isBeta: false };
@@ -172,7 +172,7 @@ export async function resolveApplierContext(applierName) {
 			try {
 				const stored = JSON.parse(raw);
 				const id = /^[a-f0-9]{24}$/i.test(String(stored.id || ''))
-					? new ObjectId(String(stored.id))
+					? new DocumentId(String(stored.id))
 					: stored.id || null;
 				const value = { id, isBeta: Boolean(stored.isBeta) };
 				applierCache.set(name, { ...value, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
@@ -220,7 +220,7 @@ const SCORE_FILTER_KEYS = new Set([
 ]);
 
 /**
- * Build a Mongo filter for POST /jobs/list from the request body.
+ * Build a compatibility filter for POST /jobs/list from the request body.
  * Pass statusTab to override applied/status: all | posted | bid-ready | bid-completed | applied | scheduled | declined
  */
 export async function buildJobsListQuery(body, { statusTab, includePersonalStatus = true } = {}) {
@@ -258,9 +258,9 @@ export async function buildJobsListQuery(body, { statusTab, includePersonalStatu
 
 	if (String(q || '').trim()) {
 		const algoliaIds = await searchJobIds(q);
-		if (algoliaIds) query.$and.push({ _id: { $in: algoliaIds.map((id) => new ObjectId(id)) } });
+		if (algoliaIds) query.$and.push({ _id: { $in: algoliaIds.map((id) => new DocumentId(id)) } });
 		else {
-			const titleFilter = buildMongoCaseInsensitiveRegexFilter(q);
+			const titleFilter = buildCaseInsensitiveRegexFilter(q);
 			if (titleFilter) query.$and.push({ title: titleFilter });
 		}
 	}
@@ -301,7 +301,7 @@ export async function buildJobsListQuery(body, { statusTab, includePersonalStatu
 		} else if (key === 'details.seniority' && typeof value === 'string') {
 			const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
 			if (parts.length === 1) {
-				const filter = buildMongoCaseInsensitiveRegexFilter(parts[0]);
+				const filter = buildCaseInsensitiveRegexFilter(parts[0]);
 				if (filter) query.$and.push({ [key]: filter });
 			} else if (parts.length > 1) {
 				const regexes = parts.map((part) => buildSafeRegExp(part)).filter(Boolean);
@@ -312,7 +312,7 @@ export async function buildJobsListQuery(body, { statusTab, includePersonalStatu
 		} else if (key === 'details.remote' || key === 'details.time') {
 			query.$and.push({ [key]: value });
 		} else if (typeof value === 'string') {
-			const filter = buildMongoCaseInsensitiveRegexFilter(value);
+			const filter = buildCaseInsensitiveRegexFilter(value);
 			if (filter) query.$and.push({ [key]: filter });
 		}
 	}

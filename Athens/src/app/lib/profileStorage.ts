@@ -3,7 +3,7 @@ import { emptyProfile } from "../data/settings/profile";
 
 const KEY = "athens-profile";
 
-/** @deprecated Profile is stored in MongoDB via /personal/auto-bid-profile */
+/** @deprecated Profile is stored in Firestore via /personal/auto-bid-profile */
 export function loadProfile(): UserProfile {
   try {
     const raw = localStorage.getItem(KEY);
@@ -14,7 +14,7 @@ export function loadProfile(): UserProfile {
   }
 }
 
-/** @deprecated Profile is stored in MongoDB via /personal/auto-bid-profile */
+/** @deprecated Profile is stored in Firestore via /personal/auto-bid-profile */
 export function saveProfile(profile: UserProfile): void {
   localStorage.setItem(KEY, JSON.stringify(profile));
 }

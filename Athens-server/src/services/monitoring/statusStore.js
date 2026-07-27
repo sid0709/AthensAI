@@ -84,6 +84,20 @@ function defaultComponent(definition) {
 	};
 }
 
+function publicComponent(component, definition) {
+	if (!component) return defaultComponent(definition);
+	return {
+		component: definition.id,
+		name: definition.name,
+		status: component.status,
+		message: component.message,
+		lastCheckedAt: component.lastCheckedAt || null,
+		lastSuccessAt: component.lastSuccessAt || null,
+		latencyMs: component.latencyMs ?? null,
+		uptimePercent: component.uptimePercent ?? null,
+	};
+}
+
 function statusMessage(status) {
 	if (status === 'operational') return 'Operating normally.';
 	if (status === 'degraded') return 'The dependency is degraded; fallback behavior remains available.';
@@ -118,7 +132,10 @@ export async function readCurrentStatus({ db, prometheusOptions } = {}) {
 	const definitions = getComponentDefinitions();
 	let fallback = null;
 	try { fallback = await readSnapshot(db); } catch { fallback = null; }
-	const fallbackById = new Map((fallback?.components || []).map((component) => [component.component, markStaleComponent(component)]));
+	const fallbackById = new Map((fallback?.components || []).map((component) => {
+		const definition = definitions.find((item) => item.id === component.component);
+		return [component.component, definition ? publicComponent(markStaleComponent(component), definition) : null];
+	}));
 	try {
 		const live = await readPrometheusCurrentStatus(definitions, prometheusOptions);
 		return definitions.map((definition) => {

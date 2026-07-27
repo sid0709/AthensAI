@@ -1,19 +1,19 @@
 /**
  * Backfill jobs.skills / skillsNormalized / skillTokens from the shared
- * normalizer (e.g. after a tokenizer change). MongoDB only — no Redis.
+ * normalizer (e.g. after a tokenizer change). Firestore only — no Redis.
  * Usage: node src/scripts/backfillJobSkills.js
  */
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { initMongo, jobsCollection, closeMongo } from '../db/mongo.js';
+import { initDataStore, jobsCollection, closeDataStore } from '../db/dataStore.js';
 import { jobSkillTokens } from '../services/matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../services/matching/jobSkillExtraction.js';
 
 async function main() {
-  await initMongo();
+  await initDataStore();
 
-  if (!jobsCollection) throw new Error('MongoDB not ready');
+  if (!jobsCollection) throw new Error('Firestore not ready');
 
   const cursor = jobsCollection.find({}, { projection: { title: 1, skills: 1, skillsNormalized: 1, skillTokens: 1 } });
   let updated = 0;
@@ -37,7 +37,7 @@ async function main() {
   }
 
   console.log(`[backfill-job-skills] updated=${updated}`);
-  await closeMongo?.();
+  await closeDataStore?.();
   process.exit(0);
 }
 

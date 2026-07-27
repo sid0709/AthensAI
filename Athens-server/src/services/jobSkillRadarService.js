@@ -1,9 +1,9 @@
-import { ObjectId } from 'mongodb';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import {
 	jobsCollection,
 	userKnowledgeGraphsCollection,
 	userResumesCollection,
-} from '../db/mongo.js';
+} from '../db/dataStore.js';
 import { PROFILE_GRAPH_ID } from '../services/userKnowledgeGraph/index.js';
 import { loadProfileSkillSet } from './matching/profileSkills.js';
 import { computeCoverageScore } from './matching/coverageScore.js';
@@ -96,7 +96,7 @@ function pickDefaultResumeId(requestedResumeId, recommendedResumeId, recommended
 export async function buildJobResumeRank({ jobId, applierName }) {
 	const name = String(applierName || '').trim();
 	if (!name) throw new Error('applierName is required');
-	if (!ObjectId.isValid(jobId)) throw new Error('Invalid job id');
+	if (!DocumentId.isValid(jobId)) throw new Error('Invalid job id');
 
 	const availableResumes = await loadAvailableResumes(name);
 	if (!availableResumes.length) {
@@ -104,7 +104,7 @@ export async function buildJobResumeRank({ jobId, applierName }) {
 	}
 
 	const job = jobsCollection
-		? await jobsCollection.findOne({ _id: new ObjectId(jobId) }, { projection: { skills: 1, skillsNormalized: 1 } })
+		? await jobsCollection.findOne({ _id: new DocumentId(jobId) }, { projection: { skills: 1, skillsNormalized: 1 } })
 		: null;
 	const jobSkills = job?.skillsNormalized?.length
 		? job.skillsNormalized
@@ -161,14 +161,14 @@ export async function buildJobSkillRadar({
 }) {
 	const name = String(applierName || '').trim();
 	if (!name) throw new Error('applierName is required');
-	if (!ObjectId.isValid(jobId)) throw new Error('Invalid job id');
+	if (!DocumentId.isValid(jobId)) throw new Error('Invalid job id');
 	if (!jobsCollection) throw new Error('Database not ready');
 
 	if (rankOnly) {
 		return buildJobResumeRank({ jobId, applierName });
 	}
 
-	const job = await jobsCollection.findOne({ _id: new ObjectId(jobId) });
+	const job = await jobsCollection.findOne({ _id: new DocumentId(jobId) });
 	if (!job) throw new Error('Job not found');
 
 	const analysisStatus = job.skillAnalysis?.status;
