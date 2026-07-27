@@ -8,6 +8,7 @@ const {
 	applyUpdate,
 	runPipeline,
 	buildNativeQueryPlan,
+	buildFallbackQueryPlan,
 	collectFilterFields,
 	canTryCompositeQuery,
 	conjunctiveDocumentIds,
@@ -34,6 +35,22 @@ test("Firestore compatibility query plan marks regex and OR filters as fallback 
 	const plan = buildNativeQueryPlan({ $or: [{ title: /react/i }, { company: "Example" }] });
 	assert.equal(plan.complete, false);
 	assert.deepEqual(plan.clauses, []);
+});
+
+test("Firestore compatibility bounds mixed local and native job-search filters to one indexed clause", () => {
+	const plan = buildNativeQueryPlan({
+		$and: [
+			{ sourceCatalog: "market" },
+			{ title: /PCB/i },
+			{ source: { $in: ["Greenhouse"] } },
+			{ postedAt: { $gte: "2026-07-19" } },
+		],
+	});
+	assert.equal(plan.complete, false);
+	assert.ok(plan.clauses.length > 1);
+	const fallback = buildFallbackQueryPlan(plan, "job_market");
+	assert.equal(fallback.clauses.length, 1);
+	assert.equal(fallback.clauses[0].field, "source");
 });
 
 test("Firestore compatibility fallback keeps fields needed by nested local filters", () => {

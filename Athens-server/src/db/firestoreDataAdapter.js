@@ -99,6 +99,14 @@ function selectBoundingClause(clauses = []) {
 	return [...clauses].sort((left, right) => score(right) - score(left))[0];
 }
 
+function buildFallbackQueryPlan(plan, collectionName) {
+	if (plan.clauses.length <= 1) return plan;
+	const boundingClause = collectionName === "mail_messages"
+		? plan.clauses.find((clause) => clause.field === "hasCustomLabels") || selectBoundingClause(plan.clauses)
+		: selectBoundingClause(plan.clauses);
+	return { ...plan, clauses: boundingClause ? [boundingClause] : [] };
+}
+
 function conjunctiveDocumentIds(filter = {}) {
 	if (!isPlain(filter)) return null;
 	if (isPlain(filter._id) && Array.isArray(filter._id.$in)) return filter._id.$in.map((id) => String(comparable(id)));
@@ -691,12 +699,7 @@ class FirestoreCollection {
 		// filters and ordering. Until those indexes are deployed, use one native
 		// equality filter to bound the read and apply the remaining compatibility
 		// predicates locally.
-		const boundingClause = this.collectionName === 'mail_messages'
-			? plan.clauses.find((clause) => clause.field === 'hasCustomLabels') || selectBoundingClause(plan.clauses)
-			: selectBoundingClause(plan.clauses);
-		const queryPlan = plan.complete && plan.clauses.length > 1
-			? { ...plan, clauses: [boundingClause] }
-			: plan;
+		const queryPlan = buildFallbackQueryPlan(plan, this.collectionName);
 		let query = this._queryFromPlan(queryPlan);
 		if (selectedFields.length) query = query.select(...selectedFields);
 		const nativeSort = plan.complete &&
@@ -1220,6 +1223,7 @@ export const firestoreAdapterTest = {
 	evaluate,
 	applyProjection,
 	buildNativeQueryPlan,
+	buildFallbackQueryPlan,
 	collectFilterFields,
 	canTryCompositeQuery,
 	conjunctiveDocumentIds,
