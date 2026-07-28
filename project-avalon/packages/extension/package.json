@@ -10,7 +10,7 @@
     "zip": "wxt zip",
     "postinstall": "wxt prepare",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build -w @avalon/shared && tsx src/utils/endpoint.test.ts && tsx src/utils/dropdown-probe.test.ts && tsx src/utils/actionable-tree.test.ts",
+    "test": "npm run build -w @avalon/shared && tsx src/utils/endpoint.test.ts && tsx src/utils/dropdown-probe.test.ts && tsx src/utils/actionable-tree.test.ts && tsx src/utils/job-context.test.ts && tsx src/utils/session-selection.test.ts",
     "test:live": "node scripts/test-live-actionable-tree.mjs"
   },
   "dependencies": {
@@ -20,6 +20,7 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
+    "@types/jsdom": "^21.1.7",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@wxt-dev/module-react": "^1.1.3",

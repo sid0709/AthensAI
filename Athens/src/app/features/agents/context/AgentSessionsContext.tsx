@@ -22,7 +22,12 @@ import {
 import { formatApplierProfile } from "../avalon/ai/profile";
 import { AvalonControllerView } from "../components/AvalonControllerView";
 import { DeployAgentModal } from "../components/DeployAgentModal";
-import { QUEUE_STORAGE_PREFIX, useAvalonRelay, type QueuedJob } from "../hooks/useAvalonRelay";
+import {
+  LEGACY_QUEUE_STORAGE_PREFIX,
+  QUEUE_STORAGE_PREFIX,
+  useAvalonRelay,
+  type QueuedJob,
+} from "../hooks/useAvalonRelay";
 
 /**
  * Persistent, multi-session Avalon engine.
@@ -100,7 +105,9 @@ export function useAgentSessions(): AgentSessionsContextValue {
   return ctx;
 }
 
-const SESSIONS_STORAGE_KEY = "athens-agent-sessions";
+const LEGACY_SESSIONS_STORAGE_KEY = "athens-agent-sessions";
+const SESSIONS_STORAGE_PREFIX = "athens-agent-state:v2:profile:";
+const LEGACY_MIGRATION_STORAGE_KEY = "athens-agent-state:v2:legacy-profile";
 
 let sessionSeq = 0;
 function newSessionKey(): string {
@@ -136,30 +143,79 @@ function defaultSession(name = "Session 1", sessionId?: string): AgentSessionMet
   };
 }
 
-function loadSessions(): AgentSessionMeta[] {
+function normalizeSessions(parsed: AgentSessionMeta[]): AgentSessionMeta[] {
+  const seen = new Set<string>();
+  return parsed.map((session) => {
+    let sessionId = session.sessionId?.trim() || "";
+    if (!sessionId || seen.has(sessionId)) {
+      do {
+        sessionId = newAvalonSessionId();
+      } while (seen.has(sessionId));
+    }
+    seen.add(sessionId);
+    return { ...session, sessionId };
+  });
+}
+
+function loadSessions(profileId: string): { sessions: AgentSessionMeta[]; activeSessionId: string } {
   try {
-    const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
+    const key = profileId ? `${SESSIONS_STORAGE_PREFIX}${profileId}` : "";
+    const raw = key ? localStorage.getItem(key) : null;
     if (raw) {
-      const parsed = JSON.parse(raw) as AgentSessionMeta[];
-      if (Array.isArray(parsed) && parsed.length && parsed.every((s) => s?.id)) {
-        const seen = new Set<string>();
-        return parsed.map((s) => {
-          let sid = s.sessionId?.trim() || "";
-          if (!sid || seen.has(sid)) {
-            do {
-              sid = newAvalonSessionId();
-            } while (seen.has(sid));
-          }
-          seen.add(sid);
-          return { ...s, sessionId: sid };
-        });
+      const parsed = JSON.parse(raw) as { version?: number; sessions?: AgentSessionMeta[]; activeSessionId?: string };
+      if (parsed.version === 2 && Array.isArray(parsed.sessions) && parsed.sessions.length && parsed.sessions.every((session) => session?.id)) {
+        if (!localStorage.getItem(LEGACY_MIGRATION_STORAGE_KEY) && localStorage.getItem(LEGACY_SESSIONS_STORAGE_KEY)) {
+          localStorage.setItem(LEGACY_MIGRATION_STORAGE_KEY, profileId);
+        }
+        const sessions = normalizeSessions(parsed.sessions);
+        const activeSessionId = sessions.some((session) => session.id === parsed.activeSessionId)
+          ? String(parsed.activeSessionId)
+          : sessions[0].id;
+        return { sessions, activeSessionId };
+      }
+    }
+    if (profileId && !localStorage.getItem(LEGACY_MIGRATION_STORAGE_KEY)) {
+      const legacyRaw = localStorage.getItem(LEGACY_SESSIONS_STORAGE_KEY);
+      const legacy = legacyRaw ? JSON.parse(legacyRaw) as AgentSessionMeta[] : null;
+      if (Array.isArray(legacy) && legacy.length && legacy.every((session) => session?.id)) {
+        const sessions = normalizeSessions(legacy);
+        for (const session of sessions) {
+          const legacyQueue = localStorage.getItem(`${LEGACY_QUEUE_STORAGE_PREFIX}${session.id}`);
+          const nextQueueKey = `${QUEUE_STORAGE_PREFIX}${profileId}:${session.id}`;
+          if (legacyQueue && !localStorage.getItem(nextQueueKey)) localStorage.setItem(nextQueueKey, legacyQueue);
+        }
+        const state = { version: 2, sessions, activeSessionId: sessions[0].id };
+        localStorage.setItem(`${SESSIONS_STORAGE_PREFIX}${profileId}`, JSON.stringify(state));
+        localStorage.setItem(LEGACY_MIGRATION_STORAGE_KEY, profileId);
+        return state;
       }
     }
   } catch {
     /* fall through to a fresh default */
   }
   const stored = storedAvalonSessionId()?.trim();
-  return [defaultSession("Session 1", stored || newAvalonSessionId())];
+  const sessions = [defaultSession("Session 1", stored || newAvalonSessionId())];
+  return { sessions, activeSessionId: sessions[0].id };
+}
+
+function appendQueuedJobs(current: QueuedJob[], additions: QueuedJob[]): QueuedJob[] {
+  const canonical = (value: string) => {
+    try {
+      const parsed = new URL(value);
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return value.trim();
+    }
+  };
+  const next = [...current];
+  for (const job of additions) {
+    if (!next.some((existing) =>
+      ((!existing.id.startsWith("manual:") && !job.id.startsWith("manual:")) && existing.id === job.id) ||
+      canonical(existing.url) === canonical(job.url),
+    )) next.push(job);
+  }
+  return next;
 }
 
 export function AgentSessionsProvider({ children }: { children: ReactNode }) {
@@ -178,8 +234,10 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
     setProfileDefaultModel(resolveProfileDefaultModel(profile));
   }, [applierName, applier?.autoBidProfile]);
 
-  const [sessions, setSessions] = useState<AgentSessionMeta[]>(() => loadSessions());
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => sessions[0]?.id ?? "");
+  const initialSessionsRef = useRef<ReturnType<typeof loadSessions> | null>(null);
+  if (!initialSessionsRef.current) initialSessionsRef.current = loadSessions(profileId);
+  const [sessions, setSessions] = useState<AgentSessionMeta[]>(() => initialSessionsRef.current!.sessions);
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => initialSessionsRef.current!.activeSessionId);
   const [statusById, setStatusById] = useState<Record<string, AgentSessionStatus>>({});
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
   const [deployMode, setDeployMode] = useState<"closed" | "queue" | "new-session">("closed");
@@ -189,13 +247,36 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
   // Jobs queued before an engine has mounted (createSession/setSessionQueue).
   const pendingJobsRef = useRef<Map<string, QueuedJob[]>>(new Map());
 
+  const loadedProfileRef = useRef(profileId);
+  const skipProfilePersistRef = useRef(false);
   useEffect(() => {
+    if (!profileId || loadedProfileRef.current === profileId) return;
+    skipProfilePersistRef.current = true;
+    loadedProfileRef.current = profileId;
+    const loaded = loadSessions(profileId);
+    enginesRef.current.forEach((engine) => engine.stopAutoRun());
+    enginesRef.current.clear();
+    pendingJobsRef.current.clear();
+    setStatusById({});
+    setSessions(loaded.sessions);
+    setActiveSessionId(loaded.activeSessionId);
+  }, [profileId]);
+
+  useEffect(() => {
+    if (!profileId || loadedProfileRef.current !== profileId) return;
+    if (skipProfilePersistRef.current) {
+      skipProfilePersistRef.current = false;
+      return;
+    }
     try {
-      localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
+      localStorage.setItem(
+        `${SESSIONS_STORAGE_PREFIX}${profileId}`,
+        JSON.stringify({ version: 2, sessions, activeSessionId }),
+      );
     } catch {
       /* storage unavailable */
     }
-  }, [sessions]);
+  }, [profileId, sessions, activeSessionId]);
 
   // Keep the active id valid as sessions are added/removed.
   useEffect(() => {
@@ -258,7 +339,7 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
     enginesRef.current.get(id)?.stopAutoRun();
     pendingJobsRef.current.delete(id);
     try {
-      localStorage.removeItem(`${QUEUE_STORAGE_PREFIX}${id}`);
+      localStorage.removeItem(`${QUEUE_STORAGE_PREFIX}${profileId}:${id}`);
     } catch {
       /* storage unavailable */
     }
@@ -272,7 +353,7 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
       const next = prev.filter((s) => s.id !== id);
       return next.length ? next : [defaultSession()];
     });
-  }, []);
+  }, [profileId]);
 
   const renameSession = useCallback((id: string, name: string) => {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
@@ -281,7 +362,7 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
   const setSessionQueue = useCallback((id: string, jobs: QueuedJob[]) => {
     const engine = enginesRef.current.get(id);
     if (engine) engine.enqueueJobs(jobs);
-    else pendingJobsRef.current.set(id, jobs);
+    else pendingJobsRef.current.set(id, appendQueuedJobs(pendingJobsRef.current.get(id) || [], jobs));
   }, []);
 
   const openDeploy = useCallback(() => setDeployMode("queue"), []);
@@ -342,7 +423,7 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
     <AgentSessionsContext.Provider value={value}>
       {sessions.map((session) => (
         <AgentSessionEngine
-          key={session.id}
+          key={`${profileId}:${session.id}`}
           meta={session}
           active={session.id === activeSessionId}
           slotEl={slotEl}
@@ -400,7 +481,7 @@ function AgentSessionEngine({
     sessionId: meta.sessionId,
     sessionLabel: meta.name,
     persist: false,
-    persistKey: meta.id,
+    persistKey: `${profileId}:${meta.id}`,
     accountTier,
     profileId,
   });

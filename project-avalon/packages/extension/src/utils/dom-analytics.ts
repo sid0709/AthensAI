@@ -645,7 +645,7 @@ export function isVisibleListbox(listbox: Element): boolean {
   return rect.width > 0 && rect.height > 0;
 }
 
-export function optionsFromListbox(listbox: Element): ActionableTarget['options'] {
+export function optionsFromListbox(listbox: Element): NonNullable<ActionableTarget['options']> {
   return Array.from(listbox.querySelectorAll('[role="option"]')).map((opt) => {
     const label = (opt.textContent ?? '').trim();
     return { value: label, label };

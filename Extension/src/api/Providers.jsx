@@ -1,6 +1,6 @@
 import { SnackbarProvider } from 'notistack';
 import { RuntimeProvider } from './runtime.jsx';
-import { SocketProvider } from './socket.jsx';
+import { BackendHealthProvider } from './backendHealth.jsx';
 
 const Providers = ({ children }) => {
 	return (
@@ -13,11 +13,11 @@ const Providers = ({ children }) => {
 				fontFamily: '"Figtree", system-ui, sans-serif',
 			}}
 		>
-			<SocketProvider>
+			<BackendHealthProvider>
 				<RuntimeProvider>
 					{children}
 				</RuntimeProvider>
-			</SocketProvider>
+			</BackendHealthProvider>
 		</SnackbarProvider>
 	);
 };

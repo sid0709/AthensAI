@@ -3,9 +3,11 @@ import { JOB_TITLE_SCAN_PROMPT } from '../../config/jobTitleScanPrompt.js';
 import {
 	DEFAULT_TITLE_SCAN_ROLE,
 	TITLE_SCAN_ROLE_SET,
+	inferTitleScanRole,
 } from '../../config/jobTitleScanRoles.js';
 import { resolveExtractionAuth } from '../jobSkillExtraction/aiExtractService.js';
 import { jobsCollection } from '../../db/dataStore.js';
+import { syncJobTitleRoleUpdates } from './titleRoleIndexSync.js';
 
 export { resolveExtractionAuth };
 
@@ -22,20 +24,7 @@ function normalizeRole(raw) {
 	for (const allowed of TITLE_SCAN_ROLE_SET) {
 		if (allowed.toLowerCase() === lower) return allowed;
 	}
-	// Light alias cleanup for common model drift (specialized domains before generic SWE).
-	if (/health|clinical|biomed|fhir|hl7/.test(lower)) return 'Healthcare Engineer';
-	if (/\bai\b|machine learning|\bml\b|llm|genai|mlops/.test(lower)) {
-		return 'AI engineer';
-	}
-	if (/data eng|analytics eng|\betl\b/.test(lower)) return 'Data Engineer';
-	if (/devops|sre|site reliability|platform/.test(lower)) return 'DevOps';
-	if (/cloud|network|\brpa\b|security eng|sales eng|support eng/.test(lower)) {
-		return DEFAULT_TITLE_SCAN_ROLE;
-	}
-	if (/software|full.?stack|front.?end|back.?end|mobile|\bswe\b/.test(lower)) {
-		return 'Software Engineer';
-	}
-	return DEFAULT_TITLE_SCAN_ROLE;
+	return inferTitleScanRole(role);
 }
 
 /** Tolerant parse of batched title-classification JSON. */
@@ -136,6 +125,7 @@ export async function classifyAndPersistTitleBatch(jobs, auth, { signal } = {}) 
 
 	if (ops.length && jobsCollection) {
 		await jobsCollection.bulkWrite(ops, { ordered: false });
+		await syncJobTitleRoleUpdates(roles);
 	}
 
 	return {

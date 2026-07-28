@@ -13,8 +13,7 @@ async function withDom(html: string, fn: (body: HTMLElement) => Promise<void>): 
   const dom = new JSDOM(html);
   const { window } = dom;
   for (const key of ['document', 'window', 'MutationObserver', 'HTMLElement', 'HTMLInputElement'] as const) {
-    // @ts-expect-error jsdom globals
-    globalThis[key] = window[key];
+    (globalThis as unknown as Record<string, unknown>)[key] = window[key] as unknown;
   }
   window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
     const style = window.getComputedStyle(this);

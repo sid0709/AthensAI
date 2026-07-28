@@ -49,9 +49,12 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
 
   const industries = Array.isArray(company.tags) ? company.tags.map(String) : isExternal ? [] : ["General"];
   const applierId = applier?._id != null ? normalizeId(applier._id) : null;
-  const status = (isExternal || !applierId
-    ? "posted"
-    : resolveJobStatusState(doc.status as unknown[] | undefined, applierId)) as JobStatus;
+  const viewerStatus = typeof doc.viewerStatus === "string" ? doc.viewerStatus : null;
+  const status = ((viewerStatus && ["posted", "bid-ready", "bid-completed", "applied", "scheduled", "declined"].includes(viewerStatus)
+    ? viewerStatus
+    : !applierId
+      ? "posted"
+      : resolveJobStatusState(doc.status as unknown[] | undefined, applierId))) as JobStatus;
 
   const location = String(details.position || (isAnalyzedExternal ? "—" : isExternal ? "—" : "—"));
   const workMode = isAnalyzedExternal
@@ -164,6 +167,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     bestResumeId,
     skillHighlights,
     aiSkills,
+    skillCount: typeof doc.aiSkillCount === "number" ? doc.aiSkillCount : aiSkills?.length,
     titleScanned:
       typeof doc.titleScanned === "string" && doc.titleScanned.trim()
         ? doc.titleScanned.trim()

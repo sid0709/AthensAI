@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DocumentId } from "@nextoffer/shared/document-id";
 import { FieldValue } from "firebase-admin/firestore";
 import {
@@ -6,7 +6,7 @@ import {
 	mergeJobStatusRows,
 	resolveJobStatusState,
 } from "@nextoffer/shared/job-status";
-import { accountInfoCollection, jobsCollection } from "../db/dataStore.js";
+import { accountInfoCollection, externalScrapedJobsCollection, jobsCollection } from "../db/dataStore.js";
 import { JobSourceTitles } from "../config/jobSources.js";
 import { buildJobsListQuery, JOB_LIST_PROJECTION, resolveApplierContext } from "./jobListQuery.js";
 import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
@@ -16,6 +16,7 @@ import { isBetaTier } from "../lib/betaTier.js";
 import { excludeExtensionV2JobsFilter, isExtensionV2Job } from "../config/jobMarketSchema.js";
 import { readDateTailPage } from "./matching/jobRankingIndex.js";
 import { getJobRankingPoints } from "./vectorStore/qdrantClient.js";
+import { observeHistogram } from "./monitoring/metrics.js";
 import {
 	JOB_STATUS_STATES,
 	buildJobStatusCountsCache,
@@ -462,6 +463,52 @@ async function loadStatusIdBaseline(profileId) {
 	return baseline;
 }
 
+/**
+ * Extract one state directly from verified v2 projections. Invalid or legacy
+ * rows are ignored instead of forcing a full scan of the jobs catalog.
+ */
+export function canonicalProjectedJobStatusIdsByState(profileId, states = [], projectionRows = []) {
+	if (!profileId) return new Map();
+	const key = String(profileId);
+	const requested = [...new Set((Array.isArray(states) ? states : [states])
+		.filter((state) => JOB_STATUS_STATES.includes(state)))];
+	const grouped = new Map(requested.map((state) => [state, []]));
+	for (const projection of projectionRows) {
+		const row = projectedStatusRow(key, projection);
+		const state = row ? stateOf(row) : null;
+		if (!projection.jobId || !grouped.has(state)) continue;
+		grouped.get(state).push({ jobId: String(projection.jobId), postedAt: projection.postedAt || null });
+	}
+	for (const [state, entries] of grouped) {
+		grouped.set(state, entries.sort((left, right) =>
+			(Date.parse(right.postedAt || 0) || 0) - (Date.parse(left.postedAt || 0) || 0) ||
+			right.jobId.localeCompare(left.jobId),
+		).map((entry) => entry.jobId));
+	}
+	return grouped;
+}
+
+export function canonicalProjectedStatusIds(profileId, state, projectionRows = []) {
+	return canonicalProjectedJobStatusIdsByState(profileId, [state], projectionRows).get(state) || [];
+}
+
+/** Authoritative IDs grouped by state from one migrated Firestore projection read. */
+export async function readCanonicalProjectedJobStatusIdsByState(profileId, states = []) {
+	if (!enabled() || !profileId) return new Map();
+	const key = String(profileId);
+	const snapshot = await getFirestoreDb().collection("job_statuses")
+		.where("profileId", "==", key)
+		.select("jobId", "state", "postedAt", "schemaVersion", "statusRow", "statusFingerprint")
+		.get();
+	return canonicalProjectedJobStatusIdsByState(key, states, snapshot.docs.map((doc) => doc.data()));
+}
+
+/** Authoritative IDs for one state, read from the migrated Firestore projection. */
+export async function readCanonicalProjectedJobStatusIds(profileId, state) {
+	if (!JOB_STATUS_STATES.includes(state)) return [];
+	return (await readCanonicalProjectedJobStatusIdsByState(profileId, [state])).get(state) || [];
+}
+
 /** Ordered status IDs without requiring a Firestore composite index. */
 export async function readMaterializedJobStatusIds(profileId, state) {
 	if (!profileId || (state !== "any" && !JOB_STATUS_STATES.includes(state))) return [];
@@ -502,10 +549,11 @@ function countDeltas(previousStatuses, statuses) {
 	];
 }
 
-async function publishStatusCache(profileId, jobId, statuses, {
+export async function publishStatusCache(profileId, jobId, statuses, {
 	previousStatuses = [],
 	extensionV2 = false,
 	adjustCounts = true,
+	updateStatusIds = adjustCounts,
 } = {}) {
 	invalidateLiveProjectedStatusCount(profileId);
 	statusIdBaselineCache.delete(String(profileId));
@@ -519,7 +567,7 @@ async function publishStatusCache(profileId, jobId, statuses, {
 	const countKeys = adjustCounts ? [jobStatusCountsCacheKey(profileId, true)] : [];
 	if (adjustCounts && !extensionV2) countKeys.push(jobStatusCountsCacheKey(profileId, false));
 	const currentStates = new Set(statesOf(statuses));
-	const statusIdWrite = adjustCounts
+	const statusIdWrite = updateStatusIds
 		? getRedis().eval(UPDATE_STATUS_IDS_SCRIPT, {
 			keys: JOB_STATUS_STATES.flatMap((state) => [jobStatusAddedKey(profileId, state), jobStatusRemovedKey(profileId, state)]),
 			arguments: [jobId, JOB_STATUS_STATES.find((state) => currentStates.has(state)) || ""],
@@ -537,9 +585,22 @@ async function publishStatusCache(profileId, jobId, statuses, {
 		void warmMaterializedJobStatusCounts(profileId, true);
 		if (!extensionV2) void warmMaterializedJobStatusCounts(profileId, false);
 	}
+	if (updateStatusIds && !adjustCounts) {
+		await getRedis().del([
+			jobStatusCountsCacheKey(profileId, true),
+			jobStatusCountsCacheKey(profileId, false),
+		]);
+		void warmMaterializedJobStatusCounts(profileId, true);
+		if (!extensionV2) void warmMaterializedJobStatusCounts(profileId, false);
+	}
 }
 
 /** Pure state-machine used by every Apply/Bid/Pipeline mutation. */
+/** Mongo-era jobs without an explicit catalog belong to the market catalog. */
+export function canonicalJobCatalog(sourceCatalog) {
+	return String(sourceCatalog || "market").trim().toLowerCase();
+}
+
 export function reduceJobStatuses(statusRows, profileValue, transition, now = new Date().toISOString()) {
 	const profileId = String(profileValue || "");
 	const otherRows = [];
@@ -605,42 +666,89 @@ export function reduceJobStatuses(statusRows, profileValue, transition, now = ne
  * profile/job status document in one transaction; no catalog-wide counter
  * document is touched on the interactive request path.
  */
-export async function mutateJobStatus({ jobId: jobIdRaw, applierName, transition }) {
+export async function mutateJobStatus({
+	jobId: jobIdRaw,
+	applierName,
+	transition,
+	catalog: catalogRaw = "market",
+	mutationId: mutationIdRaw = null,
+}) {
 	const jobId = String(jobIdRaw || "");
 	const name = String(applierName || "").trim();
+	const catalog = String(catalogRaw || "market").trim().toLowerCase() === "external" ? "external" : "market";
+	const mutationId = String(mutationIdRaw || randomUUID()).trim();
 	if (!DocumentId.isValid(jobId)) throw new Error("Invalid job id");
 	if (!name) throw new Error("applierName is required");
+	if (!mutationId) throw new Error("mutationId is required");
 	const account = await resolveApplierContext(name);
 	if (!account?.id) throw new Error(`User ${name} not found`);
 	const profileId = String(account.id);
 	const documentId = new DocumentId(jobId);
 
 	if (!enabled()) {
-		const job = await jobsCollection.findOne({ _id: documentId });
+		const collection = catalog === "external" ? externalScrapedJobsCollection : jobsCollection;
+		const job = await collection.findOne({ _id: documentId });
 		if (!job || (!account.isBeta && isExtensionV2Job(job))) throw new Error("Job not found");
-			const reduced = reduceJobStatuses(job.status, profileId, transition);
-		await jobsCollection.updateOne({ _id: documentId }, {
+		const reduced = reduceJobStatuses(job.status, profileId, transition);
+		await collection.updateOne({ _id: documentId }, {
 			$set: { status: reduced.statuses },
 			$unset: { statusProfileIds: "" },
 		});
-		await publishStatusCache(profileId, jobId, reduced.current ? [reduced.current] : [], {
+		void publishStatusCache(profileId, jobId, reduced.current ? [reduced.current] : [], {
 			previousStatuses: reduced.previous ? [reduced.previous] : [],
 			extensionV2: isExtensionV2Job(job),
-		});
-		return { job: { ...job, status: reduced.statuses }, changed: reduced.changed, profileId };
+		}).catch((error) => console.warn("[job-status-cache] deferred publication failed:", error?.message || error));
+		return {
+			job: { ...job, status: reduced.statuses },
+			changed: reduced.changed,
+			profileId,
+			catalog,
+			mutationId,
+			statusVersion: `${Date.now()}:${mutationId}`,
+			viewerStatus: resolveJobStatusState(reduced.current ? [reduced.current] : []),
+			cacheSync: "queued",
+		};
 	}
 
 	const firestore = getFirestoreDb();
 	const jobRef = firestore.collection("jobs").doc(jobId);
 	const statusRef = firestore.collection("job_statuses").doc(jobStatusProjectionId(profileId, jobId));
+	const outboxRef = firestore.collection("job_status_outbox").doc(mutationId);
+	const statusVersion = `${Date.now()}:${mutationId}`;
+	const durableCommitStarted = performance.now();
 	const result = await firestore.runTransaction(async (transaction) => {
-		const snapshot = await transaction.get(jobRef);
+		const [snapshot, existingOutbox] = await Promise.all([
+			transaction.get(jobRef),
+			transaction.get(outboxRef),
+		]);
 		if (
 			!snapshot.exists ||
-			snapshot.data()?.sourceCatalog !== "market" ||
+			// Mongo-era market jobs may not have sourceCatalog persisted. Everywhere
+			// else in the read model those records are canonically treated as market.
+			canonicalJobCatalog(snapshot.data()?.sourceCatalog) !== catalog ||
 			(!account.isBeta && isExtensionV2Job(snapshot.data()))
 		) throw new Error("Job not found");
 		const job = snapshot.data();
+		if (existingOutbox.exists) {
+			const prior = existingOutbox.data();
+			if (
+				String(prior.profileId || "") !== profileId ||
+				String(prior.jobId || "") !== jobId ||
+				String(prior.catalog || "market") !== catalog ||
+				String(prior.transition || "") !== String(transition)
+			) throw new Error("mutationId was already used for another status change");
+			const current = mergeJobStatusRows(job.status, profileId);
+			return {
+				job: { ...job, _id: documentId },
+				changed: false,
+				profileStatuses: current ? [canonicalStatusRow(profileId, current)] : [],
+				previousStatuses: current ? [canonicalStatusRow(profileId, current)] : [],
+				extensionV2: isExtensionV2Job(job),
+				mutationId,
+				statusVersion: String(prior.statusVersion || statusVersion),
+				duplicate: true,
+			};
+		}
 		const reduced = reduceJobStatuses(job.status, profileId, transition);
 		transaction.update(jobRef, {
 			status: reduced.statuses,
@@ -652,23 +760,56 @@ export async function mutateJobStatus({ jobId: jobIdRaw, applierName, transition
 		} else {
 			transaction.delete(statusRef);
 		}
+		transaction.set(outboxRef, {
+			mutationId,
+			profileId,
+			jobId,
+			catalog,
+			transition,
+			profileStatuses,
+			previousStatuses: reduced.previous ? [canonicalStatusRow(profileId, reduced.previous)] : [],
+			extensionV2: isExtensionV2Job(job),
+			statusVersion,
+			status: "pending",
+			attempts: 0,
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		});
 		return {
 			job: { ...job, _id: documentId, status: reduced.statuses },
 			changed: reduced.changed,
 			profileStatuses,
 			previousStatuses: reduced.previous ? [reduced.previous] : [],
 			extensionV2: isExtensionV2Job(job),
+			mutationId,
+			statusVersion,
+			duplicate: false,
 		};
 	});
+	observeHistogram("athens_job_status_durable_commit_seconds", { catalog }, (performance.now() - durableCommitStarted) / 1000);
 	// This write bypasses the compatibility adapter, so explicitly discard
 	// cached job reads before any subsequent filtered/list query can observe the
 	// old embedded status array.
-	jobsCollection?._invalidateCaches?.();
-	await publishStatusCache(profileId, jobId, result.profileStatuses, {
-		previousStatuses: result.previousStatuses,
-		extensionV2: result.extensionV2,
-	});
-	return { job: result.job, changed: result.changed, profileId };
+	if (catalog === "external") externalScrapedJobsCollection?._invalidateCaches?.();
+	else jobsCollection?._invalidateCaches?.();
+	if (!result.duplicate) {
+		const scheduled = setImmediate(() => {
+			import("./jobStatusOutboxWorker.js")
+				.then(({ processJobStatusOutboxRecord }) => processJobStatusOutboxRecord(result.mutationId))
+				.catch((error) => console.warn("[job-status-outbox] immediate publication failed; queued retry remains:", error?.message || error));
+		});
+		scheduled.unref?.();
+	}
+	return {
+		job: result.job,
+		changed: result.changed,
+		profileId,
+		catalog,
+		mutationId: result.mutationId,
+		statusVersion: result.statusVersion,
+		viewerStatus: resolveJobStatusState(result.profileStatuses),
+		cacheSync: "queued",
+	};
 }
 
 export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {

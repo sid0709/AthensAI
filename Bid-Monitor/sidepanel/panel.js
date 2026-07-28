@@ -163,31 +163,22 @@ function escapeHtml(value) {
   }[ch]));
 }
 
-/** Canonical upload name — same stem as bulk zip + .pdf */
+/** Recruiter-facing upload name — profile only, without job title or internal id. */
 function resolveExpectedResumeFileName(job) {
-  const fromJob = String(job?.expectedResumeName || '').trim();
-  if (fromJob) return fromJob;
-
-  if (typeof CanonicalResumeName === 'undefined') return null;
-  const company = job?.companyName;
-  const title = job?.title;
   const profile =
     dashboardState?.auth?.displayName ||
     dashboardState?.auth?.applierName ||
     profileNameEl?.textContent?.trim();
-  const jobId = job?.athensJobId || job?.id;
-  if (!company || !title || !profile || !jobId || profile === '—') return null;
-  try {
-    return CanonicalResumeName.buildCanonicalResumeFileName(
-      company,
-      title,
-      profile,
-      jobId,
-      '.pdf',
-    );
-  } catch {
-    return null;
+  if (typeof CanonicalResumeName !== 'undefined' && profile && profile !== '—') {
+    try {
+      return CanonicalResumeName.buildProfileResumeFileName(profile, '.pdf');
+    } catch {
+      /* fall through to the job payload */
+    }
   }
+
+  const fromJob = String(job?.expectedResumeName || '').trim();
+  return fromJob || null;
 }
 
 function resumeFileNameMarkup(fileName) {

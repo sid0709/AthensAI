@@ -28,6 +28,7 @@
 		"benchmark-query-ranking": "node src/scripts/benchmarkQueryRanking.js",
 		"test:query-ranking": "node --test src/services/matching/canonicalSkillVectors.test.mjs src/services/matching/exactRerank.test.mjs src/services/matching/jobRankingIndex.test.mjs src/services/matching/rankingEvaluation.test.mjs",
 		"test:company-grouping": "node --test src/services/companyIdentity.test.mjs src/services/companyGroupedJobsService.test.mjs",
+		"test:job-list-v2": "node --test src/controllers/agentController.test.mjs src/services/jobListReadModelService.test.mjs src/services/jobStatusProjectionService.test.mjs src/services/jobTitleScan/titleRoleIndexSync.test.mjs",
 		"qdrant:start": "docker compose -f ../compose.yaml up -d --wait qdrant",
 		"qdrant:stop": "docker compose -f ../compose.yaml stop qdrant",
 		"redis:start": "docker compose -f ../compose.yaml up -d --wait redis",
@@ -43,9 +44,6 @@
 	"dependencies": {
 		"@google-cloud/kms": "^5.4.0",
 		"@nextoffer/shared": "file:../packages/shared",
-		"@socket.io/cluster-adapter": "^0.2.2",
-		"@socket.io/redis-adapter": "^8.3.0",
-		"@socket.io/sticky": "^1.0.4",
 		"algoliasearch": "^5.56.0",
 		"archiver": "^8.0.0",
 		"bcrypt": "^6.0.0",
@@ -68,10 +66,8 @@
 		"pizzip": "^3.2.0",
 		"puppeteer": "^25.1.0",
 		"redis": "^4.7.0",
-		"socket.io": "^4.8.1",
 		"tlds": "^1.261.0",
-		"uc.micro": "^2.1.0",
-		"uid2": "^1.0.0"
+		"uc.micro": "^2.1.0"
 	},
 	"devDependencies": {
 		"nodemon": "^3.1.14",

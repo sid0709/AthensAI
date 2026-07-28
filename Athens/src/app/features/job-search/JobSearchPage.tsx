@@ -355,8 +355,8 @@ function JobSearchPageContent() {
         onPageSizeChange={setPageSize}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         detailed
-        unitLabel="companies"
-        secondaryTotal={totalJobs}
+        unitLabel="jobs"
+        secondaryTotal={null}
         loading={loading}
         className="mt-2"
       />

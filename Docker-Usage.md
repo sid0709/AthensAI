@@ -68,7 +68,7 @@ Container nginx (port **9030**) already routes:
 | Path | Service |
 |------|---------|
 | `/` | Athens SPA |
-| `/api/`, `/personal/`, `/socket.io/` | Athens-server |
+| `/api/`, `/personal/` | Athens-server REST API |
 | `/avalon/` | Avalon relay process (`@avalon/backend` on :3847) |
 | `/ai-bff/` | ai-bff |
 | `/downloads/` | Chrome extension zips (Apps & Plugins) |
@@ -84,7 +84,7 @@ as the **origin only** (no `/avalon` path); the Engine.IO path is always
 
 Athens connects to `wss://<host>/avalon/socket.io/`. If the host proxy only forwards plain HTTP (no WebSocket upgrade), the browser floods `WebSocket connection … failed` errors while the rest of the UI still works.
 
-Point TLS at **9030** and enable upgrades for the whole upstream (or at least `/avalon/` and `/socket.io/`):
+Point TLS at **9030** and enable upgrades for the Avalon `/avalon/` upstream:
 
 ```nginx
 map $http_upgrade $connection_upgrade {
@@ -110,7 +110,7 @@ server {
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # Required for Avalon (/avalon/socket.io) and Athens-server (/socket.io)
+        # Required only for Avalon (/avalon/socket.io)
         proxy_set_header Upgrade    $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
 

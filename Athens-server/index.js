@@ -10,16 +10,14 @@ installTerminalLogger("athens");
 
 import express from "express";
 import cors from "cors";
-import { setupMaster } from "@socket.io/sticky";
-import { setupPrimary } from "@socket.io/cluster-adapter";
 
 import { initDataStore, closeDataStore, getDataStore } from "./src/db/dataStore.js";
 import { initRedis, closeRedis, isRedisReady } from "./src/db/redis.js";
 import { loadCanonicalSkillDictionary } from "./src/services/matching/canonicalSkillDictionary.js";
-import { initSocket, closeSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 import { startLocalSearchOutboxWorker, stopLocalSearchOutboxWorker } from "./src/services/search/localOutboxWorker.js";
+import { startJobStatusOutboxWorker, stopJobStatusOutboxWorker } from "./src/services/jobStatusOutboxWorker.js";
 import { shutdownPool as shutdownImapPool } from "./src/services/mail/imapPool.js";
 import { shutdownPdfPool } from "./src/services/pdf/pdfRenderPool.js";
 import statusRoutes from "./src/routes/statusRoutes.js";
@@ -34,6 +32,12 @@ import {
 } from "./src/config/graphAndVectorConfig.js";
 import { shutdownRankingPool, warmRankingPool } from "./src/services/matching/exactRerankPool.js";
 import { cleanupExistingJobIdentityDuplicates } from "./src/services/jobIdentityCleanup.js";
+import {
+	getJobListReadModelState,
+	initJobListCatalogSnapshot,
+	initJobListReadModel,
+	isJobListV2Enabled,
+} from "./src/services/jobListReadModelService.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -135,7 +139,11 @@ function createApp() {
 		if (!databaseReady || !getDataStore()) return res.status(503).json({ ok: false, databaseReady: false });
 		try {
 			await getDataStore().command({ ping: 1 });
-			return res.json({ ok: true, databaseReady: true });
+			const jobListReadModel = getJobListReadModelState();
+			if (jobListReadModel.enabled && !jobListReadModel.ready) {
+				return res.status(503).json({ ok: false, databaseReady: true, jobListReadModel });
+			}
+			return res.json({ ok: true, databaseReady: true, jobListReadModel });
 		} catch {
 			return res.status(503).json({ ok: false, databaseReady: false, error: "database unavailable" });
 		}
@@ -199,12 +207,13 @@ function createApp() {
 
 async function startBackgroundWorkers() {
 	await initDataStore();
-	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled();
+	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled() || isJobListV2Enabled();
 	await initRedis({ force: rankingIndexNeeded });
 	if (rankingIndexNeeded) {
 		await initQdrantCollections();
 		await initJobRankingCollection();
 	}
+	if (isJobListV2Enabled()) await initJobListCatalogSnapshot();
 	databaseReady = true;
 	void cleanupHistoricalJobDuplicates().catch((error) => {
 		console.error("[job-identity] historical cleanup failed:", error?.message || error);
@@ -213,6 +222,7 @@ async function startBackgroundWorkers() {
 		startJobAnalysisWorker();
 		if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 		startLocalSearchOutboxWorker();
+		startJobStatusOutboxWorker();
 	}
 	console.log(`[athens] primary background workers started (pid ${process.pid})`);
 }
@@ -220,21 +230,21 @@ async function startBackgroundWorkers() {
 async function startHttpWorker({ clustered }) {
 	const app = createApp();
 	const server = http.createServer(app);
-	if (!clustered) {
-		server.on("error", (err) => {
-			console.error(`[athens] listen error:`, err.message);
-			process.exit(1);
-		});
-		server.listen(port, host, () => {
-			console.log(`Server running on http://${host}:${port} (pid ${process.pid})`);
-			console.log(`Socket.IO on ws://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+	server.on("error", (err) => {
+		console.error(`[athens] listen error:`, err.message);
+		process.exit(1);
+	});
+	server.listen(port, host, () => {
+		console.log(`Server running on http://${host}:${port} (pid ${process.pid})`);
+		if (!clustered) {
 			console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
-		});
-	}
+		}
+	});
 
 	await initDataStore();
-	await initRedis({ force: isQueryTimeRankingIndexEnabled() });
-	if (isQueryTimeRankingIndexEnabled()) {
+	const needsJobRankingIndex = isQueryTimeRankingIndexEnabled() || isJobListV2Enabled();
+	await initRedis({ force: needsJobRankingIndex });
+	if (needsJobRankingIndex) {
 		await initQdrantCollections();
 		const rankingReady = await initJobRankingCollection();
 		if (rankingReady && isRedisReady()) {
@@ -242,6 +252,7 @@ async function startHttpWorker({ clustered }) {
 			await warmRankingPool();
 		}
 	}
+	if (isJobListV2Enabled()) await initJobListReadModel();
 	databaseReady = true;
 	if (!clustered) {
 		startAggregateMetricsServer();
@@ -251,8 +262,6 @@ async function startHttpWorker({ clustered }) {
 	}
 	if (!clustered && process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
-	await initSocket(server, { clustered });
-
 	let shuttingDown = false;
 	async function shutdown(signal) {
 		if (shuttingDown) return;
@@ -261,13 +270,13 @@ async function startHttpWorker({ clustered }) {
 		const force = setTimeout(() => process.exit(1), 15_000);
 		force.unref?.();
 		try {
-			await closeSocket();
 			if (!clustered) {
 				stopJobAnalysisWorker();
 				stopMatchScoreWorker();
 				stopLocalSearchOutboxWorker();
-				await new Promise((resolve) => server.close(() => resolve()));
+				stopJobStatusOutboxWorker();
 			}
+			await new Promise((resolve) => server.close(() => resolve()));
 			await shutdownPdfPool();
 			await shutdownImapPool();
 			await shutdownRankingPool();
@@ -285,28 +294,16 @@ async function startHttpWorker({ clustered }) {
 
 	if (!clustered) return;
 
-	// Sticky worker: the primary owns the listen socket; workers receive handed-off connections.
+	// Node's cluster module shares the HTTP listener across workers.
 	console.log(`[athens] cluster worker ready (pid ${process.pid})`);
 }
 
 async function startPrimary() {
 	startAggregateMetricsServer();
-	const httpServer = http.createServer();
-	setupMaster(httpServer, {
-		loadBalancingMethod: "least-connection",
-	});
-	setupPrimary();
-
-	httpServer.listen(port, host, () => {
-		console.log(`[athens] cluster primary listening on http://${host}:${port} (workers=${workerCount})`);
-		console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
-	});
-
-	for (let i = 0; i < workerCount; i += 1) {
-		cluster.fork();
-	}
+	let shuttingDown = false;
 
 	cluster.on("exit", (worker, code, signal) => {
+		if (shuttingDown) return;
 		console.warn(
 			`[athens] worker ${worker.process.pid} exited (code=${code} signal=${signal}) — respawning`,
 		);
@@ -314,9 +311,13 @@ async function startPrimary() {
 	});
 
 	await startBackgroundWorkers();
+	for (let i = 0; i < workerCount; i += 1) {
+		cluster.fork();
+	}
+	console.log(`[athens] cluster primary started HTTP workers (workers=${workerCount})`);
+	console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
-	let shuttingDown = false;
 	async function shutdown(signal) {
 		if (shuttingDown) return;
 		shuttingDown = true;
@@ -324,6 +325,7 @@ async function startPrimary() {
 		stopJobAnalysisWorker();
 		stopMatchScoreWorker();
 		stopLocalSearchOutboxWorker();
+		stopJobStatusOutboxWorker();
 		for (const id of Object.keys(cluster.workers || {})) {
 			cluster.workers[id]?.process.kill("SIGTERM");
 		}
@@ -334,7 +336,6 @@ async function startPrimary() {
 			await stopAggregateMetricsServer();
 			await closeRedis();
 			await closeDataStore();
-			await new Promise((resolve) => httpServer.close(() => resolve()));
 		} catch (err) {
 			console.error(`[athens] primary shutdown error:`, err.message);
 		}
@@ -359,6 +360,7 @@ async function main() {
 			startJobAnalysisWorker();
 			if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 			startLocalSearchOutboxWorker();
+			startJobStatusOutboxWorker();
 		}
 	}
 }

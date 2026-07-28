@@ -1,28 +1,30 @@
 const assert = require('assert');
 const {
+  buildRenameAudit,
   buildSubmittedFileName,
   createTracker,
+  resumeAuditOutboxKey,
 } = require('./resume-file-tracking.js');
 
 function file(name, size, type, lastModified) {
   return { name, size, type, lastModified };
 }
 
-function testCanonicalNameAndExtension() {
-  const expected = 'LangChain - Senior Backend Engineer - Eli Taylor - abc123.pdf';
+function testProfileUploadNameAndExtension() {
+  const expected = 'Eli Taylor.pdf';
   assert.strictEqual(
-    buildSubmittedFileName('Backend.pdf', expected, 'EliTaylor'),
+    buildSubmittedFileName('Oliver_Baltay.pdf', expected, 'EliTaylor'),
     expected,
   );
   assert.strictEqual(
-    buildSubmittedFileName('Backend.docx', expected, 'EliTaylor'),
-    'LangChain - Senior Backend Engineer - Eli Taylor - abc123.docx',
+    buildSubmittedFileName('Oliver_Baltay.docx', expected, 'EliTaylor'),
+    'Eli Taylor.docx',
   );
 }
 
 function testAshbyCopiedInputKeepsOriginal() {
   const tracker = createTracker();
-  const expected = 'LangChain - Senior Backend Engineer - Eli Taylor - abc123.pdf';
+  const expected = 'Eli Taylor.pdf';
   tracker.reset('session-1');
 
   const selected = file('Backend.pdf', 42000, 'application/pdf', 100);
@@ -73,8 +75,33 @@ function testNewSessionClearsDedupe() {
   assert.strictEqual(tracker.shouldEmit(audit), true);
 }
 
-testCanonicalNameAndExtension();
+function testOriginalAndUploadedNamesAreStoredAsAnOrderedPair() {
+  const audit = buildRenameAudit({
+    sessionId: 'session-1',
+    jobId: 'job-1',
+    originalName: 'Oliver_Baltay.pdf',
+    uploadedName: 'Eli Taylor.pdf',
+    expectedName: 'Eli Taylor.pdf',
+    fileSize: 100_540,
+    mimeType: 'application/pdf',
+  });
+
+  assert.strictEqual(audit.originalFileName, 'Oliver_Baltay.pdf');
+  assert.strictEqual(audit.originalName, 'Oliver_Baltay.pdf');
+  assert.strictEqual(audit.submittedFileName, 'Eli Taylor.pdf');
+  assert.strictEqual(audit.cleanedName, 'Eli Taylor.pdf');
+  assert.strictEqual(audit.renamed, true);
+  assert.strictEqual(audit.mismatch, false);
+
+  const firstKey = resumeAuditOutboxKey(audit);
+  const retryKey = resumeAuditOutboxKey({ ...audit });
+  assert.ok(firstKey.startsWith('bidMonitorResumeAudit:session-1:'));
+  assert.strictEqual(retryKey, firstKey);
+}
+
+testProfileUploadNameAndExtension();
 testAshbyCopiedInputKeepsOriginal();
 testDifferentSelectionReplacesOriginal();
 testNewSessionClearsDedupe();
+testOriginalAndUploadedNamesAreStoredAsAnOrderedPair();
 console.log('resume-file-tracking.test.js: all passed');

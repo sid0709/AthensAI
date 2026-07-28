@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, X, Zap, ArrowRight, Plus, Rocket, Link2, Search, Calendar, FilterX } from "lucide-react";
+import { AlertCircle, Loader2, X, Zap, ArrowRight, Plus, Rocket, Link2, Search, Calendar, FilterX, RefreshCw } from "lucide-react";
 import { Skeleton } from "../../../components/ui/skeleton";
 import type { DeployOptions } from "../../../types/agent";
 import type { JobCandidate } from "../../../services/agentApi";
@@ -90,10 +90,10 @@ export function DeployAgentModal({
               <select
                 value={form.source}
                 onChange={(e) => form.setSource(e.target.value)}
-                disabled={!form.profileName || !form.sources.length}
+                disabled={!form.profileName}
                 className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
               >
-                <option value="">{form.sources.length ? "Select job source…" : "No posted jobs found"}</option>
+                <option value="">All job sources</option>
                 {form.sources.map((s) => (
                   <option key={s.title} value={s.title}>{s.title} · {s.type} — {s.posted} posted</option>
                 ))}
@@ -186,7 +186,7 @@ export function DeployAgentModal({
             <div className="rounded-xl border border-border overflow-hidden flex flex-col">
               <div className="flex items-center justify-between px-3 py-2 bg-secondary/40 border-b border-border">
                 <span className="text-[11px] font-semibold text-muted-foreground">
-                  Candidates · {form.loadingJobs ? "…" : form.candidates.length}
+                  Candidates · {form.loadingJobs ? "…" : `${form.candidates.length} available / ${form.total}`}
                 </span>
                 <button type="button" onClick={form.addAll} disabled={form.loadingJobs || !form.candidates.length} className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-primary disabled:opacity-40">
                   Add all <ArrowRight size={11} />
@@ -195,14 +195,38 @@ export function DeployAgentModal({
               <div className="h-72 overflow-auto">
                 {form.loadingJobs ? (
                   <CandidateListSkeleton />
+                ) : form.jobError ? (
+                  <div role="alert" className="h-full p-4 text-xs text-red-700 flex flex-col items-center justify-center text-center gap-2">
+                    <AlertCircle size={18} />
+                    <span>{form.jobError}</span>
+                    <button
+                      type="button"
+                      onClick={form.retryJobs}
+                      className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 font-semibold hover:bg-red-100"
+                    >
+                      <RefreshCw size={12} /> Retry
+                    </button>
+                  </div>
                 ) : form.candidates.length === 0 ? (
                   <div className="p-3 text-xs text-muted-foreground">
                     {form.hasFilter
                       ? "No posted jobs match. Adjust the source or filters."
-                      : "Select a job source, filter by title/date, or paste a URL above."}
+                      : "No posted jobs are available for this profile."}
                   </div>
                 ) : (
-                  form.candidates.map((j) => <JobRow key={j.id} job={j} action="add" onClick={() => form.addToQueue(j)} />)
+                  <>
+                    {form.candidates.map((j) => <JobRow key={j.id} job={j} action="add" onClick={() => form.addToQueue(j)} />)}
+                    {form.hasMore && (
+                      <button
+                        type="button"
+                        onClick={form.loadMore}
+                        disabled={form.loadingMore}
+                        className="w-full py-2.5 text-xs font-semibold text-primary hover:bg-primary/5 disabled:opacity-50"
+                      >
+                        {form.loadingMore ? <><Loader2 size={12} className="inline animate-spin mr-1" /> Loading…</> : `Load more (${form.loadedCount} of ${form.total})`}
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             </div>

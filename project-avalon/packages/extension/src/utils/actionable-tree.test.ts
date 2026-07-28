@@ -306,7 +306,6 @@ function withDom(html: string, run: (body: HTMLElement) => void | Promise<void>)
     'CSS',
     'MutationObserver',
   ] as const) {
-    // @ts-expect-error test shim
     globalThis[key] = window[key];
   }
   window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
@@ -493,7 +492,7 @@ const PLAIN_TEXT_HTML = `
     assert(comboboxes[0].target === 'Country', `country target: "${comboboxes[0].target}"`);
     assert(comboboxes[0].options?.length === 2, `country options: ${comboboxes[0].options?.length}`);
     assert(
-      comboboxes[0].options?.[0].label.includes('United States'),
+      Boolean(comboboxes[0].options?.[0].label.includes('United States')),
       'country options should come from react-select listbox, not iti',
     );
 

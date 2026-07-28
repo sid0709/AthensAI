@@ -4,6 +4,12 @@ import { invalidateApplierContextCache } from "./jobListQuery.js";
 export async function insertAccountInfo(doc) {
 	const result = await accountInfoCollection.insertOne(doc);
 	await invalidateApplierContextCache(doc?.name);
+	const { registerJobListProfile } = await import("./jobListReadModelService.js");
+	await registerJobListProfile({
+		profileId: result.insertedId,
+		applierName: doc?.name,
+		isBeta: String(doc?.tier || "").toLowerCase() === "beta",
+	});
 	return result;
 }
 

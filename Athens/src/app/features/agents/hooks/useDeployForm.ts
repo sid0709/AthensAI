@@ -1,7 +1,32 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApplier } from "@/context/applier-context";
-import { fetchAgentModels, fetchJobSources, fetchCandidateJobs, type JobCandidate } from "../../../services/agentApi";
-import type { DeployOptions, ModelOption, SourceOption } from "../../../types/agent";
+import { fetchCandidateJobs, type JobCandidate } from "../../../services/agentApi";
+import type { DeployOptions, SourceOption } from "../../../types/agent";
+
+function canonicalUrl(raw: string): { url: string; host: string } | null {
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`);
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    parsed.hash = "";
+    [...parsed.searchParams.keys()].forEach((key) => {
+      if (/^(utm_|gclid$|fbclid$|mc_)/i.test(key)) parsed.searchParams.delete(key);
+    });
+    return { url: parsed.toString(), host: parsed.hostname.replace(/^www\./, "") };
+  } catch {
+    return null;
+  }
+}
+
+function sameJob(left: JobCandidate, right: JobCandidate): boolean {
+  if (!left.id.startsWith("manual:") && !right.id.startsWith("manual:")) return left.id === right.id;
+  return canonicalUrl(left.url)?.url === canonicalUrl(right.url)?.url;
+}
+
+function appendUnique(current: JobCandidate[], additions: JobCandidate[]): JobCandidate[] {
+  const next = [...current];
+  for (const job of additions) if (!next.some((existing) => sameJob(existing, job))) next.push(job);
+  return next;
+}
 
 export function useDeployForm(
   onDeploy: (opts: DeployOptions) => Promise<void> | void,
@@ -9,14 +34,12 @@ export function useDeployForm(
 ) {
   const { applier, applierReady } = useApplier();
   const profileId = applier?._id != null ? String(applier._id) : "";
+  const applierName = applier?.name || "";
   const asNewSession = Boolean(opts?.asNewSession);
 
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [models, setModels] = useState<ModelOption[]>([]);
-  const [model, setModel] = useState("");
-  const [loadingMeta, setLoadingMeta] = useState(false);
   const [sources, setSources] = useState<SourceOption[]>([]);
   const [source, setSource] = useState("");
   const [titleQuery, setTitleQuery] = useState("");
@@ -25,114 +48,89 @@ export function useDeployForm(
   const [fetched, setFetched] = useState<JobCandidate[]>([]);
   const [queue, setQueue] = useState<JobCandidate[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
-
-  // Debounce the free-text title filter so we don't refetch on every keystroke.
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [jobError, setJobError] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [retryKey, setRetryKey] = useState(0);
   const [debouncedTitle, setDebouncedTitle] = useState("");
+
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedTitle(titleQuery.trim()), 350);
-    return () => clearTimeout(timer);
+    const timer = window.setTimeout(() => setDebouncedTitle(titleQuery.trim()), 350);
+    return () => window.clearTimeout(timer);
   }, [titleQuery]);
 
-  useEffect(() => {
-    if (!applierReady || !profileId) {
-      setModels([]);
-      setModel("");
-      return;
-    }
-    setLoadingMeta(true);
-    fetchAgentModels(profileId)
-      .then((modelList) => {
-        setModels(modelList);
-        setModel((prev) => (prev && modelList.some((m) => m.id === prev) ? prev : modelList[0]?.id || ""));
-      })
-      .catch((e) => setErr(String((e as Error)?.message || e)))
-      .finally(() => setLoadingMeta(false));
-  }, [profileId, applierReady]);
+  useEffect(() => setPage(1), [profileId, source, debouncedTitle, postedFrom, postedTo]);
 
   useEffect(() => {
-    if (!profileId) {
-      setSources([]);
-      setSource("");
-      return;
-    }
-    fetchJobSources(profileId)
-      .then((list) => {
-        setSources(list);
-        setSource((prev) => (prev && list.some((s) => s.title === prev) ? prev : list[0]?.title || ""));
-      })
-      .catch(() => setSources([]));
-  }, [profileId]);
-
-  const applierName = applier?.name || "";
-  // Fetch when a source is chosen OR any filter is set — so title/date filters
-  // can stand on their own across all sources without picking a source first.
-  const hasFilter = Boolean(source || debouncedTitle || postedFrom || postedTo);
-  useEffect(() => {
-    if (!applierName || !hasFilter) {
+    if (!applierReady || !applierName || !profileId) {
       setFetched([]);
+      setSources([]);
       setLoadingJobs(false);
       return;
     }
-    let cancelled = false;
-    setLoadingJobs(true);
-    // Clear stale candidates immediately so the list doesn't keep showing the
-    // previous source/filter results while the next request is in flight.
-    setFetched([]);
-    fetchCandidateJobs(applierName, source, 200, {
+    const controller = new AbortController();
+    const firstPage = page === 1;
+    setJobError("");
+    if (firstPage) {
+      setLoadingJobs(true);
+      setFetched([]);
+    } else {
+      setLoadingMore(true);
+    }
+    fetchCandidateJobs(applierName, source, 100, {
       titleQuery: debouncedTitle,
       postedFrom,
       postedTo,
-    })
-      .then((jobs) => {
-        if (!cancelled) setFetched(jobs);
+    }, { page, signal: controller.signal })
+      .then((result) => {
+        setFetched((current) => firstPage ? result.jobs : appendUnique(current, result.jobs));
+        setSources(result.sources);
+        setTotal(result.total);
+        setTotalPages(result.totalPages);
       })
-      .catch(() => {
-        if (!cancelled) setFetched([]);
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setJobError(error instanceof Error ? error.message : String(error));
       })
       .finally(() => {
-        if (!cancelled) setLoadingJobs(false);
+        if (controller.signal.aborted) return;
+        setLoadingJobs(false);
+        setLoadingMore(false);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [applierName, source, debouncedTitle, postedFrom, postedTo, hasFilter]);
+    return () => controller.abort();
+  }, [applierReady, applierName, profileId, source, debouncedTitle, postedFrom, postedTo, page, retryKey]);
 
-  const queuedIds = new Set(queue.map((j) => j.id));
-  const candidates = fetched.filter((j) => !queuedIds.has(j.id));
-
-  const addToQueue = (job: JobCandidate) => setQueue((q) => (q.some((x) => x.id === job.id) ? q : [...q, job]));
-  const removeFromQueue = (id: string) => setQueue((q) => q.filter((x) => x.id !== id));
-  const addAll = () => setQueue((q) => [...q, ...candidates]);
+  const candidates = useMemo(
+    () => fetched.filter((job) => !queue.some((queued) => sameJob(job, queued))),
+    [fetched, queue],
+  );
+  const addToQueue = (job: JobCandidate) => setQueue((current) => appendUnique(current, [job]));
+  const removeFromQueue = (id: string) => setQueue((current) => current.filter((job) => job.id !== id));
+  const addAll = () => setQueue((current) => appendUnique(current, candidates));
   const clearQueue = () => setQueue([]);
 
-  /** Manually queue a pasted job URL (no job source needed). Returns false on a bad URL. */
   const addUrlToQueue = (rawUrl: string): boolean => {
-    const trimmed = rawUrl.trim();
-    if (!trimmed) return false;
-    let normalized: string;
-    let host: string;
-    try {
-      const u = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
-      normalized = u.toString();
-      host = u.hostname.replace(/^www\./, "");
-    } catch {
+    const parsed = canonicalUrl(rawUrl);
+    if (!parsed) {
       setErr("Enter a valid job URL");
       return false;
     }
     setErr("");
-    setQueue((q) =>
-      q.some((x) => x.url === normalized)
-        ? q
-        : [...q, { id: `manual:${normalized}`, title: host, company: "Manual link", url: normalized, source: "manual" } as JobCandidate],
-    );
+    const job: JobCandidate = {
+      id: `manual:${parsed.url}`,
+      title: parsed.host,
+      company: "Unresolved job",
+      url: parsed.url,
+      source: "manual",
+    };
+    setQueue((current) => appendUnique(current, [job]));
     return true;
   };
 
-  const selectedSource = sources.find((s) => s.title === source);
-  const posted = selectedSource?.posted ?? 0;
-  // A new session can start empty (queue jobs into it later); queuing into the
-  // active session still requires at least one job.
-  const valid = !!profileId && (queue.length > 0 || asNewSession);
+  const hasFilter = Boolean(source || titleQuery || postedFrom || postedTo);
+  const valid = Boolean(profileId && (queue.length > 0 || asNewSession));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -142,26 +140,19 @@ export function useDeployForm(
     }
     setErr("");
     setLoading(true);
-    const autoLabel = source || (debouncedTitle ? `"${debouncedTitle}"` : "Manual");
-    const sessionName = name.trim() || `${autoLabel} · ${new Date().toLocaleDateString()}`;
+    const autoLabel = source || (debouncedTitle ? `“${debouncedTitle}”` : "Agent session");
     try {
       await onDeploy({
-        name: sessionName,
+        name: name.trim() || `${autoLabel} · ${new Date().toLocaleDateString()}`,
         profileId,
-        model: model || "avalon",
+        model: "avalon",
         source,
-        jobIds: queue.map((j) => j.id),
-        jobs: queue.map((j) => ({
-          id: j.id,
-          title: j.title,
-          company: j.company,
-          url: j.url,
-          source: j.source,
-        })),
+        jobIds: queue.map((job) => job.id),
+        jobs: queue,
         ...(asNewSession ? { createNewSession: true } : {}),
       });
-    } catch (e: unknown) {
-      setErr(String(e instanceof Error ? e.message : e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
       setLoading(false);
     }
   }
@@ -172,11 +163,7 @@ export function useDeployForm(
     asNewSession,
     loading,
     err,
-    profileName: applier?.name || "",
-    models,
-    model,
-    setModel,
-    loadingMeta,
+    profileName: applierName,
     sources,
     source,
     setSource,
@@ -193,10 +180,16 @@ export function useDeployForm(
       setPostedFrom("");
       setPostedTo("");
     },
-    posted,
     candidates,
+    loadedCount: fetched.length,
+    total,
+    hasMore: page < totalPages,
     queue,
     loadingJobs,
+    loadingMore,
+    jobError,
+    retryJobs: () => setRetryKey((key) => key + 1),
+    loadMore: () => setPage((current) => Math.min(totalPages, current + 1)),
     addToQueue,
     addUrlToQueue,
     removeFromQueue,

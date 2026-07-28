@@ -342,7 +342,14 @@ export async function analyzeJobPage({ pageContext, applierName, sessionContext,
 		};
 	}
 
-	const { content, usage } = await chatCompletion({
+	const {
+		content,
+		usage,
+		requestId,
+		provider: usedProvider,
+		requestedModel,
+		billedModel,
+	} = await chatCompletion({
 		provider,
 		apiKey,
 		model,
@@ -386,6 +393,10 @@ export async function analyzeJobPage({ pageContext, applierName, sessionContext,
 		},
 		usage: summarizeUsage(usage, model),
 		mode: "llm",
+		requestId,
+		provider: usedProvider,
+		requestedModel,
+		billedModel,
 	};
 }
 
@@ -429,7 +440,14 @@ export async function analyzeJobFlags({
 			? matchedSentences.map((sentence) => `- ${sentence}`).join("\n")
 			: "(no sentences matched the location/clearance keywords)";
 
-		const { content, usage } = await chatCompletion({
+		const {
+			content,
+			usage,
+			requestId,
+			provider: usedProvider,
+			requestedModel,
+			billedModel,
+		} = await chatCompletion({
 			provider,
 			apiKey,
 			model,
@@ -470,7 +488,15 @@ export async function analyzeJobFlags({
 		if (!result.remote && !result.clearance) {
 			return { result: heuristicFlags(jdBody, flags), usage: null, mode: "heuristic" };
 		}
-		return { result, usage: summarizeUsage(usage, model), mode: "llm" };
+		return {
+			result,
+			usage: summarizeUsage(usage, model),
+			mode: "llm",
+			requestId,
+			provider: usedProvider,
+			requestedModel,
+			billedModel,
+		};
 	} catch (err) {
 		console.warn("[bid-job-analyze] flags LLM failed, using heuristic:", err.message);
 		return { result: heuristicFlags(jdBody, flags), usage: null, mode: "heuristic" };
@@ -549,7 +575,14 @@ export async function recommendResumeForJob({ pageContext, applierName, jobId })
 	}
 
 	const allowedList = stackNames.map((s) => `- ${s}`).join("\n");
-	const { content, usage } = await chatCompletion({
+	const {
+		content,
+		usage,
+		requestId,
+		provider: usedProvider,
+		requestedModel,
+		billedModel,
+	} = await chatCompletion({
 		provider,
 		apiKey,
 		model,
@@ -591,6 +624,10 @@ export async function recommendResumeForJob({ pageContext, applierName, jobId })
 			},
 			usage: summarizeUsage(usage, model),
 			mode: "llm",
+			requestId,
+			provider: usedProvider,
+			requestedModel,
+			billedModel,
 		};
 	}
 
@@ -611,5 +648,9 @@ export async function recommendResumeForJob({ pageContext, applierName, jobId })
 		},
 		usage: summarizeUsage(usage, model),
 		mode: "llm",
+		requestId,
+		provider: usedProvider,
+		requestedModel,
+		billedModel,
 	};
 }

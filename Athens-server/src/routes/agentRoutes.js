@@ -5,9 +5,11 @@ import {
   getAgentHealth,
   getAgentJobSources,
   getAgentModels,
+  getAgentReadiness,
   getAgentRuns,
   postAgentChat,
   postAgentDeploy,
+  postResolveManualJob,
 } from "../controllers/agentController.js";
 import {
   postApplyLog,
@@ -22,7 +24,9 @@ router.get("/dashboard", getAgentDashboard);
 router.get("/runs", getAgentRuns);
 router.get("/activity", getAgentActivity);
 router.get("/job-sources", getAgentJobSources);
+router.get("/readiness", getAgentReadiness);
 router.get("/models", getAgentModels);
+router.post("/manual-jobs/resolve", postResolveManualJob);
 router.post("/chat", postAgentChat);
 router.post("/deploy", postAgentDeploy);
 

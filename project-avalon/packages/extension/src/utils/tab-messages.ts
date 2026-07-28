@@ -1,4 +1,5 @@
 import type { ActionResult, RemoteAction } from '@avalon/shared';
+import type { ScriptPublicPath } from 'wxt/utils/inject-script';
 import { EXTENSION_MESSAGES } from './constants';
 
 export async function ensureContentScript(tabId: number): Promise<void> {
@@ -10,7 +11,7 @@ export async function ensureContentScript(tabId: number): Promise<void> {
   }
 
   const manifest = browser.runtime.getManifest();
-  const files = manifest.content_scripts?.flatMap((entry) => entry.js ?? []) ?? [];
+  const files = (manifest.content_scripts?.flatMap((entry) => entry.js ?? []) ?? []) as ScriptPublicPath[];
   if (files.length === 0) return;
 
   try {

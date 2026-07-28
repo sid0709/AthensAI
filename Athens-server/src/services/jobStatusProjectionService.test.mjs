@@ -3,12 +3,20 @@ import assert from "node:assert/strict";
 import {
   buildStatusProjectionData,
   canUseMaterializedStatusPageForTier,
+  canonicalJobCatalog,
+  canonicalProjectedStatusIds,
   normalizeMaterializedJobStatusCounts,
 	reduceJobStatuses,
   stateOf,
   statesOf,
   statusContribution,
 } from "./jobStatusProjectionService.js";
+
+test("Mongo-era jobs without sourceCatalog remain market jobs", () => {
+	assert.equal(canonicalJobCatalog(undefined), "market");
+	assert.equal(canonicalJobCatalog(""), "market");
+	assert.equal(canonicalJobCatalog(" EXTERNAL "), "external");
+});
 
 test("status projection gives completed and scheduled states precedence", () => {
   assert.equal(stateOf({ appliedDate: "a", scheduledDate: "s" }), "scheduled");
@@ -162,4 +170,25 @@ test("projection v2 stores the exact canonical row and its fingerprint", () => {
 		scheduledDate: "2026-01-03T00:00:00.000Z",
 	});
 	assert.match(projection.statusFingerprint, /^[a-f0-9]{64}$/);
+});
+
+test("canonical projection reads ignore legacy and tampered rows without discarding valid Bid Ready rows", () => {
+	const valid = buildStatusProjectionData({
+		profileId: "profile-1",
+		jobId: "ready-job",
+		job: { sourceCatalog: "market", postedAt: "2026-07-21T00:00:00.000Z" },
+		statuses: [{ applier: "profile-1", bidReadyDate: "2026-07-21T00:00:00.000Z" }],
+	});
+	const legacy = {
+		profileId: "profile-1",
+		jobId: "legacy-job",
+		state: "bid-ready",
+		statusRow: { applier: "profile-1", bidReadyDate: "2026-07-20T00:00:00.000Z" },
+	};
+	const tampered = { ...valid, jobId: "tampered-job", statusFingerprint: "invalid" };
+
+	assert.deepEqual(
+		canonicalProjectedStatusIds("profile-1", "bid-ready", [legacy, tampered, valid]),
+		["ready-job"],
+	);
 });

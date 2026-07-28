@@ -16,7 +16,7 @@ import {
 } from './combobox-input.js';
 
 export interface ProbedDropdownResult {
-  options: ActionableTarget['options'];
+  options: NonNullable<ActionableTarget['options']>;
   source: OptionsSource;
 }
 
@@ -34,7 +34,7 @@ export function staticComboboxOptions(input: HTMLInputElement): ProbedDropdownRe
   return { options, source: 'static-listbox' };
 }
 
-function harvestOptionsForInput(input: HTMLInputElement): ActionableTarget['options'] {
+function harvestOptionsForInput(input: HTMLInputElement): NonNullable<ActionableTarget['options']> {
   const labels = harvestVisibleOptions(input);
   if (labels.length === 0) return [];
   return labels.map((label) => ({ value: label, label }));
@@ -89,11 +89,11 @@ export function closeDropdown(): void {
 export function waitForDropdownWithObserver(
   input: HTMLInputElement,
   timeoutMs: number,
-  checkFn: () => ActionableTarget['options'],
-): Promise<ActionableTarget['options']> {
+  checkFn: () => NonNullable<ActionableTarget['options']>,
+): Promise<NonNullable<ActionableTarget['options']>> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (options: ActionableTarget['options']) => {
+    const finish = (options: NonNullable<ActionableTarget['options']>) => {
       if (settled) return;
       settled = true;
       observer.disconnect();

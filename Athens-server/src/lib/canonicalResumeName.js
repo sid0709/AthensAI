@@ -1,6 +1,6 @@
 /**
- * Canonical résumé naming for Bid Ready zip + upload mismatch checks.
- * Pattern: `Company - Title - Profile - shortId`
+ * Canonical résumé naming for internal Bid Ready files plus the shorter
+ * recruiter-facing upload name.
  */
 
 const WIN_RESERVED = new Set([
@@ -84,6 +84,15 @@ export function buildCanonicalResumeFileName(company, title, profileName, jobId,
 	return `${stem}${safeExt}`;
 }
 
+/** Recruiter-facing ATS upload name: `Profile.ext`. */
+export function buildProfileResumeFileName(profileName, ext = ".pdf") {
+	const profileSeg = sanitizeResumeSegment(profileName);
+	const safeExt = String(ext || ".pdf").startsWith(".")
+		? String(ext)
+		: `.${ext}`;
+	return `${profileSeg}${safeExt}`;
+}
+
 /** Basename for comparison (case-sensitive). */
 export function resumeBasename(name) {
 	const s = String(name || "").trim();
@@ -93,10 +102,10 @@ export function resumeBasename(name) {
 }
 
 /**
- * Mismatch = hooked original basename !== expected canonical basename (case-sensitive).
+ * Mismatch = actual uploaded basename !== recruiter-facing target basename.
  */
-export function isResumeNameMismatch(originalName, expectedName) {
-	const a = resumeBasename(originalName);
+export function isResumeNameMismatch(actualName, expectedName) {
+	const a = resumeBasename(actualName);
 	const b = resumeBasename(expectedName);
 	if (!a || !b) return false;
 	return a !== b;

@@ -62,6 +62,7 @@ function AppCard({
 
   return (
     <motion.article
+      id={app.id}
       initial={{ opacity: 0, y: 28 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.55, delay: 0.15 + index * 0.1, ease: [0.22, 1, 0.36, 1] }}

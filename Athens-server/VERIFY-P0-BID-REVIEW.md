@@ -45,7 +45,7 @@ If endpoints 404 after pulling code, restart Athens-server so nodemon/node loads
 # P2 — Canonical résumé naming (verified)
 
 - Unit tests: stem format, folder===file stem, case-sensitive mismatch, Windows reserved names
-- `POST /bid-results/resume-audit` → mismatch true for `WrongName.pdf` vs `Company - Title - Profile - shortId.pdf`
+- `POST /bid-results/resume-audit` → records the selected original and verifies the uploaded name against `Profile Name.pdf`
 - `GET /bid-results/resumes.zip?jobIds=…` → 200 zip; entries like `Motional - Senior Engineer - Eli Taylor - …/….pdf` (stem match)
 - Bid-Monitor page-hook records original vs expected; still renames to profile for ATS; toast + Athens BidDetail mismatch banner
 

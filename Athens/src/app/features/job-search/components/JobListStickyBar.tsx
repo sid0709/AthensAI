@@ -103,8 +103,8 @@ export function JobListStickyBar({
             onPageSizeChange={onPageSizeChange}
             pageSizeOptions={pageSizeOptions}
             detailed
-            unitLabel="companies"
-            secondaryTotal={totalJobs}
+            unitLabel="jobs"
+            secondaryTotal={null}
             loading={loading}
             className="py-2 px-0 flex-1 min-w-0"
           />

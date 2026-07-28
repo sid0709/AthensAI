@@ -50,6 +50,38 @@ function normalizeBidResult(row: BidResult): BidResult {
     useCustomizedResume: Boolean(row.useCustomizedResume),
     analysisSummary:
       typeof row.analysisSummary === "string" ? row.analysisSummary : null,
+    analysisFormAnswers: Array.isArray(row.analysisFormAnswers)
+      ? row.analysisFormAnswers
+      : [],
+    analysisMode:
+      row.analysisMode === "llm" || row.analysisMode === "heuristic"
+        ? row.analysisMode
+        : null,
+    analysisPageUrl:
+      typeof row.analysisPageUrl === "string" ? row.analysisPageUrl : null,
+    analysisPageTitle:
+      typeof row.analysisPageTitle === "string" ? row.analysisPageTitle : null,
+    analysisUsage:
+      row.analysisUsage && typeof row.analysisUsage === "object"
+        ? row.analysisUsage
+        : null,
+    analysisRequestId:
+      typeof row.analysisRequestId === "string" ? row.analysisRequestId : null,
+    analyzedAt: typeof row.analyzedAt === "string" ? row.analyzedAt : null,
+    flagAnalysisMode:
+      row.flagAnalysisMode === "llm" || row.flagAnalysisMode === "heuristic"
+        ? row.flagAnalysisMode
+        : null,
+    flagAnalysisUsage:
+      row.flagAnalysisUsage && typeof row.flagAnalysisUsage === "object"
+        ? row.flagAnalysisUsage
+        : null,
+    flagAnalysisRequestId:
+      typeof row.flagAnalysisRequestId === "string"
+        ? row.flagAnalysisRequestId
+        : null,
+    flagAnalyzedAt:
+      typeof row.flagAnalyzedAt === "string" ? row.flagAnalyzedAt : null,
     recommendedResumeStack:
       typeof row.recommendedResumeStack === "string"
         ? row.recommendedResumeStack
@@ -62,6 +94,18 @@ function normalizeBidResult(row: BidResult): BidResult {
       typeof row.recommendWarning === "string" ? row.recommendWarning : null,
     recommendedAt:
       typeof row.recommendedAt === "string" ? row.recommendedAt : null,
+    recommendMode:
+      row.recommendMode === "llm" || row.recommendMode === "heuristic"
+        ? row.recommendMode
+        : null,
+    recommendUsage:
+      row.recommendUsage && typeof row.recommendUsage === "object"
+        ? row.recommendUsage
+        : null,
+    recommendRequestId:
+      typeof row.recommendRequestId === "string"
+        ? row.recommendRequestId
+        : null,
     resumeStackMatch:
       stackMatch === "match" ||
       stackMatch === "mismatch" ||

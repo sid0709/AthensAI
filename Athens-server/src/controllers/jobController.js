@@ -1,5 +1,5 @@
 import { DocumentId } from "@nextoffer/shared/document-id";
-import { mergeJobStatusRows } from "@nextoffer/shared/job-status";
+import { mergeJobStatusRows, resolveJobStatusState } from "@nextoffer/shared/job-status";
 import {
 	jobsCollection,
 	jobIdentityRegistryCollection,
@@ -64,6 +64,13 @@ import {
 	listCompanyGroupedJobs,
 	listCompanyGroupMembers,
 } from '../services/companyGroupedJobsService.js';
+import {
+	countJobsV2,
+	getJobListReadModelState,
+	listJobsV2,
+	patchJobListViewerStatus,
+} from '../services/jobListReadModelService.js';
+import { setGauge } from '../services/monitoring/metrics.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -90,6 +97,25 @@ async function jobsForApplier(jobs, applierName) {
 	const account = name ? await resolveApplierContext(name) : null;
 	const profileId = account?.id ? String(account.id) : null;
 	return (Array.isArray(jobs) ? jobs : []).map((job) => jobForProfile(job, profileId));
+}
+
+function syncMutationReadModel(result, jobId) {
+	patchJobListViewerStatus({
+		profileId: result.profileId,
+		jobId,
+		state: result.viewerStatus,
+		version: result.statusVersion,
+	});
+}
+
+function mutationMetadata(result) {
+	return {
+		changed: Boolean(result.changed),
+		mutationId: result.mutationId,
+		statusVersion: result.statusVersion,
+		cacheSync: result.cacheSync || 'queued',
+		viewerStatus: result.viewerStatus,
+	};
 }
 
 function jobCountCacheKey(body = {}) {
@@ -260,6 +286,7 @@ export async function createJob(req, res) {
 					success: false,
 					created: false,
 					duplicate: true,
+					existingId: String(existingByUrl._id || ''),
 					reason: 'Job with this URL has been posted within the last 30 days',
 				});
 			}
@@ -278,6 +305,7 @@ export async function createJob(req, res) {
 				success: false,
 				created: false,
 				duplicate: true,
+				existingId: identityClaim.existingJobId ? String(identityClaim.existingJobId) : '',
 				reason: 'Duplicate job with this company and title was added within the last 30 days',
 			});
 		}
@@ -375,6 +403,24 @@ export async function createJob(req, res) {
 		console.error('POST /api/jobs error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
+}
+
+/** Reuse the canonical ingest path from internal controllers without an HTTP loopback. */
+export async function createJobRecord(job, { client = 'agent-manual' } = {}) {
+	let statusCode = 200;
+	let payload = null;
+	const response = {
+		status(code) {
+			statusCode = code;
+			return this;
+		},
+		json(value) {
+			payload = value;
+			return value;
+		},
+	};
+	await createJob({ body: job, get: () => client }, response);
+	return { statusCode, payload: payload || {} };
 }
 
 export async function getJobsForRule(req, res) {
@@ -705,6 +751,49 @@ export async function getJobs(req, res) {
 	}
 }
 
+/** Compact, pre-materialized Job Search endpoint. */
+export async function getJobsV2(req, res) {
+	const started = performance.now();
+	try {
+		const result = await listJobsV2(req.body || {});
+		if (result?.disabled) return res.status(404).json({ success: false, error: 'Job Search v2 is disabled' });
+		const totalMs = performance.now() - started;
+		const phases = result._serverTiming || { total: totalMs };
+		res.setHeader('Server-Timing', Object.entries(phases)
+			.map(([phase, duration]) => `jobs-v2-${phase};dur=${Number(duration).toFixed(1)}`)
+			.join(', '));
+		setGauge(
+			'athens_jobs_v2_payload_bytes',
+			{ limit: String(result.pagination?.limit || 0) },
+			Buffer.byteLength(JSON.stringify(result)),
+		);
+		res.setHeader('X-Job-Read-Model-Version', String(result.readModelVersion || ''));
+		return res.json(result);
+	} catch (err) {
+		console.error('POST /api/jobs/list/v2 error', err);
+		return res.status(503).json({
+			success: false,
+			retryable: true,
+			error: err.message,
+			readModel: getJobListReadModelState(),
+		});
+	}
+}
+
+/** Snapshot-backed status counts; intentionally independent from card delivery. */
+export async function getJobStatusCountsV2(req, res) {
+	const started = performance.now();
+	try {
+		const result = await countJobsV2(req.body || {});
+		if (result?.disabled) return res.status(404).json({ success: false, error: 'Job Search v2 is disabled' });
+		res.setHeader('Server-Timing', `jobs-v2-counts;dur=${(performance.now() - started).toFixed(1)}`);
+		return res.json(result);
+	} catch (err) {
+		console.error('POST /api/jobs/list/v2/counts error', err);
+		return res.status(503).json({ success: false, retryable: true, error: err.message });
+	}
+}
+
 export async function getCompanyGroupMembers(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
@@ -724,12 +813,14 @@ export async function applyToJob(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const { id } = req.params;
-		const { applierName } = req.body;
-		const result = await mutateJobStatus({ jobId: id, applierName, transition: 'apply' });
+		const { applierName, catalog, mutationId } = req.body;
+		const result = await mutateJobStatus({ jobId: id, applierName, transition: 'apply', catalog, mutationId });
+		syncMutationReadModel(result, id);
 		jobCountCache.clear();
 		return res.json({
 			success: true,
 			data: jobForProfile(result.job, result.profileId),
+			...mutationMetadata(result),
 			...(result.changed ? {} : { message: 'User has already applied' }),
 		});
 	} catch (err) {
@@ -745,14 +836,15 @@ export async function updateJobStatus(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const { id } = req.params;
-		const { status, applierName } = req.body;
+		const { status, applierName, catalog, mutationId } = req.body;
 		const transition = ({ Declined: 'declined', Scheduled: 'scheduled', Applied: 'applied' })[status];
 		if (!transition) {
 			return res.status(400).json({ success: false, error: 'Invalid status' });
 		}
-		const result = await mutateJobStatus({ jobId: id, applierName, transition });
+		const result = await mutateJobStatus({ jobId: id, applierName, transition, catalog, mutationId });
+		syncMutationReadModel(result, id);
 		jobCountCache.clear();
-		return res.json({ success: true, data: jobForProfile(result.job, result.profileId) });
+		return res.json({ success: true, data: jobForProfile(result.job, result.profileId), ...mutationMetadata(result) });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/status error', err);
 		const statusCode = err.message === 'Invalid job id' || err.message === 'applierName is required'
@@ -791,10 +883,11 @@ export async function unapplyFromJob(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const { id } = req.params;
-		const { applierName } = req.body;
-		const result = await mutateJobStatus({ jobId: id, applierName, transition: 'unapply' });
+		const { applierName, catalog, mutationId } = req.body;
+		const result = await mutateJobStatus({ jobId: id, applierName, transition: 'unapply', catalog, mutationId });
+		syncMutationReadModel(result, id);
 		jobCountCache.clear();
-		return res.json({ success: true, data: jobForProfile(result.job, result.profileId) });
+		return res.json({ success: true, data: jobForProfile(result.job, result.profileId), ...mutationMetadata(result) });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/unapply error', err);
 		const status = err.message === 'Invalid job id' || err.message === 'applierName is required'
@@ -814,6 +907,8 @@ export async function updateJobBidStatus(req, res) {
 		const { id } = req.params;
 		const applierName = String(req.body?.applierName ?? '').trim();
 		const status = String(req.body?.status ?? '').trim();
+		const catalog = String(req.body?.catalog ?? 'market').trim();
+		const mutationId = req.body?.mutationId ?? null;
 
 		if (!applierName) {
 			return res.status(400).json({ success: false, error: 'applierName is required' });
@@ -831,8 +926,10 @@ export async function updateJobBidStatus(req, res) {
 
 		let updatedJob;
 		let updatedProfileId;
+		let mutationResult;
 		if (status === 'clear') {
-			const result = await clearJobBidStatus(applierName, id);
+			const result = await clearJobBidStatus(applierName, id, { catalog, mutationId });
+			mutationResult = result;
 			updatedJob = result.job;
 			updatedProfileId = result.profileId;
 			const tasks = getVendorTasksCollection();
@@ -840,7 +937,8 @@ export async function updateJobBidStatus(req, res) {
 				console.warn('[jobs] deferred vendor task removal failed:', error?.message || error);
 			});
 		} else if (status === 'BidReady') {
-			const result = await upsertJobBidStatus(applierName, id, { bidReady: true });
+			const result = await upsertJobBidStatus(applierName, id, { bidReady: true, catalog, mutationId });
+			mutationResult = result;
 			updatedJob = result.job;
 			updatedProfileId = result.profileId;
 			const tasks = getVendorTasksCollection();
@@ -894,12 +992,18 @@ export async function updateJobBidStatus(req, res) {
 				console.warn('[jobs] deferred vendor task sync failed:', error?.message || error);
 			});
 		} else {
-			const result = await upsertJobBidStatus(applierName, id, { bidReady: true, bidCompleted: true });
+			const result = await upsertJobBidStatus(applierName, id, { bidReady: true, bidCompleted: true, catalog, mutationId });
+			mutationResult = result;
 			updatedJob = result.job;
 			updatedProfileId = result.profileId;
 		}
+		syncMutationReadModel(mutationResult, id);
 		jobCountCache.clear();
-		return res.json({ success: true, data: jobForProfile(updatedJob, updatedProfileId) });
+		return res.json({
+			success: true,
+			data: jobForProfile(updatedJob, updatedProfileId),
+			...mutationMetadata(mutationResult),
+		});
 	} catch (err) {
 		console.error('POST /api/jobs/:id/bid-status error', err);
 		const statusCode = err.message === 'Invalid job id' || err.message === 'applierName is required'
@@ -964,6 +1068,38 @@ export async function getJobById(req, res) {
 	} catch (err) {
 		console.error(`GET /api/jobs/${req.params.id} error`, err);
 		return res.status(500).json({ success: false, error: 'Failed to fetch job' });
+	}
+}
+
+/** Authoritative status reconciliation after a lost mutation response. */
+export async function getJobViewerStatus(req, res) {
+	try {
+		const { id } = req.params;
+		if (!id || !DocumentId.isValid(id)) {
+			return res.status(400).json({ success: false, error: 'Invalid job id' });
+		}
+		const applierName = String(req.query?.applierName || '').trim();
+		if (!applierName) return res.status(400).json({ success: false, error: 'applierName is required' });
+		const account = await resolveApplierContext(applierName);
+		if (!account?.id) return res.status(404).json({ success: false, error: `User ${applierName} not found` });
+		const catalog = String(req.query?.catalog || 'market').toLowerCase() === 'external' ? 'external' : 'market';
+		const collection = catalog === 'external' ? externalScrapedJobsCollection : jobsCollection;
+		const job = await collection?.findOne(
+			{ _id: new DocumentId(id) },
+			{ projection: { status: 1, sourceCatalog: 1 } },
+		);
+		if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
+		const row = mergeJobStatusRows(job.status, String(account.id));
+		return res.json({
+			success: true,
+			jobId: id,
+			catalog,
+			viewerStatus: resolveJobStatusState(row),
+			status: row ? [row] : [],
+		});
+	} catch (err) {
+		console.error('GET /api/jobs/:id/viewer-status error', err);
+		return res.status(500).json({ success: false, error: err.message });
 	}
 }
 

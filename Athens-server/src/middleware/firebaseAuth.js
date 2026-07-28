@@ -131,29 +131,6 @@ export async function requireFirebaseAuth(req, res, next) {
 	}
 }
 
-export async function requireFirebaseSocket(socket, next) {
-	try {
-		const token =
-			String(socket.handshake.auth?.token || "").trim() ||
-			String(socket.handshake.headers?.authorization || "").replace(/^Bearer\s+/i, "").trim();
-		if (!token) {
-			if (!authRequired()) return next();
-			return next(new Error("Firebase ID token required"));
-		}
-		const decoded = await getFirebaseAuth().verifyIdToken(token, true);
-		socket.data.auth = decoded;
-		socket.data.profileAccess = await loadAccess(decoded.uid);
-		const requestedProfile = String(socket.handshake.auth?.profileId || "").trim();
-		if (requestedProfile && !isAdmin(decoded) && !socket.data.profileAccess.profileIds.has(requestedProfile)) {
-			return next(new Error("Profile access denied"));
-		}
-		socket.data.requestedProfile = requestedProfile || null;
-		return next();
-	} catch {
-		return next(new Error("Invalid or revoked Firebase ID token"));
-	}
-}
-
 export function clearProfileAccessCache(uid) {
 	if (uid) accessCache.delete(uid);
 	else accessCache.clear();

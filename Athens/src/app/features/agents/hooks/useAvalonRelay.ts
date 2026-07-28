@@ -25,6 +25,7 @@ import {
   createAvalonSocket,
   persistAvalonSessionId,
   storedAvalonSessionId,
+  resolveManualJob,
 } from "../../../services/agentApi";
 import {
   applyToJob,
@@ -262,9 +263,12 @@ export interface AvalonRelayOptions {
   profileId?: string;
 }
 
-export const QUEUE_STORAGE_PREFIX = "athens-agent-queue-";
+export const QUEUE_STORAGE_PREFIX = "athens-agent-state:v2:queue:";
+export const LEGACY_QUEUE_STORAGE_PREFIX = "athens-agent-queue-";
 
 interface PersistedQueueState {
+  version?: 2;
+  profileId?: string;
   jobQueue: QueuedJob[];
   activeJobIndex: number;
   appliedJobIds: string[];
@@ -278,6 +282,7 @@ function loadPersistedQueue(persistKey: string): PersistedQueueState | null {
     const parsed = JSON.parse(raw) as Partial<PersistedQueueState>;
     if (!Array.isArray(parsed.jobQueue)) return null;
     return {
+      version: 2,
       jobQueue: parsed.jobQueue,
       activeJobIndex: typeof parsed.activeJobIndex === "number" ? parsed.activeJobIndex : 0,
       appliedJobIds: Array.isArray(parsed.appliedJobIds) ? parsed.appliedJobIds : [],
@@ -395,6 +400,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     if (!persistKey) return;
     try {
       const snapshot: PersistedQueueState = {
+        version: 2,
+        profileId: profileIdRef.current || undefined,
         jobQueue,
         activeJobIndex,
         appliedJobIds: Array.from(appliedJobIds),
@@ -1316,9 +1323,27 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
   const enqueueJobs = useCallback(
     (jobs: QueuedJob[]) => {
-      setJobQueue(jobs);
-      setActiveJobIndex(0);
-      pushLog(`Queued ${jobs.length} job(s) for application`, true);
+      setJobQueue((current) => {
+        const next = [...current];
+        const canonical = (value: string) => {
+          try {
+            const parsed = new URL(value);
+            parsed.hash = "";
+            return parsed.toString();
+          } catch {
+            return value.trim();
+          }
+        };
+        for (const job of jobs) {
+          const duplicate = next.some((existing) =>
+            (!isManualJob(existing) && !isManualJob(job) && existing.id === job.id) ||
+            canonical(existing.url) === canonical(job.url),
+          );
+          if (!duplicate) next.push(job);
+        }
+        return next;
+      });
+      pushLog(`Added ${jobs.length} job(s) to the queue`, true);
     },
     [pushLog],
   );
@@ -1726,13 +1751,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
   /** Mark a (non-manual) queued job Applied in the pipeline and badge it locally. */
   const markJobApplied = useCallback(
-    async (job: QueuedJob) => {
-      setAppliedJobIds((prev) => new Set(prev).add(job.id));
-      if (job.source === "manual" || job.id.startsWith("manual:") || !applierName) return;
+    async (job: QueuedJob): Promise<boolean> => {
+      if (job.source === "manual" || job.id.startsWith("manual:") || !applierName) {
+        setAppliedJobIds((prev) => new Set(prev).add(job.id));
+        return true;
+      }
       try {
         await applyToJob(job.id, applierName);
+        setAppliedJobIds((prev) => new Set(prev).add(job.id));
+        return true;
       } catch (error) {
         pushLog(`Could not mark "${job.title}" applied: ${error instanceof Error ? error.message : error}`, false);
+        return false;
       }
     },
     [applierName, pushLog],
@@ -2184,11 +2214,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog("Manual/link-only jobs can't be marked applied in the pipeline", false);
       return;
     }
-    await markJobApplied(job);
     // Marking applied is an explicit "done" — interrupt any running pipeline first.
     autoAbortRef.current = true;
     autoPauseRef.current = false;
-    await markJobApplied(job);
+    const marked = await markJobApplied(job);
+    if (!marked) return;
     pushLog(`Marked "${job.title}" as Applied for ${applierName}`, true);
     // Also tell the extension to close the job tab (the application is done).
     const tabId = treePage?.tabId ?? (typeof selectedTabId === "number" ? selectedTabId : undefined);
@@ -2229,6 +2259,52 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     pushLog("Stopping auto-run…", false);
   }, [abortAllPending, pushLog]);
 
+  const resolveManualQueueJob = useCallback(async (job: QueuedJob, tabId: number): Promise<QueuedJob> => {
+    if (!isManualJob(job)) return job;
+    const contextResult = await emitActionAsync({
+      id: createActionId(),
+      tabId,
+      action: "read_job_context",
+    }, 30_000);
+    if (!contextResult.success) throw new Error(contextResult.error || "Unable to read this job page");
+    const context = (contextResult.data || {}) as {
+      title?: string;
+      company?: string;
+      description?: string;
+      visibleText?: string;
+      page?: { url?: string };
+    };
+    const title = String(context.title || "").trim();
+    const structuredDescription = String(context.description || "").trim();
+    const visibleDescription = String(context.visibleText || "").trim();
+    const description = structuredDescription.length >= 80
+      ? structuredDescription
+      : `${structuredDescription}\n${visibleDescription}`.trim();
+    if (!title || description.length < 80) {
+      throw new Error("A usable title or job description could not be extracted. Retry, or save this job from Job Search.");
+    }
+    const resolved = await resolveManualJob(
+      profileIdRef.current,
+      applierName,
+      {
+        url: String(context.page?.url || job.url),
+        title,
+        company: String(context.company || ""),
+        description,
+      },
+      runSignal(),
+    );
+    const saved: QueuedJob = { ...resolved.job, id: resolved.job.id };
+    setJobQueue((current) => current.map((entry) => entry.id === job.id ? saved : entry));
+    setPipelineByJobId((current) => {
+      const next = { ...current, [saved.id]: current[job.id] || EMPTY_PIPELINE };
+      delete next[job.id];
+      return next;
+    });
+    pushLog(`${resolved.created ? "Saved" : "Matched"} pasted job as “${saved.title}”`, true);
+    return saved;
+  }, [applierName, emitActionAsync, pushLog, runSignal]);
+
   /**
    * Auto-run pipeline steps 2–8 in order (open → verify tab → résumé → scan →
    * analyze → apply → verify). One job at a time — parallel Chrome tabs interrupt
@@ -2236,20 +2312,16 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
    */
   const runPipelineAuto = useCallback(async (jobOverride?: QueuedJob) => {
     if (autoRunningRef.current || applyingRef.current) return;
-    const job = jobOverride ?? getActiveQueuedJob();
-    if (!job) {
+    const queuedJob = jobOverride ?? getActiveQueuedJob();
+    if (!queuedJob) {
       pushLog("Select a queued job first", false);
       return;
     }
+    let job: QueuedJob = queuedJob;
     if (!canExecute) {
       pushLog(executeDisabledReason ?? "Cannot auto-run — extension not connected", false);
       return;
     }
-    if (isManualJob(job)) {
-      pushLog(`"${job.title}" is manual — auto-run needs a catalog job with tailored résumé`, false);
-      return;
-    }
-
     autoRunningRef.current = true;
     autoAbortRef.current = false;
     autoPauseRef.current = false;
@@ -2366,12 +2438,14 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             if (!validity.valid) {
               pushLog(`Not a usable form (${validity.kind}) — ${validity.reason}; closing tab`, false);
               await closeTab(tabId);
-              setAppliedJobIds((prev) => new Set(prev).add(job.id));
-              if (applierName) {
-                try {
-                  await applyToJob(job.id, applierName);
-                } catch {
-                  /* non-fatal */
+              if (!isManualJob(job)) {
+                setAppliedJobIds((prev) => new Set(prev).add(job.id));
+                if (applierName) {
+                  try {
+                    await applyToJob(job.id, applierName);
+                  } catch {
+                    /* non-fatal */
+                  }
                 }
               }
               finalStatus = `skipped-${validity.kind}`;
@@ -2383,6 +2457,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             setValidatingTab(false);
           }
           if (await budgetAbort()) return;
+        }
+
+        if (isManualJob(job)) {
+          if (!tabId) {
+            abort("No tab available to read the pasted job");
+            return;
+          }
+          try {
+            job = await resolveManualQueueJob(job, tabId);
+            runJobRef.current = job;
+          } catch (error) {
+            abort(error instanceof Error ? error.message : "Unable to save this pasted job");
+            return;
+          }
         }
 
         if (!(await gate())) return;
@@ -3080,7 +3168,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         endRunLog(finalStatus);
       }
     },
-    [abortForBudget, applicantContext, canExecute, checkBudgetExceeded, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, recordUsage, resetJobRunCost, resetJobUsage, resolveResumeForSubmission, runRecoveryLoop, runSignal, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
+    [abortForBudget, applicantContext, canExecute, checkBudgetExceeded, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, recordUsage, resetJobRunCost, resetJobUsage, resolveResumeForSubmission, resolveManualQueueJob, runRecoveryLoop, runSignal, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
   );
 
   /**
@@ -3124,7 +3212,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       }
       const job = jobQueue[i];
       if (appliedJobIds.has(job.id) || budgetSkippedJobIds.has(job.id)) continue;
-      if (isManualJob(job)) continue;
       setActiveJobIndex(i);
       prefetchAhead(i);
       await runPipelineAuto(job);

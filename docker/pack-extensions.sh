@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="${ROOT}/Athens/dist/downloads"
+OUT_DIR="${EXTENSION_OUTPUT_DIR:-${ROOT}/Athens/dist/downloads}"
 BID_ZIP_NAME="bid-monitor-extension.zip"
 AVALON_ZIP_NAME="avalon-extension.zip"
 

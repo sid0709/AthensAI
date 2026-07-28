@@ -89,6 +89,7 @@ export type ActionType =
   | 'screenshot'
   | 'execute_script'
   | 'read_page_state'
+  | 'read_job_context'
   | 'fill_verification_code'
   | 'fetch_actionable_tree'
   | 'apply_injection_plan';
@@ -299,6 +300,11 @@ export const ACTION_DEFINITIONS: Record<
   read_page_state: {
     label: 'Read page state',
     description: 'Read page innerText and control count after submit (CSP-safe via chrome.scripting)',
+    needsTarget: false,
+  },
+  read_job_context: {
+    label: 'Read job context',
+    description: 'Extract structured job data and sanitized visible page text (CSP-safe)',
     needsTarget: false,
   },
   fill_verification_code: {

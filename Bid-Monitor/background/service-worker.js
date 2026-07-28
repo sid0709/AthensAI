@@ -18,6 +18,8 @@ importScripts(
 );
 
 const STORAGE_KEY = 'bidMonitorSessions';
+const RESUME_AUDIT_OUTBOX_PREFIX = 'bidMonitorResumeAudit:';
+const resumeAuditOutboxInFlight = new Map();
 
 /** @deprecated Prefer ApplyLifecycle — kept as tab-shaped compatibility helpers. */
 async function getPendingApplyTabs() {
@@ -72,6 +74,177 @@ async function getSessionForTab(tabId) {
   const sessions = await getRecordingSessions();
   return sessions.find((s) => s.tabId === tabId) ?? null;
 }
+
+function resumeBaseName(name) {
+  const value = String(name || '').trim().replace(/\\/g, '/');
+  return value.split('/').pop() || '';
+}
+
+async function findSessionForResumeAudit(payload, senderTabId) {
+  const sessions = await getSessions();
+  const sessionId = String(payload?.sessionId || '').trim();
+  const jobId = String(payload?.jobId || '').trim();
+  return (
+    (sessionId && sessions.find((session) => String(session.id) === sessionId)) ||
+    (jobId && sessions.find((session) => String(session.jobId || '') === jobId)) ||
+    (senderTabId != null && sessions.find((session) => session.tabId === senderTabId)) ||
+    null
+  );
+}
+
+async function persistResumeAuditPayload(payload, senderTab = null) {
+  const session = await findSessionForResumeAudit(payload, senderTab?.id);
+  const originalName = resumeBaseName(
+    payload?.originalName || payload?.originalFileName,
+  );
+  const cleanedName = resumeBaseName(
+    payload?.cleanedName || payload?.submittedFileName,
+  );
+  const jobId = String(session?.jobId || payload?.jobId || '').trim();
+  const sessionId = String(session?.id || payload?.sessionId || '').trim();
+
+  if (!originalName || !cleanedName || !jobId) {
+    return {
+      ok: false,
+      persisted: false,
+      retryable: true,
+      error: 'Resume filename audit is missing originalName, cleanedName, or jobId.',
+    };
+  }
+
+  const expectedName = resumeBaseName(
+    payload?.expectedName || session?.expectedResumeName || cleanedName,
+  );
+  const auditKey = String(
+    payload?.auditKey ||
+      [
+        sessionId || jobId,
+        originalName,
+        cleanedName,
+        Number(payload?.fileSize) || 0,
+        payload?.mimeType || '',
+      ].join('|'),
+  );
+  const event = {
+    ...payload,
+    sessionId: sessionId || null,
+    jobId,
+    auditKey,
+    originalFileName: originalName,
+    originalName,
+    submittedFileName: cleanedName,
+    cleanedName,
+    expectedName: expectedName || cleanedName,
+    renamed:
+      typeof payload?.renamed === 'boolean'
+        ? payload.renamed
+        : originalName !== cleanedName,
+    mismatch: Boolean(expectedName && expectedName !== cleanedName),
+    recordedAt: new Date().toISOString(),
+    pageUrl: senderTab?.url || payload?.pageUrl || null,
+    pageTitle: senderTab?.title || payload?.pageTitle || null,
+    sessionResumeSetFolder: session?.resumeSetFolder || null,
+  };
+
+  const isDuplicate = Boolean(
+    session?.resumeEvents?.some((existingEvent) => existingEvent?.auditKey === auditKey),
+  );
+  if (session && !isDuplicate) {
+    await updateSession(session.id, (current) => ({
+      ...current,
+      resumeEvents: [...(current.resumeEvents ?? []), event],
+    }));
+  }
+
+  const auth = await MockApi.getAuth();
+  const settings = await AthensApi.getSettings();
+  const applierName =
+    settings.applierName || auth?.applierName || auth?.displayName || '';
+  if (!applierName) {
+    return {
+      ok: false,
+      persisted: false,
+      retryable: true,
+      error: 'Bidder profile is unavailable for the resume filename audit.',
+    };
+  }
+
+  // This is intentionally called even for a locally duplicate event. A prior
+  // REST request may have failed after the event was stored in the session.
+  await AthensApi.saveResumeAudit(applierName, {
+    jobId,
+    originalName,
+    expectedName: event.expectedName,
+    cleanedName,
+    renamed: event.renamed,
+    company: session?.companyName || payload?.company,
+    title: session?.jobTitle || payload?.title,
+    pageUrl: event.pageUrl,
+    sessionId: sessionId || undefined,
+    source: payload?.source,
+    fileSize: Number(payload?.fileSize),
+    lastModified: Number(payload?.lastModified),
+    mimeType: payload?.mimeType,
+    auditKey,
+  });
+
+  return {
+    ok: true,
+    persisted: true,
+    duplicate: isDuplicate,
+    mismatch: event.mismatch,
+  };
+}
+
+function processResumeAuditOutboxEntry(outboxKey, entry, senderTab = null) {
+  if (resumeAuditOutboxInFlight.has(outboxKey)) {
+    return resumeAuditOutboxInFlight.get(outboxKey);
+  }
+
+  const operation = (async () => {
+    try {
+      const payload = entry?.payload || entry;
+      const result = await persistResumeAuditPayload(payload, senderTab);
+      if (result.persisted) {
+        await chrome.storage.local.remove(outboxKey);
+      }
+      return result;
+    } catch (err) {
+      console.warn('Bid Monitor: resume filename audit retry pending', err);
+      return {
+        ok: false,
+        persisted: false,
+        retryable: true,
+        error: err?.message || String(err),
+      };
+    }
+  })().finally(() => {
+    resumeAuditOutboxInFlight.delete(outboxKey);
+  });
+
+  resumeAuditOutboxInFlight.set(outboxKey, operation);
+  return operation;
+}
+
+async function flushResumeAuditOutbox() {
+  const stored = await chrome.storage.local.get(null);
+  const pending = Object.entries(stored).filter(([key]) =>
+    key.startsWith(RESUME_AUDIT_OUTBOX_PREFIX),
+  );
+  await Promise.all(
+    pending.map(([key, entry]) => processResumeAuditOutboxEntry(key, entry)),
+  );
+}
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  for (const [key, change] of Object.entries(changes)) {
+    if (!key.startsWith(RESUME_AUDIT_OUTBOX_PREFIX) || !change.newValue) continue;
+    void processResumeAuditOutboxEntry(key, change.newValue);
+  }
+});
+
+void flushResumeAuditOutbox();
 
 let badgedTabIds = new Set();
 
@@ -144,7 +317,7 @@ async function ensureTabScriptsReady(tabId) {
       }).catch(() => {});
       await chrome.scripting.executeScript({
         target: { tabId, allFrames: true },
-        files: ['content/content.js'],
+        files: ['content/resume-file-tracking.js', 'content/content.js'],
       }).catch(() => {});
     }
 
@@ -169,7 +342,7 @@ async function notifyTabWithRetry(tabId, message, maxAttempts = 25) {
 
   await chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
-    files: ['content/content.js'],
+    files: ['content/resume-file-tracking.js', 'content/content.js'],
   }).catch(() => {});
 
   try {
@@ -1189,13 +1362,7 @@ async function registerSidePanelRecording(tabId, { mimeType, videoFormat, fallba
   const normalizedFormat = VideoFormat.normalizePreference(videoFormat);
   let expectedResumeName = '';
   try {
-    expectedResumeName = CanonicalResumeName.buildCanonicalResumeFileName(
-      pending.job.companyName,
-      pending.job.title,
-      auth.displayName,
-      pending.job.id,
-      '.pdf',
-    );
+    expectedResumeName = CanonicalResumeName.buildProfileResumeFileName(auth.displayName, '.pdf');
   } catch {
     expectedResumeName = '';
   }
@@ -1278,14 +1445,8 @@ async function beginRecordingSession({
   const normalizedFormat = VideoFormat.normalizePreference(videoFormat);
   let expectedResumeName = '';
   try {
-    if (companyName && jobTitle && jobId && bidderName) {
-      expectedResumeName = CanonicalResumeName.buildCanonicalResumeFileName(
-        companyName,
-        jobTitle,
-        bidderName,
-        jobId,
-        '.pdf',
-      );
+    if (bidderName) {
+      expectedResumeName = CanonicalResumeName.buildProfileResumeFileName(bidderName, '.pdf');
     }
   } catch {
     expectedResumeName = '';
@@ -1594,6 +1755,8 @@ async function completeRecordingSession({
 
   if (applyFlow && jobId) {
     try {
+      // Drain filename records before the session is finalized/removed.
+      await flushResumeAuditOutbox();
       const auth = await MockApi.getAuth();
       const settings = await AthensApi.getSettings();
       const applierName = settings.applierName || auth?.applierName || auth?.displayName;
@@ -2013,6 +2176,12 @@ function createContextMenus() {
 
 createContextMenus();
 chrome.runtime.onInstalled.addListener(createContextMenus);
+chrome.runtime.onInstalled.addListener(() => {
+  void flushResumeAuditOutbox();
+});
+chrome.runtime.onStartup.addListener(() => {
+  void flushResumeAuditOutbox();
+});
 
 if (chrome.contextMenus) {
   chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -2781,14 +2950,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const jdAnalyzed = Boolean(page?.isJobPage || summary || flags.remote || flags.clearance);
           const mode = pageRes?.mode || flagsRes?.mode || null;
 
-          if (applierName && jobId && (flags.remote || flags.clearance || summary)) {
-            try {
-              await AthensApi.saveBidFlags(applierName, { jobId, flags, summary });
-            } catch (err) {
-              console.warn('Bid Monitor: save flags failed', err);
-            }
-          }
-
           const formAnswers = Array.isArray(page?.formAnswers) ? page.formAnswers : [];
           // Count answers from page text (AI), not DOM label/name field count.
           const formCount = page?.formCount ?? formAnswers.length;
@@ -2821,6 +2982,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 : pageRes?.error || flagsRes?.error || null,
             pageUrl: pageContext.url,
             pageTitle: pageContext.title,
+            aiCalls: [
+              {
+                feature: 'bid-job-analyze',
+                requestId: pageRes?.requestId || null,
+                usage: pageRes?.usage || null,
+                mode: pageRes?.mode || null,
+              },
+              {
+                feature: 'bid-job-flags',
+                requestId: flagsRes?.requestId || null,
+                usage: flagsRes?.usage || null,
+                mode: flagsRes?.mode || null,
+              },
+            ],
             ...(priorRecommend ? { recommend: priorRecommend } : {}),
           };
 
@@ -2907,6 +3082,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             warning: result.warning || null,
             reason: result.reason || null,
             isJobDescription: Boolean(result.isJobDescription),
+            requestId: recommendRes?.requestId || null,
+            usage: recommendRes?.usage || null,
+            mode: recommendRes?.mode || null,
             updatedAt: new Date().toISOString(),
           };
 
@@ -3119,87 +3297,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case 'RESUME_SELECTED': {
-        const session = await getSessionForTab(sender.tab?.id);
-        if (!session || session.status !== 'recording') {
-          sendResponse({ ok: false });
-          break;
-        }
-
         const payload = message.payload || {};
-        if (payload.sessionId && String(payload.sessionId) !== String(session.id)) {
-          sendResponse({ ok: false, staleSession: true });
-          break;
-        }
-        const originalName =
-          payload.originalName || payload.originalFileName || null;
-        const cleanedName = payload.cleanedName || payload.submittedFileName || null;
-        const auditKey = String(
-          payload.auditKey ||
-            [
-              session.id,
-              originalName || '',
-              cleanedName || '',
-              Number(payload.fileSize) || 0,
-              payload.mimeType || '',
-            ].join('|'),
-        );
-        const event = {
-          ...payload,
-          sessionId: session.id,
-          auditKey,
-          recordedAt: new Date().toISOString(),
-          pageUrl: sender.tab?.url ?? payload.pageUrl,
-          pageTitle: sender.tab?.title ?? payload.pageTitle,
-          sessionResumeSetFolder: session.resumeSetFolder || null,
-          expectedName:
-            payload.expectedName || session.expectedResumeName || null,
-        };
-
-        const isDuplicate = (session.resumeEvents || []).some(
-          (existingEvent) => existingEvent?.auditKey === auditKey,
-        );
-
-        if (!isDuplicate) {
-          await updateSession(session.id, (s) => ({
-            ...s,
-            resumeEvents: [...(s.resumeEvents ?? []), event],
-          }));
-        }
-
-        // Persist audit to Athens (original vs canonical expected).
-        try {
-          const auth = await MockApi.getAuth();
-          const jobId = session.jobId || null;
-          const settings = await AthensApi.getSettings();
-          const applierName =
-            settings.applierName || auth?.applierName || auth?.displayName || '';
-          if (!isDuplicate && applierName && jobId && originalName) {
-            await AthensApi.saveResumeAudit(applierName, {
-              jobId,
-              originalName,
-              expectedName: event.expectedName,
-              cleanedName,
-              renamed: Boolean(payload.renamed),
-              company: session.companyName,
-              title: session.jobTitle,
-              pageUrl: event.pageUrl,
-              sessionId: session.id,
-              source: payload.source,
-              fileSize: Number(payload.fileSize),
-              lastModified: Number(payload.lastModified),
-              mimeType: payload.mimeType,
-              auditKey,
-            });
-          }
-        } catch (err) {
-          console.warn('Bid Monitor: resume audit failed', err);
-        }
-
-        sendResponse({
-          ok: true,
-          duplicate: isDuplicate,
-          mismatch: Boolean(event.mismatch),
-        });
+        const outboxKey = String(message.outboxKey || '');
+        const result = outboxKey.startsWith(RESUME_AUDIT_OUTBOX_PREFIX)
+          ? await processResumeAuditOutboxEntry(
+              outboxKey,
+              { payload },
+              sender.tab || null,
+            )
+          : await persistResumeAuditPayload(payload, sender.tab || null);
+        sendResponse(result);
         break;
       }
 

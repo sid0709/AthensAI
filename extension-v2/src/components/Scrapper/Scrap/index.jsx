@@ -15,7 +15,7 @@ import PropTypes from 'prop-types';
 import { useRuntime } from '../../../api/runtimeContext';
 import useApi from '../../../api/useApi';
 import useNotification, { formatFailureMessage } from '../../../api/useNotification';
-import useScraperSocket from '../../../api/useScraperSocket';
+import useBackendHealth from '../../../api/useBackendHealth';
 import {
 	bindScraperTab,
 	unbindScraperTab,
@@ -25,7 +25,7 @@ import {
 	isNetworkError,
 	waitMs,
 } from '../../../api/scraperRecovery';
-import { SCRAPER_RESTART_URL } from '../../../config/socket_protocol';
+import { SCRAPER_RESTART_URL } from '../../../config/scraper';
 import {
 	swanFetch,
 	buildListJobsUrl,
@@ -79,7 +79,6 @@ const ScrapComponent = () => {
 	const [scrapFlag, setScrapFlag] = useState(false);
 	const [recoveryStatus, setRecoveryStatus] = useState('');
 	const [lastError, setLastError] = useState('');
-	const [lastJobAt, setLastJobAt] = useState(null);
 	const [stats, setStats] = useState({
 		saved: 0,
 		duplicate: 0,
@@ -153,26 +152,7 @@ const ScrapComponent = () => {
 		}
 	}, [stopScraping]);
 
-	const handleBackendRestart = useCallback(async (payload) => {
-		if (!scrapFlagRef.current) return;
-		if (recoveringRef.current) return;
-		const reason = payload?.reason || 'backend_restart';
-		setRecoveryStatus(`Backend requested restart (${reason})…`);
-		try {
-			const result = await handleRecovery(new Error(reason));
-			if (result?.stopped) return;
-			setRecoveryStatus('');
-		} catch (err) {
-			notifyFailure(err, 'Backend restart recovery failed');
-			await stopScraping(err?.message || 'Recovery failed');
-		}
-	}, [handleRecovery, notifyFailure, stopScraping]);
-
-	const { socketId, status: socketStatus } = useScraperSocket({
-		scraping: scrapFlag,
-		lastJobAt,
-		onRestart: handleBackendRestart,
-	});
+	const { status: backendStatus } = useBackendHealth();
 
 	useEffect(() => {
 		const listener = (message) => {
@@ -265,18 +245,13 @@ const ScrapComponent = () => {
 					pageSaved += 1;
 					savedCountRef.current += 1;
 					setStats((s) => ({ ...s, saved: s.saved + 1 }));
-					setLastJobAt(new Date().toISOString());
 					recoveryAttemptRef.current = 0;
 				} else if (reason.includes('already exists') || reason.includes('duplicate')) {
 					setStats((s) => ({ ...s, duplicate: s.duplicate + 1 }));
-					setLastJobAt(new Date().toISOString());
 				} else if (reason.includes('blocked by rule')) {
 					setStats((s) => ({ ...s, blocked: s.blocked + 1 }));
-					setLastJobAt(new Date().toISOString());
 				} else if (res?.success === false) {
 					setStats((s) => ({ ...s, errors: s.errors + 1 }));
-				} else {
-					setLastJobAt(new Date().toISOString());
 				}
 
 				if (jobrightJobId) {
@@ -423,7 +398,7 @@ const ScrapComponent = () => {
 						Jobright API Scraper
 					</Typography>
 					<Typography variant="body2" color="text.secondary">
-						Backend: {import.meta.env.VITE_API_URL || '(unset)'} · Socket: {socketStatus || 'offline'}
+						Backend: {import.meta.env.VITE_API_URL || '(unset)'} · REST: {backendStatus || 'offline'}
 					</Typography>
 					<Stack direction="row" spacing={1} alignItems="center">
 						{!scrapFlag ? (
@@ -440,13 +415,13 @@ const ScrapComponent = () => {
 					{recoveryStatus ? (
 						<Typography variant="body2" color="warning.main">{recoveryStatus}</Typography>
 					) : null}
-					{socketId ? (
+					{backendStatus === 'connected' ? (
 						<Typography variant="caption" color="text.secondary">
-							Socket id: {socketId}
+							REST API connected
 						</Typography>
 					) : (
 						<Typography variant="caption" color="warning.main">
-							Socket disconnected — start Athens-server on the API host
+							REST API unavailable — start Athens-server on the API host
 						</Typography>
 					)}
 					<Divider />

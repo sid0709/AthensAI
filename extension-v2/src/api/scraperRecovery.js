@@ -1,5 +1,5 @@
 /* global chrome */
-import { SCRAPER_RESTART_URL } from '../config/socket_protocol';
+import { SCRAPER_RESTART_URL } from '../config/scraper';
 
 const BACKOFF_SLOTS_SEC = [5, 10, 20, 40, 80, 160, 200];
 

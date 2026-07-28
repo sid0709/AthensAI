@@ -57,6 +57,30 @@ function StatusPill({ status }: { status: BidResultStatus }) {
   return <span className={`bm-status ${status}`}>{STATUS_LABELS[status]}</span>;
 }
 
+function ResumeFileNames({
+  original,
+  uploaded,
+  variant,
+}: {
+  original?: string | null;
+  uploaded?: string | null;
+  variant: "ticket" | "list";
+}) {
+  if (!original && !uploaded) return null;
+  return (
+    <div className={`bm-file-names ${variant}`}>
+      <div title={original || undefined}>
+        <span>Original</span>
+        <code>{original || "—"}</code>
+      </div>
+      <div title={uploaded || undefined}>
+        <span>Uploaded</span>
+        <code>{uploaded || "—"}</code>
+      </div>
+    </div>
+  );
+}
+
 function TicketCard({
   result,
   active,
@@ -96,14 +120,11 @@ function TicketCard({
         {result.recording ? <Film className="w-3 h-3 bm-ticket-rec" /> : null}
       </div>
       <div className="bm-ticket-title">{result.job.title}</div>
-      {result.resumeOriginalName &&
-      (result.status === "submitted" ||
-        result.status === "reviewed" ||
-        result.status === "rejected") ? (
-        <div className="bm-ticket-resume" title={result.resumeOriginalName}>
-          {result.resumeOriginalName}
-        </div>
-      ) : null}
+      <ResumeFileNames
+        original={result.resumeOriginalName}
+        uploaded={result.resumeCleanedName}
+        variant="ticket"
+      />
       {(result.resubmitCount ?? 0) > 0 ||
       result.resumeMismatch ||
       result.resumeStackMatch === "mismatch" ||
@@ -301,14 +322,11 @@ function ListBoard({
                     <div className="bm-list-sub">
                       {r.job.company} · {r.status === "pending" ? "Bid ready" : r.bidder.name} · {r.job.source}
                     </div>
-                    {r.resumeOriginalName &&
-                    (r.status === "submitted" ||
-                      r.status === "reviewed" ||
-                      r.status === "rejected") ? (
-                      <div className="bm-list-resume" title={r.resumeOriginalName}>
-                        Uploaded: {r.resumeOriginalName}
-                      </div>
-                    ) : null}
+                    <ResumeFileNames
+                      original={r.resumeOriginalName}
+                      uploaded={r.resumeCleanedName}
+                      variant="list"
+                    />
                   </div>
                   {!editable ? <StatusPill status={r.status} /> : null}
                   <span className="bm-list-dur">{formatDuration(r.durationSec)}</span>
