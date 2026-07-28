@@ -161,7 +161,7 @@ export function DeployAgentModal({
                     type="date"
                     value={form.postedFrom}
                     max={form.postedTo || undefined}
-                    onChange={(e) => form.setPostedFrom(e.target.value)}
+                    onInput={(e) => form.setPostedFrom(e.currentTarget.value)}
                     title="Posted from"
                     className="flex-1 min-w-0 bg-transparent text-xs text-foreground focus:outline-none"
                   />
@@ -172,7 +172,7 @@ export function DeployAgentModal({
                     type="date"
                     value={form.postedTo}
                     min={form.postedFrom || undefined}
-                    onChange={(e) => form.setPostedTo(e.target.value)}
+                    onInput={(e) => form.setPostedTo(e.currentTarget.value)}
                     title="Posted to"
                     className="flex-1 min-w-0 bg-transparent text-xs text-foreground focus:outline-none"
                   />

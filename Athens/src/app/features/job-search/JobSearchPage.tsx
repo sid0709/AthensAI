@@ -176,7 +176,7 @@ function JobSearchPageContent() {
   };
 
   const handleRemove = async () => {
-    const ids = [...selectedIds];
+    const ids = selectedJobs.map((job) => job.id);
     if (!ids.length) return;
     // Optimistically hide, then permanently delete from the DB.
     setRemovedIds((prev) => {
@@ -186,7 +186,7 @@ function JobSearchPageContent() {
     });
     clearSelection();
     try {
-      const res = await removeJobs(ids);
+      const res = await removeJobs(selectedJobs.map((job) => job.backendId || job.id));
       if (!res?.success) throw new Error(res?.error || "Remove failed");
       removeJobsById(ids);
       toast.success(`Removed ${res.deletedCount ?? ids.length} job${ids.length === 1 ? "" : "s"}`);

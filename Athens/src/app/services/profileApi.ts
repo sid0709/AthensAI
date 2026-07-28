@@ -1,4 +1,5 @@
 import { API_BASE } from "@/lib/api-base";
+import { retryTransient } from "@/lib/transient-retry";
 import {
   buildProfileSavePayload,
   emptyProfile,
@@ -33,14 +34,25 @@ async function parseJson(res: Response) {
   }
 }
 
-export async function fetchAutoBidProfile(applierName: string): Promise<{
+export async function fetchAutoBidProfile(applierName: string, signal?: AbortSignal): Promise<{
   profile: UserProfile;
   vendorAllowed: boolean;
   vendorPasswordSet: boolean;
   accountExists: boolean;
 }> {
   const url = `${API_BASE.replace(/\/$/, "")}/personal/auto-bid-profile?applierName=${encodeURIComponent(applierName)}`;
-  const res = await fetch(url);
+  const res = await retryTransient(async () => {
+    const response = await fetch(url, { signal });
+    if (!response.ok) {
+      const error = new Error(`Profile request failed (${response.status})`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return response;
+  }, {
+    signal,
+    delaysMs: [500, 1_000, 2_000, 4_000, 8_000, 10_000, 10_000, 10_000, 10_000],
+  });
   const data = (await parseJson(res)) as {
     success?: boolean;
     accountExists?: boolean;
@@ -49,7 +61,7 @@ export async function fetchAutoBidProfile(applierName: string): Promise<{
     profile?: Record<string, unknown>;
   } | null;
 
-  if (!res.ok || !data?.success) {
+  if (!data?.success) {
     throw new Error("Could not load profile");
   }
 

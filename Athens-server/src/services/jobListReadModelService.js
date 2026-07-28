@@ -729,6 +729,19 @@ export function patchJobListViewerStatus({ profileId, jobId, state, version = nu
   return true;
 }
 
+/** Immediately evict permanently deleted jobs from the in-process list snapshot. */
+export function evictJobsFromJobListReadModel(jobIds = []) {
+  if (!catalogSnapshot || !jobIds.length) return 0;
+  const removed = new Set(jobIds.map(String));
+  const remaining = catalogSnapshot.entries.filter((entry) => !removed.has(entry.id));
+  const deletedCount = catalogSnapshot.entries.length - remaining.length;
+  if (!deletedCount) return 0;
+  catalogSnapshot = finalizeSnapshot(remaining, catalogSnapshot.revision);
+  queryCache.clear();
+  for (const ranking of profileRankings.values()) ranking.stale = true;
+  return deletedCount;
+}
+
 async function warmKnownProfiles(snapshot) {
   if (!accountInfoCollection) return;
   const accounts = await accountInfoCollection

@@ -52,6 +52,7 @@ import {
 	normalizeMaterializedJobStatusCounts,
 	readMaterializedJobStatusCounts,
 	mutateJobStatus,
+	mutateJobStatusesBulk,
 } from '../services/jobStatusProjectionService.js';
 import { findDuplicateByUrl } from '../services/jobDuplicateLookup.js';
 import {
@@ -69,7 +70,12 @@ import {
 	getJobListReadModelState,
 	listJobsV2,
 	patchJobListViewerStatus,
+	evictJobsFromJobListReadModel,
 } from '../services/jobListReadModelService.js';
+import {
+	deleteJobDocuments,
+	normalizeJobRemovalIds,
+} from '../services/jobRemovalService.js';
 import { setGauge } from '../services/monitoring/metrics.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
@@ -857,22 +863,16 @@ export async function updateJobStatus(req, res) {
 export async function removeJobs(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
-		const { ids } = req.body;
-		if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ success: false, error: 'Missing ids array' });
+		const ids = normalizeJobRemovalIds(req.body);
+		if (!ids.length) return res.status(400).json({ success: false, error: 'Missing ids array' });
 
-		const documentIds = ids.map(id => {
-			try {
-				return new DocumentId(id);
-			} catch {
-				return null;
-			}
-		}).filter(Boolean);
-
-		const result = await jobsCollection.deleteMany({ _id: { $in: documentIds } });
+		const { deletedCount } = await deleteJobDocuments({ ids, jobsCollection });
+		evictJobsFromJobListReadModel(ids);
 		invalidateLiveProjectedStatusCount();
-		void deleteScoresForJobs(documentIds).catch(() => {});
-		void removeJobsFromRanking(documentIds).catch(() => {});
-		return res.json({ success: true, deletedCount: result.deletedCount });
+		jobCountCache.clear();
+		void deleteScoresForJobs(ids).catch(() => {});
+		void removeJobsFromRanking(ids).catch(() => {});
+		return res.json({ success: true, deletedCount });
 	} catch (err) {
 		console.error('POST /api/jobs/remove error', err);
 		return res.status(500).json({ success: false, error: err.message });
@@ -1009,6 +1009,85 @@ export async function updateJobBidStatus(req, res) {
 		const statusCode = err.message === 'Invalid job id' || err.message === 'applierName is required'
 			? 400
 			: err.message === 'Job not found' || /^User .+ not found$/.test(err.message) ? 404 : 500;
+		return res.status(statusCode).json({ success: false, error: err.message });
+	}
+}
+
+/** POST /jobs/bid-status/bulk — one durable transaction for up to 150 jobs. */
+export async function updateJobsBidStatusBulk(req, res) {
+	try {
+		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
+		const applierName = String(req.body?.applierName ?? '').trim();
+		const status = String(req.body?.status ?? '').trim();
+		if (!applierName) return res.status(400).json({ success: false, error: 'applierName is required' });
+		if (!['BidReady', 'clear'].includes(status)) {
+			return res.status(400).json({ success: false, error: 'status must be BidReady or clear' });
+		}
+		const result = await mutateJobStatusesBulk({
+			jobs: req.body?.jobs,
+			applierName,
+			transition: status === 'BidReady' ? 'bid-ready' : 'clear-bid',
+			bulkMutationId: req.body?.mutationId,
+		});
+		for (const row of result.results) syncMutationReadModel(row, row.jobId);
+		jobCountCache.clear();
+
+		const tasks = getVendorTasksCollection();
+		if (tasks && result.results.length) {
+			if (status === 'clear') {
+				void tasks.deleteMany({
+					applierName,
+					jobId: { $in: result.results.map((row) => row.jobId) },
+				}).catch((error) => console.warn('[jobs] deferred bulk vendor task removal failed:', error?.message || error));
+			} else {
+				const now = new Date();
+				const operations = result.results.map(({ jobId, job }) => {
+					const company = job.company && typeof job.company === 'object'
+						? String(job.company.name || '')
+						: String(job.companyName || '');
+					return { updateOne: {
+						filter: { applierName, jobId },
+						update: {
+							$set: {
+								applierName,
+								jobId,
+								title: String(job.title || 'Untitled role'),
+								company,
+								applyUrl: String(job.applyLink || job.jobLink || '') || null,
+								source: String(job.source || ''),
+								location: String(job.details?.position || ''),
+								workMode: String(job.details?.remote || ''),
+								status: 'pending',
+								addedAt: now,
+								updatedAt: now,
+								completedAt: null,
+							},
+							$setOnInsert: { matchScore: null },
+						},
+						upsert: true,
+					} };
+				});
+				void tasks.atomicBulkUpsert(operations)
+					.catch((error) => console.warn('[jobs] deferred bulk vendor task sync failed:', error?.message || error));
+			}
+		}
+
+		return res.json({
+			success: true,
+			updatedCount: result.results.length,
+			failed: result.failed,
+			results: result.results.map(({ jobId, viewerStatus, changed, statusVersion }) => ({
+				jobId,
+				viewerStatus,
+				changed,
+				statusVersion,
+			})),
+			cacheSync: result.cacheSync,
+		});
+	} catch (err) {
+		console.error('POST /api/jobs/bid-status/bulk error', err);
+		const statusCode = /required|Unsupported bulk|applierName/.test(err.message) ? 400
+			: /^User .+ not found$/.test(err.message) ? 404 : 500;
 		return res.status(statusCode).json({ success: false, error: err.message });
 	}
 }

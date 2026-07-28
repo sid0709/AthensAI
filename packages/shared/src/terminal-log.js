@@ -4,6 +4,7 @@
  */
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const STRUCTURED_LINE_RE = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+level=(?:INFO|WARN|ERROR)\s/;
 
 /** @deprecated Kept for dev-dashboard compatibility — no longer used for styling. */
 export const TAG_COLORS = {};
@@ -172,6 +173,12 @@ export function installTerminalLogger(service = '') {
 	const wrap =
 		(level, output) =>
 		(...args) => {
+			// Structured loggers already include the timestamp, level and service.
+			// Passing them through formatLogLine again creates nested, unreadable logs.
+			if (args.length === 1 && typeof args[0] === 'string' && STRUCTURED_LINE_RE.test(args[0])) {
+				output(args[0]);
+				return;
+			}
 			output(formatLogLine(level, args, service));
 		};
 
@@ -241,22 +248,23 @@ export function printBanner(title, lines = []) {
 }
 
 /**
- * Express middleware: logs every incoming request and its outcome.
+ * Express middleware: logs failed and slow request outcomes once.
+ * Set LOG_HTTP_SUCCESS=1 to include ordinary successful requests.
  * @param {string} [tag]
  */
 export function requestLogger(tag = 'api') {
 	return function requestLoggerMiddleware(req, res, next) {
 		const startedAt = process.hrtime.bigint();
 		const service = process.env.LOG_SERVICE || 'app';
-		console.log(formatPlainLine('INFO', service, tag, `${req.method} ${req.originalUrl}`, { direction: 'in' }));
 		res.on('finish', () => {
 			const ms = Number(process.hrtime.bigint() - startedAt) / 1e6;
+			if (res.locals?.suppressRequestLog === true) return;
+			const slowRequestMs = Number(process.env.LOG_HTTP_SLOW_MS || 1000);
+			const logSuccessful = process.env.LOG_HTTP_SUCCESS === '1';
+			if (res.statusCode < 400 && !logSuccessful && ms < slowRequestMs) return;
 			const level = res.statusCode >= 500 ? 'ERROR' : res.statusCode >= 400 ? 'WARN' : 'INFO';
-			const line = formatPlainLine(level, service, tag, `${req.method} ${req.originalUrl} ${res.statusCode}`, {
-				direction: 'out',
-				durationMs: ms.toFixed(1),
-				status: res.statusCode,
-			});
+			const path = req.originalUrl?.split('?')[0] || req.path || '/';
+			const line = formatPlainLine(level, service, tag, `${req.method} ${path} ${res.statusCode} ${Math.round(ms)}ms`);
 			if (level === 'ERROR') console.error(line);
 			else if (level === 'WARN') console.warn(line);
 			else console.log(line);

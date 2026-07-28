@@ -44,7 +44,7 @@ export function ProfileTab() {
   });
   const isBeta = isBetaTier(applier?.tier);
   const isAdmin = isAdminPermission(applier?.permission);
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     if (!applier?.name) {
       setProfile(emptyProfile());
       setVendorAllowed(false);
@@ -55,22 +55,25 @@ export function ProfileTab() {
     }
     setLoading(true);
     try {
-      const data = await fetchAutoBidProfile(applier.name);
+      const data = await fetchAutoBidProfile(applier.name, signal);
+      if (signal?.aborted) return;
       setProfile(data.profile);
       setVendorAllowed(data.vendorAllowed);
       setVendorPasswordSet(data.vendorPasswordSet);
       setAccountMissing(!data.accountExists);
-    } catch {
+    } catch (error) {
+      if (signal?.aborted || (error as Error)?.name === "AbortError") return;
       toast.error("Could not load profile");
-      setProfile(emptyProfile());
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, [applier?.name]);
 
   useEffect(() => {
     if (!applierReady) return;
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
   }, [applierReady, load]);
 
   const patch = (p: Partial<UserProfile>) => setProfile((prev) => ({ ...prev, ...p }));

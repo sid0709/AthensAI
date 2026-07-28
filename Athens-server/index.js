@@ -150,6 +150,9 @@ function createApp() {
 	});
 	app.use((req, res, next) => {
 		if (databaseReady) return next();
+		// Startup probes and UI retries are expected while maintenance finishes.
+		// The startup lifecycle log is actionable; one error per request is not.
+		res.locals.suppressRequestLog = true;
 		return res.status(503).json({
 			success: false,
 			retryable: true,

@@ -6,11 +6,24 @@ import {
   canonicalJobCatalog,
   canonicalProjectedStatusIds,
   normalizeMaterializedJobStatusCounts,
+	normalizeBulkStatusJobs,
 	reduceJobStatuses,
   stateOf,
   statesOf,
   statusContribution,
 } from "./jobStatusProjectionService.js";
+
+test("bulk status jobs are validated, deduplicated, and keep catalog identity", () => {
+	assert.deepEqual(normalizeBulkStatusJobs([
+		{ id: "507f1f77bcf86cd799439011", catalog: "market" },
+		{ id: "507f1f77bcf86cd799439011", catalog: "external" },
+		{ id: "not-an-id", catalog: "market" },
+		{ id: "507f191e810c19729de860ea", catalog: "EXTERNAL" },
+	]), [
+		{ jobId: "507f1f77bcf86cd799439011", catalog: "market" },
+		{ jobId: "507f191e810c19729de860ea", catalog: "external" },
+	]);
+});
 
 test("Mongo-era jobs without sourceCatalog remain market jobs", () => {
 	assert.equal(canonicalJobCatalog(undefined), "market");

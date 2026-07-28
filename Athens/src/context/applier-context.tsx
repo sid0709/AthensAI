@@ -47,7 +47,7 @@ export function ApplierProvider({ children }: { children: ReactNode }) {
       }
     : null;
   const [applier, setApplier] = useState<ApplierAccount | null>(() => fallbackAccount);
-  const [applierReady, setApplierReady] = useState(() => Boolean(fallbackAccount));
+  const [applierReady, setApplierReady] = useState(() => !fallbackAccount);
 
   useEffect(() => {
     if (!isAuthenticated || !user?.name) {
@@ -58,7 +58,7 @@ export function ApplierProvider({ children }: { children: ReactNode }) {
 
     let cancelled = false;
     setApplier((current) => current?.name === user.name ? current : fallbackAccount);
-    setApplierReady(true);
+    setApplierReady(false);
     (async () => {
       try {
         const res = await retryTransient(async () => {

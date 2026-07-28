@@ -986,6 +986,31 @@ class FirestoreCollection {
 		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
 		return { acknowledged: true, deletedCount };
 	}
+	/**
+	 * Delete known document ids without reading them first. This is intended for
+	 * an explicit user deletion where the ids came from the current job list.
+	 * Job catalogs share the physical `jobs` collection, so the document id is
+	 * authoritative and no profile or catalog lookup is needed.
+	 */
+	async deleteDocumentsByIds(ids) {
+		const uniqueIds = [...new Set(ids.map((id) => String(comparable(id))).filter(Boolean))];
+		if (!uniqueIds.length) return { acknowledged: true, deletedCount: 0 };
+		const outboxIds = [];
+		// Each job adds one delete and one search-outbox write.
+		for (let offset = 0; offset < uniqueIds.length; offset += 200) {
+			const chunk = uniqueIds.slice(offset, offset + 200);
+			const batch = this.db.firestore.batch();
+			for (const id of chunk) {
+				batch.delete(this.ref.doc(id));
+				const outboxId = this._outbox(batch, id, "delete");
+				if (outboxId) outboxIds.push(outboxId);
+			}
+			await batch.commit();
+		}
+		this._invalidateCaches();
+		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
+		return { acknowledged: true, deletedCount: uniqueIds.length };
+	}
 	async countDocuments(filter = {}) {
 		if (filter?._id && !isPlain(filter._id)) return (await this._read(filter)).length;
 		const normalized = this._filterWithCatalog(filter);

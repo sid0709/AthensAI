@@ -812,6 +812,140 @@ export async function mutateJobStatus({
 	};
 }
 
+const MAX_BULK_STATUS_JOBS = 150;
+
+export function normalizeBulkStatusJobs(jobs = []) {
+	const seen = new Set();
+	const normalized = [];
+	for (const value of Array.isArray(jobs) ? jobs : []) {
+		const jobId = String(value?.id || "").trim();
+		if (!DocumentId.isValid(jobId) || seen.has(jobId)) continue;
+		seen.add(jobId);
+		normalized.push({
+			jobId,
+			catalog: String(value?.catalog || "market").trim().toLowerCase() === "external" ? "external" : "market",
+		});
+		if (normalized.length >= MAX_BULK_STATUS_JOBS) break;
+	}
+	return normalized;
+}
+
+/**
+ * Apply one transition to many jobs in a single Firestore transaction.
+ * Cache publication remains durable through the outbox and never blocks the
+ * interactive response.
+ */
+export async function mutateJobStatusesBulk({
+	jobs,
+	applierName,
+	transition,
+	bulkMutationId: bulkMutationIdRaw = null,
+}) {
+	const name = String(applierName || "").trim();
+	const targets = normalizeBulkStatusJobs(jobs);
+	const bulkMutationId = String(bulkMutationIdRaw || randomUUID()).trim();
+	if (!name) throw new Error("applierName is required");
+	if (!targets.length) throw new Error("jobs are required");
+	if (!bulkMutationId) throw new Error("mutationId is required");
+	if (!['bid-ready', 'clear-bid'].includes(transition)) throw new Error("Unsupported bulk status transition");
+
+	const account = await resolveApplierContext(name);
+	if (!account?.id) throw new Error(`User ${name} not found`);
+	const profileId = String(account.id);
+	const firestore = getFirestoreDb();
+	const now = new Date();
+	const nowIso = now.toISOString();
+	const startedAt = performance.now();
+	const jobRefs = targets.map(({ jobId }) => firestore.collection("jobs").doc(jobId));
+
+	const committed = await firestore.runTransaction(async (transaction) => {
+		const snapshots = await transaction.getAll(...jobRefs);
+		const results = [];
+		const failed = [];
+		for (let index = 0; index < targets.length; index += 1) {
+			const target = targets[index];
+			const snapshot = snapshots[index];
+			if (
+				!snapshot.exists ||
+				canonicalJobCatalog(snapshot.data()?.sourceCatalog) !== target.catalog ||
+				(!account.isBeta && isExtensionV2Job(snapshot.data()))
+			) {
+				failed.push({ jobId: target.jobId, error: "Job not found" });
+				continue;
+			}
+
+			const job = snapshot.data();
+			const reduced = reduceJobStatuses(job.status, profileId, transition, nowIso);
+			const profileStatuses = reduced.current ? [reduced.current] : [];
+			const mutationId = createHash("sha256")
+				.update(`${bulkMutationId}:${target.jobId}:${transition}`)
+				.digest("hex");
+			const statusVersion = `${now.getTime()}:${mutationId}`;
+			const statusRef = firestore.collection("job_statuses").doc(jobStatusProjectionId(profileId, target.jobId));
+			const outboxRef = firestore.collection("job_status_outbox").doc(mutationId);
+
+			transaction.update(jobRefs[index], {
+				status: reduced.statuses,
+				statusProfileIds: FieldValue.delete(),
+			});
+			if (profileStatuses.length) {
+				transaction.set(statusRef, buildStatusProjectionData({
+					profileId,
+					jobId: target.jobId,
+					job,
+					statuses: profileStatuses,
+				}), { merge: false });
+			} else {
+				transaction.delete(statusRef);
+			}
+			transaction.set(outboxRef, {
+				mutationId,
+				profileId,
+				jobId: target.jobId,
+				catalog: target.catalog,
+				transition,
+				profileStatuses,
+				previousStatuses: reduced.previous ? [canonicalStatusRow(profileId, reduced.previous)] : [],
+				extensionV2: isExtensionV2Job(job),
+				statusVersion,
+				status: "pending",
+				attempts: 0,
+				createdAt: now,
+				updatedAt: now,
+			});
+			results.push({
+				jobId: target.jobId,
+				job: { ...job, _id: new DocumentId(target.jobId), status: reduced.statuses },
+				profileId,
+				viewerStatus: resolveJobStatusState(profileStatuses),
+				changed: reduced.changed,
+				mutationId,
+				statusVersion,
+				cacheSync: "queued",
+			});
+		}
+		return { results, failed };
+	});
+
+	observeHistogram("athens_job_status_durable_commit_seconds", { catalog: "bulk" }, (performance.now() - startedAt) / 1000);
+	jobsCollection?._invalidateCaches?.();
+	externalScrapedJobsCollection?._invalidateCaches?.();
+	if (committed.results.length) {
+		const scheduled = setImmediate(() => {
+			import("./jobStatusOutboxWorker.js")
+				.then(async ({ processJobStatusOutboxRecord }) => {
+					for (let offset = 0; offset < committed.results.length; offset += 10) {
+						await Promise.all(committed.results.slice(offset, offset + 10)
+							.map((result) => processJobStatusOutboxRecord(result.mutationId).catch(() => false)));
+					}
+				})
+				.catch((error) => console.warn("[job-status-outbox] bulk publication deferred:", error?.message || error));
+		});
+		scheduled.unref?.();
+	}
+	return { profileId, ...committed, cacheSync: "queued" };
+}
+
 export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {
 	const jobId = String(jobIdRaw || "");
 	const profileId = String(profileIdRaw || "");

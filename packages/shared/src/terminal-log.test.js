@@ -1,4 +1,4 @@
-import { formatPlainLine, parseStyledLine } from './terminal-log.js';
+import { formatPlainLine, installTerminalLogger, parseStyledLine } from './terminal-log.js';
 
 function assert(condition, message) {
   if (!condition) throw new Error(`FAIL: ${message}`);
@@ -16,5 +16,13 @@ const parsed = parseStyledLine(line, 'athens');
 assert(parsed.level === 'info', 'parsed level');
 assert(parsed.tag === 'api', 'parsed tag');
 assert(parsed.message.includes('GET /api/foo'), 'parsed message');
+
+const originalLog = console.log;
+const written = [];
+console.log = (value) => written.push(value);
+installTerminalLogger('athens');
+console.log(line);
+console.log = originalLog;
+assert(written[0] === line, 'structured lines are not formatted twice');
 
 console.log('terminal-log ok');

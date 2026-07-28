@@ -7,7 +7,6 @@ import { isTransientRequestError } from "@/lib/transient-retry";
 import { JOB_STATUS_TO_API } from "../../../api/jobs";
 import { mapDocToJob } from "../../../lib/job-adapters";
 import type { Job } from "../../../types";
-import { runWithConcurrency } from "../lib/run-with-concurrency";
 
 type JobMutationResponse = {
   success?: boolean;
@@ -17,6 +16,13 @@ type JobMutationResponse = {
   mutationId?: string;
   statusVersion?: string;
   cacheSync?: "queued";
+};
+
+type BulkJobMutationResponse = {
+  success?: boolean;
+  updatedCount?: number;
+  failed?: Array<{ jobId: string; error?: string }>;
+  results?: Array<{ jobId: string; viewerStatus: Job["status"] }>;
 };
 
 type RequestError = Error & { data?: { error?: string } };
@@ -47,6 +53,17 @@ export function useJobApplicationActions(
       const next = new Set(prev);
       if (pending) next.add(jobId);
       else next.delete(jobId);
+      return next;
+    });
+  }, []);
+
+  const setManyPending = useCallback((jobIds: string[], pending: boolean) => {
+    setPendingIds((prev) => {
+      const next = new Set(prev);
+      for (const jobId of jobIds) {
+        if (pending) next.add(jobId);
+        else next.delete(jobId);
+      }
       return next;
     });
   }, []);
@@ -299,44 +316,34 @@ export function useJobApplicationActions(
         return;
       }
 
+      const jobIds = eligible.map((job) => job.backendId || job.id);
       eligible.forEach((job) => onJobUpdated({ ...job, status: "bid-ready" }));
-      const outcomes = await runWithConcurrency(
-        eligible,
-        async (job) => {
-          const jobId = job.backendId || job.id;
-          setPending(jobId, true);
-          try {
-            const res = await postMutation(`/jobs/${jobId}/bid-status`, {
-              applierName: applier.name,
-              status: "BidReady",
-              catalog: job.catalog || "market",
-              mutationId: newMutationId(),
-            });
-            if (res?.success && res.data) {
-              onJobUpdated(mapDocToJob(res.data, applier));
-              return true;
-            }
-            return false;
-          } catch {
-            if (await reconcileStatus(job, "bid-ready")) return true;
-            onJobUpdated(job);
-            return false;
-          } finally {
-            setPending(jobId, false);
-          }
-        },
-      );
-      const ok = outcomes.filter(Boolean).length;
-      const failed = outcomes.length - ok;
-      if (ok > 0) {
-        toast.success(`Marked ${ok} job${ok === 1 ? "" : "s"} as Bid ready`);
-      }
-      if (failed > 0) {
-        toast.error(`Failed on ${failed} job${failed === 1 ? "" : "s"}`);
+      setManyPending(jobIds, true);
+      try {
+        const res = await postMutation("/jobs/bid-status/bulk", {
+          applierName: applier.name,
+          status: "BidReady",
+          mutationId: newMutationId(),
+          jobs: eligible.map((job) => ({ id: job.backendId || job.id, catalog: job.catalog || "market" })),
+        }) as BulkJobMutationResponse;
+        const failedIds = new Set((res.failed || []).map((row) => row.jobId));
+        for (const job of eligible) {
+          if (failedIds.has(job.backendId || job.id)) onJobUpdated(job);
+        }
+        const ok = res.updatedCount ?? Math.max(0, eligible.length - failedIds.size);
+        if (ok) toast.success(`Marked ${ok} job${ok === 1 ? "" : "s"} as Bid ready`);
+        if (failedIds.size) toast.error(`Failed on ${failedIds.size} job${failedIds.size === 1 ? "" : "s"}`);
+      } catch (error) {
+        eligible.forEach(onJobUpdated);
+        toast.error("Failed to mark jobs as Bid ready", {
+          description: requestErrorMessage(error, "The server rejected the bulk update."),
+        });
+      } finally {
+        setManyPending(jobIds, false);
       }
       void refreshStatusCounts();
     },
-    [applier, onJobUpdated, postMutation, reconcileStatus, refreshStatusCounts, setPending],
+    [applier, onJobUpdated, postMutation, refreshStatusCounts, setManyPending],
   );
 
   const clearBidReadyBulk = useCallback(
@@ -353,44 +360,34 @@ export function useJobApplicationActions(
         return;
       }
 
+      const jobIds = eligible.map((job) => job.backendId || job.id);
       eligible.forEach((job) => onJobUpdated({ ...job, status: "posted" }));
-      const outcomes = await runWithConcurrency(
-        eligible,
-        async (job) => {
-          const jobId = job.backendId || job.id;
-          setPending(jobId, true);
-          try {
-            const res = await postMutation(`/jobs/${jobId}/bid-status`, {
-              applierName: applier.name,
-              status: "clear",
-              catalog: job.catalog || "market",
-              mutationId: newMutationId(),
-            });
-            if (res?.success && res.data) {
-              onJobUpdated(mapDocToJob(res.data, applier));
-              return true;
-            }
-            return false;
-          } catch {
-            if (await reconcileStatus(job, "posted")) return true;
-            onJobUpdated(job);
-            return false;
-          } finally {
-            setPending(jobId, false);
-          }
-        },
-      );
-      const ok = outcomes.filter(Boolean).length;
-      const failed = outcomes.length - ok;
-      if (ok > 0) {
-        toast.success(`Moved ${ok} job${ok === 1 ? "" : "s"} back to New`);
-      }
-      if (failed > 0) {
-        toast.error(`Failed on ${failed} job${failed === 1 ? "" : "s"}`);
+      setManyPending(jobIds, true);
+      try {
+        const res = await postMutation("/jobs/bid-status/bulk", {
+          applierName: applier.name,
+          status: "clear",
+          mutationId: newMutationId(),
+          jobs: eligible.map((job) => ({ id: job.backendId || job.id, catalog: job.catalog || "market" })),
+        }) as BulkJobMutationResponse;
+        const failedIds = new Set((res.failed || []).map((row) => row.jobId));
+        for (const job of eligible) {
+          if (failedIds.has(job.backendId || job.id)) onJobUpdated(job);
+        }
+        const ok = res.updatedCount ?? Math.max(0, eligible.length - failedIds.size);
+        if (ok) toast.success(`Moved ${ok} job${ok === 1 ? "" : "s"} back to New`);
+        if (failedIds.size) toast.error(`Failed on ${failedIds.size} job${failedIds.size === 1 ? "" : "s"}`);
+      } catch (error) {
+        eligible.forEach(onJobUpdated);
+        toast.error("Failed to move jobs back to New", {
+          description: requestErrorMessage(error, "The server rejected the bulk update."),
+        });
+      } finally {
+        setManyPending(jobIds, false);
       }
       void refreshStatusCounts();
     },
-    [applier, onJobUpdated, postMutation, reconcileStatus, refreshStatusCounts, setPending],
+    [applier, onJobUpdated, postMutation, refreshStatusCounts, setManyPending],
   );
 
   return {
