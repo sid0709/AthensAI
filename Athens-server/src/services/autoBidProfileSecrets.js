@@ -52,6 +52,43 @@ export async function decryptProfileApiKeys(profile) {
 	return out;
 }
 
+function isUnavailableKmsError(error) {
+	return error?.code === 7 || /KMS_KEY_NAME is required|cloudkms\.cryptoKeyVersions\.useToDecrypt|PERMISSION_DENIED/i.test(
+		String(error?.message || error || ''),
+	);
+}
+
+/**
+ * Decrypt secrets for a client-facing profile read without making the whole
+ * profile unavailable when this runtime cannot access a KMS-encrypted field.
+ * Unavailable values are redacted; callers may surface `unavailableFields`.
+ */
+export async function decryptProfileApiKeysForClient(profile) {
+	if (!profile || typeof profile !== 'object') return { profile, unavailableFields: [] };
+	const out = { ...profile };
+	const unavailableFields = [];
+	for (const field of FIELDS) {
+		if (typeof out[field] !== 'string' || !out[field]) continue;
+		try {
+			out[field] = await decryptValue(out[field]);
+		} catch (error) {
+			if (!isUnavailableKmsError(error)) throw error;
+			out[field] = '';
+			unavailableFields.push(field);
+		}
+	}
+	return { profile: out, unavailableFields };
+}
+
+/** Preserve ciphertext that a client could not read unless it supplied a replacement. */
+export function preserveUnavailableProfileSecrets(profile, storedProfile, unavailableFields = []) {
+	const out = { ...(profile || {}) };
+	for (const field of unavailableFields) {
+		if (FIELDS.includes(field) && !out[field]) out[field] = storedProfile?.[field] || '';
+	}
+	return out;
+}
+
 export async function rewrapProfileSecretsWithKms(profile) {
 	if (!kmsKeyName()) throw new Error('KMS_KEY_NAME is required to rewrap migrated profile secrets');
 	if (!profile || typeof profile !== 'object') return profile;

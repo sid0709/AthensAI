@@ -5,7 +5,7 @@ import {
 	insertAccountInfo,
 	updateAccountInfoById,
 } from "../services/accountInfoStore.js";
-import { decryptAccountDoc } from "../services/autoBidProfileSecrets.js";
+import { decryptProfileApiKeysForClient } from "../services/autoBidProfileSecrets.js";
 
 export const getAuthSession = async (req, res) => {
 	if (!req.auth) {
@@ -60,7 +60,12 @@ function canAccessAccount(req, doc) {
 async function sanitizeAccount(doc, { includeSecrets = false } = {}) {
 	if (!doc) return doc;
 	const { password, vendorPassword, ...rest } = doc;
-	const safe = includeSecrets ? await decryptAccountDoc(rest) : { ...rest };
+	const safe = { ...rest };
+	if (includeSecrets && safe.autoBidProfile) {
+		const decrypted = await decryptProfileApiKeysForClient(safe.autoBidProfile);
+		safe.autoBidProfile = decrypted.profile;
+		if (decrypted.unavailableFields.length) safe.secretFieldsUnavailable = decrypted.unavailableFields;
+	}
 	if (safe.notionIntegration && typeof safe.notionIntegration === "object") {
 		safe.notionIntegration = { ...safe.notionIntegration };
 		delete safe.notionIntegration.accessToken;

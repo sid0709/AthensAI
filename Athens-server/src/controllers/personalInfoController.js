@@ -4,7 +4,12 @@ import { updateAccountInfoById } from "../services/accountInfoStore.js";
 import { verifyKey, getProvider } from "../services/llm/llmService.js";
 import { toCanonical } from "../services/skillNormalize.js";
 import { emptyResumeCatalog, validateResumeCatalog } from "../services/resumeCatalogService.js";
-import { decryptProfileApiKeys, encryptProfileApiKeys } from "../services/autoBidProfileSecrets.js";
+import {
+	decryptProfileApiKeys,
+	decryptProfileApiKeysForClient,
+	encryptProfileApiKeys,
+	preserveUnavailableProfileSecrets,
+} from "../services/autoBidProfileSecrets.js";
 import { invalidateMailAccountCache } from "../services/mail/credentials.js";
 
 /** Build personal skill document with normalized canonical id. */
@@ -336,12 +341,13 @@ export async function getAutoBidProfile(req, res) {
 				profile: buildAutoBidProfileResponse({}, name),
 			});
 		}
-		const p = await decryptProfileApiKeys(acc.autoBidProfile || {});
+		const { profile: p, unavailableFields } = await decryptProfileApiKeysForClient(acc.autoBidProfile || {});
 		return res.json({
 			success: true,
 			accountExists: true,
 			vendorAllowed: Boolean(acc.vendorAllowed),
 			vendorPasswordSet: Boolean(acc.vendorPassword),
+			secretFieldsUnavailable: unavailableFields,
 			profile: buildAutoBidProfileResponse(p, acc.name),
 		});
 	} catch (err) {
@@ -363,8 +369,15 @@ export async function upsertAutoBidProfile(req, res) {
 				error: `No account named "${name}". Add it under Applier accounts in the sidebar (or POST /api/account_info) before saving the profile.`,
 			});
 		}
-		const existing = await decryptProfileApiKeys(acc.autoBidProfile || {});
-		const normalized = normalizeAutoBidProfile(body);
+		const {
+			profile: existing,
+			unavailableFields,
+		} = await decryptProfileApiKeysForClient(acc.autoBidProfile || {});
+		const normalized = preserveUnavailableProfileSecrets(
+			normalizeAutoBidProfile(body),
+			acc.autoBidProfile,
+			unavailableFields,
+		);
 		// Preserve server-managed resume sync watermark across profile saves.
 		const autoBidProfile = await encryptProfileApiKeys({
 			...normalized,
@@ -381,9 +394,11 @@ export async function upsertAutoBidProfile(req, res) {
 			});
 		}
 		await invalidateMailAccountCache(acc.name);
+		const clientProfile = await decryptProfileApiKeysForClient(autoBidProfile);
 		return res.json({
 			success: true,
-			profile: await decryptProfileApiKeys(autoBidProfile),
+			profile: clientProfile.profile,
+			secretFieldsUnavailable: clientProfile.unavailableFields,
 			vendorAllowed,
 		});
 	} catch (err) {
