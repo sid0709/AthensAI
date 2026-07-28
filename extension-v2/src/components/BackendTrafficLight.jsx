@@ -1,5 +1,5 @@
 import { Box, Stack, Tooltip, Typography } from '@mui/material';
-import useSocket from '../api/useSocket';
+import useBackendHealth from '../api/useBackendHealth';
 
 const LIGHT = {
 	off: 'rgba(255,255,255,0.12)',
@@ -24,13 +24,13 @@ function TrafficDot({ color, active, label }) {
 	);
 }
 
-function statusMeta(status, serverInfo, socketUrl) {
+function statusMeta(status, serverInfo, apiUrl) {
 	switch (status) {
 		case 'connected':
 			return serverInfo?.ok
 				? {
 					label: 'Backend online',
-					detail: `Socket connected to ${socketUrl || 'backend'}`,
+					detail: `REST API healthy at ${apiUrl || 'backend'}`,
 					active: 'green',
 				}
 				: {
@@ -41,27 +41,27 @@ function statusMeta(status, serverInfo, socketUrl) {
 		case 'connecting':
 			return {
 				label: 'Connecting…',
-				detail: socketUrl ? `Connecting to ${socketUrl}` : 'Connecting',
+				detail: apiUrl ? `Checking ${apiUrl}` : 'Connecting',
 				active: 'yellow',
 			};
 		case 'disconnected':
 			return {
 				label: 'Backend offline',
-				detail: socketUrl ? `Cannot reach ${socketUrl}` : 'Socket disconnected',
+				detail: apiUrl ? `Cannot reach ${apiUrl}` : 'REST API unavailable',
 				active: 'red',
 			};
 		default:
 			return {
 				label: 'Backend not configured',
-				detail: 'Set VITE_API_URL or VITE_SOCKET_URL and reload',
+				detail: 'Set VITE_API_URL and reload',
 				active: 'red',
 			};
 	}
 }
 
 export default function BackendTrafficLight() {
-	const { status, serverInfo, socketUrl } = useSocket();
-	const meta = statusMeta(status, serverInfo, socketUrl);
+	const { status, serverInfo, apiUrl } = useBackendHealth();
+	const meta = statusMeta(status, serverInfo, apiUrl);
 
 	const redOn = meta.active === 'red';
 	const yellowOn = meta.active === 'yellow';

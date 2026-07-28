@@ -9,7 +9,6 @@ import { JobSourceTitles } from '@/app/data/jobs/pub';
 import { JOB_TITLE_SCAN_ROLES } from "@/app/data/jobTitleRoles";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
 import { rescoreJobWithContext, type ProfileMatchContext } from "../../../lib/skill-match";
-import { subscribeJobRankingReady } from "../../../services/job-ranking-events";
 import type { CompanyJobGroup, Job } from "../../../types";
 import type {
   JobSearchFilterState,
@@ -460,7 +459,7 @@ export function useJobsList(
   const [groupedBeta, setGroupedBeta] = useState(false);
   const rawGroupsRef = useRef<CompanyJobGroup[]>([]);
   const applierRef = useRef(applier);
-  const rankingEventVersionRef = useRef<string | null>(null);
+  const rankingPollAttemptRef = useRef(0);
   rawGroupsRef.current = rawGroups;
   applierRef.current = applier;
 
@@ -640,11 +639,20 @@ export function useJobsList(
     };
   }, [countsKey, applierReady, request, isDebouncing]);
 
-  useEffect(() => subscribeJobRankingReady(applier?.name, (event) => {
-    if (event.version && rankingEventVersionRef.current === event.version) return;
-    rankingEventVersionRef.current = event.version || null;
-    setRetryRevision((revision) => revision + 1);
-  }), [applier?.name]);
+  useEffect(() => {
+    const rankingPending = rankingStatus === "warming" || rankingStatus === "stale" || recommendationWarming;
+    if (!JOB_LIST_V2_ENABLED || !applierReady || isDebouncing || !rankingPending) {
+      rankingPollAttemptRef.current = 0;
+      return undefined;
+    }
+    if (requestInFlight) return undefined;
+    const delayMs = Math.min(5_000, 1_000 + rankingPollAttemptRef.current * 750);
+    const timer = setTimeout(() => {
+      rankingPollAttemptRef.current += 1;
+      setRetryRevision((revision) => revision + 1);
+    }, delayMs);
+    return () => clearTimeout(timer);
+  }, [applierReady, isDebouncing, rankingStatus, recommendationWarming, requestInFlight, retryRevision]);
 
   const setPageSizeAndReset = useCallback((size: number) => {
     setPageSize(size);

@@ -9,9 +9,23 @@ const {
   finalizeSnapshot,
   matchesEntry,
   orderedIds,
+  rankingReadinessStatus,
   responseCard,
   statusTab,
 } = jobListReadModelTest;
+
+test('REST responses expose ranking readiness for client polling', () => {
+  assert.equal(rankingReadinessStatus(false, null, 'catalog-1'), 'fresh');
+  assert.equal(rankingReadinessStatus(true, null, 'catalog-1'), 'warming');
+  assert.equal(rankingReadinessStatus(true, {
+    catalogRevision: 'catalog-0',
+    stale: false,
+  }, 'catalog-1'), 'stale');
+  assert.equal(rankingReadinessStatus(true, {
+    catalogRevision: 'catalog-1',
+    stale: false,
+  }, 'catalog-1'), 'fresh');
+});
 
 function payload(jobId, overrides = {}) {
   return {

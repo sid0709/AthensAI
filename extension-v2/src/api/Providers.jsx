@@ -1,15 +1,15 @@
 import { SnackbarProvider } from 'notistack';
 import { RuntimeProvider } from './runtime.jsx';
-import { SocketProvider } from './socket.jsx';
+import { BackendHealthProvider } from './backendHealth.jsx';
 
 const Providers = ({ children }) => {
 	return (
 		<SnackbarProvider maxSnack={4} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
-			<SocketProvider>
+			<BackendHealthProvider>
 				<RuntimeProvider>
 					{children}
 				</RuntimeProvider>
-			</SocketProvider>
+			</BackendHealthProvider>
 		</SnackbarProvider>
 	);
 };

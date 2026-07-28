@@ -9,6 +9,8 @@
   let recorderStatusCache = 'idle';
   let recordingErrorCache = '';
   let contextInvalidatedNotified = false;
+  const ResumeFileTracking = globalThis.BidResumeFileTracking;
+  const resumeAuditRelayInFlight = new Set();
 
   const TAB_RECORDING_CONFIG = {
     videoBitsPerSecond: 900_000,
@@ -215,6 +217,10 @@
         detail: {
           isRecording: !!activeSessionCache,
           sessionId: activeSessionCache?.id || '',
+          jobId: activeSessionCache?.jobId || applyJobCache?.id || '',
+          companyName:
+            activeSessionCache?.companyName || applyJobCache?.companyName || '',
+          jobTitle: activeSessionCache?.jobTitle || applyJobCache?.title || '',
           resumeSetFolder: activeSessionCache?.resumeSetFolder || '',
           expectedResumeName:
             activeSessionCache?.expectedResumeName ||
@@ -696,14 +702,69 @@
     }, 2000);
   }
 
+  async function queueResumeAudit(payload) {
+    if (!payload || !ResumeFileTracking?.resumeAuditOutboxKey) return;
+
+    const outboxKey = ResumeFileTracking.resumeAuditOutboxKey(payload);
+    if (resumeAuditRelayInFlight.has(outboxKey)) return;
+    resumeAuditRelayInFlight.add(outboxKey);
+
+    try {
+      // Acknowledge the page hook only after both filenames are durable. If the
+      // ATS navigates immediately, the service worker can replay this outbox.
+      await chrome.storage.local.set({
+        [outboxKey]: {
+          payload,
+          queuedAt: new Date().toISOString(),
+        },
+      });
+
+      window.postMessage({
+        __bidMonitorResumeRelay: true,
+        type: 'RESUME_RENAME_AUDIT_ACK',
+        auditKey: payload.auditKey,
+      }, '*');
+
+      const response = await sendRuntimeMessage({
+        type: 'RESUME_SELECTED',
+        payload,
+        outboxKey,
+      });
+      if (response?.persisted) {
+        await chrome.storage.local.remove(outboxKey);
+      }
+    } catch (err) {
+      // Keep the outbox item for the background worker to replay later.
+      console.warn('Bid Monitor: queued resume filename audit for retry', err);
+    } finally {
+      resumeAuditRelayInFlight.delete(outboxKey);
+    }
+  }
+
   if (!window.__bidMonitorListenersAttached) {
     window.__bidMonitorListenersAttached = true;
 
     window.addEventListener('bid-monitor-resume', (event) => {
       const payload = event.detail;
       if (!payload) return;
-      void sendRuntimeMessage({ type: 'RESUME_SELECTED', payload });
+      void queueResumeAudit(payload);
     });
+
+    window.addEventListener('message', (event) => {
+      if (
+        event.source !== window ||
+        event.data?.__bidMonitorResumeRelay !== true ||
+        event.data.type !== 'RESUME_RENAME_AUDIT'
+      ) {
+        return;
+      }
+      void queueResumeAudit(event.data.payload);
+    });
+
+    window.postMessage({
+      __bidMonitorResumeRelay: true,
+      type: 'RESUME_RENAME_RELAY_READY',
+    }, '*');
 
     window.addEventListener('bid-monitor-toast', (event) => {
       const message = event.detail?.message;

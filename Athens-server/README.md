@@ -83,7 +83,7 @@ See [`idea.md`](../idea.md) in the repo root for the full design.
 
 - **Node.js** 18+ and npm
 - **Firebase** project with Firestore, Cloud Storage, and Admin SDK credentials
-- **Redis** for cache, queues, and clustered Socket.IO
+- **Redis** for cache and background queues
 - **Neo4j** (skill graph enrichment) — install **Graph Data Science** plugin for best path scoring
 - **Qdrant** (vector search) — Docker or binary
 - **Ollama** (embeddings) — [native macOS app](https://ollama.com) or Docker

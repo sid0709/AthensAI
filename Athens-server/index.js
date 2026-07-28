@@ -10,13 +10,10 @@ installTerminalLogger("athens");
 
 import express from "express";
 import cors from "cors";
-import { setupMaster } from "@socket.io/sticky";
-import { setupPrimary } from "@socket.io/cluster-adapter";
 
 import { initDataStore, closeDataStore, getDataStore } from "./src/db/dataStore.js";
 import { initRedis, closeRedis, isRedisReady } from "./src/db/redis.js";
 import { loadCanonicalSkillDictionary } from "./src/services/matching/canonicalSkillDictionary.js";
-import { initSocket, closeSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 import { startLocalSearchOutboxWorker, stopLocalSearchOutboxWorker } from "./src/services/search/localOutboxWorker.js";
@@ -233,17 +230,16 @@ async function startBackgroundWorkers() {
 async function startHttpWorker({ clustered }) {
 	const app = createApp();
 	const server = http.createServer(app);
-	if (!clustered) {
-		server.on("error", (err) => {
-			console.error(`[athens] listen error:`, err.message);
-			process.exit(1);
-		});
-		server.listen(port, host, () => {
-			console.log(`Server running on http://${host}:${port} (pid ${process.pid})`);
-			console.log(`Socket.IO on ws://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+	server.on("error", (err) => {
+		console.error(`[athens] listen error:`, err.message);
+		process.exit(1);
+	});
+	server.listen(port, host, () => {
+		console.log(`Server running on http://${host}:${port} (pid ${process.pid})`);
+		if (!clustered) {
 			console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
-		});
-	}
+		}
+	});
 
 	await initDataStore();
 	const needsJobRankingIndex = isQueryTimeRankingIndexEnabled() || isJobListV2Enabled();
@@ -266,8 +262,6 @@ async function startHttpWorker({ clustered }) {
 	}
 	if (!clustered && process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
-	await initSocket(server, { clustered });
-
 	let shuttingDown = false;
 	async function shutdown(signal) {
 		if (shuttingDown) return;
@@ -276,14 +270,13 @@ async function startHttpWorker({ clustered }) {
 		const force = setTimeout(() => process.exit(1), 15_000);
 		force.unref?.();
 		try {
-			await closeSocket();
 			if (!clustered) {
 				stopJobAnalysisWorker();
 				stopMatchScoreWorker();
 				stopLocalSearchOutboxWorker();
 				stopJobStatusOutboxWorker();
-				await new Promise((resolve) => server.close(() => resolve()));
 			}
+			await new Promise((resolve) => server.close(() => resolve()));
 			await shutdownPdfPool();
 			await shutdownImapPool();
 			await shutdownRankingPool();
@@ -301,24 +294,16 @@ async function startHttpWorker({ clustered }) {
 
 	if (!clustered) return;
 
-	// Sticky worker: the primary owns the listen socket; workers receive handed-off connections.
+	// Node's cluster module shares the HTTP listener across workers.
 	console.log(`[athens] cluster worker ready (pid ${process.pid})`);
 }
 
 async function startPrimary() {
 	startAggregateMetricsServer();
-	const httpServer = http.createServer();
-	setupMaster(httpServer, {
-		loadBalancingMethod: "least-connection",
-	});
-	setupPrimary();
-
-	httpServer.listen(port, host, () => {
-		console.log(`[athens] cluster primary listening on http://${host}:${port} (workers=${workerCount})`);
-		console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
-	});
+	let shuttingDown = false;
 
 	cluster.on("exit", (worker, code, signal) => {
+		if (shuttingDown) return;
 		console.warn(
 			`[athens] worker ${worker.process.pid} exited (code=${code} signal=${signal}) — respawning`,
 		);
@@ -329,9 +314,10 @@ async function startPrimary() {
 	for (let i = 0; i < workerCount; i += 1) {
 		cluster.fork();
 	}
+	console.log(`[athens] cluster primary started HTTP workers (workers=${workerCount})`);
+	console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") startMonitoringLoop();
 
-	let shuttingDown = false;
 	async function shutdown(signal) {
 		if (shuttingDown) return;
 		shuttingDown = true;
@@ -350,7 +336,6 @@ async function startPrimary() {
 			await stopAggregateMetricsServer();
 			await closeRedis();
 			await closeDataStore();
-			await new Promise((resolve) => httpServer.close(() => resolve()));
 		} catch (err) {
 			console.error(`[athens] primary shutdown error:`, err.message);
 		}

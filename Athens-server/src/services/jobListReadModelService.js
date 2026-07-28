@@ -10,7 +10,6 @@ import { getProfileRankingVersion } from './matching/matchScoreStore.js';
 import { loadProfileMatchContext } from './matching/profileSkills.js';
 import { getStatusRevision } from './matching/rankingCache.js';
 import { isJobRankingReady, scrollJobRankingPayloads } from './vectorStore/qdrantClient.js';
-import { getIO } from '../socketHub.js';
 import { incrementCounter, observeHistogram, setGauge } from './monitoring/metrics.js';
 import { reconcileJobTitleRoleIndex } from './jobTitleScan/titleRoleIndexSync.js';
 import { inferTitleScanRole } from '../config/jobTitleScanRoles.js';
@@ -405,11 +404,6 @@ async function buildProfileRanking(applierName, profileVersion, snapshot) {
       JSON.stringify({ ids: ranking.ids, scores: Object.fromEntries(ranking.scores), computedAt }),
     );
   }
-  getIO()?.emit('jobs:ranking-ready', {
-    applierName,
-    version: ranking.version,
-    computedAt,
-  });
   return ranking;
 }
 
@@ -592,6 +586,13 @@ function responseCard(entry, viewerStatus, rankingScore) {
   };
 }
 
+function rankingReadinessStatus(wantsRanking, ranking, catalogRevision) {
+  if (!wantsRanking) return 'fresh';
+  const fresh = ranking && ranking.catalogRevision === catalogRevision && !ranking.stale;
+  if (fresh) return 'fresh';
+  return ranking ? 'stale' : 'warming';
+}
+
 function wantsSourceFacets(body = {}) {
   return Array.isArray(body.facets) && body.facets.includes('source');
 }
@@ -644,7 +645,6 @@ export async function listJobsV2(body = {}) {
     const entry = snapshot.byId.get(id);
     return entry ? [responseCard(entry, statuses.byJobId.get(id) || 'posted', ranking?.scores?.get(id))] : [];
   });
-  const rankingFresh = ranking && ranking.catalogRevision === snapshot.revision && !ranking.stale;
   const facets = wantsSourceFacets(body)
     ? { sources: buildSourceFacets(snapshot, body, account, statuses, ranking) }
     : undefined;
@@ -661,7 +661,8 @@ export async function listJobsV2(body = {}) {
     },
     readModelVersion: snapshot.revision,
     ranking: {
-      status: text(body.sort) === 'recommended' ? (rankingFresh ? 'fresh' : ranking ? 'stale' : 'warming') : 'fresh',
+      // REST clients poll while a requested personalized ranking is warming.
+      status: rankingReadinessStatus(wantsRanking, ranking, snapshot.revision),
       version: ranking?.version ?? null,
       computedAt: ranking?.computedAt ?? null,
     },
@@ -832,6 +833,7 @@ export const jobListReadModelTest = {
   finalizeSnapshot,
   matchesEntry,
   orderedIds,
+  rankingReadinessStatus,
   responseCard,
   scoreMatches,
   statusTab,

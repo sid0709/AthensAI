@@ -10,16 +10,21 @@
   let resumeSetFolder = '';
   let expectedResumeName = '';
   let activeSessionId = '';
+  let activeJobId = '';
+  let activeCompanyName = '';
+  let activeJobTitle = '';
   let trackingSessionKey = '';
   let isRecording = false;
   const BID_ORIGINAL_NAME_PROP = '__bidOriginalName';
   const fileTracker = ResumeFileTracking.createTracker();
+  const pendingAuditPayloads = new Map();
 
   window.addEventListener('bid-monitor-session', (event) => {
     const detail = event.detail || {};
     const nextFolder = String(detail.resumeSetFolder || '').trim();
     const nextExpectedName = String(detail.expectedResumeName || '').trim();
     const nextSessionId = String(detail.sessionId || '').trim();
+    const nextJobId = String(detail.jobId || '').trim();
     const nextIsRecording = !!detail.isRecording;
     const nextTrackingKey = nextIsRecording
       ? nextSessionId || `${nextExpectedName}|${nextFolder}`
@@ -27,12 +32,16 @@
 
     if (nextTrackingKey !== trackingSessionKey) {
       fileTracker.reset(nextTrackingKey);
+      pendingAuditPayloads.clear();
       trackingSessionKey = nextTrackingKey;
     }
 
     resumeSetFolder = nextFolder;
     expectedResumeName = nextExpectedName;
     activeSessionId = nextSessionId;
+    activeJobId = nextJobId;
+    activeCompanyName = String(detail.companyName || '').trim();
+    activeJobTitle = String(detail.jobTitle || '').trim();
     isRecording = nextIsRecording;
   });
 
@@ -126,8 +135,31 @@
   }
 
   function notifyResumeSelected(payload) {
-    window.dispatchEvent(new CustomEvent('bid-monitor-resume', { detail: payload }));
+    pendingAuditPayloads.set(payload.auditKey, payload);
+    window.postMessage({
+      __bidMonitorResumeRelay: true,
+      type: 'RESUME_RENAME_AUDIT',
+      payload,
+    }, '*');
   }
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== window || event.data?.__bidMonitorResumeRelay !== true) return;
+    if (event.data.type === 'RESUME_RENAME_AUDIT_ACK') {
+      const auditKey = String(event.data.auditKey || '');
+      if (auditKey) pendingAuditPayloads.delete(auditKey);
+      return;
+    }
+    if (event.data.type === 'RESUME_RENAME_RELAY_READY') {
+      for (const payload of pendingAuditPayloads.values()) {
+        window.postMessage({
+          __bidMonitorResumeRelay: true,
+          type: 'RESUME_RENAME_AUDIT',
+          payload,
+        }, '*');
+      }
+    }
+  });
 
   function notifyToast(message) {
     window.dispatchEvent(new CustomEvent('bid-monitor-toast', { detail: { message } }));
@@ -139,33 +171,29 @@
     );
     const cleanedName = resumeBasename(file.name);
     const expected = resumeBasename(submittedName || cleanedName);
-    const renamed = cleanedName !== originalName;
-    const mismatch = Boolean(expected && cleanedName && cleanedName !== expected);
-    const payload = {
-      sessionId: activeSessionId || null,
-      originalFileName: originalName,
+    const payload = ResumeFileTracking.buildRenameAudit({
+      sessionId: activeSessionId,
+      jobId: activeJobId,
       originalName,
-      submittedFileName: cleanedName,
-      cleanedName,
-      expectedName: expected || null,
-      renamed,
-      mismatch,
-      fileName: originalName,
+      uploadedName: cleanedName,
+      expectedName: expected,
       fileSize: file.size,
       lastModified: file.lastModified,
-      mimeType: file.type || null,
+      mimeType: file.type,
       pageUrl: location.href,
       pageTitle: document.title,
       source,
-    };
+      company: activeCompanyName,
+      title: activeJobTitle,
+    });
     payload.auditKey = fileTracker.buildAuditKey(payload);
     if (!fileTracker.shouldEmit(payload)) return;
 
     notifyResumeSelected(payload);
 
-    if (mismatch) {
+    if (payload.mismatch) {
       notifyToast(`Résumé name mismatch: got “${originalName}”, expected “${expected}”`);
-    } else if (renamed) {
+    } else if (payload.renamed) {
       notifyToast(`Uploading as ${cleanedName}`);
     }
   }

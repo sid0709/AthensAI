@@ -6,7 +6,7 @@ import { renderPdfInWorker } from "../services/pdf/pdfRenderPool.js";
  * The frontend sends the already-rendered, inline-styled resume DOM (the inner
  * HTML of the live preview's `.resume-page`). We render it with headless Chromium
  * in true paged mode via a worker_threads pool — so Chromium + PDF encode never
- * block the Athens-server API / Socket.IO event loop.
+ * block the Athens-server REST API event loop.
  *
  * Browser pool size stays high (PUPPETEER_BROWSER_POOL, default 6) and
  * PDF_RENDER_CONCURRENCY stays high (default 16) — isolation, not throttling.

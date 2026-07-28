@@ -38,6 +38,68 @@
     return safe ? `${safe}${ext}` : resumeBasename(originalName);
   }
 
+  function buildRenameAudit({
+    originalName,
+    uploadedName,
+    expectedName,
+    sessionId,
+    jobId,
+    fileSize,
+    lastModified,
+    mimeType,
+    pageUrl,
+    pageTitle,
+    source,
+    company,
+    title,
+  }) {
+    const original = resumeBasename(originalName);
+    const uploaded = resumeBasename(uploadedName);
+    const expected = resumeBasename(expectedName) || uploaded;
+    return {
+      sessionId: String(sessionId || '').trim() || null,
+      jobId: String(jobId || '').trim() || null,
+      originalFileName: original,
+      originalName: original,
+      submittedFileName: uploaded,
+      cleanedName: uploaded,
+      expectedName: expected || null,
+      renamed: Boolean(original && uploaded && original !== uploaded),
+      mismatch: Boolean(expected && uploaded && expected !== uploaded),
+      fileName: original,
+      fileSize: Number(fileSize) || 0,
+      lastModified: Number(lastModified) || 0,
+      mimeType: String(mimeType || '').trim() || null,
+      pageUrl: String(pageUrl || '').trim() || null,
+      pageTitle: String(pageTitle || '').trim() || null,
+      source: String(source || '').trim() || null,
+      company: String(company || '').trim() || null,
+      title: String(title || '').trim() || null,
+    };
+  }
+
+  const RESUME_AUDIT_OUTBOX_PREFIX = 'bidMonitorResumeAudit:';
+
+  function resumeAuditOutboxKey(payload) {
+    const seed = String(
+      payload?.auditKey || [
+        payload?.sessionId || '',
+        payload?.jobId || '',
+        resumeBasename(payload?.originalName || payload?.originalFileName),
+        resumeBasename(payload?.cleanedName || payload?.submittedFileName),
+        Number(payload?.fileSize) || 0,
+        payload?.mimeType || '',
+      ].join('|'),
+    );
+    let hash = 2166136261;
+    for (let index = 0; index < seed.length; index += 1) {
+      hash ^= seed.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    const session = sanitizeForFileName(payload?.sessionId || 'session').slice(0, 40) || 'session';
+    return `${RESUME_AUDIT_OUTBOX_PREFIX}${session}:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
   function exactFileKey(file) {
     return [
       Number(file?.size) || 0,
@@ -111,6 +173,9 @@
     resumeBasename,
     getExtension,
     buildSubmittedFileName,
+    buildRenameAudit,
+    RESUME_AUDIT_OUTBOX_PREFIX,
+    resumeAuditOutboxKey,
     createTracker,
   };
 });

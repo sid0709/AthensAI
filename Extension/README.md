@@ -55,7 +55,7 @@ The project structure is as follows:
 - **dist/**: Contains the built extension files.
 - **public/**: Contains the public assets of the extension.
 - **src/**: Contains the source code of the extension.
-  - **api/**: Contains the API-related files, such as socket connection and notification hooks.
+  - **api/**: Contains the REST API, backend health, and notification hooks.
   - **assets/**: Contains the static assets of the extension, such as images and fonts.
   - **components/**: Contains the reusable components of the extension.
   - **App.jsx**: The main component of the extension's UI.
@@ -79,4 +79,4 @@ The extension is composed of three main parts:
 
 The different parts of the extension communicate with each other using the `chrome.runtime.onMessage` and `chrome.tabs.sendMessage` APIs. The background script acts as a message broker, relaying messages between the UI and the content script.
 
-The extension also communicates with the AIMS backend using Socket.io. The socket connection is managed in the `src/api/socket.jsx` file.
+The extension communicates with Athens-server over REST. Backend availability is checked through the `/healthz` HTTP endpoint.

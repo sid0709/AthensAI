@@ -1,7 +1,9 @@
 const assert = require('assert');
 const {
+  buildRenameAudit,
   buildSubmittedFileName,
   createTracker,
+  resumeAuditOutboxKey,
 } = require('./resume-file-tracking.js');
 
 function file(name, size, type, lastModified) {
@@ -73,8 +75,33 @@ function testNewSessionClearsDedupe() {
   assert.strictEqual(tracker.shouldEmit(audit), true);
 }
 
+function testOriginalAndUploadedNamesAreStoredAsAnOrderedPair() {
+  const audit = buildRenameAudit({
+    sessionId: 'session-1',
+    jobId: 'job-1',
+    originalName: 'Oliver_Baltay.pdf',
+    uploadedName: 'Eli Taylor.pdf',
+    expectedName: 'Eli Taylor.pdf',
+    fileSize: 100_540,
+    mimeType: 'application/pdf',
+  });
+
+  assert.strictEqual(audit.originalFileName, 'Oliver_Baltay.pdf');
+  assert.strictEqual(audit.originalName, 'Oliver_Baltay.pdf');
+  assert.strictEqual(audit.submittedFileName, 'Eli Taylor.pdf');
+  assert.strictEqual(audit.cleanedName, 'Eli Taylor.pdf');
+  assert.strictEqual(audit.renamed, true);
+  assert.strictEqual(audit.mismatch, false);
+
+  const firstKey = resumeAuditOutboxKey(audit);
+  const retryKey = resumeAuditOutboxKey({ ...audit });
+  assert.ok(firstKey.startsWith('bidMonitorResumeAudit:session-1:'));
+  assert.strictEqual(retryKey, firstKey);
+}
+
 testProfileUploadNameAndExtension();
 testAshbyCopiedInputKeepsOriginal();
 testDifferentSelectionReplacesOriginal();
 testNewSessionClearsDedupe();
+testOriginalAndUploadedNamesAreStoredAsAnOrderedPair();
 console.log('resume-file-tracking.test.js: all passed');
