@@ -324,10 +324,9 @@ export async function findExistingAgentJobResume(applierName, jobId, expectedTit
         }
       }
       const fingerprintDoc = generation || resume;
-      if (!matchesTitlePolicyFingerprint(fingerprintDoc, expectedFp)) {
-        return null;
+      if (matchesTitlePolicyFingerprint(fingerprintDoc, expectedFp)) {
+        return { resume, generation, reused: true };
       }
-      return { resume, generation, reused: true };
     }
   }
 
@@ -336,24 +335,20 @@ export async function findExistingAgentJobResume(applierName, jobId, expectedTit
       { applierName: name, generate_parent_job_id: parentId, status: "completed" },
       { sort: { startedAt: -1 } },
     );
-    if (!generation) return null;
-    if (!matchesTitlePolicyFingerprint(generation, expectedFp)) {
-      return null;
-    }
     let resume = null;
-    if (generation.libraryResumeId && userResumesCollection) {
+    if (generation?.libraryResumeId && userResumesCollection) {
       try {
         resume = await userResumesCollection.findOne({ _id: new DocumentId(String(generation.libraryResumeId)) });
       } catch {
         /* invalid id */
       }
     }
-    if (!resume && userResumesCollection) {
+    if (generation && !resume && userResumesCollection) {
       resume = await userResumesCollection.findOne({ ownerName: name, generationId: String(generation._id) });
     }
     // Reuse completed generation sections even when library sync was skipped —
     // otherwise Agent re-runs the LLM for a Job Search draft that already exists.
-    if (generation.sections) {
+    if (generation?.sections && matchesTitlePolicyFingerprint(generation, expectedFp)) {
       return {
         resume: resume || {
           ownerName: name,
@@ -367,6 +362,45 @@ export async function findExistingAgentJobResume(applierName, jobId, expectedTit
         generation,
         reused: true,
       };
+    }
+
+    // Some completed generations created before/during the Firestore migration
+    // lost their parent-job link even though their sections and policy
+    // fingerprint were preserved. The fingerprint covers the profile, JD and
+    // generator policy, so it is a safe recovery key that avoids another LLM
+    // run. The caller backfills the missing links after this match.
+    if (expectedFp) {
+      const recovered = await resumeGenerationsCollection.findOne(
+        {
+          applierName: name,
+          titlePolicyFingerprint: expectedFp,
+        },
+        { sort: { startedAt: -1 } },
+      );
+      if (recovered?.status === "completed" && recovered.sections) {
+        let recoveredResume = null;
+        if (userResumesCollection) {
+          recoveredResume = await userResumesCollection.findOne({
+            ownerName: name,
+            generationId: String(recovered._id),
+            source: "generated",
+          });
+        }
+        return {
+          resume: recoveredResume || {
+            ownerName: name,
+            generateParentJobId: parentId,
+            source: "generated",
+            generationId: String(recovered._id),
+            extractedText: "",
+            techStack: "Generated",
+            titlePolicyFingerprint: recovered.titlePolicyFingerprint,
+          },
+          generation: recovered,
+          reused: true,
+          recoveredJobLink: true,
+        };
+      }
     }
   }
 
@@ -639,6 +673,23 @@ export async function ensureAgentJobResume({
     ? null
     : await findExistingAgentJobResume(name, parentId, titlePolicyFingerprint);
   if (existing?.resume) {
+    if (existing.recoveredJobLink) {
+      try {
+        await resumeGenerationsCollection?.updateOne(
+          { _id: existing.generation._id },
+          { $set: { generate_parent_job_id: parentId } },
+        );
+        if (existing.resume._id) {
+          await userResumesCollection?.updateOne(
+            { _id: existing.resume._id },
+            { $set: { generateParentJobId: parentId } },
+          );
+        }
+      } catch (err) {
+        // Reuse remains valid even if the compatibility backfill is delayed.
+        console.warn("[agent-resume-gen] recovered job-link backfill failed:", err.message);
+      }
+    }
     if (onStep) onStep({ phase: "reused", name: "Existing draft" });
     const usage = usageToAgentShape(existing.generation?.usage, existing.generation?.model);
     const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;

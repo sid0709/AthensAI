@@ -824,7 +824,7 @@ export function AvalonControllerView({
           >
             {relay.generatingResume ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
             {relay.generatingResume
-              ? "Generating résumé…"
+              ? relay.resumeGenerateStep ?? "Preparing résumé…"
               : hasResumeDraft && relay.activeResume?.file?.base64
                 ? "4 · Résumé ready (regenerate)"
                 : hasResumeDraft

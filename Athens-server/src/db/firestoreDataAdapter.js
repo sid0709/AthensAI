@@ -91,8 +91,10 @@ function canTryCompositeQuery(plan) {
 function selectBoundingClause(clauses = []) {
 	const score = (clause) => {
 		if (clause.field === "sourceCatalog") return -100;
+		if (/fingerprint$/i.test(clause.field)) return 130;
+		if (/(job.?id|generation.?id|request.?id)$/i.test(clause.field)) return 120;
+		if (/(profile.?id|applier.?name|owner.?name|uid)$/i.test(clause.field)) return 100;
 		if (/status$/i.test(clause.field)) return 60;
-		if (/(profileId|applierName|uid|requestId|jobId)$/i.test(clause.field)) return 50;
 		if (typeof clause.value === "boolean") return -10;
 		return 0;
 	};
@@ -105,6 +107,10 @@ function buildFallbackQueryPlan(plan, collectionName) {
 		? plan.clauses.find((clause) => clause.field === "hasCustomLabels") || selectBoundingClause(plan.clauses)
 		: selectBoundingClause(plan.clauses);
 	return { ...plan, clauses: boundingClause ? [boundingClause] : [] };
+}
+
+function queryPlanCoversAllClauses(plan, queryPlan) {
+	return Boolean(plan.complete && queryPlan.complete && queryPlan.clauses.length === plan.clauses.length);
 }
 
 function conjunctiveDocumentIds(filter = {}) {
@@ -711,7 +717,13 @@ class FirestoreCollection {
 		if (nativeSort) {
 			for (const [field, direction] of sortEntries) query = query.orderBy(field, Number(direction) < 0 ? "desc" : "asc");
 		}
-		if (plan.complete && nativeSort && hints.limit != null) query = query.limit(Math.max(1, Number(hints.skip || 0) + Number(hints.limit)));
+		// A fallback plan usually sends only one bounding clause to Firestore and
+		// evaluates the remaining predicates locally. Applying limit/skip before
+		// that local filtering makes findOne return an unrelated first document.
+		// Push pagination down only when every predicate is in the native query.
+		if (queryPlanCoversAllClauses(plan, queryPlan) && nativeSort && hints.limit != null) {
+			query = query.limit(Math.max(1, Number(hints.skip || 0) + Number(hints.limit)));
+		}
 		const warnAt = Math.max(1, Number(process.env.FIRESTORE_COMPAT_WARN_SCAN || 1000));
 		const maxScan = Math.max(warnAt, Number(process.env.FIRESTORE_COMPAT_MAX_SCAN || 20000));
 		let snapshot;
@@ -1224,6 +1236,7 @@ export const firestoreAdapterTest = {
 	applyProjection,
 	buildNativeQueryPlan,
 	buildFallbackQueryPlan,
+	queryPlanCoversAllClauses,
 	collectFilterFields,
 	canTryCompositeQuery,
 	conjunctiveDocumentIds,

@@ -1751,13 +1751,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
   /** Mark a (non-manual) queued job Applied in the pipeline and badge it locally. */
   const markJobApplied = useCallback(
-    async (job: QueuedJob) => {
-      setAppliedJobIds((prev) => new Set(prev).add(job.id));
-      if (job.source === "manual" || job.id.startsWith("manual:") || !applierName) return;
+    async (job: QueuedJob): Promise<boolean> => {
+      if (job.source === "manual" || job.id.startsWith("manual:") || !applierName) {
+        setAppliedJobIds((prev) => new Set(prev).add(job.id));
+        return true;
+      }
       try {
         await applyToJob(job.id, applierName);
+        setAppliedJobIds((prev) => new Set(prev).add(job.id));
+        return true;
       } catch (error) {
         pushLog(`Could not mark "${job.title}" applied: ${error instanceof Error ? error.message : error}`, false);
+        return false;
       }
     },
     [applierName, pushLog],
@@ -2209,11 +2214,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog("Manual/link-only jobs can't be marked applied in the pipeline", false);
       return;
     }
-    await markJobApplied(job);
     // Marking applied is an explicit "done" — interrupt any running pipeline first.
     autoAbortRef.current = true;
     autoPauseRef.current = false;
-    await markJobApplied(job);
+    const marked = await markJobApplied(job);
+    if (!marked) return;
     pushLog(`Marked "${job.title}" as Applied for ${applierName}`, true);
     // Also tell the extension to close the job tab (the application is done).
     const tabId = treePage?.tabId ?? (typeof selectedTabId === "number" ? selectedTabId : undefined);

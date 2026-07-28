@@ -596,6 +596,11 @@ export async function publishStatusCache(profileId, jobId, statuses, {
 }
 
 /** Pure state-machine used by every Apply/Bid/Pipeline mutation. */
+/** Mongo-era jobs without an explicit catalog belong to the market catalog. */
+export function canonicalJobCatalog(sourceCatalog) {
+	return String(sourceCatalog || "market").trim().toLowerCase();
+}
+
 export function reduceJobStatuses(statusRows, profileValue, transition, now = new Date().toISOString()) {
 	const profileId = String(profileValue || "");
 	const otherRows = [];
@@ -718,7 +723,9 @@ export async function mutateJobStatus({
 		]);
 		if (
 			!snapshot.exists ||
-			snapshot.data()?.sourceCatalog !== catalog ||
+			// Mongo-era market jobs may not have sourceCatalog persisted. Everywhere
+			// else in the read model those records are canonically treated as market.
+			canonicalJobCatalog(snapshot.data()?.sourceCatalog) !== catalog ||
 			(!account.isBeta && isExtensionV2Job(snapshot.data()))
 		) throw new Error("Job not found");
 		const job = snapshot.data();

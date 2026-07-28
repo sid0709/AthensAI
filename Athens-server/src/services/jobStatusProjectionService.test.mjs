@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildStatusProjectionData,
   canUseMaterializedStatusPageForTier,
+  canonicalJobCatalog,
   canonicalProjectedStatusIds,
   normalizeMaterializedJobStatusCounts,
 	reduceJobStatuses,
@@ -10,6 +11,12 @@ import {
   statesOf,
   statusContribution,
 } from "./jobStatusProjectionService.js";
+
+test("Mongo-era jobs without sourceCatalog remain market jobs", () => {
+	assert.equal(canonicalJobCatalog(undefined), "market");
+	assert.equal(canonicalJobCatalog(""), "market");
+	assert.equal(canonicalJobCatalog(" EXTERNAL "), "external");
+});
 
 test("status projection gives completed and scheduled states precedence", () => {
   assert.equal(stateOf({ appliedDate: "a", scheduledDate: "s" }), "scheduled");

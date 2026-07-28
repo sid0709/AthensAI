@@ -9,6 +9,7 @@ const {
 	runPipeline,
 	buildNativeQueryPlan,
 	buildFallbackQueryPlan,
+	queryPlanCoversAllClauses,
 	collectFilterFields,
 	canTryCompositeQuery,
 	conjunctiveDocumentIds,
@@ -51,6 +52,27 @@ test("Firestore compatibility bounds mixed local and native job-search filters t
 	const fallback = buildFallbackQueryPlan(plan, "job_market");
 	assert.equal(fallback.clauses.length, 1);
 	assert.equal(fallback.clauses[0].field, "source");
+});
+
+test("Firestore fallback never applies pagination before remaining local predicates", () => {
+	const plan = buildNativeQueryPlan({
+		ownerName: "Owner One",
+		generateParentJobId: "job-1",
+		source: "generated",
+	});
+	const fallback = buildFallbackQueryPlan(plan, "user_resumes");
+	assert.equal(queryPlanCoversAllClauses(plan, fallback), false);
+	assert.equal(queryPlanCoversAllClauses(plan, plan), true);
+});
+
+test("Firestore fallback bounds résumé reuse by job identity instead of broad status", () => {
+	const plan = buildNativeQueryPlan({
+		applierName: "Owner One",
+		generate_parent_job_id: "job-1",
+		status: "completed",
+	});
+	const fallback = buildFallbackQueryPlan(plan, "resume_generations");
+	assert.equal(fallback.clauses[0].field, "generate_parent_job_id");
 });
 
 test("Firestore compatibility fallback keeps fields needed by nested local filters", () => {
