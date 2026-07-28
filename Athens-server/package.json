@@ -28,7 +28,7 @@
 		"benchmark-query-ranking": "node src/scripts/benchmarkQueryRanking.js",
 		"test:query-ranking": "node --test src/services/matching/canonicalSkillVectors.test.mjs src/services/matching/exactRerank.test.mjs src/services/matching/jobRankingIndex.test.mjs src/services/matching/rankingEvaluation.test.mjs",
 		"test:company-grouping": "node --test src/services/companyIdentity.test.mjs src/services/companyGroupedJobsService.test.mjs",
-		"test:job-list-v2": "node --test src/controllers/agentController.test.mjs src/services/jobListReadModelService.test.mjs src/services/jobStatusProjectionService.test.mjs",
+		"test:job-list-v2": "node --test src/controllers/agentController.test.mjs src/services/jobListReadModelService.test.mjs src/services/jobStatusProjectionService.test.mjs src/services/jobTitleScan/titleRoleIndexSync.test.mjs",
 		"qdrant:start": "docker compose -f ../compose.yaml up -d --wait qdrant",
 		"qdrant:stop": "docker compose -f ../compose.yaml stop qdrant",
 		"redis:start": "docker compose -f ../compose.yaml up -d --wait redis",

@@ -1189,13 +1189,7 @@ async function registerSidePanelRecording(tabId, { mimeType, videoFormat, fallba
   const normalizedFormat = VideoFormat.normalizePreference(videoFormat);
   let expectedResumeName = '';
   try {
-    expectedResumeName = CanonicalResumeName.buildCanonicalResumeFileName(
-      pending.job.companyName,
-      pending.job.title,
-      auth.displayName,
-      pending.job.id,
-      '.pdf',
-    );
+    expectedResumeName = CanonicalResumeName.buildProfileResumeFileName(auth.displayName, '.pdf');
   } catch {
     expectedResumeName = '';
   }
@@ -1278,14 +1272,8 @@ async function beginRecordingSession({
   const normalizedFormat = VideoFormat.normalizePreference(videoFormat);
   let expectedResumeName = '';
   try {
-    if (companyName && jobTitle && jobId && bidderName) {
-      expectedResumeName = CanonicalResumeName.buildCanonicalResumeFileName(
-        companyName,
-        jobTitle,
-        bidderName,
-        jobId,
-        '.pdf',
-      );
+    if (bidderName) {
+      expectedResumeName = CanonicalResumeName.buildProfileResumeFileName(bidderName, '.pdf');
     }
   } catch {
     expectedResumeName = '';
@@ -3166,7 +3154,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }));
         }
 
-        // Persist audit to Athens (original vs canonical expected).
+        // Persist both the selected local name and recruiter-facing upload name.
         try {
           const auth = await MockApi.getAuth();
           const jobId = session.jobId || null;

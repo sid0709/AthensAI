@@ -107,13 +107,7 @@ const AthensApi = (() => {
     let expectedResumeName = null;
     try {
       if (typeof CanonicalResumeName !== 'undefined') {
-        expectedResumeName = CanonicalResumeName.buildCanonicalResumeFileName(
-          companyName,
-          title,
-          applierName,
-          jobId,
-          '.pdf',
-        );
+        expectedResumeName = CanonicalResumeName.buildProfileResumeFileName(applierName, '.pdf');
       }
     } catch {
       expectedResumeName = null;

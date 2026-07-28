@@ -213,6 +213,7 @@ export function BidDetailPane({
     result?.rejectCount,
     result?.recommendedAt,
     result?.resumeOriginalName,
+    result?.resumeCleanedName,
     applier?.name,
   ]);
 
@@ -337,6 +338,19 @@ export function BidDetailPane({
                   ) : null}
                 </div>
 
+                {result.resumeOriginalName || result.resumeCleanedName ? (
+                  <div className="bm-detail-file-names">
+                    <div title={result.resumeOriginalName || undefined}>
+                      <span>Original file</span>
+                      <code>{result.resumeOriginalName || "—"}</code>
+                    </div>
+                    <div title={result.resumeCleanedName || undefined}>
+                      <span>Uploaded as</span>
+                      <code>{result.resumeCleanedName || "—"}</code>
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="bm-detail-row">
                   <div className="bm-bidder-chip">
                     <span className="bm-avatar sm">{result.bidder.avatarInitials}</span>
@@ -413,7 +427,7 @@ export function BidDetailPane({
                           </div>
                           {result.resumeExpectedName ? (
                             <div>
-                              Canonical expected: <code>{result.resumeExpectedName}</code>
+                              Target filename: <code>{result.resumeExpectedName}</code>
                             </div>
                           ) : null}
                           <div>
@@ -455,7 +469,7 @@ export function BidDetailPane({
                         </div>
                         {result.resumeExpectedName ? (
                           <div>
-                            Expected: <code>{result.resumeExpectedName}</code>
+                            Target filename: <code>{result.resumeExpectedName}</code>
                           </div>
                         ) : null}
                       </div>

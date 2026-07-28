@@ -374,6 +374,41 @@ export async function getJobRankingPoints(jobIds = [], { payloadInclude = null }
 	return (data?.result || []).map((point) => point.payload || {});
 }
 
+/**
+ * Patch only the role facet on existing ranking points. Using Qdrant's payload
+ * update endpoint preserves the job card and vectors already stored for each
+ * point, unlike a partial point upsert.
+ */
+export async function updateJobRankingTitleRoles(updates = [], {
+	wait = true,
+	collectionName = JOB_RANKINGS_ALIAS,
+} = {}) {
+	if (!isJobRankingReady() || !updates.length) return 0;
+	const roleByJobId = new Map();
+	for (const update of updates) {
+		const jobId = String(update?.jobId || '').trim();
+		const role = String(update?.role || '').trim();
+		if (jobId && role) roleByJobId.set(jobId, role);
+	}
+	if (!roleByJobId.size) return 0;
+
+	const idsByRole = new Map();
+	for (const [jobId, role] of roleByJobId) {
+		if (!idsByRole.has(role)) idsByRole.set(role, []);
+		idsByRole.get(role).push(toPointId(jobId));
+	}
+	await Promise.all([...idsByRole].map(([role, points]) =>
+		qdrantFetch(
+			`/collections/${encodeURIComponent(collectionName)}/points/payload?wait=${wait ? 'true' : 'false'}`,
+			{
+				method: 'POST',
+				body: { payload: { titleRoles: [role] }, points },
+			},
+		),
+	));
+	return roleByJobId.size;
+}
+
 export async function scrollJobRankingPayloads({
 	offset = null,
 	limit = 1_000,

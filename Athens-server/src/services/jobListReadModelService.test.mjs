@@ -81,6 +81,16 @@ test('filters operate entirely on the compact in-memory projection', () => {
   assert.equal(matchesEntry(entry, { q: 'nurse', jobSources: 'LinkedIn' }, account), false);
 });
 
+test('unscanned jobs use a deterministic title-role fallback', () => {
+  const software = buildEntry(payload('software', { title: 'Java Full Stack Developer' }));
+  const platform = buildEntry(payload('platform', { title: 'Senior Platform Engineer' }));
+  const account = { isBeta: true };
+  assert.deepEqual(software.titleRoles, ['Software Engineer']);
+  assert.deepEqual(platform.titleRoles, ['DevOps']);
+  assert.equal(matchesEntry(software, { titleScanned: 'Software Engineer' }, account), true);
+  assert.equal(matchesEntry(software, { titleScanned: 'DevOps' }, account), false);
+});
+
 test('status changes overlay a cached catalog ordering without rebuilding it', () => {
   const snapshot = finalizeSnapshot([
     buildEntry(payload('first', { postedAt: '2026-07-02T00:00:00.000Z' })),

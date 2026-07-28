@@ -18,6 +18,7 @@ test('ranking payload carries indexed global filter fields', () => {
   assert.equal(payload.card.title, 'Senior Engineer');
   assert.equal(payload.card.company.name, 'Athens');
   assert.equal(payload.card.status, undefined);
+  assert.deepEqual(payload.titleRoles, ['Software Engineer']);
   assert.equal(payload.rankingSchemaVersion, 4);
   assert.match(payload.companyId, /^cmp_/);
   assert.equal(payload.card.companyId, payload.companyId);
@@ -27,6 +28,21 @@ test('ranking payload carries indexed global filter fields', () => {
 test('jobs without extracted skills remain countable but cannot match a real skill id', () => {
   const point = buildJobRankingPoint({ _id: 'job-1', title: 'Engineer' });
   assert.deepEqual(point.skillsSparse, { indices: [0], values: [1] });
+});
+
+test('unscanned jobs receive a title-derived role facet', () => {
+  assert.deepEqual(
+    buildJobRankingPayload({ title: 'Machine Learning Engineer' }).titleRoles,
+    ['AI engineer'],
+  );
+  assert.deepEqual(
+    buildJobRankingPayload({ title: 'Senior Data Platform Engineer' }).titleRoles,
+    ['Data Engineer'],
+  );
+  assert.deepEqual(
+    buildJobRankingPayload({ title: 'Cloud Engineer' }).titleRoles,
+    ['Others'],
+  );
 });
 
 test('legacy string skills are retained in compact reranking payloads', () => {

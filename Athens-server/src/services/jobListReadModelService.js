@@ -12,13 +12,17 @@ import { getStatusRevision } from './matching/rankingCache.js';
 import { isJobRankingReady, scrollJobRankingPayloads } from './vectorStore/qdrantClient.js';
 import { getIO } from '../socketHub.js';
 import { incrementCounter, observeHistogram, setGauge } from './monitoring/metrics.js';
+import { reconcileJobTitleRoleIndex } from './jobTitleScan/titleRoleIndexSync.js';
+import { inferTitleScanRole } from '../config/jobTitleScanRoles.js';
 import {
   emptyJobStatusBaseline,
   jobStatusBaselineCacheKey,
   serializeJobStatusBaseline,
 } from './jobStatusCache.js';
 
-const SNAPSHOT_SCHEMA_VERSION = 1;
+// v2 guarantees every entry has a title-role facet, inferred when AI scan data
+// is unavailable. Bumping this prevents Redis from restoring role-less v1 rows.
+const SNAPSHOT_SCHEMA_VERSION = 2;
 const SNAPSHOT_TTL_SEC = 7 * 24 * 60 * 60;
 const QUERY_CACHE_MAX = 500;
 const QUERY_CACHE_TTL_MS = 60_000;
@@ -101,7 +105,10 @@ function buildEntry(payload) {
   const title = text(payload?.title || card?.title || card?.jobTitle) || 'Untitled role';
   const source = text(payload?.source || card?.source) || 'Other';
   const companyTags = list(payload?.companyTags).length ? list(payload.companyTags) : list(company.tags);
-  const titleRoles = list(payload?.titleRoles).length ? list(payload.titleRoles) : list(card?.titleScanned);
+  const indexedTitleRoles = list(payload?.titleRoles).length
+    ? list(payload.titleRoles)
+    : list(card?.titleScanned);
+  const titleRoles = indexedTitleRoles.length ? indexedTitleRoles : [inferTitleScanRole(title)];
   const seniority = list(payload?.seniority).length ? list(payload.seniority) : list(details.seniority);
   const location = text(payload?.location || details.position || card?.location);
   const workMode = text(payload?.workMode || details.remote || card?.workMode);
@@ -762,6 +769,14 @@ export async function initJobListReadModel() {
 
 export async function initJobListCatalogSnapshot() {
   if (!isJobListV2Enabled()) return null;
+  try {
+    const sync = await reconcileJobTitleRoleIndex();
+    if (sync.updated > 0) {
+      console.log(`[jobs-v2] restored ${sync.updated} title-role index entries`);
+    }
+  } catch (error) {
+    console.warn('[jobs-v2] title-role index reconciliation failed:', error?.message || error);
+  }
   return replaceCatalogSnapshot();
 }
 

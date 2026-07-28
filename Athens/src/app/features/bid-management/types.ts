@@ -97,8 +97,11 @@ export type BidResult = {
   resubmitCount?: number;
   lastRejectedAt?: string | null;
   lastResubmittedAt?: string | null;
+  /** Filename selected from the bidder's computer. */
   resumeOriginalName?: string | null;
+  /** Recruiter-facing target filename, normally `Profile Name.pdf`. */
   resumeExpectedName?: string | null;
+  /** Filename actually supplied to the ATS upload. */
   resumeCleanedName?: string | null;
   resumeRenamed?: boolean;
   resumeMismatch?: boolean;

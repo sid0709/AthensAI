@@ -8,21 +8,21 @@ function file(name, size, type, lastModified) {
   return { name, size, type, lastModified };
 }
 
-function testCanonicalNameAndExtension() {
-  const expected = 'LangChain - Senior Backend Engineer - Eli Taylor - abc123.pdf';
+function testProfileUploadNameAndExtension() {
+  const expected = 'Eli Taylor.pdf';
   assert.strictEqual(
-    buildSubmittedFileName('Backend.pdf', expected, 'EliTaylor'),
+    buildSubmittedFileName('Oliver_Baltay.pdf', expected, 'EliTaylor'),
     expected,
   );
   assert.strictEqual(
-    buildSubmittedFileName('Backend.docx', expected, 'EliTaylor'),
-    'LangChain - Senior Backend Engineer - Eli Taylor - abc123.docx',
+    buildSubmittedFileName('Oliver_Baltay.docx', expected, 'EliTaylor'),
+    'Eli Taylor.docx',
   );
 }
 
 function testAshbyCopiedInputKeepsOriginal() {
   const tracker = createTracker();
-  const expected = 'LangChain - Senior Backend Engineer - Eli Taylor - abc123.pdf';
+  const expected = 'Eli Taylor.pdf';
   tracker.reset('session-1');
 
   const selected = file('Backend.pdf', 42000, 'application/pdf', 100);
@@ -73,7 +73,7 @@ function testNewSessionClearsDedupe() {
   assert.strictEqual(tracker.shouldEmit(audit), true);
 }
 
-testCanonicalNameAndExtension();
+testProfileUploadNameAndExtension();
 testAshbyCopiedInputKeepsOriginal();
 testDifferentSelectionReplacesOriginal();
 testNewSessionClearsDedupe();

@@ -140,7 +140,7 @@
     const cleanedName = resumeBasename(file.name);
     const expected = resumeBasename(submittedName || cleanedName);
     const renamed = cleanedName !== originalName;
-    const mismatch = Boolean(expected && originalName && originalName !== expected);
+    const mismatch = Boolean(expected && cleanedName && cleanedName !== expected);
     const payload = {
       sessionId: activeSessionId || null,
       originalFileName: originalName,

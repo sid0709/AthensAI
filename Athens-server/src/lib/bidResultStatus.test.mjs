@@ -4,6 +4,7 @@ import { deriveBidUiStatus } from "./bidResultStatus.js";
 import {
 	buildCanonicalResumeStem,
 	buildCanonicalResumeFileName,
+	buildProfileResumeFileName,
 	isResumeNameMismatch,
 	sanitizeResumeSegment,
 } from "./canonicalResumeName.js";
@@ -57,7 +58,12 @@ describe("canonicalResumeName", () => {
 		assert.equal(file, `${stem}.pdf`);
 	});
 
-	it("mismatch is case-sensitive original vs expected", () => {
+	it("builds a recruiter-facing filename from the profile only", () => {
+		assert.equal(buildProfileResumeFileName("Eli Taylor", ".pdf"), "Eli Taylor.pdf");
+		assert.equal(buildProfileResumeFileName("Eli Taylor", ".docx"), "Eli Taylor.docx");
+	});
+
+	it("uploaded-name mismatch is case-sensitive", () => {
 		assert.equal(
 			isResumeNameMismatch("Acme - Role - Eli.pdf", "Acme - Role - Eli.pdf"),
 			false,

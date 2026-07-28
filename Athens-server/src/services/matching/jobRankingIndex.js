@@ -9,6 +9,7 @@ import {
   upsertJobRankingPoints,
 } from '../vectorStore/qdrantClient.js';
 import { deriveCompanyIdentity } from '../companyIdentity.js';
+import { inferTitleScanRole } from '../../config/jobTitleScanRoles.js';
 
 const CATALOG_REVISION_KEY = 'ranking:v2:catalog-revision';
 const DATE_TAIL_KEY = 'ranking:v2:date-tail';
@@ -98,6 +99,7 @@ export function buildJobRankingPayload(job, { catalog = 'market' } = {}) {
     : { name: job?.companyName || '' };
   const details = job?.details && typeof job.details === 'object' ? job.details : {};
   const title = text(job?.title || job?.jobTitle);
+  const scannedTitleRoles = stringArray(job?.titleScanned);
   const postedAt = isoDate(job?.postedAt || job?._createdAt || job?.createdAt);
   const aiSkills = Array.isArray(job?.aiSkills) && job.aiSkills.length
     ? job.aiSkills
@@ -123,7 +125,7 @@ export function buildJobRankingPayload(job, { catalog = 'market' } = {}) {
     workMode: text(details?.remote || job?.workMode),
 		employmentType: text(details?.time || job?.employmentType),
     seniority: stringArray(details?.seniority),
-    titleRoles: stringArray(job?.titleScanned),
+    titleRoles: scannedTitleRoles.length ? scannedTitleRoles : [inferTitleScanRole(title)],
     source: text(job?.source) || 'Other',
     postedAt,
     extensionV2: isExtensionV2Job(job),

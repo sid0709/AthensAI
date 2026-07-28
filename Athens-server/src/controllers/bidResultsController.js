@@ -7,7 +7,7 @@ import {
 import { detectJobSource } from "../lib/jobSource.js";
 import { deriveBidUiStatus, REVIEW_STATUSES } from "../lib/bidResultStatus.js";
 import {
-	buildCanonicalResumeFileName,
+	buildProfileResumeFileName,
 	isResumeNameMismatch,
 	resumeBasename,
 } from "../lib/canonicalResumeName.js";
@@ -1277,7 +1277,7 @@ export async function skipBidResult(req, res) {
 
 /**
  * POST /bid-results/resume-audit
- * Persist hooked original vs canonical expected name (P2).
+ * Persist the selected original name and recruiter-facing uploaded name.
  * body: { applierName, jobId, originalName, expectedName?, cleanedName?, renamed?,
  *   pageUrl?, sessionId?, source?, fileSize?, lastModified?, mimeType?, auditKey? }
  */
@@ -1313,7 +1313,7 @@ export async function saveResumeAudit(req, res) {
 
 		const expectedName =
 			resumeBasename(req.body?.expectedName) ||
-			buildCanonicalResumeFileName(company, title, applierName, jobId, ext);
+			buildProfileResumeFileName(applierName, ext);
 
 		const cleanedName =
 			resumeBasename(req.body?.cleanedName) ||
@@ -1331,7 +1331,7 @@ export async function saveResumeAudit(req, res) {
 		});
 
 		const renamed = cleanedName !== originalName;
-		const mismatch = isResumeNameMismatch(originalName, expectedName);
+		const mismatch = isResumeNameMismatch(cleanedName, expectedName);
 		const recommendedStack =
 			typeof existing?.recommendedResumeStack === "string"
 				? existing.recommendedResumeStack
@@ -1339,7 +1339,7 @@ export async function saveResumeAudit(req, res) {
 		const resumeStackMatch = matchUploadToRecommended(originalName, recommendedStack);
 		const suppliedAuditKey = String(req.body?.auditKey ?? "").trim().slice(0, 1000);
 		// Rebuild the key from the protected original name. If an ATS echoed the
-		// canonical filename as "original", its client key must not create a
+		// renamed upload filename as "original", its client key must not create a
 		// second audit after resolveResumeOriginalName restores the real name.
 		const auditKey = [
 			auditSessionId,

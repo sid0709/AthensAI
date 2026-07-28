@@ -1,6 +1,7 @@
 /**
  * Canonical résumé naming — keep in sync with Athens-server/src/lib/canonicalResumeName.js
- * Pattern: Company - Title - Profile - shortId
+ * Internal generated-file pattern: Company - Title - Profile - shortId
+ * Recruiter-facing upload pattern: Profile.ext
  */
 const CanonicalResumeName = (() => {
   const WIN_RESERVED = new Set([
@@ -54,6 +55,12 @@ const CanonicalResumeName = (() => {
     return `${stem}${safeExt}`;
   }
 
+  function buildProfileResumeFileName(profileName, ext = '.pdf') {
+    const profileSeg = sanitizeResumeSegment(profileName);
+    const safeExt = String(ext || '.pdf').startsWith('.') ? String(ext) : `.${ext}`;
+    return `${profileSeg}${safeExt}`;
+  }
+
   function resumeBasename(name) {
     const s = String(name || '').trim();
     if (!s) return '';
@@ -79,6 +86,7 @@ const CanonicalResumeName = (() => {
     shortJobId,
     buildCanonicalResumeStem,
     buildCanonicalResumeFileName,
+    buildProfileResumeFileName,
     resumeBasename,
     isResumeNameMismatch,
     profileNameToFileBase,
