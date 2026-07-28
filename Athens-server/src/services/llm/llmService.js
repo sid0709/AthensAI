@@ -348,7 +348,14 @@ export async function chatCompletion({
           modelMismatch: model !== billedModel,
         });
       }
-      return { content, usage };
+      return {
+        content,
+        usage,
+        requestId: data?.requestId || reqId,
+        provider: data?.provider || p.id,
+        requestedModel: data?.requestedModel || model,
+        billedModel,
+      };
     },
     {
       onQueued: (pending) => {

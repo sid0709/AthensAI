@@ -10,6 +10,26 @@ export type FlagLight = "green" | "red" | null;
 
 export type RejectSource = "submitted" | "skipped";
 
+export type BidAiMode = "llm" | "heuristic";
+
+export type BidFormAnswer = {
+  question: string;
+  suggestedAnswer: string;
+  confidence: "high" | "medium" | "low" | null;
+};
+
+export type BidAiCallUsage = {
+  requestId: string | null;
+  provider: string | null;
+  requestedModel: string | null;
+  billedModel: string | null;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number | null;
+};
+
 export type BidJobDetail = {
   description: string | null;
   postedAt: string | null;
@@ -45,6 +65,9 @@ export type BidReviewEvent = {
   rejectReason: string | null;
   rejectSource: RejectSource | null;
   meta: Record<string, unknown> | null;
+  eventKey?: string | null;
+  requestId?: string | null;
+  feature?: string | null;
   createdAt: string | null;
 };
 
@@ -107,12 +130,27 @@ export type BidResult = {
   resumeMismatch?: boolean;
   /** JD page summary from Bid-Monitor Analyze. */
   analysisSummary?: string | null;
+  /** Latest complete answer set returned by Bid-Monitor Analyze. */
+  analysisFormAnswers?: BidFormAnswer[];
+  analysisMode?: BidAiMode | null;
+  analysisPageUrl?: string | null;
+  analysisPageTitle?: string | null;
+  analysisUsage?: BidAiCallUsage | null;
+  analysisRequestId?: string | null;
+  analyzedAt?: string | null;
+  flagAnalysisMode?: BidAiMode | null;
+  flagAnalysisUsage?: BidAiCallUsage | null;
+  flagAnalysisRequestId?: string | null;
+  flagAnalyzedAt?: string | null;
   /** Library stack recommended by Bid-Monitor Recommend resume. */
   recommendedResumeStack?: string | null;
   recommendedResumeReason?: string | null;
   useCustomizedResume?: boolean;
   recommendWarning?: string | null;
   recommendedAt?: string | null;
+  recommendMode?: BidAiMode | null;
+  recommendUsage?: BidAiCallUsage | null;
+  recommendRequestId?: string | null;
   /** Upload basename vs recommended Library stack. */
   resumeStackMatch?: "match" | "mismatch" | "unknown" | null;
 };
@@ -132,6 +170,7 @@ export type BidAiUsageRow = {
   durationMs: number | null;
   applierName: string | null;
   jobId: string | null;
+  requestId?: string | null;
   createdAt: string | null;
 };
 

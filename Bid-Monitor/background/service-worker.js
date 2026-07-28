@@ -2950,14 +2950,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const jdAnalyzed = Boolean(page?.isJobPage || summary || flags.remote || flags.clearance);
           const mode = pageRes?.mode || flagsRes?.mode || null;
 
-          if (applierName && jobId && (flags.remote || flags.clearance || summary)) {
-            try {
-              await AthensApi.saveBidFlags(applierName, { jobId, flags, summary });
-            } catch (err) {
-              console.warn('Bid Monitor: save flags failed', err);
-            }
-          }
-
           const formAnswers = Array.isArray(page?.formAnswers) ? page.formAnswers : [];
           // Count answers from page text (AI), not DOM label/name field count.
           const formCount = page?.formCount ?? formAnswers.length;
@@ -2990,6 +2982,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 : pageRes?.error || flagsRes?.error || null,
             pageUrl: pageContext.url,
             pageTitle: pageContext.title,
+            aiCalls: [
+              {
+                feature: 'bid-job-analyze',
+                requestId: pageRes?.requestId || null,
+                usage: pageRes?.usage || null,
+                mode: pageRes?.mode || null,
+              },
+              {
+                feature: 'bid-job-flags',
+                requestId: flagsRes?.requestId || null,
+                usage: flagsRes?.usage || null,
+                mode: flagsRes?.mode || null,
+              },
+            ],
             ...(priorRecommend ? { recommend: priorRecommend } : {}),
           };
 
@@ -3076,6 +3082,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             warning: result.warning || null,
             reason: result.reason || null,
             isJobDescription: Boolean(result.isJobDescription),
+            requestId: recommendRes?.requestId || null,
+            usage: recommendRes?.usage || null,
+            mode: recommendRes?.mode || null,
             updatedAt: new Date().toISOString(),
           };
 

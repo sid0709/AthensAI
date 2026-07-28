@@ -9,6 +9,11 @@ export async function appendBidReviewEvent(event) {
 	if (!collection) return null;
 
 	const now = new Date();
+	const eventKey = String(event.eventKey || "").trim() || null;
+	if (eventKey) {
+		const existing = await collection.findOne({ eventKey });
+		if (existing) return existing;
+	}
 	const doc = {
 		taskId: event.taskId != null ? String(event.taskId) : null,
 		jobId: event.jobId != null ? String(event.jobId) : null,
@@ -21,6 +26,9 @@ export async function appendBidReviewEvent(event) {
 		rejectReason: event.rejectReason ?? null,
 		rejectSource: event.rejectSource ?? null,
 		meta: event.meta && typeof event.meta === "object" ? event.meta : null,
+		eventKey,
+		requestId: String(event.requestId || "").trim() || null,
+		feature: String(event.feature || "").trim() || null,
 		createdAt: now,
 	};
 	if (!doc.eventType || !doc.applierName) return null;
@@ -44,6 +52,9 @@ export function serializeBidReviewEvent(doc) {
 		rejectReason: doc.rejectReason ?? null,
 		rejectSource: doc.rejectSource ?? null,
 		meta: doc.meta && typeof doc.meta === "object" ? doc.meta : null,
+		eventKey: doc.eventKey ?? null,
+		requestId: doc.requestId ?? null,
+		feature: doc.feature ?? null,
 		createdAt:
 			doc.createdAt instanceof Date
 				? doc.createdAt.toISOString()

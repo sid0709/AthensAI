@@ -100,6 +100,43 @@ export function serializeTask(doc) {
 		flags: doc.flags && typeof doc.flags === "object" ? doc.flags : null,
 		analysisSummary:
 			typeof doc.analysisSummary === "string" ? doc.analysisSummary : null,
+		analysisFormAnswers: Array.isArray(doc.analysisFormAnswers)
+			? doc.analysisFormAnswers
+			: [],
+		analysisMode:
+			doc.analysisMode === "llm"
+				? "llm"
+				: doc.analysisMode === "heuristic"
+					? "heuristic"
+					: null,
+		analysisPageUrl:
+			typeof doc.analysisPageUrl === "string" ? doc.analysisPageUrl : null,
+		analysisPageTitle:
+			typeof doc.analysisPageTitle === "string" ? doc.analysisPageTitle : null,
+		analysisUsage:
+			doc.analysisUsage && typeof doc.analysisUsage === "object"
+				? doc.analysisUsage
+				: null,
+		analysisRequestId:
+			typeof doc.analysisRequestId === "string" ? doc.analysisRequestId : null,
+		analyzedAt:
+			doc.analyzedAt instanceof Date ? doc.analyzedAt.toISOString() : doc.analyzedAt ?? null,
+		flagAnalysisMode:
+			doc.flagAnalysisMode === "llm"
+				? "llm"
+				: doc.flagAnalysisMode === "heuristic"
+					? "heuristic"
+					: null,
+		flagAnalysisUsage:
+			doc.flagAnalysisUsage && typeof doc.flagAnalysisUsage === "object"
+				? doc.flagAnalysisUsage
+				: null,
+		flagAnalysisRequestId:
+			typeof doc.flagAnalysisRequestId === "string" ? doc.flagAnalysisRequestId : null,
+		flagAnalyzedAt:
+			doc.flagAnalyzedAt instanceof Date
+				? doc.flagAnalyzedAt.toISOString()
+				: doc.flagAnalyzedAt ?? null,
 		rejectReason: typeof doc.rejectReason === "string" ? doc.rejectReason : null,
 		rejectSource:
 			doc.rejectSource === "submitted" || doc.rejectSource === "skipped"
@@ -134,6 +171,18 @@ export function serializeTask(doc) {
 			doc.recommendedAt instanceof Date
 				? doc.recommendedAt.toISOString()
 				: doc.recommendedAt ?? null,
+		recommendMode:
+			doc.recommendMode === "llm"
+				? "llm"
+				: doc.recommendMode === "heuristic"
+					? "heuristic"
+					: null,
+		recommendUsage:
+			doc.recommendUsage && typeof doc.recommendUsage === "object"
+				? doc.recommendUsage
+				: null,
+		recommendRequestId:
+			typeof doc.recommendRequestId === "string" ? doc.recommendRequestId : null,
 		resumeStackMatch:
 			doc.resumeStackMatch === "match" ||
 			doc.resumeStackMatch === "mismatch" ||

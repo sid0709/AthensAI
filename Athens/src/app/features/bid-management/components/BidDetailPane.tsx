@@ -94,8 +94,17 @@ const EVENT_LABELS: Record<string, string> = {
   vendor_mark_fixed: "Vendor marked fixed",
   resume_name_mismatch: "Résumé name mismatch",
   analyze: "Analyze (JD / flags)",
+  analyze_answers: "Analyze answers",
+  analyze_flags: "Analyze flags",
   recommend_resume: "Recommend resume",
 };
+
+const AI_RESULT_EVENT_TYPES = new Set([
+  "analyze",
+  "analyze_answers",
+  "analyze_flags",
+  "recommend_resume",
+]);
 
 function eventLabel(ev: BidReviewEvent): string {
   return EVENT_LABELS[ev.eventType] || ev.eventType;
@@ -120,6 +129,93 @@ function eventMetaLine(ev: BidReviewEvent): string | null {
     bits.push(`upload vs stack: ${meta.resumeStackMatch}`);
   }
   return bits.length ? bits.join(" · ") : null;
+}
+
+function metaRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function metaText(meta: Record<string, unknown> | null, key: string): string | null {
+  const value = meta?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function artifactAnswers(meta: Record<string, unknown> | null) {
+  const rows = Array.isArray(meta?.formAnswers) ? meta.formAnswers : [];
+  return rows.flatMap((row) => {
+    const value = metaRecord(row);
+    const question = metaText(value, "question");
+    const suggestedAnswer = metaText(value, "suggestedAnswer");
+    if (!question || !suggestedAnswer) return [];
+    const confidence = metaText(value, "confidence");
+    return [{ question, suggestedAnswer, confidence }];
+  });
+}
+
+function ArtifactFlag({ label, value }: { label: string; value: unknown }) {
+  const verdict = metaRecord(value);
+  const status = metaText(verdict, "status");
+  const explanation = metaText(verdict, "explanation");
+  if (!status && !explanation) return null;
+  return (
+    <div className="bm-ai-result-flag">
+      <strong>{label}: {status || "—"}</strong>
+      {explanation ? <span>{explanation}</span> : null}
+    </div>
+  );
+}
+
+function AiResultEvent({ event }: { event: BidReviewEvent }) {
+  const meta = event.meta;
+  const answers = artifactAnswers(meta);
+  const flags = metaRecord(meta?.flags);
+  const summary = metaText(meta, "summary");
+  const mode = metaText(meta, "mode");
+  const recommended = metaText(meta, "recommendedResumeStack");
+  const reason = metaText(meta, "reason");
+  const warning = metaText(meta, "recommendWarning");
+
+  return (
+    <li className="bm-ai-result-card">
+      <div className="bm-ai-result-head">
+        <strong>{eventLabel(event)}</strong>
+        <span>
+          {mode ? `${mode.toUpperCase()} · ` : ""}
+          {formatWhen(event.createdAt)}
+        </span>
+      </div>
+      {summary ? <p className="bm-ai-result-summary">{summary}</p> : null}
+      {flags ? (
+        <div className="bm-ai-result-flags">
+          <ArtifactFlag label="Remote" value={flags.remote} />
+          <ArtifactFlag label="Clearance" value={flags.clearance} />
+        </div>
+      ) : null}
+      {recommended || meta?.useCustomizedResume ? (
+        <div className="bm-ai-result-recommendation">
+          <strong>Recommended résumé</strong>
+          <span>{recommended || "Use customized résumé"}</span>
+        </div>
+      ) : null}
+      {reason ? <p className="bm-ai-result-note">{reason}</p> : null}
+      {warning ? <p className="bm-ai-result-note warn">{warning}</p> : null}
+      {answers.length > 0 ? (
+        <ol className="bm-ai-answer-list">
+          {answers.map((answer, index) => (
+            <li key={`${event.id}-${index}`}>
+              <div className="bm-ai-answer-question">
+                <strong>{answer.question}</strong>
+                {answer.confidence ? <span>{answer.confidence}</span> : null}
+              </div>
+              <div className="bm-ai-answer-value">{answer.suggestedAnswer}</div>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </li>
+  );
 }
 
 function stackMatchLabel(match: BidResult["resumeStackMatch"]): string {
@@ -223,6 +319,16 @@ export function BidDetailPane({
   // Prefer Bid-Monitor Library recommendation over job-preview stack.
   const recommended = result?.recommendedResume || preview.recommendedResume;
   const submission = result?.submissionResume;
+  const aiResultEvents = events.filter((event) => AI_RESULT_EVENT_TYPES.has(event.eventType));
+  const savedAiRequestIds = new Set(
+    aiResultEvents.map((event) => event.requestId).filter(Boolean),
+  );
+  const hasAnswerArtifact = aiResultEvents.some(
+    (event) => event.eventType === "analyze_answers",
+  );
+  const latestAnswers = Array.isArray(result?.analysisFormAnswers)
+    ? result.analysisFormAnswers
+    : [];
   const desc = detail?.description?.trim() || "";
   const posted =
     detail?.postedLabel ||
@@ -707,6 +813,57 @@ export function BidDetailPane({
                 </Section>
 
                 <Section
+                  title="AI results"
+                  action={
+                    eventsLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin opacity-50" />
+                    ) : null
+                  }
+                >
+                  {aiResultEvents.length > 0 ? (
+                    <ul className="bm-ai-result-list">
+                      {aiResultEvents.map((event) => (
+                        <AiResultEvent key={event.id} event={event} />
+                      ))}
+                    </ul>
+                  ) : null}
+                  {!hasAnswerArtifact && latestAnswers.length > 0 ? (
+                    <div className="bm-ai-result-card">
+                      <div className="bm-ai-result-head">
+                        <strong>Latest Analyze answers</strong>
+                        <span>
+                          {result.analysisMode
+                            ? `${result.analysisMode.toUpperCase()} · `
+                            : ""}
+                          {formatWhen(result.analyzedAt || null)}
+                        </span>
+                      </div>
+                      {result.analysisSummary ? (
+                        <p className="bm-ai-result-summary">{result.analysisSummary}</p>
+                      ) : null}
+                      <ol className="bm-ai-answer-list">
+                        {latestAnswers.map((answer, index) => (
+                          <li key={`${answer.question}-${index}`}>
+                            <div className="bm-ai-answer-question">
+                              <strong>{answer.question}</strong>
+                              {answer.confidence ? <span>{answer.confidence}</span> : null}
+                            </div>
+                            <div className="bm-ai-answer-value">
+                              {answer.suggestedAnswer}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  ) : null}
+                  {!eventsLoading &&
+                  aiResultEvents.length === 0 &&
+                  latestAnswers.length === 0 ? (
+                    <div className="bm-empty-inline">No saved AI results for this bid yet</div>
+                  ) : null}
+                </Section>
+
+                <Section
                   title="AI usage"
                   action={
                     aiUsageLoading ? (
@@ -729,6 +886,9 @@ export function BidDetailPane({
                             {" · "}
                             {formatUsd(row.costUsd)}
                             {row.success ? "" : " · failed"}
+                            {row.requestId && savedAiRequestIds.has(row.requestId)
+                              ? " · result saved"
+                              : ""}
                           </div>
                         </li>
                       ))}

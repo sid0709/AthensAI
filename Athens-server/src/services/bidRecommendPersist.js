@@ -1,8 +1,10 @@
 /**
  * Persist recommend-resume + stack-vs-upload compare onto vendor_tasks.
  */
+import { randomUUID } from "node:crypto";
 import { getVendorTasksCollection } from "../db/dataStore.js";
 import { matchUploadToRecommended } from "../lib/resumeCatalogCompress.js";
+import { normalizeBidAiUsage } from "./bidAiArtifactPersist.js";
 import { appendBidReviewEvent } from "./bidReviewEventsService.js";
 
 /**
@@ -11,9 +13,9 @@ import { appendBidReviewEvent } from "./bidReviewEventsService.js";
  * @param {string} jobId
  * @param {object} result — recommendResumeForJob result
  */
-export async function persistRecommendResumeResult(applierName, jobId, result) {
+export async function persistRecommendResumeResult(applierName, jobId, result, call = {}) {
 	const collection = getVendorTasksCollection();
-	if (!collection) return null;
+	if (!collection) throw new Error("Database is not connected.");
 
 	const name = String(applierName || "").trim();
 	const jid = String(jobId || "").trim();
@@ -30,6 +32,9 @@ export async function persistRecommendResumeResult(applierName, jobId, result) {
 		typeof result?.reason === "string" && result.reason.trim()
 			? result.reason.trim().slice(0, 1000)
 			: null;
+	const requestId = String(call?.requestId || "").trim() || null;
+	const recommendMode = call?.mode === "llm" ? "llm" : "heuristic";
+	const recommendUsage = normalizeBidAiUsage(call?.usage, call);
 
 	const existing = await collection.findOne({ applierName: name, jobId: jid });
 	const resumeStackMatch = matchUploadToRecommended(
@@ -43,6 +48,9 @@ export async function persistRecommendResumeResult(applierName, jobId, result) {
 		useCustomizedResume,
 		recommendWarning,
 		recommendedAt: now,
+		recommendMode,
+		recommendUsage,
+		recommendRequestId: requestId,
 		resumeStackMatch,
 		updatedAt: now,
 	};
@@ -73,6 +81,11 @@ export async function persistRecommendResumeResult(applierName, jobId, result) {
 		toStatus: null,
 		actorType: "vendor",
 		actorName: name,
+		eventKey: requestId
+			? `ai:${requestId}`
+			: `ai:bid-recommend-resume:${randomUUID()}`,
+		requestId,
+		feature: "bid-recommend-resume",
 		meta: {
 			recommendedResumeStack,
 			useCustomizedResume,
@@ -80,6 +93,8 @@ export async function persistRecommendResumeResult(applierName, jobId, result) {
 			reason: recommendedResumeReason,
 			isJobDescription: Boolean(result?.isJobDescription),
 			resumeStackMatch,
+			mode: recommendMode,
+			usage: recommendUsage,
 		},
 	});
 

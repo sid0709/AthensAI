@@ -152,6 +152,19 @@ function mapTaskToBidResult(task) {
 						: null,
 		},
 		analysisSummary: task.analysisSummary || null,
+		analysisFormAnswers: Array.isArray(task.analysisFormAnswers)
+			? task.analysisFormAnswers
+			: [],
+		analysisMode: task.analysisMode || null,
+		analysisPageUrl: task.analysisPageUrl || null,
+		analysisPageTitle: task.analysisPageTitle || null,
+		analysisUsage: task.analysisUsage || null,
+		analysisRequestId: task.analysisRequestId || null,
+		analyzedAt: task.analyzedAt || null,
+		flagAnalysisMode: task.flagAnalysisMode || null,
+		flagAnalysisUsage: task.flagAnalysisUsage || null,
+		flagAnalysisRequestId: task.flagAnalysisRequestId || null,
+		flagAnalyzedAt: task.flagAnalyzedAt || null,
 		jobDetail: null,
 		recommendedResume: task.recommendedResumeStack
 			? {
@@ -180,6 +193,9 @@ function mapTaskToBidResult(task) {
 		useCustomizedResume: Boolean(task.useCustomizedResume),
 		recommendWarning: task.recommendWarning || null,
 		recommendedAt: task.recommendedAt || null,
+		recommendMode: task.recommendMode || null,
+		recommendUsage: task.recommendUsage || null,
+		recommendRequestId: task.recommendRequestId || null,
 		resumeStackMatch:
 			task.resumeStackMatch === "match" ||
 			task.resumeStackMatch === "mismatch" ||
@@ -218,6 +234,7 @@ function serializeAiUsageRow(doc) {
 	if (!doc) return null;
 	return {
 		id: String(doc._id),
+		requestId: doc.requestId || null,
 		feature: doc.feature || null,
 		provider: doc.provider || null,
 		requestedModel: doc.requestedModel || null,
