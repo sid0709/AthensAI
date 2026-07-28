@@ -14,6 +14,10 @@ import cors from "cors";
 import { initDataStore, closeDataStore, getDataStore } from "./src/db/dataStore.js";
 import { initRedis, closeRedis, isRedisReady } from "./src/db/redis.js";
 import { loadCanonicalSkillDictionary } from "./src/services/matching/canonicalSkillDictionary.js";
+import {
+	closeExtensionScraperSocket,
+	initExtensionScraperSocket,
+} from "./src/services/extensionScraperSocket.js";
 import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 import { startLocalSearchOutboxWorker, stopLocalSearchOutboxWorker } from "./src/services/search/localOutboxWorker.js";
@@ -233,6 +237,7 @@ async function startBackgroundWorkers() {
 async function startHttpWorker({ clustered }) {
 	const app = createApp();
 	const server = http.createServer(app);
+	initExtensionScraperSocket(server);
 	server.on("error", (err) => {
 		console.error(`[athens] listen error:`, err.message);
 		process.exit(1);
@@ -273,13 +278,14 @@ async function startHttpWorker({ clustered }) {
 		const force = setTimeout(() => process.exit(1), 15_000);
 		force.unref?.();
 		try {
+			await closeExtensionScraperSocket();
 			if (!clustered) {
 				stopJobAnalysisWorker();
 				stopMatchScoreWorker();
 				stopLocalSearchOutboxWorker();
 				stopJobStatusOutboxWorker();
 			}
-			await new Promise((resolve) => server.close(() => resolve()));
+			if (server.listening) await new Promise((resolve) => server.close(() => resolve()));
 			await shutdownPdfPool();
 			await shutdownImapPool();
 			await shutdownRankingPool();

@@ -15,13 +15,19 @@ import {
 import { isJobBlocked, buildQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
 import { attachStaticScoreFields } from '../services/jobListPipeline.js';
 import {
-	EXTENSION_V2_CLIENT_HEADER,
-	JOB_MARKET_EXTENSION_VERSION_V2,
 	JOB_MARKET_MODEL_VERSION,
 	excludeExtensionV2JobsFilter,
 	isExtensionV2Job,
 	stripScraperOnlyJobFields,
 } from '../config/jobMarketSchema.js';
+import {
+	classifyJobMarketIngest,
+	duplicateJobResult,
+	normalizeExtensionV2OriginalJob,
+	resolveJobPostedAt,
+	stampJobMarketIngestVersion,
+	validateExtensionV2OriginalJob,
+} from '../services/jobMarketIngest.js';
 import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import {
@@ -202,32 +208,6 @@ const toValidDate = (value) => {
 	return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const resolvePostedAt = (job, now) => {
-	if (job.postedAt) {
-		const explicitPostedAt = toValidDate(job.postedAt);
-		if (explicitPostedAt) {
-			return explicitPostedAt.toISOString();
-		}
-	}
-
-	let postedAtDate = new Date(now);
-	if (job.postedAgo && typeof job.postedAgo === 'string') {
-		const match = job.postedAgo.match(/(\d+)\s+(minute|hour|day)/);
-		if (match) {
-			const value = parseInt(match[1], 10);
-			const unit = match[2];
-			if (unit === 'minute') {
-				postedAtDate.setMinutes(postedAtDate.getMinutes() - value);
-			} else if (unit === 'hour') {
-				postedAtDate.setHours(postedAtDate.getHours() - value);
-			} else if (unit === 'day') {
-				postedAtDate.setDate(postedAtDate.getDate() - value);
-			}
-		}
-	}
-	return postedAtDate.toISOString();
-};
-
 const extractJobTimestamp = (jobDoc) => {
 	return toValidDate(jobDoc?.postedAt) || toValidDate(jobDoc?._createdAt) || toValidDate(jobDoc?.createdAt);
 };
@@ -247,8 +227,24 @@ export async function createJob(req, res) {
 	let identityClaim = null;
 	let jobInserted = false;
 	try {
-		const job = req.body;
+		let job = req.body;
 		if (!job) return res.status(400).json({ error: 'Missing job in request body' });
+
+		const clientHeader = typeof req.get === 'function' ? req.get('x-athens-client') : '';
+		const ingest = classifyJobMarketIngest(job, clientHeader);
+		if (ingest.kind === 'extension-v2-original') {
+			job = normalizeExtensionV2OriginalJob(job);
+			const validation = validateExtensionV2OriginalJob(job);
+			if (!validation.valid) {
+				return res.status(422).json({
+					success: false,
+					created: false,
+					code: 'INVALID_EXTENSION_V2_JOB',
+					error: validation.error,
+					reason: validation.error,
+				});
+			}
+		}
 
 		// Requirement 2: if title is empty(""), not create.
 		const title = typeof job.title === 'string' ? job.title.trim() : '';
@@ -266,13 +262,10 @@ export async function createJob(req, res) {
 
 		const now = new Date();
 		const createdAt = now.toISOString();
-		const postedAt = resolvePostedAt(job, now);
+		const postedAt = resolveJobPostedAt(job, now);
 
-		const clientHeader = String(req.get('x-athens-client') || '').trim().toLowerCase();
-		const incomingVersion = typeof job.version === 'string' ? job.version.trim() : '';
-		const fromExtensionV2 =
-			clientHeader === EXTENSION_V2_CLIENT_HEADER ||
-			incomingVersion === JOB_MARKET_EXTENSION_VERSION_V2;
+		const fromExtensionV2 = ingest.fromExtensionV2;
+		const identitySource = fromExtensionV2 ? 'extension-v2' : 'extension';
 		// Preserve the legacy URL scope. Company/title identity dedupe below is
 		// intentionally global across Extension, extension-v2, and exposed jobs.
 		const duplicateScope = fromExtensionV2 ? {} : excludeExtensionV2JobsFilter();
@@ -288,13 +281,10 @@ export async function createJob(req, res) {
 		if (urlCandidates.length) {
 			const existingByUrl = await findDuplicateByUrl(jobsCollection, urlCandidates, duplicateScope);
 			if (existingByUrl && isWithinDuplicateWindow(existingByUrl, postedAt)) {
-				return res.status(200).json({
-					success: false,
-					created: false,
-					duplicate: true,
-					existingId: String(existingByUrl._id || ''),
+				return res.status(200).json(duplicateJobResult({
+					existingId: existingByUrl._id,
 					reason: 'Job with this URL has been posted within the last 30 days',
-				});
+				}));
 			}
 		}
 
@@ -304,16 +294,13 @@ export async function createJob(req, res) {
 			companyName,
 			title,
 			acceptedAt: now,
-			source: fromExtensionV2 ? 'extension-v2' : 'extension',
+			source: identitySource,
 		});
 		if (identityClaim.duplicate) {
-			return res.status(200).json({
-				success: false,
-				created: false,
-				duplicate: true,
+			return res.status(200).json(duplicateJobResult({
 				existingId: identityClaim.existingJobId ? String(identityClaim.existingJobId) : '',
 				reason: 'Duplicate job with this company and title was added within the last 30 days',
-			});
+			}));
 		}
 
 		stripScraperOnlyJobFields(job);
@@ -336,12 +323,8 @@ export async function createJob(req, res) {
 			});
 		}
 
-		// Never trust arbitrary client versions — only stamp known extension-v2.
-		if (fromExtensionV2) {
-			job.version = JOB_MARKET_EXTENSION_VERSION_V2;
-		} else {
-			delete job.version;
-		}
+		// Never trust arbitrary client versions — only stamp classified extension-v2.
+		stampJobMarketIngestVersion(job, ingest);
 
 		job._createdAt = createdAt;
 		job.postedAt = postedAt;
@@ -375,9 +358,7 @@ export async function createJob(req, res) {
 		job.aiSkillStatus = 'pending';
 		Object.assign(job, attachStaticScoreFields({ ...job, skills }));
 		// Re-assert after static fields — distinct from sourceVersion / modelVersion.
-		if (fromExtensionV2) {
-			job.version = JOB_MARKET_EXTENSION_VERSION_V2;
-		}
+		stampJobMarketIngestVersion(job, ingest);
 
 		const result = jobsCollection ? await jobsCollection.insertOne(job) : null;
 		jobInserted = Boolean(result?.insertedId);
@@ -385,7 +366,7 @@ export async function createJob(req, res) {
 		if (result?.insertedId) {
 			await finalizeJobIdentityClaim(jobIdentityRegistryCollection, identityClaim, {
 				jobId: result.insertedId,
-				source: fromExtensionV2 ? 'extension-v2' : 'extension',
+				source: identitySource,
 			}).catch((error) => {
 				// The acceptedAt claim itself already blocks duplicates; final metadata
 				// is best-effort and must not turn a successful insert into a 500.
