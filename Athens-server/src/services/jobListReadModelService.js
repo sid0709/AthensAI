@@ -42,6 +42,12 @@ const profileAccounts = new Map();
 const profileRankings = new Map();
 const profileRankingBuilds = new Map();
 
+function formatWarmupDuration(milliseconds) {
+  if (milliseconds < 1_000) return `${Math.max(0, Math.round(milliseconds))}ms`;
+  const seconds = milliseconds / 1_000;
+  return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+}
+
 function enabledValue(value, fallback = true) {
   const raw = String(value ?? (fallback ? 'true' : 'false')).trim().toLowerCase();
   return !['0', 'false', 'no', 'off'].includes(raw);
@@ -744,10 +750,13 @@ export function evictJobsFromJobListReadModel(jobIds = []) {
 
 async function warmKnownProfiles(snapshot) {
   if (!accountInfoCollection) return;
+  const warmupStartedAt = Date.now();
   const accounts = await accountInfoCollection
     .find({}, { projection: { _id: 1, name: 1, tier: 1 } })
     .toArray();
-  for (const accountDoc of accounts) {
+  console.log(`[jobs-v2] warming status/ranking caches for ${accounts.length} profiles`);
+  for (const [index, accountDoc] of accounts.entries()) {
+    const profileStartedAt = Date.now();
     const applierName = text(accountDoc?.name);
     if (!applierName) continue;
     const account = await resolveApplierContext(applierName);
@@ -761,16 +770,29 @@ async function warmKnownProfiles(snapshot) {
     }
     await loadProfileStatuses(applierName, account);
     const profileVersion = await getProfileRankingVersion(applierName);
+    let rankingLoaded = false;
     if (isRedisReady()) {
       const raw = await getRedis().get(profileRankingKey(applierName, profileVersion, snapshot.revision));
       const parsed = raw ? parseRanking(raw, applierName, profileVersion, snapshot) : null;
       if (parsed) {
         profileRankings.set(applierName, parsed);
-        continue;
+        rankingLoaded = true;
       }
     }
-    await startProfileRankingBuild(applierName, profileVersion, snapshot);
+    if (!rankingLoaded) await startProfileRankingBuild(applierName, profileVersion, snapshot);
+    const completed = index + 1;
+    const profileDuration = Date.now() - profileStartedAt;
+    if (profileDuration >= 1_000 || completed === accounts.length || completed % 5 === 0) {
+      console.log(
+        `[jobs-v2] profile cache warmup ${completed}/${accounts.length} ` +
+        `(last=${formatWarmupDuration(profileDuration)}, total=${formatWarmupDuration(Date.now() - warmupStartedAt)})`,
+      );
+    }
   }
+  console.log(
+    `[jobs-v2] profile caches warm (${accounts.length} profiles, ` +
+    `${formatWarmupDuration(Date.now() - warmupStartedAt)})`,
+  );
 }
 
 export async function initJobListReadModel() {

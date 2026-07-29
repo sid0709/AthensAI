@@ -83,6 +83,7 @@ import {
 	normalizeJobRemovalIds,
 } from '../services/jobRemovalService.js';
 import { setGauge } from '../services/monitoring/metrics.js';
+import { ingestJobsBulk, MAX_JOB_BULK_SIZE } from '../services/jobBulkIngest.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -390,6 +391,29 @@ export async function createJob(req, res) {
 		console.error('POST /api/jobs error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
+}
+
+export async function createJobsBulk(req, res) {
+	const jobs = Array.isArray(req.body?.jobs) ? req.body.jobs : null;
+	if (!jobs) {
+		return res.status(400).json({ success: false, error: 'Request body must contain a jobs array' });
+	}
+	if (jobs.length === 0) {
+		return res.status(400).json({ success: false, error: 'At least one job is required' });
+	}
+	if (jobs.length > MAX_JOB_BULK_SIZE) {
+		return res.status(400).json({
+			success: false,
+			error: `A bulk request may contain at most ${MAX_JOB_BULK_SIZE} jobs`,
+		});
+	}
+
+	const client = typeof req.get === 'function' ? req.get('x-athens-client') : '';
+	const { results, summary } = await ingestJobsBulk(
+		jobs,
+		(job) => createJobRecord(job, { client }),
+	);
+	return res.status(200).json({ success: true, results, summary });
 }
 
 /** Reuse the canonical ingest path from internal controllers without an HTTP loopback. */

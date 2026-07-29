@@ -1,5 +1,5 @@
 import { accountInfoCollection } from '../../db/dataStore.js';
-import { decryptProfileApiKeys } from '../autoBidProfileSecrets.js';
+import { decryptProfileApiKeysForClient } from '../autoBidProfileSecrets.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 
 const accountCache = new Map();
@@ -65,9 +65,15 @@ export async function resolveMailCredentials(applierName) {
 	if (!acc) {
 		return { ok: false, error: `No account named "${applierName}".` };
 	}
-	const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
+	const { profile, unavailableFields } = await decryptProfileApiKeysForClient(acc.autoBidProfile || {});
 	const email = String(profile.email ?? '').trim();
 	const password = String(profile.gmailAppPassword ?? '').replace(/\s/g, '');
+	if (unavailableFields.includes('gmailAppPassword')) {
+		return {
+			ok: false,
+			error: 'The stored Gmail app password cannot be decrypted here. Re-enter it in Settings → Profile.',
+		};
+	}
 	if (!email || !password) {
 		return {
 			ok: false,

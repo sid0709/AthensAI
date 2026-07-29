@@ -94,6 +94,39 @@ const useCluster = workerCount > 1;
 
 let databaseReady = false;
 
+const startupProgressIntervalMs = Math.max(
+	1_000,
+	Number.parseInt(String(process.env.STARTUP_PROGRESS_INTERVAL_MS || "10000"), 10) || 10_000,
+);
+
+function formatStartupDuration(milliseconds) {
+	if (milliseconds < 1_000) return `${Math.max(0, Math.round(milliseconds))}ms`;
+	const seconds = milliseconds / 1_000;
+	return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+}
+
+async function runStartupStep(label, operation) {
+	const startedAt = Date.now();
+	console.log(`[startup] ${label} started`);
+	const progress = setInterval(() => {
+		console.log(`[startup] ${label} still running (${formatStartupDuration(Date.now() - startedAt)})`);
+	}, startupProgressIntervalMs);
+	progress.unref?.();
+	try {
+		const result = await operation();
+		console.log(`[startup] ${label} finished (${formatStartupDuration(Date.now() - startedAt)})`);
+		return result;
+	} catch (error) {
+		console.error(
+			`[startup] ${label} failed after ${formatStartupDuration(Date.now() - startedAt)}:`,
+			error?.message || error,
+		);
+		throw error;
+	} finally {
+		clearInterval(progress);
+	}
+}
+
 function isCompanyGroupingEnabled() {
 	return !["0", "false", "no", "off"].includes(
 		String(process.env.JOB_COMPANY_GROUPING_ENABLED ?? "true").trim().toLowerCase(),
@@ -213,15 +246,19 @@ function createApp() {
 }
 
 async function startBackgroundWorkers() {
-	await initDataStore();
+	const startupStartedAt = Date.now();
+	await runStartupStep("Firestore connection and job-identity maintenance", () => initDataStore());
 	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled() || isJobListV2Enabled();
-	await initRedis({ force: rankingIndexNeeded });
+	await runStartupStep("Redis connection", () => initRedis({ force: rankingIndexNeeded }));
 	if (rankingIndexNeeded) {
-		await initQdrantCollections();
-		await initJobRankingCollection();
+		await runStartupStep("Qdrant collections", () => initQdrantCollections());
+		await runStartupStep("Qdrant ranking indexes", () => initJobRankingCollection());
 	}
-	if (isJobListV2Enabled()) await initJobListCatalogSnapshot();
+	if (isJobListV2Enabled()) {
+		await runStartupStep("Job-list catalog snapshot", () => initJobListCatalogSnapshot());
+	}
 	databaseReady = true;
+	console.log(`[startup] background services ready (${formatStartupDuration(Date.now() - startupStartedAt)} total)`);
 	void cleanupHistoricalJobDuplicates().catch((error) => {
 		console.error("[job-identity] historical cleanup failed:", error?.message || error);
 	});
@@ -235,6 +272,7 @@ async function startBackgroundWorkers() {
 }
 
 async function startHttpWorker({ clustered }) {
+	const startupStartedAt = Date.now();
 	const app = createApp();
 	const server = http.createServer(app);
 	initExtensionScraperSocket(server);
@@ -244,24 +282,28 @@ async function startHttpWorker({ clustered }) {
 	});
 	server.listen(port, host, () => {
 		console.log(`Server running on http://${host}:${port} (pid ${process.pid})`);
+		console.log("[startup] health checks are available; API requests return 503 until maintenance finishes");
 		if (!clustered) {
 			console.log(`Avalon relay is a separate process (default :3847) — see @avalon/backend`);
 		}
 	});
 
-	await initDataStore();
+	await runStartupStep("Firestore connection and job-identity maintenance", () => initDataStore());
 	const needsJobRankingIndex = isQueryTimeRankingIndexEnabled() || isJobListV2Enabled();
-	await initRedis({ force: needsJobRankingIndex });
+	await runStartupStep("Redis connection", () => initRedis({ force: needsJobRankingIndex }));
 	if (needsJobRankingIndex) {
-		await initQdrantCollections();
-		const rankingReady = await initJobRankingCollection();
+		await runStartupStep("Qdrant collections", () => initQdrantCollections());
+		const rankingReady = await runStartupStep("Qdrant ranking indexes", () => initJobRankingCollection());
 		if (rankingReady && isRedisReady()) {
-			await loadCanonicalSkillDictionary();
-			await warmRankingPool();
+			await runStartupStep("Canonical skill dictionary", () => loadCanonicalSkillDictionary());
+			await runStartupStep("Ranking worker pool", () => warmRankingPool());
 		}
 	}
-	if (isJobListV2Enabled()) await initJobListReadModel();
+	if (isJobListV2Enabled()) {
+		await runStartupStep("Job-list read model and profile caches", () => initJobListReadModel());
+	}
 	databaseReady = true;
+	console.log(`[startup] API ready (${formatStartupDuration(Date.now() - startupStartedAt)} total)`);
 	if (!clustered) {
 		startAggregateMetricsServer();
 		void cleanupHistoricalJobDuplicates().catch((error) => {

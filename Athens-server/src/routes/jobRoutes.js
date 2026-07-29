@@ -1,6 +1,7 @@
 import express from "express";
 import {
 	createJob,
+	createJobsBulk,
 	getJobs,
 	getJobsV2,
 	getJobStatusCounts,
@@ -34,6 +35,7 @@ import {
 const router = express.Router();
 
 router.post('/jobs', createJob);
+router.post('/jobs/bulk', createJobsBulk);
 router.post('/jobs/list', getJobs);
 router.post('/jobs/list/v2', getJobsV2);
 router.post('/jobs/list/v2/counts', getJobStatusCountsV2);

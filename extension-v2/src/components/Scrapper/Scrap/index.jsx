@@ -40,7 +40,7 @@ const PAGE_DELAY_MS = 800;
 const MAX_RECOVERY_ATTEMPTS = 6;
 const FEED_REFRESH_COOLDOWN_MS = 60_000;
 const MAX_EMPTY_FEED_CYCLES = 3;
-const JOB_UPLOAD_TIMEOUT_MS = 20_000;
+const JOB_BULK_UPLOAD_TIMEOUT_MS = 45_000;
 
 function CircularProgressWithLabel(props) {
 	return (
@@ -221,6 +221,7 @@ const ScrapComponent = () => {
 
 		setProgress(40);
 		let pageSaved = 0;
+		const uploadEntries = [];
 
 		for (let i = 0; i < jobs.length; i += 1) {
 			if (!scrapFlagRef.current) {
@@ -234,12 +235,25 @@ const ScrapComponent = () => {
 				setLastError('Skipped a Jobright item because its title was missing.');
 				continue;
 			}
+			uploadEntries.push({ resultData, jobrightJobId });
+		}
 
-			setProgress(40 + Math.round(((i + 1) / jobs.length) * 40));
+		if (uploadEntries.length) {
+			const bulk = await api.post(
+				'/jobs/bulk',
+				{ jobs: uploadEntries.map(({ resultData }) => resultData) },
+				{ timeoutMs: JOB_BULK_UPLOAD_TIMEOUT_MS },
+			);
+			if (!Array.isArray(bulk?.results) || bulk.results.length !== uploadEntries.length) {
+				const error = new Error('Backend returned an incomplete bulk-save response');
+				error.retryable = true;
+				throw error;
+			}
 
-			try {
-				const res = await api.post('/jobs', resultData, { timeoutMs: JOB_UPLOAD_TIMEOUT_MS });
+			for (let i = 0; i < uploadEntries.length; i += 1) {
+				const res = bulk.results[i];
 				const reason = String(res?.reason || '').toLowerCase();
+				setProgress(45 + Math.round(((i + 1) / uploadEntries.length) * 35));
 
 				if (res?.created === true) {
 					pageSaved += 1;
@@ -250,11 +264,18 @@ const ScrapComponent = () => {
 					setStats((s) => ({ ...s, duplicate: s.duplicate + 1 }));
 				} else if (reason.includes('blocked by rule')) {
 					setStats((s) => ({ ...s, blocked: s.blocked + 1 }));
-				} else if (res?.success === false) {
+				} else {
 					setStats((s) => ({ ...s, errors: s.errors + 1 }));
+					setLastError(String(res?.error || res?.reason || 'Failed to save job'));
 				}
+			}
 
-				if (jobrightJobId) {
+			for (let i = 0; i < uploadEntries.length; i += 1) {
+				if (!scrapFlagRef.current) throw new Error('Scraping stopped');
+				const { jobrightJobId } = uploadEntries[i];
+				const statusCode = Number(bulk.results[i]?.statusCode || 500);
+				if (jobrightJobId && statusCode >= 200 && statusCode < 300) {
+					setProgress(80 + Math.round(((i + 1) / uploadEntries.length) * 20));
 					const applyRaw = await swanFetch({
 						url: JOBRIGHT_APPLY_URL,
 						method: 'POST',
@@ -265,11 +286,6 @@ const ScrapComponent = () => {
 						console.warn('swan/job/apply failed', applyResult.error);
 					}
 				}
-			} catch (err) {
-				setStats((s) => ({ ...s, errors: s.errors + 1 }));
-				setLastError(formatFailureMessage(err, 'Failed to save job'));
-				if (isNetworkError(err)) throw err;
-				console.error('Failed to save job', err);
 			}
 		}
 
