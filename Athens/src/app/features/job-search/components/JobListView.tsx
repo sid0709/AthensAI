@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "../../../lib/utils";
 import { alignJobScoreForDisplay } from "../../../lib/skill-match";
@@ -70,16 +70,20 @@ export function JobListView({
   const listRef = useCallback((node: HTMLDivElement | null) => {
     setScrollElement(node?.closest<HTMLElement>("[data-page-scroll-container]") ?? null);
   }, []);
+  const getItemKey = useCallback(
+    (index: number) => displayGroups[index]?.companyId ?? index,
+    [displayGroups],
+  );
+  // Keep measurements by company and let ResizeObserver update only the row
+  // whose card/tray changed. Calling virtualizer.measure() here clears every
+  // cached height, leaving unchanged rows stuck at estimateSize until remount.
   const virtualizer = useVirtualizer({
     count: layout === "list" ? displayGroups.length : 0,
     getScrollElement: () => scrollElement,
-    estimateSize: () => 350,
+    getItemKey,
+    estimateSize: () => 260,
     overscan: 4,
   });
-
-  useEffect(() => {
-    virtualizer.measure();
-  }, [displayGroups, expandedCompanyId, layout, virtualizer]);
 
   const renderGroup = (group: CompanyJobGroup) => {
     const job = group.jobs[0];
