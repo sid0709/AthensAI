@@ -54,17 +54,22 @@ export async function reconcileJobTitleRoleIndex({
 } = {}) {
 	if (!collection) return { processed: 0, indexed: 0, updated: 0, skipped: true };
 	const processedFilter = {};
-	const [processed, indexed] = await Promise.all([
+	const marketFilter = {
+		must: [{ key: 'catalog', match: { value: 'market' } }],
+	};
+	const roleFilter = {
+		must: [
+			...marketFilter.must,
+			{ key: 'titleRoles', match: { any: TITLE_SCAN_ROLES } },
+		],
+	};
+	const [processed, indexed, totalIndexed] = await Promise.all([
 		collection.countDocuments(processedFilter),
-		countIndexed({
-			must: [
-				{ key: 'catalog', match: { value: 'market' } },
-				{ key: 'titleRoles', match: { any: TITLE_SCAN_ROLES } },
-			],
-		}),
+		countIndexed(roleFilter),
+		countIndexed(marketFilter),
 	]);
-	if (!force && indexed >= processed) {
-		return { processed, indexed, updated: 0, skipped: true };
+	if (!force && indexed >= totalIndexed) {
+		return { processed, indexed, totalIndexed, updated: 0, skipped: true };
 	}
 
 	const options = {
@@ -91,7 +96,7 @@ export async function reconcileJobTitleRoleIndex({
 	}
 	if (batch.length) updated += await updateIndexed(batch);
 	if (updated > 0) await bumpRevision();
-	return { processed, indexed, updated, skipped: false };
+	return { processed, indexed, totalIndexed, updated, skipped: false };
 }
 
 export const titleRoleIndexSyncTest = { validUpdates };

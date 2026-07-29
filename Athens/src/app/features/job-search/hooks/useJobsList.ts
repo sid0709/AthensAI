@@ -10,6 +10,7 @@ import { JOB_TITLE_SCAN_ROLES } from "@/app/data/jobTitleRoles";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
 import { rescoreJobWithContext, type ProfileMatchContext } from "../../../lib/skill-match";
 import type { CompanyJobGroup, Job } from "../../../types";
+import { mergeCompanyMembers, removeCompanyJobs } from "../lib/companyGroupState";
 import type {
   JobSearchFilterState,
   JobScoreFilters,
@@ -44,6 +45,9 @@ type ListResponse = {
 type MembersResponse = {
   success?: boolean;
   data?: Record<string, unknown>[];
+  focusJob?: Record<string, unknown> | null;
+  focusValid?: boolean;
+  focusOffset?: number | null;
   pagination?: { offset: number; limit: number; total: number; nextOffset?: number | null };
 };
 
@@ -162,75 +166,18 @@ async function persistListResponse(key: string, entry: ListCacheEntry) {
   }
 }
 
-function cachedStatusTab(cacheKey?: string): JobStatusTab {
-  if (!cacheKey) return "all";
-  try {
-    const body = JSON.parse(cacheKey.slice(cacheKey.indexOf("{"))) as { applied?: boolean; status?: string };
-    if (body.applied === false) return "posted";
-    if (body.applied !== true) return "all";
-    const statusByApi: Record<string, JobStatusTab> = {
-      Applied: "applied",
-      Scheduled: "scheduled",
-      Declined: "declined",
-      BidReady: "bid-ready",
-      BidCompleted: "bid-completed",
-    };
-    return statusByApi[body.status || ""] || "all";
-  } catch {
-    return "all";
-  }
-}
-
-function patchResponseJobStatus(
-  response: ListResponse,
-  jobId: string,
-  status: Job["status"],
-  cacheKey?: string,
-): boolean {
-  let changed = false;
-  const requestedStatus = cachedStatusTab(cacheKey);
-  const remove = requestedStatus !== "all" && requestedStatus !== status;
-  response.data = (response.data || []).flatMap((row) => {
-    if (Array.isArray(row.jobs)) {
-      const jobs = row.jobs.flatMap((job) => {
-        if (String(job._id || "") !== jobId) return [job];
-        changed = true;
-        if (remove) return [];
-        job.viewerStatus = status;
-        return [job];
-      });
-      return jobs.length ? [{ ...row, jobs }] : [];
-    }
-    if (String(row._id || "") !== jobId) return [row];
-    changed = true;
-    if (remove) return [];
-    row.viewerStatus = status;
-    return [row];
-  });
-  if (changed && remove && response.pagination) {
-    response.pagination.total = Math.max(0, response.pagination.total - 1);
-    if (typeof response.pagination.totalJobs === "number") {
-      response.pagination.totalJobs = Math.max(0, response.pagination.totalJobs - 1);
-    }
-    response.pagination.totalPages = Math.ceil(response.pagination.total / Math.max(1, response.pagination.limit));
-  }
-  return changed;
-}
-
-async function patchPersistentJobStatus(jobId: string, status: Job["status"]) {
+async function clearPersistentListCache() {
   try {
     const db = await listCacheDb();
-    if (!db) return;
-    const keys = await db.getAllKeys(LIST_CACHE_STORE);
-    for (const key of keys) {
-      const entry = (await db.get(LIST_CACHE_STORE, key)) as ListCacheEntry | undefined;
-      if (entry && patchResponseJobStatus(entry.response, jobId, status, String(key))) {
-        await db.put(LIST_CACHE_STORE, entry, key);
-      }
-    }
+    if (db) await db.clear(LIST_CACHE_STORE);
   } catch {
-    /* Cache patching must never affect the mutation itself. */
+    /* Cache invalidation must never affect the mutation itself. */
   }
+}
+
+function invalidateJobListCaches() {
+  listCache.clear();
+  void clearPersistentListCache();
 }
 
 function cacheListResponse(key: string, response: ListResponse) {
@@ -324,7 +271,6 @@ function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
 
   return {
     filters: effectiveFilters,
-    filtersKey: JSON.stringify(effectiveFilters),
     isDebouncing:
       filters.jobQuery !== debouncedJobQuery ||
       filters.companyQuery !== debouncedCompanyQuery,
@@ -345,7 +291,7 @@ export function buildJobsListBody(
       ? filters.source.join(",")
       : JobSourceTitles.join(","),
   };
-  if (!JOB_LIST_V2_ENABLED) body.groupBy = "company";
+  body.groupBy = "company";
 
   if (opts.applierName) body.applierName = opts.applierName;
   if (filters.aiExtractedOnly) body.aiExtracted = true;
@@ -386,6 +332,7 @@ export function buildJobsCountsBody(
   delete body.sort;
   delete body.page;
   delete body.limit;
+  delete body.groupBy;
   delete body.applied;
   delete body.status;
   return body;
@@ -411,6 +358,7 @@ function mapResponseGroups(
         jobs,
         matchingJobCount: typeof row.matchingJobCount === "number" ? row.matchingJobCount : undefined,
         nextMemberOffset: row.nextMemberOffset ?? undefined,
+        memberOrder: Object.fromEntries(jobs.map((job, index) => [job.id, index])),
       });
       continue;
     }
@@ -422,9 +370,14 @@ function mapResponseGroups(
         companyId: job.companyId,
         company: { name: job.company, logoUrl: job.logoUrl, url: job.companyUrl },
         jobs: [job],
+        memberOrder: { [job.id]: 0 },
       });
     } else {
       groups[index].jobs.push(job);
+      groups[index].memberOrder = {
+        ...groups[index].memberOrder,
+        [job.id]: groups[index].jobs.length - 1,
+      };
     }
   }
   return groups;
@@ -434,16 +387,18 @@ export function useJobsList(
   filters: JobSearchFilterState,
   excludeIds: Set<string> = new Set(),
   rankingRevision = 0,
+  page = 1,
+  pageSize = 25,
 ) {
   const { post, request } = useApi(API_BASE);
   const { applier, applierReady } = useApplier();
 
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
   const [rawGroups, setRawGroups] = useState<CompanyJobGroup[]>([]);
   const [total, setTotal] = useState(0);
 	const [totalJobs, setTotalJobs] = useState(0);
 	const [memberLoadingIds, setMemberLoadingIds] = useState<Set<string>>(new Set());
+  const [memberErrors, setMemberErrors] = useState<Record<string, string>>({});
+  const memberRequestTokensRef = useRef(new Map<string, symbol>());
   const [requestInFlight, setRequestInFlight] = useState(false);
   const [settledKey, setSettledKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -456,7 +411,6 @@ export function useJobsList(
   const [recommendationWarming, setRecommendationWarming] = useState(false);
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
   const [rankingStatus, setRankingStatus] = useState<ListResponse["rankingStatus"]>(null);
-  const [groupedBeta, setGroupedBeta] = useState(false);
   const rawGroupsRef = useRef<CompanyJobGroup[]>([]);
   const applierRef = useRef(applier);
   const rankingPollAttemptRef = useRef(0);
@@ -465,13 +419,8 @@ export function useJobsList(
 
   const {
     filters: debouncedFilters,
-    filtersKey: debouncedFiltersKey,
     isDebouncing,
   } = useDebouncedTextFilters(filters);
-  const pageFilterKeyRef = useRef(debouncedFiltersKey);
-  const filterChanged = pageFilterKeyRef.current !== debouncedFiltersKey;
-  const requestPage = filterChanged ? 1 : page;
-
   const groups = useMemo(
     () => rawGroups
 			.map((group) => ({ ...group, jobs: group.jobs.filter((job) => !excludeIds.has(job.id)) }))
@@ -480,19 +429,14 @@ export function useJobsList(
   );
 	const jobs = useMemo(() => groups.flatMap((group) => group.jobs), [groups]);
 
-  useEffect(() => {
-    pageFilterKeyRef.current = debouncedFiltersKey;
-    setPage(1);
-  }, [debouncedFiltersKey, pageSize]);
-
   const listBody = useMemo(
     () =>
       buildJobsListBody(debouncedFilters, {
-        page: requestPage,
+        page,
         limit: pageSize,
         applierName: applier?.name,
       }),
-    [debouncedFilters, requestPage, pageSize, applier?.name, rankingRevision],
+    [debouncedFilters, page, pageSize, applier?.name, rankingRevision],
   );
 
   const countsBody = useMemo(
@@ -501,11 +445,19 @@ export function useJobsList(
   );
 
   const currentQueryKey = `${rankingRevision}:${listCacheKey(listBody)}`;
+  const currentQueryKeyRef = useRef(currentQueryKey);
+  currentQueryKeyRef.current = currentQueryKey;
   const countsKey = listCacheKey(countsBody);
   const loading =
     !applierReady ||
     isDebouncing ||
     ((requestInFlight || settledKey !== currentQueryKey) && rawGroups.length === 0);
+
+  useEffect(() => {
+    memberRequestTokensRef.current.clear();
+    setMemberLoadingIds(new Set());
+    setMemberErrors({});
+  }, [currentQueryKey]);
 
   useEffect(() => {
     if (!applierReady || isDebouncing) return;
@@ -525,7 +477,6 @@ export function useJobsList(
       setRecommendationWarming(Boolean(res.recommendationWarming) || v2RankingStatus === "warming");
       setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
       setRankingStatus(v2RankingStatus ?? res.rankingStatus ?? null);
-      setGroupedBeta(res.beta === true);
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
       }
@@ -581,7 +532,6 @@ export function useJobsList(
 			setTotalJobs(0);
           setRecommendationFallback(false);
           setRecommendationReason(null);
-          setGroupedBeta(false);
           setCatalogTotal(null);
           setSettledKey(currentQueryKey);
           setError(timedOut
@@ -654,14 +604,8 @@ export function useJobsList(
     return () => clearTimeout(timer);
   }, [applierReady, isDebouncing, rankingStatus, recommendationWarming, requestInFlight, retryRevision]);
 
-  const setPageSizeAndReset = useCallback((size: number) => {
-    setPageSize(size);
-    setPage(1);
-  }, []);
-
   const patchJob = useCallback(
     (updated: Job) => {
-      const updatedId = updated.backendId || updated.id;
       const previousJob = rawGroupsRef.current
         .flatMap((group) => group.jobs)
         .find((job) => job.id === updated.id || job.backendId === updated.backendId);
@@ -672,38 +616,24 @@ export function useJobsList(
           [updated.status]: previous[updated.status] + 1,
         }));
       }
-      for (const [key, entry] of listCache) patchResponseJobStatus(entry.response, updatedId, updated.status, key);
-      void patchPersistentJobStatus(updatedId, updated.status);
+      invalidateJobListCaches();
       const statusTab = debouncedFilters.statusTab;
 			setRawGroups((previous) => {
-				let removedGroupCount = 0;
-				let removedJobCount = 0;
-				let needsDirectoryRefresh = false;
-				const next = previous.flatMap((group) => {
-					const index = group.jobs.findIndex(
-						(job) => job.id === updated.id || job.backendId === updated.backendId,
-					);
-					if (index < 0) return [group];
-					if (statusTab !== "all" && updated.status !== statusTab) {
-						removedJobCount += 1;
-						const remaining = group.jobs.filter((_, jobIndex) => jobIndex !== index);
-						const matchingJobCount = Math.max(0, (group.matchingJobCount ?? group.jobs.length) - 1);
-						if (!remaining.length && matchingJobCount === 0) {
-							removedGroupCount += 1;
-							return [];
-						}
-						if (!remaining.length) needsDirectoryRefresh = true;
-						return [{ ...group, jobs: remaining, matchingJobCount }];
-					}
-					const jobs = [...group.jobs];
-					jobs[index] = updated;
-					return [{ ...group, jobs }];
-				});
-				const removedUnits = JOB_LIST_V2_ENABLED ? removedJobCount : removedGroupCount;
-				if (removedUnits) setTotal((value) => Math.max(0, value - removedUnits));
-				if (removedJobCount) setTotalJobs((value) => Math.max(0, value - removedJobCount));
-				if (needsDirectoryRefresh) queueMicrotask(() => setRetryRevision((revision) => revision + 1));
-				return next;
+        if (statusTab !== "all" && updated.status !== statusTab) {
+          const result = removeCompanyJobs(
+            previous,
+            (job) => job.id === updated.id || job.backendId === updated.backendId,
+          );
+          if (result.removedGroups) setTotal((value) => Math.max(0, value - result.removedGroups));
+          if (result.removedJobs) setTotalJobs((value) => Math.max(0, value - result.removedJobs));
+          if (result.needsDirectoryRefresh) queueMicrotask(() => setRetryRevision((revision) => revision + 1));
+          return result.groups;
+        }
+        return previous.map((group) => ({
+          ...group,
+          jobs: group.jobs.map((job) =>
+            job.id === updated.id || job.backendId === updated.backendId ? updated : job),
+        }));
       });
     },
     [debouncedFilters.statusTab],
@@ -711,28 +641,17 @@ export function useJobsList(
 
   const removeJobsById = useCallback((ids: string[]) => {
     if (!ids.length) return;
+    invalidateJobListCaches();
     const idSet = new Set(ids);
 		setRawGroups((previous) => {
-			let removedGroups = 0;
-			let removedJobs = 0;
-			let needsDirectoryRefresh = false;
-			const next = previous.flatMap((group) => {
-				const jobs = group.jobs.filter((job) => !idSet.has(job.id) && !idSet.has(job.backendId || ""));
-				const removed = group.jobs.length - jobs.length;
-				removedJobs += removed;
-				const matchingJobCount = Math.max(0, (group.matchingJobCount ?? group.jobs.length) - removed);
-				if (!jobs.length && matchingJobCount === 0) {
-					removedGroups += 1;
-					return [];
-				}
-				if (!jobs.length) needsDirectoryRefresh = true;
-				return [{ ...group, jobs, matchingJobCount }];
-			});
-			const removedUnits = JOB_LIST_V2_ENABLED ? removedJobs : removedGroups;
-			if (removedUnits) setTotal((value) => Math.max(0, value - removedUnits));
-			if (removedJobs) setTotalJobs((value) => Math.max(0, value - removedJobs));
-			if (needsDirectoryRefresh) queueMicrotask(() => setRetryRevision((revision) => revision + 1));
-			return next;
+      const result = removeCompanyJobs(
+        previous,
+        (job) => idSet.has(job.id) || idSet.has(job.backendId || ""),
+      );
+      if (result.removedGroups) setTotal((value) => Math.max(0, value - result.removedGroups));
+      if (result.removedJobs) setTotalJobs((value) => Math.max(0, value - result.removedJobs));
+      if (result.needsDirectoryRefresh) queueMicrotask(() => setRetryRevision((revision) => revision + 1));
+      return result.groups;
     });
   }, []);
 
@@ -776,43 +695,93 @@ export function useJobsList(
     });
   }, [debouncedFilters.sort]);
 
-	const loadCompanyMembers = useCallback(async (companyId: string) => {
+	const loadCompanyMembers = useCallback(async (
+    companyId: string,
+    options: { focusJobId?: string } = {},
+  ) => {
 		const group = rawGroups.find((candidate) => candidate.companyId === companyId);
-		if (!group || group.nextMemberOffset == null || memberLoadingIds.has(companyId)) return;
+		if (!group || memberLoadingIds.has(companyId)) return;
+    const focusLoaded = !options.focusJobId || group.jobs.some((job) => job.id === options.focusJobId);
+    if (group.nextMemberOffset == null && focusLoaded) return;
+    const queryKeyAtStart = currentQueryKey;
+    const requestToken = Symbol(companyId);
+    memberRequestTokensRef.current.set(companyId, requestToken);
 		setMemberLoadingIds((previous) => new Set(previous).add(companyId));
+		setMemberErrors((previous) => {
+      if (!previous[companyId]) return previous;
+      const next = { ...previous };
+      delete next[companyId];
+      return next;
+    });
 		try {
-			const response = (await request("/jobs/list/company-members", {
+			const response = (await request(
+        JOB_LIST_V2_ENABLED ? "/jobs/list/v2/company-members" : "/jobs/list/company-members",
+        {
 				method: "POST",
 				body: {
 					...listBody,
 					companyId,
-					memberOffset: group.nextMemberOffset,
-					memberLimit: 10,
+					...(JOB_LIST_V2_ENABLED
+            ? { offset: group.nextMemberOffset ?? 1, limit: 10 }
+            : { memberOffset: group.nextMemberOffset ?? 1, memberLimit: 10 }),
+					...(options.focusJobId ? { focusJobId: options.focusJobId } : {}),
 				},
 			})) as MembersResponse;
-			if (!response?.success || !Array.isArray(response.data)) return;
-			const loaded = response.data.map((doc) => mapDocToJob(doc, applier));
-			setRawGroups((previous) => previous.map((candidate) => {
-				if (candidate.companyId !== companyId) return candidate;
-				const seen = new Set(candidate.jobs.map((job) => job.id));
-				return {
-					...candidate,
-					jobs: [...candidate.jobs, ...loaded.filter((job) => !seen.has(job.id))],
-					nextMemberOffset: response.pagination?.nextOffset ?? null,
-				};
-			}));
+			if (
+        currentQueryKeyRef.current !== queryKeyAtStart ||
+        memberRequestTokensRef.current.get(companyId) !== requestToken
+      ) return undefined;
+			if (!response?.success || !Array.isArray(response.data)) {
+        throw new Error("The server could not load this company's roles.");
+      }
+			const memberOffset = response.pagination?.offset ?? group.nextMemberOffset ?? 1;
+			const loaded = [
+        ...response.data.map((doc, index) => ({
+          job: mapDocToJob(doc, applier),
+          order: memberOffset + index,
+        })),
+        ...(response.focusJob ? [{
+          job: mapDocToJob(response.focusJob, applier),
+          order: response.focusOffset ?? Number.MAX_SAFE_INTEGER,
+        }] : []),
+      ];
+			setRawGroups((previous) => mergeCompanyMembers(
+        previous,
+        companyId,
+        loaded,
+        response.pagination?.nextOffset ?? null,
+      ));
+			setMemberErrors((previous) => {
+        if (!previous[companyId]) return previous;
+        const next = { ...previous };
+        delete next[companyId];
+        return next;
+      });
+      return { focusValid: response.focusValid !== false };
 		} catch (error) {
+			if (
+        currentQueryKeyRef.current !== queryKeyAtStart ||
+        memberRequestTokensRef.current.get(companyId) !== requestToken
+      ) return undefined;
+			setMemberErrors((previous) => ({
+        ...previous,
+        [companyId]: error instanceof Error ? error.message : "Please try again.",
+      }));
 			toast.error("Could not load more roles", {
 				description: error instanceof Error ? error.message : "Please try again.",
 			});
+			return undefined;
 		} finally {
-			setMemberLoadingIds((previous) => {
-				const next = new Set(previous);
-				next.delete(companyId);
-				return next;
-			});
+			if (memberRequestTokensRef.current.get(companyId) === requestToken) {
+        memberRequestTokensRef.current.delete(companyId);
+        setMemberLoadingIds((previous) => {
+          const next = new Set(previous);
+          next.delete(companyId);
+          return next;
+        });
+      }
 		}
-	}, [applier, listBody, memberLoadingIds, rawGroups, request]);
+	}, [applier, currentQueryKey, listBody, memberLoadingIds, rawGroups, request]);
 
   return {
     jobs,
@@ -824,11 +793,10 @@ export function useJobsList(
     staleResults,
     retry,
     requestKey: currentQueryKey,
+    resultsSettled: settledKey === currentQueryKey,
     countsLoading: loading || countsLoading,
     page,
     pageSize,
-    setPage,
-    setPageSize: setPageSizeAndReset,
     statusCounts,
     applierReady,
     recommendationFallback,
@@ -840,7 +808,7 @@ export function useJobsList(
     removeJobsById,
 		loadCompanyMembers,
 		memberLoadingIds,
-    groupedBeta,
+    memberErrors,
     refreshStatusCounts,
     rescoreVisibleJobs,
   };

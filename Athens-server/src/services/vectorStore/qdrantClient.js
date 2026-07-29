@@ -395,14 +395,21 @@ export async function updateJobRankingTitleRoles(updates = [], {
 	const idsByRole = new Map();
 	for (const [jobId, role] of roleByJobId) {
 		if (!idsByRole.has(role)) idsByRole.set(role, []);
-		idsByRole.get(role).push(toPointId(jobId));
+		idsByRole.get(role).push(jobId);
 	}
-	await Promise.all([...idsByRole].map(([role, points]) =>
+	await Promise.all([...idsByRole].map(([role, jobIds]) =>
 		qdrantFetch(
 			`/collections/${encodeURIComponent(collectionName)}/points/payload?wait=${wait ? 'true' : 'false'}`,
 			{
 				method: 'POST',
-				body: { payload: { titleRoles: [role] }, points },
+				// Filter selection is intentionally tolerant of deleted jobs. A strict
+				// point-id selector rejects the whole batch when any point is absent.
+				body: {
+					payload: { titleRoles: [role] },
+					filter: {
+						must: [{ key: 'jobId', match: { any: jobIds } }],
+					},
+				},
 			},
 		),
 	));

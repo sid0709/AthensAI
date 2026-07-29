@@ -1,20 +1,21 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { JobCard } from "./JobCard";
 import { cn } from "../../../lib/utils";
 import { alignJobScoreForDisplay } from "../../../lib/skill-match";
 import type { CompanyJobGroup, Job } from "../../../types";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 import { useProfileMatchSkills } from "../hooks/useProfileMatchSkills";
-import { CompanyJobCarousel } from "./CompanyJobCarousel";
+import { CompanyJobGroupCard } from "./CompanyJobGroupCard";
 
 type JobListViewProps = {
   groups: CompanyJobGroup[];
-  isBeta?: boolean;
+  expandedCompanyId?: string;
+  onExpandedChange?: (companyId: string, expanded: boolean) => void;
   activeJobIds?: Record<string, string>;
   onActiveJobChange?: (companyId: string, jobId: string) => void;
   onLoadCompanyMembers?: (companyId: string) => void;
   memberLoadingIds?: Set<string>;
+  memberErrors?: Record<string, string>;
   layout?: "list" | "grid";
   selectedIds?: Set<string>;
   onSelectJob?: (id: string, shiftKey: boolean) => void;
@@ -34,11 +35,13 @@ type JobListViewProps = {
 
 export function JobListView({
   groups,
-  isBeta = false,
+  expandedCompanyId,
+  onExpandedChange,
   activeJobIds,
   onActiveJobChange,
   onLoadCompanyMembers,
   memberLoadingIds,
+  memberErrors,
   layout = "list",
   selectedIds,
   onSelectJob,
@@ -74,53 +77,38 @@ export function JobListView({
     overscan: 4,
   });
 
+  useEffect(() => {
+    virtualizer.measure();
+  }, [displayGroups, expandedCompanyId, layout, virtualizer]);
+
   const renderGroup = (group: CompanyJobGroup) => {
     const job = group.jobs[0];
     if (!job) return null;
-    if (isBeta || group.jobs.length > 1) {
-      return (
-        <CompanyJobCarousel
-          key={group.companyId}
-          group={group}
-          activeJobId={activeJobIds?.[group.companyId]}
-          onActiveJobChange={(jobId) => onActiveJobChange?.(group.companyId, jobId)}
-          selectedIds={selectedIds}
-          onSelectJob={onSelectJob}
-          showScores={showScores}
-          bookmarkedIds={bookmarkedIds}
-          onToggleBookmark={onToggleBookmark}
-          isJobPending={isJobPending}
-          onApply={onApply}
-          onMarkBidReady={onMarkBidReady}
-          onMarkScheduled={onMarkScheduled}
-          onMarkDeclined={onMarkDeclined}
-          onCancel={onCancel}
-          onJobScoresUpdated={onJobScoresUpdated}
-          resumeStates={resumeStates}
-          onGenerateResume={onGenerateResume}
-          onLoadMore={onLoadCompanyMembers}
-          loadingMore={memberLoadingIds?.has(group.companyId)}
-        />
-      );
-    }
     return (
-      <JobCard
+      <CompanyJobGroupCard
         key={group.companyId}
-        job={job}
-        selected={selectedIds?.has(job.id)}
-        onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
+        group={group}
+        expanded={expandedCompanyId === group.companyId}
+        onExpandedChange={(expanded) => onExpandedChange?.(group.companyId, expanded)}
+        activeJobId={activeJobIds?.[group.companyId]}
+        onActiveJobChange={(jobId) => onActiveJobChange?.(group.companyId, jobId)}
+        selectedIds={selectedIds}
+        onSelectJob={onSelectJob}
         showScores={showScores}
-        bookmarked={bookmarkedIds?.has(job.id)}
-        onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
-        statusPending={isJobPending?.(job.id)}
-        onApply={onApply ? () => onApply(job) : undefined}
-        onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(job) : undefined}
-        onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
-        onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
-        onCancel={onCancel ? () => onCancel(job) : undefined}
+        bookmarkedIds={bookmarkedIds}
+        onToggleBookmark={onToggleBookmark}
+        isJobPending={isJobPending}
+        onApply={onApply}
+        onMarkBidReady={onMarkBidReady}
+        onMarkScheduled={onMarkScheduled}
+        onMarkDeclined={onMarkDeclined}
+        onCancel={onCancel}
         onJobScoresUpdated={onJobScoresUpdated}
-        resumeState={resumeStates?.[job.id]}
-        onGenerateResume={onGenerateResume ? () => onGenerateResume(job) : undefined}
+        resumeStates={resumeStates}
+        onGenerateResume={onGenerateResume}
+        onLoadMore={onLoadCompanyMembers}
+        loadingMore={memberLoadingIds?.has(group.companyId)}
+        memberError={memberErrors?.[group.companyId]}
       />
     );
   };
@@ -135,7 +123,7 @@ export function JobListView({
 
   if (layout === "grid") {
     return (
-      <div className={cn("grid grid-cols-1 gap-4 py-2 md:grid-cols-2 xl:grid-cols-3")}>
+      <div className={cn("grid grid-cols-1 items-start gap-4 py-2 md:grid-cols-2 xl:grid-cols-3")}>
         {displayGroups.map(renderGroup)}
       </div>
     );

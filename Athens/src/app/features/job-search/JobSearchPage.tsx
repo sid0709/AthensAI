@@ -5,12 +5,7 @@ import { removeJobs } from "../../api/jobs";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
-import { useJobSearchNavigationOptional } from "../../context/JobSearchNavigationContext";
-import {
-  DEFAULT_JOB_FILTERS,
-  downloadJobsCsv,
-  type JobSearchFilterState,
-} from "../../hooks/useJobSearchFilters";
+import { downloadJobsCsv } from "../../hooks/useJobSearchFilters";
 import { isBetaTier } from "../../lib/beta";
 import { JobExportDialog } from "./components/JobExportDialog";
 import { JobListSkeleton } from "./components/JobListSkeleton";
@@ -25,20 +20,33 @@ import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { isExternalJob } from "../../types/job";
 import { useProfileMatchSkills } from "./hooks/useProfileMatchSkills";
+import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
+import { JOB_SEARCH_PAGE_SIZES } from "./lib/jobSearchUrlState";
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const PAGE_SIZE_OPTIONS = [...JOB_SEARCH_PAGE_SIZES];
 
 export function JobSearchPage() {
   return <JobSearchPageContent />;
 }
 
 function JobSearchPageContent() {
-  const jobNav = useJobSearchNavigationOptional();
   const { applier } = useApplier();
   const isBeta = isBetaTier(applier?.tier);
-  const [filters, setFilters] = useState<JobSearchFilterState>(DEFAULT_JOB_FILTERS);
-  const [showGrid, setShowGrid] = useState(false);
-  const [showScoresOnCards, setShowScoresOnCards] = useState(false);
+  const {
+    state: urlState,
+    setFilters,
+    replaceFilters,
+    setPage,
+    clampPage,
+    setPageSize,
+    setView,
+    setShowScores,
+    setOpenJob,
+    clearOpenJob,
+  } = useJobSearchUrlState();
+  const { filters, page, pageSize, groupId: expandedCompanyId, jobId: focusedJobId } = urlState;
+  const showGrid = urlState.view === "grid";
+  const showScoresOnCards = urlState.showScores;
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(() => {
     try {
       return new Set(JSON.parse(localStorage.getItem("athens-job-bookmarks") ?? "[]") as string[]);
@@ -53,24 +61,26 @@ function JobSearchPageContent() {
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
   const { profileVersion, matchContext } = useProfileMatchSkills();
 
-  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, countsLoading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, removeJobsById, refreshStatusCounts, rescoreVisibleJobs, loadCompanyMembers, memberLoadingIds, groupedBeta } =
-    useJobsList(filters, removedIds, profileVersion);
+  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, resultsSettled, countsLoading, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, removeJobsById, refreshStatusCounts, rescoreVisibleJobs, loadCompanyMembers, memberLoadingIds, memberErrors } =
+    useJobsList(filters, removedIds, profileVersion, page, pageSize);
 
   useEffect(() => {
     setActiveJobIds((previous) => {
       const next: Record<string, string> = {};
       for (const group of groups) {
-        const preserved = previous[group.companyId];
-        next[group.companyId] = preserved && group.jobs.some((job) => job.id === preserved)
-          ? preserved
-          : group.jobs[0]?.id ?? "";
+        const focused = group.companyId === expandedCompanyId
+          ? group.jobs.find((job) => job.id === focusedJobId)?.id
+          : undefined;
+        next[group.companyId] = focused
+          ?? group.jobs[0]?.id
+          ?? "";
       }
       const previousKeys = Object.keys(previous);
       const unchanged = previousKeys.length === Object.keys(next).length
         && previousKeys.every((key) => previous[key] === next[key]);
       return unchanged ? previous : next;
     });
-  }, [groups]);
+  }, [expandedCompanyId, focusedJobId, groups]);
 
   const visibleJobs = useMemo(
     () => groups.flatMap((group) => {
@@ -104,15 +114,15 @@ function JobSearchPageContent() {
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
 
   useEffect(() => {
-    const pending = jobNav?.pendingFilters;
-    if (!pending) return;
-    setFilters((prev) => ({ ...prev, ...pending }));
-    jobNav.clearPendingFilters();
-  }, [jobNav?.pendingFilters, jobNav]);
+    clearSelection();
+  }, [profileVersion, requestKey, clearSelection]);
 
   useEffect(() => {
-    clearSelection();
-  }, [filters, page, pageSize, profileVersion, requestKey, clearSelection]);
+    const visibleIds = new Set(visibleJobs.map((job) => job.id));
+    for (const id of selectedIds) {
+      if (!visibleIds.has(id)) deselectJob(id);
+    }
+  }, [deselectJob, selectedIds, visibleJobs]);
 
   useEffect(() => {
     if (matchContext) rescoreVisibleJobs(matchContext);
@@ -121,8 +131,61 @@ function JobSearchPageContent() {
   // Role filter is beta-only — clear when switching to a non-beta profile.
   useEffect(() => {
     if (isBeta) return;
-    setFilters((prev) => (prev.titleRoles.length ? { ...prev, titleRoles: [] } : prev));
-  }, [isBeta]);
+    if (filters.titleRoles.length) replaceFilters({ ...filters, titleRoles: [] });
+  }, [filters, isBeta, replaceFilters]);
+
+  useEffect(() => {
+    if (!resultsSettled) return;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    if (page > totalPages) clampPage(totalPages);
+  }, [clampPage, page, pageSize, resultsSettled, total]);
+
+  useEffect(() => {
+    if (!expandedCompanyId || !resultsSettled) return;
+    const group = groups.find((candidate) => candidate.companyId === expandedCompanyId);
+    if (!group || (group.matchingJobCount ?? group.jobs.length) < 2) {
+      clearOpenJob();
+      return;
+    }
+    const targetJobId = focusedJobId || group.jobs[0]?.id || "";
+    if (!focusedJobId && targetJobId) {
+      setOpenJob(expandedCompanyId, targetJobId);
+      return;
+    }
+    if (
+      targetJobId &&
+      !group.jobs.some((job) => job.id === targetJobId) &&
+      !memberLoadingIds.has(expandedCompanyId) &&
+      !memberErrors[expandedCompanyId]
+    ) {
+      void loadCompanyMembers(expandedCompanyId, { focusJobId: targetJobId }).then((result) => {
+        if (result?.focusValid === false && group.jobs[0]?.id) {
+          setOpenJob(expandedCompanyId, group.jobs[0].id);
+        }
+      });
+    } else if (
+      group.jobs.length === 1 &&
+      group.nextMemberOffset != null &&
+      !memberLoadingIds.has(expandedCompanyId) &&
+      !memberErrors[expandedCompanyId]
+    ) {
+      void loadCompanyMembers(expandedCompanyId, { focusJobId: targetJobId }).then((result) => {
+        if (result?.focusValid === false && group.jobs[0]?.id) {
+          setOpenJob(expandedCompanyId, group.jobs[0].id);
+        }
+      });
+    }
+  }, [
+    clearOpenJob,
+    expandedCompanyId,
+    focusedJobId,
+    groups,
+    loadCompanyMembers,
+    memberErrors,
+    memberLoadingIds,
+    resultsSettled,
+    setOpenJob,
+  ]);
 
   const pageIds = useMemo(() => visibleJobs.map((job) => job.id), [visibleJobs]);
   const selectedOnPage = useMemo(
@@ -144,6 +207,17 @@ function JobSearchPageContent() {
     if (previousId === jobId) return;
     if (previousId && selectedIds.has(previousId)) deselectJob(previousId);
     setActiveJobIds((previous) => ({ ...previous, [companyId]: jobId }));
+    setOpenJob(companyId, jobId);
+  };
+
+  const handleCompanyExpandedChange = (companyId: string, expanded: boolean) => {
+    if (!expanded) {
+      clearOpenJob();
+      return;
+    }
+    const group = groups.find((candidate) => candidate.companyId === companyId);
+    const activeJobId = activeJobIds[companyId] || group?.jobs[0]?.id || "";
+    setOpenJob(companyId, activeJobId);
   };
 
   const handleApplyAll = async (jobs = selectedJobs) => {
@@ -232,7 +306,7 @@ function JobSearchPageContent() {
         statusCounts={statusCounts}
         countsLoading={countsLoading}
         showScoresOnCards={showScoresOnCards}
-        onShowScoresOnCardsChange={setShowScoresOnCards}
+        onShowScoresOnCardsChange={setShowScores}
         matchScoreHint={matchScoreHint}
         matchScoreHintVariant={matchScoreHintVariant}
       />
@@ -288,7 +362,7 @@ function JobSearchPageContent() {
         onPageSizeChange={setPageSize}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         showGrid={showGrid}
-        onToggleGrid={() => setShowGrid((g) => !g)}
+        onToggleGrid={() => setView(showGrid ? "list" : "grid")}
         loading={loading}
       />
 
@@ -321,11 +395,13 @@ function JobSearchPageContent() {
         <TabTransition tabKey={showGrid ? "grid" : "list"}>
           <JobListView
             groups={groups}
-            isBeta={groupedBeta}
+            expandedCompanyId={expandedCompanyId}
             activeJobIds={activeJobIds}
+            onExpandedChange={handleCompanyExpandedChange}
             onActiveJobChange={handleActiveJobChange}
-            onLoadCompanyMembers={(companyId) => void loadCompanyMembers(companyId)}
+            onLoadCompanyMembers={(companyId) => void loadCompanyMembers(companyId, { focusJobId: activeJobIds[companyId] })}
             memberLoadingIds={memberLoadingIds}
+            memberErrors={memberErrors}
             layout={showGrid ? "grid" : "list"}
             selectedIds={selectedIds}
             onSelectJob={selectJob}
@@ -355,8 +431,9 @@ function JobSearchPageContent() {
         onPageSizeChange={setPageSize}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         detailed
-        unitLabel="jobs"
-        secondaryTotal={null}
+        unitLabel="companies"
+        secondaryTotal={totalJobs}
+        secondaryLabel="matching jobs"
         loading={loading}
         className="mt-2"
       />

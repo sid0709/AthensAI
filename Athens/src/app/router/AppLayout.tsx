@@ -19,6 +19,7 @@ import {
   type ResumeNavigationContextValue,
 } from "../context/ResumeNavigationContext";
 import type { View } from "../types";
+import { defaultJobSearchHref } from "../features/job-search/lib/jobSearchUrlState";
 
 function AppProviders({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -30,7 +31,6 @@ function AppProviders({ children }: { children: ReactNode }) {
   );
 
   const [pendingEditorOpen, setPendingEditorOpen] = useState<OpenEditorOptions | null>(null);
-  const [pendingJobFilters, setPendingJobFilters] = useState<OpenJobSearchOptions | null>(null);
 
   const openEditor = useCallback(
     (opts?: OpenEditorOptions) => {
@@ -47,13 +47,10 @@ function AppProviders({ children }: { children: ReactNode }) {
 
   const openJobSearch = useCallback(
     (opts?: OpenJobSearchOptions) => {
-      setPendingJobFilters(opts ?? null);
-      routerNavigate("job-board");
+      navigate(defaultJobSearchHref(opts));
     },
-    [routerNavigate],
+    [navigate],
   );
-
-  const clearPendingFilters = useCallback(() => setPendingJobFilters(null), []);
 
   const resumeNav = useMemo<ResumeNavigationContextValue>(
     () => ({ openEditor, pendingEditorOpen, clearPendingEditorOpen }),
@@ -61,8 +58,8 @@ function AppProviders({ children }: { children: ReactNode }) {
   );
 
   const jobNav = useMemo(
-    () => ({ openJobSearch, pendingFilters: pendingJobFilters, clearPendingFilters }),
-    [openJobSearch, pendingJobFilters, clearPendingFilters],
+    () => ({ openJobSearch }),
+    [openJobSearch],
   );
 
   const appNav = useMemo(() => ({ navigate: routerNavigate }), [routerNavigate]);

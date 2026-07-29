@@ -13,15 +13,17 @@ import { isJobRankingReady, scrollJobRankingPayloads } from './vectorStore/qdran
 import { incrementCounter, observeHistogram, setGauge } from './monitoring/metrics.js';
 import { reconcileJobTitleRoleIndex } from './jobTitleScan/titleRoleIndexSync.js';
 import { inferTitleScanRole } from '../config/jobTitleScanRoles.js';
+import { reconcileIndexedJobCatalog } from './jobRankingCatalogReconciler.js';
+import { deriveCompanyIdentity } from './companyIdentity.js';
 import {
   emptyJobStatusBaseline,
   jobStatusBaselineCacheKey,
   serializeJobStatusBaseline,
 } from './jobStatusCache.js';
 
-// v2 guarantees every entry has a title-role facet, inferred when AI scan data
-// is unavailable. Bumping this prevents Redis from restoring role-less v1 rows.
-const SNAPSHOT_SCHEMA_VERSION = 2;
+// v2 guarantees inferred title-role facets and canonical company identities
+// when older ranking payloads do not contain them.
+const SNAPSHOT_SCHEMA_VERSION = 3;
 const SNAPSHOT_TTL_SEC = 7 * 24 * 60 * 60;
 const QUERY_CACHE_MAX = 500;
 const QUERY_CACHE_TTL_MS = 60_000;
@@ -119,7 +121,10 @@ function buildEntry(payload) {
   const workMode = text(payload?.workMode || details.remote || card?.workMode);
   const employmentType = text(payload?.employmentType || details.time || card?.employmentType);
   const catalog = text(payload?.catalog || card?.catalog) || 'market';
-  const companyId = text(payload?.companyId || card?.companyId) || `legacy:${jobId}`;
+  const companyId = text(payload?.companyId || card?.companyId) || deriveCompanyIdentity(
+    { ...card, company, companyName: company.name, _id: jobId },
+    { seed: jobId },
+  ).companyId;
   const cardPayload = {
     _id: jobId,
     catalog,
@@ -348,6 +353,19 @@ async function readProfileAccount(applierName) {
       }
     }
   }
+	const resolved = await resolveApplierContext(applierName);
+	if (resolved?.id) {
+		const value = { id: text(resolved.id), isBeta: Boolean(resolved.isBeta) };
+		profileAccounts.set(applierName, value);
+		if (isRedisReady()) {
+			await getRedis().setEx(
+				profileContextKey(applierName),
+				SNAPSHOT_TTL_SEC,
+				JSON.stringify(value),
+			);
+		}
+		return value;
+	}
   throw new Error(`Profile read model is not ready for ${applierName}`);
 }
 
@@ -515,14 +533,18 @@ function scoreMatches(score, scoreFilters) {
   return true;
 }
 
-function stableBody(body, { rankingVersion, catalogRevision }) {
-  const ignored = new Set(['page', 'limit', 'skip', 'groupBy', 'groupByCompany', 'applied', 'status']);
+function stableBody(body, { rankingVersion, catalogRevision, accountBeta = false }) {
+  const ignored = new Set([
+    'page', 'limit', 'skip', 'groupBy', 'groupByCompany', 'applied', 'status',
+    'companyId', 'memberOffset', 'memberLimit', 'offset', 'focusJobId',
+  ]);
   const filtered = Object.fromEntries(Object.entries(body)
     .filter(([key]) => !ignored.has(key))
     .sort(([left], [right]) => left.localeCompare(right)));
   return JSON.stringify({
     catalogRevision,
     rankingVersion: rankingVersion || null,
+    accountBeta,
     body: filtered,
   });
 }
@@ -561,6 +583,7 @@ function orderedIds(snapshot, body, account, statuses, ranking) {
   const key = stableBody(body, {
     rankingVersion: text(body.sort) === 'recommended' ? ranking?.version : null,
     catalogRevision: snapshot.revision,
+    accountBeta: Boolean(account?.isBeta),
   });
   let filtered = readQueryCache(key);
   if (!filtered) {
@@ -589,6 +612,106 @@ function responseCard(entry, viewerStatus, rankingScore) {
     matchScore: score,
     skillsCovered: Number(rankingScore?.covered ?? entry.card.skillsCovered ?? 0),
     skillsRequired: Number(rankingScore?.required ?? entry.card.skillsRequired ?? entry.rankingSkills.length),
+  };
+}
+
+function groupOrderedJobIds(ids, snapshot) {
+  const byCompany = new Map();
+  for (const id of ids) {
+    const entry = snapshot.byId.get(String(id));
+    if (!entry) continue;
+    const companyId = text(entry.companyId) || `legacy:${entry.id}`;
+    let group = byCompany.get(companyId);
+    if (!group) {
+      const company = entry.card?.company && typeof entry.card.company === 'object'
+        ? entry.card.company
+        : {};
+      group = {
+        companyId,
+        company: {
+          name: text(company.name || entry.card?.companyName) || 'Unknown',
+          ...(text(company.logo || entry.card?.companyIcon) ? { logo: text(company.logo || entry.card.companyIcon) } : {}),
+          ...(text(entry.card?.companyLink) ? { url: text(entry.card.companyLink) } : {}),
+        },
+        memberJobIds: [],
+      };
+      byCompany.set(companyId, group);
+    }
+    group.memberJobIds.push(entry.id);
+  }
+  return [...byCompany.values()];
+}
+
+function groupedJobPage({ ids, snapshot, statuses, ranking, page, limit, skip }) {
+  const groups = groupOrderedJobIds(ids, snapshot);
+  const pageGroups = groups.slice(skip, skip + limit);
+  const data = pageGroups.flatMap((group) => {
+    const primaryId = group.memberJobIds[0];
+    const entry = snapshot.byId.get(primaryId);
+    if (!entry) return [];
+    return [{
+      companyId: group.companyId,
+      company: group.company,
+      jobs: [responseCard(entry, statuses.byJobId.get(primaryId) || 'posted', ranking?.scores?.get(primaryId))],
+      matchingJobCount: group.memberJobIds.length,
+      nextMemberOffset: group.memberJobIds.length > 1 ? 1 : null,
+    }];
+  });
+  return {
+    data,
+    pagination: {
+      unit: 'companies',
+      page,
+      limit,
+      total: groups.length,
+      totalJobs: ids.length,
+      totalPages: Math.ceil(groups.length / limit),
+    },
+  };
+}
+
+function companyMemberPage({
+  ids,
+  snapshot,
+  statuses,
+  ranking,
+  companyId,
+  offset,
+  limit,
+  focusJobId,
+}) {
+  const memberIds = ids.filter((id) => snapshot.byId.get(String(id))?.companyId === companyId);
+  if (!memberIds.length) return null;
+  const pageIds = memberIds.slice(offset, offset + limit);
+  const data = pageIds.flatMap((id) => {
+    const entry = snapshot.byId.get(id);
+    return entry
+      ? [responseCard(entry, statuses.byJobId.get(id) || 'posted', ranking?.scores?.get(id))]
+      : [];
+  });
+  const normalizedFocusId = text(focusJobId);
+  const focusValid = !normalizedFocusId || memberIds.includes(normalizedFocusId);
+  const focusOffset = focusValid && normalizedFocusId ? memberIds.indexOf(normalizedFocusId) : null;
+  const focusEntry = normalizedFocusId && memberIds.includes(normalizedFocusId) && !pageIds.includes(normalizedFocusId)
+    ? snapshot.byId.get(normalizedFocusId)
+    : null;
+  return {
+    data,
+    focusJob: focusEntry
+      ? responseCard(
+        focusEntry,
+        statuses.byJobId.get(normalizedFocusId) || 'posted',
+        ranking?.scores?.get(normalizedFocusId),
+      )
+      : null,
+    focusValid,
+    focusOffset,
+    pagination: {
+      offset,
+      limit,
+      total: memberIds.length,
+      nextOffset: offset + pageIds.length < memberIds.length ? offset + pageIds.length : null,
+    },
   };
 }
 
@@ -647,7 +770,11 @@ export async function listJobsV2(body = {}) {
   const skip = body.skip !== undefined && body.skip !== null && body.skip !== ''
     ? Math.max(0, Number.parseInt(body.skip, 10) || 0)
     : (page - 1) * limit;
-  const data = ids.slice(skip, skip + limit).flatMap((id) => {
+  const groupByCompany = text(body.groupBy) === 'company' || body.groupByCompany === true;
+  const grouped = groupByCompany
+    ? groupedJobPage({ ids, snapshot, statuses, ranking, page, limit, skip })
+    : null;
+  const data = grouped?.data || ids.slice(skip, skip + limit).flatMap((id) => {
     const entry = snapshot.byId.get(id);
     return entry ? [responseCard(entry, statuses.byJobId.get(id) || 'posted', ranking?.scores?.get(id))] : [];
   });
@@ -658,7 +785,7 @@ export async function listJobsV2(body = {}) {
     success: true,
     data,
     ...(facets ? { facets } : {}),
-    pagination: {
+    pagination: grouped?.pagination || {
       unit: 'jobs',
       page,
       limit,
@@ -688,6 +815,38 @@ export async function listJobsV2(body = {}) {
     value: { catalog: catalogMs, status: statusMs, ranking: rankingMs, filter: filterMs, total: totalMs },
   });
   return result;
+}
+
+export async function listJobCompanyMembersV2(body = {}) {
+  if (!isJobListV2Enabled()) return { disabled: true };
+  const snapshot = await ensureCatalogCurrent();
+  const applierName = text(body.applierName);
+  const account = await readProfileAccount(applierName);
+  const statuses = await ensureProfileStatuses(applierName, account);
+  const wantsRanking = text(body.sort) === 'recommended' || Object.keys(extractScoreFilters(body)).length > 0;
+  const ranking = wantsRanking ? await ensureProfileRanking(applierName, snapshot) : profileRankings.get(applierName) || null;
+  const ids = orderedIds(snapshot, body, account, statuses, ranking);
+  const companyId = text(body.companyId);
+  if (!companyId) return { invalid: true, error: 'companyId is required' };
+  const offset = Math.max(0, Number.parseInt(body.memberOffset ?? body.offset, 10) || 0);
+  const limit = Math.max(1, Math.min(10, Number.parseInt(body.memberLimit ?? body.limit, 10) || 10));
+  const page = companyMemberPage({
+    ids,
+    snapshot,
+    statuses,
+    ranking,
+    companyId,
+    offset,
+    limit,
+    focusJobId: body.focusJobId,
+  });
+  if (!page) return { notFound: true };
+  return {
+    success: true,
+    companyId,
+    ...page,
+    readModelVersion: snapshot.revision,
+  };
 }
 
 export async function countJobsV2(body = {}) {
@@ -751,10 +910,11 @@ export function evictJobsFromJobListReadModel(jobIds = []) {
 async function warmKnownProfiles(snapshot) {
   if (!accountInfoCollection) return;
   const warmupStartedAt = Date.now();
+	const rankingsToBuild = [];
   const accounts = await accountInfoCollection
     .find({}, { projection: { _id: 1, name: 1, tier: 1 } })
     .toArray();
-  console.log(`[jobs-v2] warming status/ranking caches for ${accounts.length} profiles`);
+  console.log(`[jobs-v2] warming profile/status caches for ${accounts.length} profiles`);
   for (const [index, accountDoc] of accounts.entries()) {
     const profileStartedAt = Date.now();
     const applierName = text(accountDoc?.name);
@@ -779,7 +939,7 @@ async function warmKnownProfiles(snapshot) {
         rankingLoaded = true;
       }
     }
-    if (!rankingLoaded) await startProfileRankingBuild(applierName, profileVersion, snapshot);
+    if (!rankingLoaded) rankingsToBuild.push({ applierName, profileVersion });
     const completed = index + 1;
     const profileDuration = Date.now() - profileStartedAt;
     if (profileDuration >= 1_000 || completed === accounts.length || completed % 5 === 0) {
@@ -790,30 +950,58 @@ async function warmKnownProfiles(snapshot) {
     }
   }
   console.log(
-    `[jobs-v2] profile caches warm (${accounts.length} profiles, ` +
+    `[jobs-v2] profile/status caches warm (${accounts.length} profiles, ` +
     `${formatWarmupDuration(Date.now() - warmupStartedAt)})`,
+  );
+	if (rankingsToBuild.length) {
+		void (async () => {
+			for (const { applierName, profileVersion } of rankingsToBuild) {
+				await startProfileRankingBuild(applierName, profileVersion, snapshot);
+			}
+			console.log(`[jobs-v2] background rankings warm (${rankingsToBuild.length} profiles)`);
+		})().catch((error) => {
+			console.warn('[jobs-v2] background ranking warmup failed:', error?.message || error);
+		});
+	}
+}
+
+async function reconcileCatalogSnapshot(snapshot) {
+  const started = Date.now();
+  const result = await reconcileIndexedJobCatalog(snapshot.entries, {
+    revision: snapshot.revision,
+    onStale: (jobIds) => evictJobsFromJobListReadModel(jobIds),
+  });
+  if (result.skipped === 'already-running') return;
+  if (result.skipped) {
+    console.warn(`[jobs-v2] catalog reconciliation skipped (${result.skipped})`);
+    return;
+  }
+  console.log(
+    `[jobs-v2] catalog reconciliation scanned=${result.scanned} ` +
+    `removed=${result.removed} (${formatWarmupDuration(Date.now() - started)})`,
   );
 }
 
 export async function initJobListReadModel() {
   if (!isJobListV2Enabled()) return { enabled: false };
   const snapshot = await initJobListCatalogSnapshot();
-  await warmKnownProfiles(snapshot);
+	void (async () => {
+		await warmKnownProfiles(snapshot);
+		await reconcileCatalogSnapshot(snapshot);
+		const sync = await reconcileJobTitleRoleIndex();
+		if (sync.updated > 0) {
+			console.log(`[jobs-v2] restored ${sync.updated} title-role index entries`);
+		}
+	})().catch((error) => {
+		console.warn('[jobs-v2] background read-model maintenance failed:', error?.message || error);
+	});
   console.log(`[jobs-v2] read model ready (revision=${snapshot.revision}, jobs=${snapshot.entries.length})`);
   return { enabled: true, revision: snapshot.revision, jobs: snapshot.entries.length };
 }
 
 export async function initJobListCatalogSnapshot() {
   if (!isJobListV2Enabled()) return null;
-  try {
-    const sync = await reconcileJobTitleRoleIndex();
-    if (sync.updated > 0) {
-      console.log(`[jobs-v2] restored ${sync.updated} title-role index entries`);
-    }
-  } catch (error) {
-    console.warn('[jobs-v2] title-role index reconciliation failed:', error?.message || error);
-  }
-  return replaceCatalogSnapshot();
+	return replaceCatalogSnapshot();
 }
 
 export async function registerJobListProfile({ profileId: profileIdRaw, applierName: applierNameRaw, isBeta = false }) {
@@ -865,7 +1053,10 @@ export function getJobListReadModelState() {
 export const jobListReadModelTest = {
   buildSourceFacets,
   buildEntry,
+  companyMemberPage,
   finalizeSnapshot,
+  groupedJobPage,
+  groupOrderedJobIds,
   matchesEntry,
   orderedIds,
   rankingReadinessStatus,

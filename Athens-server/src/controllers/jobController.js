@@ -74,6 +74,7 @@ import {
 import {
 	countJobsV2,
 	getJobListReadModelState,
+	listJobCompanyMembersV2,
 	listJobsV2,
 	patchJobListViewerStatus,
 	evictJobsFromJobListReadModel,
@@ -801,6 +802,20 @@ export async function getJobStatusCountsV2(req, res) {
 		return res.json(result);
 	} catch (err) {
 		console.error('POST /api/jobs/list/v2/counts error', err);
+		return res.status(503).json({ success: false, retryable: true, error: err.message });
+	}
+}
+
+export async function getCompanyGroupMembersV2(req, res) {
+	try {
+		const result = await listJobCompanyMembersV2(req.body || {});
+		if (result?.disabled) return res.status(404).json({ success: false, error: 'Job Search v2 is disabled' });
+		if (result?.invalid) return res.status(400).json({ success: false, error: result.error || 'Invalid request' });
+		if (result?.notFound) return res.status(404).json({ success: false, error: 'Company group not found' });
+		res.setHeader('X-Job-Read-Model-Version', String(result.readModelVersion || ''));
+		return res.json(result);
+	} catch (err) {
+		console.error('POST /api/jobs/list/v2/company-members error', err);
 		return res.status(503).json({ success: false, retryable: true, error: err.message });
 	}
 }

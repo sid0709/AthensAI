@@ -6,6 +6,7 @@ import {
 	getJobsV2,
 	getJobStatusCounts,
 	getJobStatusCountsV2,
+	getCompanyGroupMembersV2,
 	getCompanyGroupMembers,
 	applyToJob,
 	removeJobs,
@@ -39,6 +40,7 @@ router.post('/jobs/bulk', createJobsBulk);
 router.post('/jobs/list', getJobs);
 router.post('/jobs/list/v2', getJobsV2);
 router.post('/jobs/list/v2/counts', getJobStatusCountsV2);
+router.post('/jobs/list/v2/company-members', getCompanyGroupMembersV2);
 router.post('/jobs/list/counts', getJobStatusCounts);
 router.post('/jobs/list/company-members', getCompanyGroupMembers);
 router.get('/jobs/skill-extract/status', getSkillExtractStatus);

@@ -104,9 +104,11 @@ export interface CompanyJobGroup {
 		url?: string;
 	};
 	jobs: Job[];
-	/** Present only for Beta-tier grouped responses. */
+	/** Total roles matching the current grouped Job Search request. */
 	matchingJobCount?: number;
 	nextMemberOffset?: number | null;
+	/** Client-side ordering for partially loaded member batches and deep-linked roles. */
+	memberOrder?: Record<string, number>;
 }
 
 export function isExternalJob(job: Pick<Job, "catalog">): boolean {

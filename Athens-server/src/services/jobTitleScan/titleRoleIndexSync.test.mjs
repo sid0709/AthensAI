@@ -44,7 +44,7 @@ test('startup reconciliation repairs a ranking index with missing title roles', 
 
   const result = await reconcileJobTitleRoleIndex({
     collection,
-    countIndexed: async () => 0,
+    countIndexed: async (filter) => filter.must.length === 1 ? jobs.length : 0,
     updateIndexed: async (updates) => {
       patched.push(...updates);
       return updates.length;
@@ -54,6 +54,7 @@ test('startup reconciliation repairs a ranking index with missing title roles', 
 
   assert.equal(result.updated, 2);
   assert.equal(result.skipped, false);
+	assert.equal(result.totalIndexed, 2);
   assert.deepEqual(patched, [
     { jobId: 'job-1', role: 'Software Engineer' },
     { jobId: 'job-2', role: 'Data Engineer' },
@@ -64,7 +65,9 @@ test('startup reconciliation repairs a ranking index with missing title roles', 
 test('startup reconciliation skips the scan when indexed roles are current', async () => {
   let scanned = false;
   const collection = {
-    countDocuments: async () => 2,
+    // A Firestore job can legitimately be absent from the ranking index while
+    // analysis is pending. That must not force a full repair on every startup.
+    countDocuments: async () => 3,
     async *findPaged() {
       scanned = true;
     },

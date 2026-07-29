@@ -6,13 +6,139 @@ import { jobListReadModelTest } from './jobListReadModelService.js';
 const {
   buildEntry,
   buildSourceFacets,
+  companyMemberPage,
   finalizeSnapshot,
+  groupedJobPage,
+  groupOrderedJobIds,
   matchesEntry,
   orderedIds,
   rankingReadinessStatus,
   responseCard,
   statusTab,
 } = jobListReadModelTest;
+
+test('company groups preserve the first matching job order and expose every member', () => {
+  const snapshot = finalizeSnapshot([
+    buildEntry(payload('acme-best', { companyId: 'acme', companyName: 'Acme' })),
+    buildEntry(payload('beta-only', { companyId: 'beta', companyName: 'Beta' })),
+    buildEntry(payload('acme-next', { companyId: 'acme', companyName: 'Acme' })),
+  ], 'catalog-groups');
+  const groups = groupOrderedJobIds(['acme-best', 'beta-only', 'acme-next'], snapshot);
+  assert.deepEqual(groups.map((group) => group.companyId), ['acme', 'beta']);
+  assert.deepEqual(groups[0].memberJobIds, ['acme-best', 'acme-next']);
+});
+
+test('legacy jobs derive a stable company identity without a database migration', () => {
+  const snapshot = finalizeSnapshot([
+    buildEntry(payload('legacy-1', { companyId: undefined, companyName: 'Insight Global' })),
+    buildEntry(payload('legacy-2', { companyId: undefined, companyName: 'Insight Global' })),
+  ], 'catalog-legacy-groups');
+  const groups = groupOrderedJobIds(['legacy-1', 'legacy-2'], snapshot);
+
+  assert.equal(groups.length, 1);
+  assert.match(groups[0].companyId, /^cmp_/);
+  assert.deepEqual(groups[0].memberJobIds, ['legacy-1', 'legacy-2']);
+});
+
+test('grouped pages paginate companies while retaining the matching job total', () => {
+  const snapshot = finalizeSnapshot([
+    buildEntry(payload('a-1', { companyId: 'a', companyName: 'A' })),
+    buildEntry(payload('a-2', { companyId: 'a', companyName: 'A' })),
+    buildEntry(payload('b-1', { companyId: 'b', companyName: 'B' })),
+  ], 'catalog-groups');
+  const statuses = { byJobId: new Map([['a-1', 'applied']]) };
+  const result = groupedJobPage({
+    ids: ['a-1', 'a-2', 'b-1'],
+    snapshot,
+    statuses,
+    ranking: null,
+    page: 1,
+    limit: 1,
+    skip: 0,
+  });
+  assert.equal(result.data.length, 1);
+  assert.equal(result.data[0].companyId, 'a');
+  assert.equal(result.data[0].jobs[0]._id, 'a-1');
+  assert.equal(result.data[0].jobs[0].viewerStatus, 'applied');
+  assert.equal(result.data[0].matchingJobCount, 2);
+  assert.equal(result.data[0].nextMemberOffset, 1);
+  assert.deepEqual(result.pagination, {
+    unit: 'companies', page: 1, limit: 1, total: 2, totalJobs: 3, totalPages: 2,
+  });
+});
+
+test('company grouping preserves tier visibility after a beta query is cached', () => {
+  const snapshot = finalizeSnapshot([
+    buildEntry(payload('public-role', { companyId: 'public', companyName: 'Public' })),
+    buildEntry(payload('beta-role', {
+      companyId: 'beta',
+      companyName: 'Beta',
+      extensionV2: true,
+    })),
+  ], 'catalog-tier-groups');
+  const body = { sort: 'postedAt_desc', jobSources: 'LinkedIn' };
+  const statuses = { version: '1', byJobId: new Map() };
+
+  const betaIds = orderedIds(snapshot, body, { isBeta: true }, statuses, null);
+  const standardIds = orderedIds(snapshot, body, { isBeta: false }, statuses, null);
+
+  assert.deepEqual(betaIds, ['public-role', 'beta-role']);
+  assert.deepEqual(standardIds, ['public-role']);
+  assert.deepEqual(groupOrderedJobIds(standardIds, snapshot).map((group) => group.companyId), ['public']);
+});
+
+test('company member pages batch roles and restore a focused role outside the batch', () => {
+  const snapshot = finalizeSnapshot(Array.from({ length: 14 }, (_, index) => buildEntry(payload(`job-${index}`, {
+    companyId: 'acme',
+    companyName: 'Acme',
+  }))), 'catalog-members');
+  const ids = Array.from({ length: 14 }, (_, index) => `job-${index}`);
+  const result = companyMemberPage({
+    ids,
+    snapshot,
+    statuses: { byJobId: new Map() },
+    ranking: null,
+    companyId: 'acme',
+    offset: 1,
+    limit: 10,
+    focusJobId: 'job-13',
+  });
+  assert.deepEqual(result.data.map((job) => job._id), ids.slice(1, 11));
+  assert.equal(result.focusJob._id, 'job-13');
+  assert.equal(result.focusValid, true);
+  assert.equal(result.focusOffset, 13);
+  assert.deepEqual(result.pagination, { offset: 1, limit: 10, total: 14, nextOffset: 11 });
+  assert.equal(companyMemberPage({
+    ids,
+    snapshot,
+    statuses: { byJobId: new Map() },
+    ranking: null,
+    companyId: 'missing',
+    offset: 0,
+    limit: 10,
+    focusJobId: '',
+  }), null);
+});
+
+test('company member pages reject a focused role outside the matching company', () => {
+  const snapshot = finalizeSnapshot([
+    buildEntry(payload('acme-1', { companyId: 'acme', companyName: 'Acme' })),
+    buildEntry(payload('other-1', { companyId: 'other', companyName: 'Other' })),
+  ], 'catalog-members-invalid-focus');
+  const result = companyMemberPage({
+    ids: ['acme-1', 'other-1'],
+    snapshot,
+    statuses: { byJobId: new Map() },
+    ranking: null,
+    companyId: 'acme',
+    offset: 1,
+    limit: 10,
+    focusJobId: 'other-1',
+  });
+  assert.equal(result.focusJob, null);
+  assert.equal(result.focusValid, false);
+  assert.equal(result.focusOffset, null);
+});
 
 test('REST responses expose ranking readiness for client polling', () => {
   assert.equal(rankingReadinessStatus(false, null, 'catalog-1'), 'fresh');
