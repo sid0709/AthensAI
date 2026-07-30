@@ -17,6 +17,28 @@ export function normalizeJobRemovalIds(body = {}) {
 	return ids;
 }
 
+/**
+ * Job deletion is catalog-scoped, not applier-scoped. Keep an optional profile
+ * id only so the shared task stream can route progress back to its initiator.
+ */
+export function resolveJobRemovalTaskIdentity(req = {}) {
+	const authenticatedProfile = req.authProfile || {};
+	const applierName = String(
+		authenticatedProfile.profileName
+		|| authenticatedProfile.applierName
+		|| req.body?.applierName
+		|| req.query?.applierName
+		|| "",
+	).trim();
+	const ownerUid = String(req.auth?.uid || "").trim() || null;
+	const requestedProfileId = String(req.body?.profileId || req.query?.profileId || "").trim();
+	const profileId = String(authenticatedProfile.profileId || "").trim()
+		|| requestedProfileId
+		|| (applierName ? applierName.toLocaleLowerCase("en-US") : "")
+		|| (ownerUid ? `user:${ownerUid}` : "system:job-catalog");
+	return { applierName, profileId, ownerUid };
+}
+
 /** Permanently delete exact documents from the physical jobs collection. */
 export async function deleteJobDocuments({ ids, jobsCollection }) {
 	return jobsCollection.deleteDocumentsByIds(ids);

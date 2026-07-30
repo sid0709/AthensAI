@@ -151,8 +151,11 @@ export async function startTitleReview(req, res) {
 
 export async function stopTitleReview(req, res) {
 	try {
-		const applierName = String(req.body?.applierName || req.authProfile?.profileName || req.authProfile?.applierName || '').trim();
-		if (!applierName) return res.status(400).json({ success: false, error: 'applierName is required.' });
+		const applierName = await requireBetaApplierName(
+			req.body?.applierName || req.authProfile?.profileName || req.authProfile?.applierName,
+			res,
+		);
+		if (!applierName) return;
 		const identity = titleTaskIdentity(req, applierName);
 		const task = await findActiveBackgroundTask(identity.profileId, BACKGROUND_TASK_TYPES.TITLE_REVIEW);
 		if (!task) return res.json({ success: true, stopped: false, message: 'No active session' });

@@ -72,11 +72,16 @@ export async function removeJobs(
 export async function removeOtherCompanyJobs(
   companyId: string,
   keepJobId: string,
+  taskProfileId?: string,
 ): Promise<{ success?: boolean; deletedCount?: number; deletedIds?: string[]; task?: BackgroundTask; error?: string }> {
   const res = await fetch(`${API_BASE}/jobs/company/remove-others`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ companyId, keepJobId }),
+    body: JSON.stringify({
+      companyId,
+      keepJobId,
+      ...(taskProfileId ? { profileId: taskProfileId } : {}),
+    }),
   });
   return parseJson(res);
 }

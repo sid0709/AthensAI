@@ -84,6 +84,7 @@ import {
 	findOtherCompanyJobIds,
 	normalizeCompanySiblingRemoval,
 	normalizeJobRemovalIds,
+	resolveJobRemovalTaskIdentity,
 } from '../services/jobRemovalService.js';
 import { setGauge } from '../services/monitoring/metrics.js';
 import { ingestJobsBulk, MAX_JOB_BULK_SIZE } from '../services/jobBulkIngest.js';
@@ -110,26 +111,6 @@ export function invalidateJobListCountCache() {
 	jobCountCache.clear();
 }
 
-function backgroundTaskIdentity(req) {
-	const applierName = String(
-		req.authProfile?.profileName
-		|| req.authProfile?.applierName
-		|| req.body?.applierName
-		|| req.query?.applierName
-		|| '',
-	).trim();
-	const profileId = String(req.authProfile?.profileId || '').trim()
-		|| applierName.toLocaleLowerCase('en-US');
-	if (!applierName || !profileId) {
-		throw Object.assign(new Error('applierName is required'), { status: 400 });
-	}
-	return {
-		applierName,
-		profileId,
-		ownerUid: String(req.auth?.uid || '').trim() || null,
-	};
-}
-
 async function enqueueJobRemoval(req, ids, operation) {
 	const normalized = normalizeJobRemovalIds({ ids });
 	if (!normalized.length) throw Object.assign(new Error('Missing ids array'), { status: 400 });
@@ -142,7 +123,7 @@ async function enqueueJobRemoval(req, ids, operation) {
 	return createBackgroundTask({
 		requestId: String(req.body?.requestId || '').trim() || randomUUID(),
 		type: BACKGROUND_TASK_TYPES.JOB_REMOVAL,
-		...backgroundTaskIdentity(req),
+		...resolveJobRemovalTaskIdentity(req),
 		payload,
 		progress: {
 			total: normalized.length,

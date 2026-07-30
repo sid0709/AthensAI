@@ -31,6 +31,7 @@ export function JobSearchPage() {
 
 function JobSearchPageContent() {
   const { applier } = useApplier();
+  const profileId = applier?._id != null ? String(applier._id) : "";
   const { startTask, adoptTask, waitForTask } = useBackgroundTasks();
   const {
     state: urlState,
@@ -281,7 +282,7 @@ function JobSearchPageContent() {
   const handleRemoveOtherCompanyJobs = async (group: CompanyJobGroup, activeJob: Job) => {
     try {
       const keepJobId = activeJob.backendId || activeJob.id;
-      const res = await removeCompanySiblingJobs(group.companyId, keepJobId);
+      const res = await removeCompanySiblingJobs(group.companyId, keepJobId, profileId);
       if (!res?.success) throw new Error(res?.error || "Delete failed");
 			let deletedCount = res.deletedCount;
 			if (res.task) {

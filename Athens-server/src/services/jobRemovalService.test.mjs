@@ -5,6 +5,7 @@ import {
 	findOtherCompanyJobIds,
 	normalizeCompanySiblingRemoval,
 	normalizeJobRemovalIds,
+	resolveJobRemovalTaskIdentity,
 } from "./jobRemovalService.js";
 
 test("normalizeJobRemovalIds deduplicates and validates exact document ids", () => {
@@ -13,6 +14,34 @@ test("normalizeJobRemovalIds deduplicates and validates exact document ids", () 
 
 test("normalizeJobRemovalIds accepts the catalog-aware compatibility payload", () => {
 	assert.deepEqual(normalizeJobRemovalIds({ jobs: [{ id: "job-1", catalog: "external" }] }), ["job-1"]);
+});
+
+test("job removal task identity does not require an applier name", () => {
+	assert.deepEqual(resolveJobRemovalTaskIdentity({ body: { profileId: "profile-1" } }), {
+		applierName: "",
+		profileId: "profile-1",
+		ownerUid: null,
+	});
+});
+
+test("authenticated job removal identity takes precedence over request metadata", () => {
+	assert.deepEqual(resolveJobRemovalTaskIdentity({
+		auth: { uid: "uid-1" },
+		authProfile: { profileId: "granted-profile", profileName: "Oliver Baltay" },
+		body: { profileId: "other-profile", applierName: "Someone Else" },
+	}), {
+		applierName: "Oliver Baltay",
+		profileId: "granted-profile",
+		ownerUid: "uid-1",
+	});
+});
+
+test("profile-free job removal uses a catalog task stream", () => {
+	assert.deepEqual(resolveJobRemovalTaskIdentity(), {
+		applierName: "",
+		profileId: "system:job-catalog",
+		ownerUid: null,
+	});
 });
 
 test("deleteJobDocuments performs one direct collection deletion", async () => {
