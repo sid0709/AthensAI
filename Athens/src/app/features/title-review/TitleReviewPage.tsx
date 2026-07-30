@@ -21,7 +21,7 @@ import {
   getCachedTitleReviewJobs,
   invalidateTitleReviewListCache,
   prefetchTitleReviewJobs,
-  removeTitleReviewJobsWithProgress,
+	removeTitleReviewJobs,
   titleReviewListCacheKey,
   type TitleReviewJob,
   type TitleReviewListOptions,
@@ -45,6 +45,7 @@ import {
 import { cn } from "@/app/lib/utils";
 import { useJobSelection } from "../job-search/hooks/useJobSelection";
 import { useTitleReviewSession } from "./useTitleReviewSession";
+import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 
 type ReviewTab = "unreviewed" | "review_required" | "failed";
 type ReviewSort = "confidence_desc" | "newest" | "oldest";
@@ -233,6 +234,7 @@ function TitleReviewRows({
 
 export function TitleReviewPage() {
   const { applier } = useApplier();
+	const { tasks: backgroundTasks, adoptTask, waitForTask } = useBackgroundTasks();
   const {
     session,
     loading: sessionLoading,
@@ -254,6 +256,7 @@ export function TitleReviewPage() {
   const [mutation, setMutation] = useState<"approve" | "remove" | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletionProgress, setDeletionProgress] = useState<DeletionProgressState | null>(null);
+	const [deletionTaskId, setDeletionTaskId] = useState<string | null>(null);
   const latestLoadIdRef = useRef(0);
   const initialBootstrapRef = useRef(true);
   const activeLoadRef = useRef<{
@@ -275,6 +278,33 @@ export function TitleReviewPage() {
   }, []);
 
   useEffect(() => setPage(1), [debouncedQuery, sort, tab]);
+
+	useEffect(() => {
+		if (!deletionTaskId) return;
+		const task = backgroundTasks.find((candidate) => candidate.id === deletionTaskId);
+		if (!task || !["queued", "running", "cancelling"].includes(task.status)) return;
+		const progress = task.progress || {};
+		setDeletionProgress((current) => {
+			if (!current) return current;
+			const total = Number(progress.total ?? current.total);
+			const completed = Number(progress.completed ?? 0);
+			const failed = Number(progress.failed ?? 0);
+			const cancelled = Number(progress.cancelled ?? 0);
+			const remaining = Number(progress.remaining ?? Math.max(0, total - completed - failed - cancelled));
+			const processed = Math.max(completed + failed + cancelled, total - remaining);
+			return {
+				...current,
+				total,
+				processed,
+				removed: processed,
+				deleted: completed,
+				failed,
+				activeBatches: Number(progress.active ?? 0) > 0 ? 1 : 0,
+				completedBatches: processed >= total ? 1 : 0,
+				batchCount: 1,
+			};
+		});
+	}, [backgroundTasks, deletionTaskId]);
 
   const load = useCallback(({ force = false }: { force?: boolean } = {}) => {
     if (!applier?.name) {
@@ -426,34 +456,61 @@ export function TitleReviewPage() {
       failed: 0,
       activeBatches: 0,
       completedBatches: 0,
-      batchCount: Math.ceil(ids.length / 100),
+			batchCount: 1,
     });
     setJobs((current) => current.filter((job) => !removingIds.has(job.id)));
     setTotal((current) => Math.max(0, current - ids.length));
     clearSelection();
     try {
-      const result = await removeTitleReviewJobsWithProgress(applier.name, ids, (next) => {
-        setDeletionProgress({ ...next, phase: "deleting" });
-      });
+			const queued = await removeTitleReviewJobs(applier.name, ids);
+			const task = queued.task;
+			if (!task) {
+				invalidateTitleReviewListCache();
+				await refreshAll();
+				setDeletionProgress((current) => current ? {
+					...current,
+					phase: "complete",
+					processed: current.total,
+					activeBatches: 0,
+					completedBatches: 1,
+				} : current);
+				toast.info("The selected titles are no longer removable");
+				deletionProgressTimerRef.current = setTimeout(() => setDeletionProgress(null), 2_500);
+				return;
+			}
+			adoptTask(task);
+			setDeletionTaskId(task.id);
+			const finished = await waitForTask(task.id);
+			if (finished.status === "failed" || finished.status === "cancelled") {
+				throw new Error(finished.error || (finished.status === "cancelled" ? "Deletion cancelled" : "Deletion failed"));
+			}
+			const deletedCount = Math.max(0, Number(finished.result?.deletedCount ?? 0));
+			const removedCount = Number(finished.progress.total ?? ids.length);
+			const alreadyAbsentCount = Math.max(0, removedCount - deletedCount);
       invalidateTitleReviewListCache();
       setDeletionProgress((current) => current ? { ...current, phase: "refreshing" } : current);
       await refreshAll();
-      const partial = result.failedIds.length > 0;
-      setDeletionProgress((current) => current ? { ...current, phase: partial ? "partial" : "complete" } : current);
-      if (partial) {
-        toast.error(`Removed ${result.removedCount} title${result.removedCount === 1 ? "" : "s"}; ${result.failedIds.length} could not be removed`, {
-          description: result.errors[0],
-        });
-      } else if (result.removedCount === 0) {
+			setDeletionProgress((current) => current ? {
+				...current,
+				phase: "complete",
+				processed: removedCount,
+				removed: removedCount,
+				deleted: deletedCount,
+				alreadyAbsent: alreadyAbsentCount,
+				failed: 0,
+				activeBatches: 0,
+				completedBatches: 1,
+			} : current);
+			if (removedCount === 0) {
         toast.info("The selected titles were already absent from the review queue");
-      } else if (result.alreadyAbsentCount > 0) {
-        toast.success(`Removed ${result.removedCount} title${result.removedCount === 1 ? "" : "s"} from the review queue`, {
-          description: `${result.deletedCount} job${result.deletedCount === 1 ? " was" : "s were"} permanently deleted; ${result.alreadyAbsentCount} had already been deleted.`,
+			} else if (alreadyAbsentCount > 0) {
+				toast.success(`Removed ${removedCount} title${removedCount === 1 ? "" : "s"} from the review queue`, {
+					description: `${deletedCount} job${deletedCount === 1 ? " was" : "s were"} permanently deleted; ${alreadyAbsentCount} had already been deleted.`,
         });
       } else {
-        toast.success(`Removed ${result.deletedCount} job${result.deletedCount === 1 ? "" : "s"} permanently`);
+				toast.success(`Removed ${deletedCount} job${deletedCount === 1 ? "" : "s"} permanently`);
       }
-      deletionProgressTimerRef.current = setTimeout(() => setDeletionProgress(null), partial ? 6_000 : 2_500);
+			deletionProgressTimerRef.current = setTimeout(() => setDeletionProgress(null), 2_500);
     } catch (nextError) {
       setDeletionProgress((current) => current ? {
         ...current,
@@ -466,6 +523,7 @@ export function TitleReviewPage() {
       await refreshAll();
       deletionProgressTimerRef.current = setTimeout(() => setDeletionProgress(null), 6_000);
     } finally {
+			setDeletionTaskId(null);
       setMutation(null);
     }
   };

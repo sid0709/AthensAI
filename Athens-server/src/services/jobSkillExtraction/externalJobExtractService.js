@@ -8,8 +8,32 @@ import { enrichJobSkillsFromTitle } from "../matching/jobSkillExtraction.js";
 import { recordJobSkills } from "../skillDictionary/skillDictionaryStore.js";
 import { indexOneJobRanking } from "../matching/jobRankingIndex.js";
 import { parseJobSkillsJson, MAX_ATTEMPTS } from "./aiExtractService.js";
+import {
+	firestoreMutationLimiter,
+	indexMutationLimiter,
+} from "../backgroundTasks/resourceLimits.js";
 
 const MAX_CHARS = Number(process.env.JOB_SKILL_EXTRACT_MAX_CHARS || 8000);
+
+function throwIfAborted(signal) {
+	if (!signal?.aborted) return;
+	throw signal.reason instanceof Error
+		? signal.reason
+		: Object.assign(new Error("External skill enrichment cancelled"), { name: "AbortError" });
+}
+
+async function optionalIndexWrite(signal, operation) {
+	try {
+		await indexMutationLimiter.run(async () => {
+			throwIfAborted(signal);
+			await operation();
+			throwIfAborted(signal);
+		});
+	} catch (error) {
+		if (signal?.aborted || error?.name === "AbortError") throw error;
+		// Firestore remains authoritative; a later backfill repairs derived indexes.
+	}
+}
 
 const SENIORITY_VALUES = new Set([
 	"Entry Level",
@@ -119,6 +143,7 @@ function buildCompanyBlock(job, industryTags) {
 /** Extract metadata + skills for one external job and persist in-place. */
 export async function extractAndPersistExternalJob(job, auth, { signal } = {}) {
 	if (!externalScrapedJobsCollection) throw new Error("Database not ready");
+	throwIfAborted(signal);
 
 	const jobId = String(job._id);
 	const text = externalJobText(job);
@@ -145,6 +170,7 @@ export async function extractAndPersistExternalJob(job, auth, { signal } = {}) {
 				{ role: "user", content: `Job posting:\n\n${text}` },
 			],
 		});
+		throwIfAborted(signal);
 		usage = result?.usage || null;
 		const parsed = parseExternalEnrichmentJson(result?.content);
 		metadata = parsed.metadata;
@@ -161,10 +187,12 @@ export async function extractAndPersistExternalJob(job, auth, { signal } = {}) {
 	const now = new Date().toISOString();
 	const description = String(job.jobDescription || "").trim();
 
-	await externalScrapedJobsCollection.updateOne(
-		{ _id: job._id },
-		{
-			$set: {
+	await firestoreMutationLimiter.run(async () => {
+		throwIfAborted(signal);
+		await externalScrapedJobsCollection.updateOne(
+			{ _id: job._id },
+			{
+				$set: {
 				aiSkills,
 				skills: displaySkills,
 				skillsNormalized,
@@ -179,41 +207,49 @@ export async function extractAndPersistExternalJob(job, auth, { signal } = {}) {
 				matchScoreStatus: "pending",
 				modelVersion: JOB_MARKET_MODEL_VERSION,
 				updatedAt: new Date(),
+				},
+				$unset: { aiSkillAttempts: "", aiSkillClaimedAt: "", aiSkillSessionId: "" },
 			},
-			$unset: { aiSkillAttempts: "" },
-		},
-	);
+		);
+	});
 
-	await indexJobInRedis(jobId, skillsNormalized, tokens).catch(() => {});
-	await recordJobSkills(aiSkills).catch(() => {});
-	await indexOneJobRanking({
+	throwIfAborted(signal);
+	await optionalIndexWrite(signal, () => indexJobInRedis(jobId, skillsNormalized, tokens));
+	await optionalIndexWrite(signal, () => recordJobSkills(aiSkills));
+	await optionalIndexWrite(signal, () => indexOneJobRanking({
 		...job,
 		title: titleForFallback,
 		aiSkills,
 		skills: displaySkills,
 		details: metadata.details,
 		company: buildCompanyBlock(job, metadata.industryTags),
-	}, { catalog: 'external' }).catch(() => {});
+	}, { catalog: 'external' }));
+	throwIfAborted(signal);
 
 	return { jobId, skillCount: aiSkills.length, usage };
 }
 
 /** Record a failed external extraction attempt. */
-export async function recordExternalExtractionFailure(job, err) {
+export async function recordExternalExtractionFailure(job, err, { signal } = {}) {
 	if (!externalScrapedJobsCollection) return;
+	throwIfAborted(signal);
 	const attempts = (Number(job.aiSkillAttempts) || 0) + 1;
 	const terminal = attempts >= MAX_ATTEMPTS;
-	await externalScrapedJobsCollection.updateOne(
-		{ _id: job._id },
-		{
+	await firestoreMutationLimiter.run(async () => {
+		throwIfAborted(signal);
+		return externalScrapedJobsCollection.updateOne(
+			{ _id: job._id },
+			{
 			$set: {
 				aiSkillStatus: terminal ? "failed" : "pending",
 				aiSkillAttempts: attempts,
 				aiSkillError: String(err?.message || err).slice(0, 500),
 				updatedAt: new Date(),
 			},
-		},
-	);
+			$unset: { aiSkillClaimedAt: "", aiSkillSessionId: "" },
+			},
+		);
+	});
 	return { attempts, terminal };
 }
 

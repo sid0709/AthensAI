@@ -1257,6 +1257,55 @@ class FirestoreCollection {
 		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
 		return { acknowledged: true, modifiedCount: rows.length };
 	}
+	/** Apply exact-id conditional patches in one transaction and report which ids matched. */
+	async atomicBulkConditionalPatch(operations, { skipOutbox = false } = {}) {
+		const rows = operations.map((operation) => {
+			const spec = operation?.updateOne;
+			const id = spec?.filter?._id;
+			if (!id || !spec?.update || Object.keys(spec.update).some((key) => !['$set', '$unset'].includes(key))) {
+				throw new Error(`atomicBulkConditionalPatch received an unsupported ${this.collectionName} operation`);
+			}
+			return {
+				id: String(comparable(id)),
+				filter: this._filterWithCatalog(spec.filter),
+				update: spec.update,
+			};
+		});
+		const outboxIds = [];
+		const modifiedIds = await this.db.firestore.runTransaction(async (transaction) => {
+			const refs = rows.map((row) => this.ref.doc(row.id));
+			const snapshots = await transaction.getAll(...refs);
+			const changed = [];
+			for (let index = 0; index < snapshots.length; index += 1) {
+				const snapshot = snapshots[index];
+				const row = rows[index];
+				if (!snapshot.exists) continue;
+				const current = decodeDoc(snapshot.id, snapshot.data());
+				if (!matches(current, row.filter)) continue;
+				const data = encode(row.update.$set || {});
+				for (const path of Object.keys(row.update.$unset || {})) {
+					setPath(data, path, FieldValue.delete());
+				}
+				transaction.update(refs[index], data);
+				if (this.sourceCatalog && !skipOutbox) {
+					const outboxRef = this.db.firestore.collection('search_outbox').doc();
+					transaction.set(outboxRef, {
+						jobId: row.id,
+						operation: 'upsert',
+						status: 'pending',
+						attempts: 0,
+						createdAt: new Date(),
+					});
+					outboxIds.push(outboxRef.id);
+				}
+				changed.push(row.id);
+			}
+			return changed;
+		});
+		this._invalidateCaches();
+		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
+		return { acknowledged: true, modifiedCount: modifiedIds.length, modifiedIds };
+	}
 	async bulkWrite(operations) {
 		const totals = { acknowledged: true, insertedCount: 0, modifiedCount: 0, deletedCount: 0, upsertedCount: 0 };
 		// A large write fan-out can monopolize the Firestore HTTP/2 connection and

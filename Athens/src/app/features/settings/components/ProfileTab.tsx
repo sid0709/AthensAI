@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
+import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 import { ThemeToggle } from "../../../components/shared/ThemeToggle";
 import { emptyCareer, emptyEducation, emptyProfile, type UserProfile } from "../../../data/settings/profile";
 import {
   clearVendorAccessPassword,
   fetchAutoBidProfile,
-  refreshGeneratedResumesIdentityStream,
   type RefreshResumesProgress,
   saveAutoBidProfile,
   setVendorAccessPassword,
@@ -27,6 +27,13 @@ import { DefaultModelCard } from "./DefaultModelCard";
 
 export function ProfileTab() {
   const { applier, applierReady, setApplier } = useApplier();
+	const { latestTask, startTask, cancelTask, waitForTask } = useBackgroundTasks();
+	const resumeRefreshTask = latestTask("resume_identity_refresh");
+	const activeResumeRefreshTask = resumeRefreshTask
+		&& ["queued", "running", "cancelling"].includes(resumeRefreshTask.status)
+		? resumeRefreshTask
+		: null;
+	const refreshStopping = activeResumeRefreshTask?.status === "cancelling";
   const [profile, setProfile] = useState<UserProfile>(() => emptyProfile());
   const [vendorAllowed, setVendorAllowed] = useState(false);
   const [vendorPasswordSet, setVendorPasswordSet] = useState(false);
@@ -43,6 +50,28 @@ export function ProfileTab() {
     deepseek: { state: "idle" },
   });
   const isBeta = isBetaTier(applier?.tier);
+
+	useEffect(() => {
+		if (!resumeRefreshTask) return;
+		const progress = resumeRefreshTask.progress || {};
+		if (["queued", "running", "cancelling"].includes(resumeRefreshTask.status)) {
+			setRefreshingResumes(true);
+			setRefreshProgress({
+				done: Number(progress.completed || 0),
+				total: Number(progress.total || 0),
+				left: Number(progress.remaining || 0),
+				updated: Number(progress.updated || 0),
+				pdfs: Number(progress.pdfs || 0),
+				skipped: Number(progress.skipped || 0),
+				failed: Number(progress.failed || 0),
+				active: Number(progress.active || 0),
+				alreadyCurrent: Number(progress.alreadyCurrent || 0),
+				phase: String(progress.phase || resumeRefreshTask.status),
+				profileUpdatedAt: progress.profileUpdatedAt ? String(progress.profileUpdatedAt) : null,
+				resumeUpdatedAt: progress.resumeUpdatedAt ? String(progress.resumeUpdatedAt) : null,
+			});
+		}
+	}, [resumeRefreshTask]);
   const isAdmin = isAdminPermission(applier?.permission);
   const load = useCallback(async (signal?: AbortSignal) => {
     if (!applier?.name) {
@@ -152,6 +181,16 @@ export function ProfileTab() {
   };
 
   const refreshResumes = async () => {
+		if (activeResumeRefreshTask) {
+			if (activeResumeRefreshTask.status === "cancelling") return;
+			try {
+				await cancelTask(activeResumeRefreshTask.id);
+				toast.info("Stopping résumé updates…");
+			} catch (error) {
+				toast.error(error instanceof Error ? error.message : "Could not stop résumé updates");
+			}
+			return;
+		}
     if (!applier?.name) {
       toast.warning("Sign in to refresh résumés");
       return;
@@ -180,22 +219,29 @@ export function ProfileTab() {
         return;
       }
       setAccountMissing(false);
-      const res = await refreshGeneratedResumesIdentityStream(applier.name, (progress) => {
-        setRefreshProgress(progress);
-      });
-      if (!res.success) {
-        toast.error(res.error || "Could not refresh résumés");
-        return;
-      }
-      const failed = res.failed ?? 0;
-      const already = res.alreadyCurrent ?? 0;
-      if ((res.total ?? 0) === 0 && already > 0) {
+			const task = await startTask("resume_identity_refresh", {});
+			const finished = await waitForTask(task.id);
+			if (finished.status === "cancelled") {
+				toast.info("Résumé updates stopped");
+				return;
+			}
+			if (finished.status === "failed") {
+				toast.error(finished.error || "Could not refresh résumés");
+				return;
+			}
+			const res = finished.result || {};
+			const failed = Number(res.failed ?? 0);
+			const already = Number(res.alreadyCurrent ?? 0);
+			const total = Number(res.total ?? 0);
+			const updated = Number(res.updated ?? 0);
+			const pdfs = Number(res.pdfs ?? 0);
+			if (total === 0 && already > 0) {
         toast.success(`All ${already} generated résumé${already === 1 ? "" : "s"} already match your profile`);
       } else {
         toast.success(
-          `Updated ${res.updated ?? 0} of ${res.total ?? 0} outdated résumé${(res.total ?? 0) === 1 ? "" : "s"}` +
+          `Updated ${updated} of ${total} outdated résumé${total === 1 ? "" : "s"}` +
             (already ? ` · ${already} already current` : "") +
-            (res.pdfs ? ` · ${res.pdfs} PDF${res.pdfs === 1 ? "" : "s"}` : "") +
+            (pdfs ? ` · ${pdfs} PDF${pdfs === 1 ? "" : "s"}` : "") +
             (failed ? ` · ${failed} failed` : ""),
         );
       }
@@ -256,15 +302,23 @@ export function ProfileTab() {
             <button
               type="button"
               onClick={() => void refreshResumes()}
-              disabled={refreshingResumes || saving || loading}
-              className="inline-flex items-center gap-2 border border-border bg-secondary text-foreground px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-muted min-h-10 disabled:opacity-50"
-              title="Save profile, then re-apply name, contact, and LinkedIn to all generated résumé PDFs"
+              disabled={refreshStopping || (refreshingResumes && !activeResumeRefreshTask) || saving || loading}
+              className={`inline-flex items-center gap-2 border px-4 py-2.5 rounded-xl text-sm font-bold min-h-10 disabled:opacity-50 ${
+						refreshingResumes
+							? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+							: "border-border bg-secondary text-foreground hover:bg-muted"
+					}`}
+              title={refreshingResumes
+						? "Stop résumé updates immediately"
+						: "Save profile, then re-apply name, contact, and LinkedIn to all generated résumé PDFs"}
             >
               {refreshingResumes ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              {refreshingResumes
+              {refreshStopping
+						? "Stopping…"
+						: refreshingResumes
                 ? refreshProgress && refreshProgress.total > 0
-                  ? `Updating… ${refreshProgress.done}/${refreshProgress.total}`
-                  : "Updating résumés…"
+                  ? `Update ${refreshProgress.done}/${refreshProgress.total} · Stop`
+                  : "Stop update"
                 : "Update generated résumés"}
             </button>
           )}

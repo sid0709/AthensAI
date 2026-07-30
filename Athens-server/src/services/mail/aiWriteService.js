@@ -53,7 +53,7 @@ function resolveMode(raw) {
 /**
  * @param {{ mode: 'write'|'fine-tune'|'reply', prompt?: string, body?: string, subject?: string, replyContext?: string }} input
  * @param {object} profile decrypted autoBidProfile
- * @param {{ applierName?: string }} [context]
+ * @param {{ applierName?: string, signal?: AbortSignal }} [context]
  */
 export async function runMailAiWrite(input, profile, context = {}) {
 	const picked = pickProvider(profile);
@@ -123,6 +123,7 @@ export async function runMailAiWrite(input, profile, context = {}) {
 				{ role: 'user', content: parts.join('\n') },
 			],
 			timeoutMs: 60000,
+			signal: context.signal,
 		});
 
 		const text = stripFences(content);
@@ -131,6 +132,9 @@ export async function runMailAiWrite(input, profile, context = {}) {
 		}
 		return { ok: true, body: text, usage };
 	} catch (err) {
+		if (err?.name === 'AbortError' || context.signal?.aborted) {
+			throw context.signal?.reason instanceof Error ? context.signal.reason : err;
+		}
 		return { ok: false, error: err?.message || String(err) };
 	}
 }

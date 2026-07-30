@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import { removeJobs, removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
+import { removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
+import { useBackgroundTasks } from "../../context/BackgroundTaskContext";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
@@ -30,6 +31,7 @@ export function JobSearchPage() {
 
 function JobSearchPageContent() {
   const { applier } = useApplier();
+  const { startTask, adoptTask, waitForTask } = useBackgroundTasks();
   const {
     state: urlState,
     setFilters,
@@ -102,9 +104,12 @@ function JobSearchPageContent() {
     generateForJob,
     generateBulk,
     cancelBulk,
+    cancelRemoval,
     removeBulkResumes,
     bulkRunning,
+    bulkStopping,
     bulkRemoving,
+    removalStopping,
     bulkProgress,
   } = useJobResumeGeneration(jobs);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
@@ -251,10 +256,16 @@ function JobSearchPageContent() {
     });
     clearSelection();
     try {
-      const res = await removeJobs(selectedJobs.map((job) => job.backendId || job.id));
-      if (!res?.success) throw new Error(res?.error || "Remove failed");
+      const task = await startTask("job_removal", {
+        recordIds: selectedJobs.map((job) => job.backendId || job.id),
+      });
+      const finished = await waitForTask(task.id);
+			if (finished.status === "failed" || finished.status === "cancelled") {
+				throw new Error(finished.error || (finished.status === "cancelled" ? "Removal cancelled" : "Remove failed"));
+			}
+      const deletedCount = Number(finished.result?.deletedCount ?? ids.length);
       removeJobsById(ids);
-      toast.success(`Removed ${res.deletedCount ?? ids.length} job${ids.length === 1 ? "" : "s"}`);
+      toast.success(`Removed ${deletedCount} job${ids.length === 1 ? "" : "s"}`);
       void refreshStatusCounts();
     } catch (err) {
       // Revert the optimistic hide so nothing silently disappears.
@@ -272,8 +283,17 @@ function JobSearchPageContent() {
       const keepJobId = activeJob.backendId || activeJob.id;
       const res = await removeCompanySiblingJobs(group.companyId, keepJobId);
       if (!res?.success) throw new Error(res?.error || "Delete failed");
+			let deletedCount = res.deletedCount;
+			if (res.task) {
+				adoptTask(res.task);
+				const finished = await waitForTask(res.task.id);
+				if (finished.status === "failed" || finished.status === "cancelled") {
+					throw new Error(finished.error || (finished.status === "cancelled" ? "Delete cancelled" : "Delete failed"));
+				}
+				deletedCount = Number(finished.result?.deletedCount ?? 0);
+			}
       removeOtherCompanyJobs(group.companyId, keepJobId);
-      const deletedCount = res.deletedCount
+			deletedCount = deletedCount
         ?? Math.max(0, (group.matchingJobCount ?? group.jobs.length) - 1);
       toast.success(
         `Deleted ${deletedCount} other role${deletedCount === 1 ? "" : "s"} at ${group.company.name}`,
@@ -356,11 +376,14 @@ function JobSearchPageContent() {
           void generateBulk(selectedJobs);
         }}
         onStopGenerateResumes={cancelBulk}
+        onStopRemoveResumes={cancelRemoval}
         onRemoveResumes={() => {
           void removeBulkResumes(selectedJobs);
         }}
         resumeGenerating={bulkRunning}
+        resumeStopping={bulkStopping}
         resumeRemoving={bulkRemoving}
+        resumeRemovalStopping={removalStopping}
         hasSelectedResumes={hasSelectedResumes}
         resumeProgress={bulkProgress ?? undefined}
         page={page}

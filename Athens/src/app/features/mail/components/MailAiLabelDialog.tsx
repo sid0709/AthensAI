@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Loader2, Sparkles, X } from "lucide-react";
 import {
   fetchMailLabelDefinitions,
   fetchUnlabeledThreads,
-  runMailAiLabelStream,
   saveMailLabelDefinitions,
   type MailAiLabelResult,
   type MailAiLabelProgress,
   type MailLabelDefinitions,
 } from "@/api/mail";
+import { useBackgroundTasks } from "../../../context/BackgroundTaskContext";
 import { AthensTextarea } from "../../../components/forms";
 import { PaginationBar } from "../../../components/shared/PaginationBar";
 import { Checkbox } from "../../../components/ui/checkbox";
@@ -107,6 +107,8 @@ export function MailAiLabelDialog({
   labels,
   onComplete,
 }: MailAiLabelDialogProps) {
+  const { latestTask, startTask, cancelTask, waitForTask } = useBackgroundTasks();
+  const latestMailTask = latestTask("mail_ai_label");
   const [threads, setThreads] = useState<MailThread[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -130,6 +132,36 @@ export function MailAiLabelDialog({
   const [summary, setSummary] = useState<{ applied: number; skipped: number; failed: number } | null>(null);
   const [runDetails, setRunDetails] = useState<{ durationMs: number; model?: string } | null>(null);
   const [runProgress, setRunProgress] = useState<MailAiLabelProgress | null>(null);
+  const [runTaskId, setRunTaskId] = useState<string | null>(null);
+  const recordedResultIds = useRef(new Set<string>());
+  const finishedTaskIds = useRef(new Set<string>());
+
+  const runTask = latestMailTask && (
+    latestMailTask.id === runTaskId
+    || (!runTaskId && ["queued", "running", "cancelling"].includes(latestMailTask.status))
+  ) ? latestMailTask : null;
+
+  const recordResult = useCallback((result: MailAiLabelResult) => {
+    const id = String(result.uid);
+    if (recordedResultIds.current.has(id)) return;
+    recordedResultIds.current.add(id);
+    const status: RowStatus = result.applied
+      ? "done"
+      : result.error || (result.reason && result.reason !== "no_match")
+        ? "error"
+        : "skipped";
+    setRowResults((prev) => ({ ...prev, [id]: result }));
+    setRowStatus((prev) => ({ ...prev, [id]: status }));
+    if (result.applied) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setThreads((prev) => prev.filter((thread) => thread.id !== id));
+      setTotal((prev) => (prev === null ? null : Math.max(0, prev - 1)));
+    }
+  }, []);
 
   const labelTree = useMemo(() => buildLabelTree(labels), [labels]);
   const pageIds = useMemo(() => threads.map((t) => t.id), [threads]);
@@ -221,7 +253,46 @@ export function MailAiLabelDialog({
     setDefinitions({});
     setDefinitionsDirty(false);
     setRunning(false);
+    setRunTaskId(null);
+    recordedResultIds.current.clear();
   }, [open]);
+
+  useEffect(() => {
+    if (!runTask || !["queued", "running", "cancelling"].includes(runTask.status)) return;
+    if (!runTaskId) setRunTaskId(runTask.id);
+    setRunning(true);
+    setRunProgress({
+      phase: String(runTask.progress.phase || "loading_snippets") as MailAiLabelProgress["phase"],
+      completed: Number(runTask.progress.completed ?? 0),
+      total: Number(runTask.progress.total ?? 0),
+    });
+    for (const item of Object.values(runTask.progress.items || {})) {
+      if (item.result) recordResult(item.result as MailAiLabelResult);
+    }
+  }, [recordResult, runTask, runTaskId]);
+
+  useEffect(() => {
+    if (!runTask || ["queued", "running", "cancelling"].includes(runTask.status)) return;
+    if (finishedTaskIds.current.has(runTask.id)) return;
+    finishedTaskIds.current.add(runTask.id);
+    const results = Array.isArray(runTask.result?.results)
+      ? runTask.result.results as MailAiLabelResult[]
+      : [];
+    let applied = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const result of results) {
+      recordResult(result);
+      if (result.applied) applied += 1;
+      else if (result.error || (result.reason && result.reason !== "no_match")) failed += 1;
+      else skipped += 1;
+    }
+    setSummary({ applied, skipped, failed });
+    setRunning(false);
+    setRunProgress(null);
+    if (runTask.status === "cancelled") setRunError("AI labeling was stopped.");
+    onComplete?.();
+  }, [onComplete, recordResult, runTask]);
 
   const handleDefinitionChange = (label: MailLabel, value: string) => {
     const key = labelDefKey(label);
@@ -289,6 +360,7 @@ export function MailAiLabelDialog({
       .filter((m) => Number.isFinite(m.uid));
 
     setRunning(true);
+    recordedResultIds.current.clear();
     setRunError(null);
     setSummary(null);
     setRunDetails(null);
@@ -296,41 +368,18 @@ export function MailAiLabelDialog({
     setRowStatus(Object.fromEntries(messages.map((m) => [String(m.uid), "running"])));
 
     try {
-      const streamedIds = new Set<string>();
-      const recordResult = (result: MailAiLabelResult) => {
-        const id = String(result.uid);
-        if (streamedIds.has(id)) return;
-        streamedIds.add(id);
-        const status: RowStatus = result.applied
-          ? "done"
-          : result.error || (result.reason && result.reason !== "no_match")
-            ? "error"
-            : "skipped";
-        setRowResults((prev) => ({ ...prev, [id]: result }));
-        setRowStatus((prev) => ({ ...prev, [id]: status }));
-        setRunProgress((prev) => prev ? { ...prev, completed: streamedIds.size } : prev);
-        if (result.applied) {
-          setSelectedIds((prev) => {
-            const next = new Set(prev);
-            next.delete(id);
-            return next;
-          });
-          setThreads((prev) => prev.filter((thread) => thread.id !== id));
-          setTotal((prev) => (prev === null ? null : Math.max(0, prev - 1)));
-        }
-      };
-
-      const { results, processing, model } = await runMailAiLabelStream(
-        applierName,
-        { messages, labelDefinitions: definitions },
-        (event, data) => {
-          if (event === "progress") {
-            setRunProgress(data as unknown as MailAiLabelProgress);
-          } else if (event === "result" && data.result) {
-            recordResult(data.result as MailAiLabelResult);
-          }
-        },
-      );
+      const task = await startTask("mail_ai_label", {
+        messageIds: messages.map((message) => message.mailbox
+          ? `${message.mailbox}\0${message.uid}`
+          : String(message.uid)),
+      });
+      setRunTaskId(task.id);
+      const finished = await waitForTask(task.id);
+      const results = Array.isArray(finished.result?.results)
+        ? finished.result.results as MailAiLabelResult[]
+        : [];
+      const processing = finished.result?.processing as { durationMs?: number } | undefined;
+      const model = finished.result?.model as { model?: string } | undefined;
 
       let applied = 0;
       let skipped = 0;
@@ -349,9 +398,9 @@ export function MailAiLabelDialog({
 
       setSummary({ applied, skipped, failed });
       if (processing) {
-        setRunDetails({ durationMs: processing.durationMs, model: model?.model });
+        setRunDetails({ durationMs: Number(processing.durationMs || 0), model: model?.model });
       }
-      onComplete?.();
+      if (finished.status === "cancelled") setRunError("AI labeling was stopped.");
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "AI labeling failed");
       setRowStatus((prev) => Object.fromEntries(
@@ -360,6 +409,15 @@ export function MailAiLabelDialog({
     } finally {
       setRunning(false);
       setRunProgress(null);
+    }
+  };
+
+  const handleStop = async () => {
+    if (!runTask || !["queued", "running"].includes(runTask.status)) return;
+    try {
+      await cancelTask(runTask.id);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Failed to stop AI labeling");
     }
   };
 
@@ -590,8 +648,11 @@ export function MailAiLabelDialog({
           </button>
           <button
             type="button"
-            onClick={() => void handleRun()}
-            disabled={running || totalSelected === 0 || labels.length === 0}
+            onClick={() => void (running ? handleStop() : handleRun())}
+            disabled={
+              (!running && (totalSelected === 0 || labels.length === 0))
+              || runTask?.status === "cancelling"
+            }
             className="px-4 py-2 rounded-xl text-sm font-bold bg-primary text-white hover:bg-primary/90 min-h-10 disabled:opacity-50 inline-flex items-center gap-2"
           >
             <span className="inline-flex size-4 shrink-0 items-center justify-center" aria-hidden>
@@ -603,7 +664,9 @@ export function MailAiLabelDialog({
             </span>
             <span>
               {running
-                ? `Labeling ${runProgress?.completed ?? 0}/${runProgress?.total ?? totalSelected}…`
+                ? runTask?.status === "cancelling"
+                  ? "Stopping…"
+                  : `Labeling ${runProgress?.completed ?? 0}/${runProgress?.total ?? totalSelected} · Stop`
                 : `Run AI Label (${totalSelected})`}
             </span>
           </button>

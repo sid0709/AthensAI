@@ -30,6 +30,11 @@ scrape_configs:
     static_configs:
       - targets: ["nextoffer:9101"]
 
+  - job_name: athens-background-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["nextoffer:9102"]
+
   - job_name: ai-bff
     metrics_path: /metrics
     static_configs:

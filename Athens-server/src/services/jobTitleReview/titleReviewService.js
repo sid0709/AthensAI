@@ -3,6 +3,10 @@ import { JOB_TITLE_REVIEW_PROMPT } from '../../config/jobTitleReviewPrompt.js';
 import { resolveExtractionAuth } from '../jobSkillExtraction/aiExtractService.js';
 import { jobsCollection } from '../../db/dataStore.js';
 import { syncJobTitleReviewUpdates } from './titleReviewIndexSync.js';
+import {
+	firestoreMutationLimiter,
+	indexMutationLimiter,
+} from '../backgroundTasks/resourceLimits.js';
 
 export { resolveExtractionAuth };
 
@@ -12,6 +16,13 @@ const configuredBatchSize = Number(process.env.JOB_TITLE_REVIEW_BATCH_SIZE || 10
 export const TITLE_REVIEW_BATCH_SIZE = Number.isFinite(configuredBatchSize)
 	? Math.max(1, Math.min(10, Math.floor(configuredBatchSize)))
 	: 10;
+
+function throwIfAborted(signal) {
+	if (!signal?.aborted) return;
+	throw signal.reason instanceof Error
+		? signal.reason
+		: Object.assign(new Error('Title review cancelled'), { name: 'AbortError' });
+}
 
 function invalidResult(code, message) {
 	return { code, message };
@@ -135,6 +146,7 @@ export async function classifyAndPersistTitleReviewBatch(jobs, auth, {
 			},
 		],
 	});
+	throwIfAborted(signal);
 
 	const parsed = parseTitleReviewJson(result?.content, items);
 	const now = new Date().toISOString();
@@ -184,20 +196,53 @@ export async function classifyAndPersistTitleReviewBatch(jobs, auth, {
 
 	let persisted = 0;
 	if (collection) {
-		const results = await Promise.all(operations.map(async (operation) => {
-			const write = await collection.updateOne(operation.filter, operation.update);
-			if (write.modifiedCount) return { ...operation, persisted: true };
-			// The title or lease changed while the model was running. Release only this
-			// stale lease and let the current title be classified in a later batch.
-			await collection.updateOne(
-				{ _id: operation.item._id, 'titleReview.lease.sessionId': sessionId },
-				{
-					$set: { 'titleReview.processingState': 'pending' },
-					$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
-				},
-			);
-			return { ...operation, persisted: false };
-		}));
+		let results;
+		if (typeof collection.atomicBulkConditionalPatch === 'function') {
+			const write = await firestoreMutationLimiter.run(() => {
+				throwIfAborted(signal);
+				return collection.atomicBulkConditionalPatch(operations.map((operation) => ({
+					updateOne: { filter: operation.filter, update: operation.update },
+				})));
+			});
+			const modified = new Set((write.modifiedIds || []).map(String));
+			results = operations.map((operation) => ({
+				...operation,
+				persisted: modified.has(String(operation.item._id)),
+			}));
+			const stale = results.filter((operation) => !operation.persisted);
+			if (stale.length) {
+				await firestoreMutationLimiter.run(() => {
+					throwIfAborted(signal);
+					return collection.atomicBulkConditionalPatch(stale.map((operation) => ({
+						updateOne: {
+							filter: { _id: operation.item._id, 'titleReview.lease.sessionId': sessionId },
+							update: {
+								$set: { 'titleReview.processingState': 'pending' },
+								$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+							},
+						},
+					})));
+				});
+			}
+		} else {
+			results = await Promise.all(operations.map(async (operation) => {
+				const write = await firestoreMutationLimiter.run(() => {
+					throwIfAborted(signal);
+					return collection.updateOne(operation.filter, operation.update);
+				});
+				if (write.modifiedCount) return { ...operation, persisted: true };
+				// The title or lease changed while the model was running. Release only this
+				// stale lease and let the current title be classified in a later batch.
+				await firestoreMutationLimiter.run(() => collection.updateOne(
+					{ _id: operation.item._id, 'titleReview.lease.sessionId': sessionId },
+					{
+						$set: { 'titleReview.processingState': 'pending' },
+						$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+					},
+				));
+				return { ...operation, persisted: false };
+			}));
+		}
 		for (const operation of results) {
 			if (!operation.persisted) {
 				failed += 1;
@@ -215,8 +260,10 @@ export async function classifyAndPersistTitleReviewBatch(jobs, auth, {
 	}
 	if (Object.keys(labels).length) {
 		try {
-			await syncUpdates(labels);
+			throwIfAborted(signal);
+			await indexMutationLimiter.run(() => syncUpdates(labels));
 		} catch (error) {
+			if (signal?.aborted || error?.name === 'AbortError') throw error;
 			// Firestore is authoritative. A transient search-index failure must not
 			// turn an already persisted classification into a failed AI batch.
 			console.warn('[title-review] read-model sync failed', error?.message || error);
@@ -246,6 +293,6 @@ export async function recordTitleReviewBatchFailure(jobs, sessionId, error) {
 			}, now),
 		},
 	}));
-	const result = await jobsCollection.bulkWrite(operations, { ordered: false });
+	const result = await firestoreMutationLimiter.run(() => jobsCollection.bulkWrite(operations, { ordered: false }));
 	return result.modifiedCount || 0;
 }

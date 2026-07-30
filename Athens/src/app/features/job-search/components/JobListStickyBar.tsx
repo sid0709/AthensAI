@@ -20,8 +20,11 @@ type JobListStickyBarProps = {
   onGenerateResumes?: () => void;
   onStopGenerateResumes?: () => void;
   onRemoveResumes?: () => void;
+  onStopRemoveResumes?: () => void;
   resumeGenerating?: boolean;
+  resumeStopping?: boolean;
   resumeRemoving?: boolean;
+  resumeRemovalStopping?: boolean;
   hasSelectedResumes?: boolean;
   resumeProgress?: JobResumeBulkProgress;
   page: number;
@@ -52,8 +55,11 @@ export function JobListStickyBar({
   onGenerateResumes,
   onStopGenerateResumes,
   onRemoveResumes,
+  onStopRemoveResumes,
   resumeGenerating,
+  resumeStopping,
   resumeRemoving,
+  resumeRemovalStopping,
   hasSelectedResumes,
   resumeProgress,
   page,
@@ -86,8 +92,11 @@ export function JobListStickyBar({
           onGenerateResumes={onGenerateResumes}
           onStopGenerateResumes={onStopGenerateResumes}
           onRemoveResumes={onRemoveResumes}
+          onStopRemoveResumes={onStopRemoveResumes}
           resumeGenerating={resumeGenerating}
+          resumeStopping={resumeStopping}
           resumeRemoving={resumeRemoving}
+          resumeRemovalStopping={resumeRemovalStopping}
           hasSelectedResumes={hasSelectedResumes}
           resumeProgress={resumeProgress}
           loading={loading}

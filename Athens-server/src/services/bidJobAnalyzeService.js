@@ -295,7 +295,7 @@ async function loadAccountCatalog(applierNameRaw) {
 /**
  * @returns {{ result: object, usage: object|null, mode: 'llm'|'heuristic' }}
  */
-export async function analyzeJobPage({ pageContext, applierName, sessionContext, jobId }) {
+export async function analyzeJobPage({ pageContext, applierName, sessionContext, jobId, signal }) {
 	if (!pageContext || typeof pageContext !== "object") {
 		throw new Error("pageContext is required.");
 	}
@@ -365,6 +365,7 @@ export async function analyzeJobPage({ pageContext, applierName, sessionContext,
 		feature: "bid-job-analyze",
 		applierName,
 		jobId: jobIdStr,
+		signal,
 	});
 
 	let parsed;
@@ -409,6 +410,7 @@ export async function analyzeJobFlags({
 	sessionContext,
 	neededFlags = ["remote", "clearance"],
 	jobId,
+	signal,
 }) {
 	if (!pageContext || typeof pageContext !== "object") {
 		throw new Error("pageContext is required.");
@@ -463,6 +465,7 @@ export async function analyzeJobFlags({
 			feature: "bid-job-flags",
 			applierName,
 			jobId: jobIdStr,
+			signal,
 		});
 
 		let parsed;
@@ -498,6 +501,9 @@ export async function analyzeJobFlags({
 			billedModel,
 		};
 	} catch (err) {
+		if (err?.name === "AbortError" || signal?.aborted) {
+			throw signal?.reason instanceof Error ? signal.reason : err;
+		}
 		console.warn("[bid-job-analyze] flags LLM failed, using heuristic:", err.message);
 		return { result: heuristicFlags(jdBody, flags), usage: null, mode: "heuristic" };
 	}
@@ -507,7 +513,7 @@ export async function analyzeJobFlags({
  * Recommend best Library resume stack from compressed resumeAnalysisCatalog + page JD text.
  * @returns {{ result: object, usage: object|null, mode: 'llm'|'heuristic' }}
  */
-export async function recommendResumeForJob({ pageContext, applierName, jobId }) {
+export async function recommendResumeForJob({ pageContext, applierName, jobId, signal }) {
 	if (!pageContext || typeof pageContext !== "object") {
 		throw new Error("pageContext is required.");
 	}
@@ -598,6 +604,7 @@ export async function recommendResumeForJob({ pageContext, applierName, jobId })
 		feature: "bid-recommend-resume",
 		applierName: name,
 		jobId: jobIdStr,
+		signal,
 	});
 
 	let parsed;

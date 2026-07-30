@@ -69,7 +69,11 @@ export async function startSkillExtract(applierName?: string): Promise<StartResp
   return parseJson<StartResponse>(res);
 }
 
-export async function stopSkillExtract(): Promise<{ stopped: boolean; message?: string }> {
-  const res = await fetch(`${API_BASE}/jobs/skill-extract/stop`, { method: "POST" });
+export async function stopSkillExtract(applierName?: string): Promise<{ stopped: boolean; message?: string }> {
+  const res = await fetch(`${API_BASE}/jobs/skill-extract/stop`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applierName }),
+  });
   return parseJson(res);
 }

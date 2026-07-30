@@ -156,7 +156,7 @@ export function JobSearchFilterPanel({
                   >
                     {countsLoading ? (
                       <span className="inline-block h-2.5 w-5 animate-pulse rounded bg-current/20" aria-label="Updating count" />
-                    ) : statusCounts[tab.id]}
+                    ) : statusCounts[tab.id].toLocaleString()}
                   </span>
                 </button>
               );

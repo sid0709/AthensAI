@@ -407,6 +407,21 @@
   ],
   "fieldOverrides": [
     {
+      "collectionGroup": "background_task_inputs",
+      "fieldPath": "request",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "background_task_inputs",
+      "fieldPath": "partialSections",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "background_task_inputs",
+      "fieldPath": "result",
+      "indexes": []
+    },
+    {
       "collectionGroup": "jobs",
       "fieldPath": "description",
       "indexes": []

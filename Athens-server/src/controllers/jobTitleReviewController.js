@@ -2,24 +2,24 @@ import { jobsCollection } from '../db/dataStore.js';
 import { findAccountByApplierName } from '../services/mail/credentials.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import {
-	getTitleReviewSessionStatus,
+	getTitleReviewCounts,
 	invalidateTitleReviewCounts,
-	startTitleReviewSession,
-	stopTitleReviewSession,
 } from '../services/jobTitleReview/titleReviewSession.js';
+import {
+	createBackgroundTask,
+	findActiveBackgroundTask,
+	listBackgroundTasks,
+	requestBackgroundTaskCancellation,
+} from '../services/backgroundTasks/taskStore.js';
+import { BACKGROUND_TASK_TYPES, publicTaskSnapshot } from '../services/backgroundTasks/taskTypes.js';
 import {
 	listTitleReviewReadModel,
 	patchTitleReviewReadModel,
 } from '../services/jobTitleReview/titleReviewReadModel.js';
 import { TitleReviewQueryError } from '../services/jobTitleReview/titleReviewQueryService.js';
 import { syncJobTitleReviewUpdates } from '../services/jobTitleReview/titleReviewIndexSync.js';
-import { normalizeJobRemovalIds, deleteJobDocuments } from '../services/jobRemovalService.js';
-import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
-import { removeJobsFromRanking } from '../services/matching/jobRankingIndex.js';
-import { evictJobsFromJobListReadModel } from '../services/jobListReadModelService.js';
-import { invalidateLiveProjectedStatusCount } from '../services/jobStatusProjectionService.js';
+import { normalizeJobRemovalIds } from '../services/jobRemovalService.js';
 import { observeHistogram } from '../services/monitoring/metrics.js';
-import { invalidatePendingExtractionCount } from '../services/jobSkillExtraction/extractSession.js';
 import { invalidateJobListCountCache } from './jobController.js';
 
 async function requireBetaApplierName(applierNameRaw, res) {
@@ -38,6 +38,51 @@ async function requireBetaApplierName(applierNameRaw, res) {
 		return null;
 	}
 	return applierName;
+}
+
+function titleTaskIdentity(req, applierName) {
+	const name = String(applierName || req.authProfile?.profileName || req.authProfile?.applierName || '').trim();
+	return {
+		applierName: name,
+		profileId: String(req.authProfile?.profileId || req.body?.profileId || req.query?.profileId || '').trim()
+			|| name.toLocaleLowerCase('en-US'),
+		ownerUid: String(req.auth?.uid || '').trim() || null,
+	};
+}
+
+async function latestTitleTask(profileId) {
+	const active = await findActiveBackgroundTask(profileId, BACKGROUND_TASK_TYPES.TITLE_REVIEW);
+	if (active) return active;
+	const tasks = await listBackgroundTasks(profileId, { limit: 20 });
+	return tasks.find((task) => task.type === BACKGROUND_TASK_TYPES.TITLE_REVIEW) || null;
+}
+
+function titleSession(task, counts = {}) {
+	if (!task) return { running: false, status: 'idle', ...counts };
+	const progress = task.progress || {};
+	const status = task.status === 'queued'
+		? 'running'
+		: task.status === 'cancelling'
+			? 'stopping'
+			: task.status === 'completed_with_errors' ? 'completed' : task.status;
+	return {
+		running: ['queued', 'running', 'cancelling'].includes(task.status),
+		status,
+		phase: progress.phase ?? null,
+		sessionId: task.id,
+		total: progress.total ?? null,
+		processed: progress.completed ?? 0,
+		approved: progress.approved ?? 0,
+		reviewRequired: progress.reviewRequired ?? 0,
+		failed: progress.failed ?? 0,
+		remaining: progress.remaining ?? null,
+		startedAt: task.startedAt,
+		finishedAt: task.finishedAt,
+		error: task.error,
+		concurrency: 10,
+		batchSize: 10,
+		...counts,
+	};
 }
 
 function setReviewTiming(res, { auth = 0, cache = 0, firestore = 0, serialization = 0, total = 0 } = {}) {
@@ -67,7 +112,12 @@ export async function getTitleReviewStatus(req, res) {
 	try {
 		const applierName = await requireBetaApplierName(req.query?.applierName, res);
 		if (!applierName) return;
-		return res.json({ success: true, ...(await getTitleReviewSessionStatus()) });
+		const identity = titleTaskIdentity(req, applierName);
+		const [task, counts] = await Promise.all([
+			latestTitleTask(identity.profileId),
+			getTitleReviewCounts(),
+		]);
+		return res.json({ success: true, ...titleSession(task, counts) });
 	} catch (error) {
 		console.error('GET /api/jobs/title-review/status error', error);
 		return res.status(500).json({ success: false, error: error.message });
@@ -78,10 +128,22 @@ export async function startTitleReview(req, res) {
 	try {
 		const applierName = await requireBetaApplierName(req.body?.applierName, res);
 		if (!applierName) return;
-		const result = await startTitleReviewSession({ applierName });
-		return res.status(result.started ? 202 : 200).json({ success: true, ...result });
+		const identity = titleTaskIdentity(req, applierName);
+		const result = await createBackgroundTask({
+			requestId: req.body?.requestId,
+			type: BACKGROUND_TASK_TYPES.TITLE_REVIEW,
+			...identity,
+			payload: {},
+		});
+		return res.status(result.created ? 202 : 200).json({
+			success: true,
+			started: result.created,
+			sessionId: result.task.id,
+			pending: null,
+			...(result.alreadyActive ? { message: 'Title review is already running.' } : {}),
+		});
 	} catch (error) {
-		const status = error.message.includes('already running') ? 409 : 400;
+		const status = Number.isInteger(error?.status) ? error.status : 500;
 		console.error('POST /api/jobs/title-review/start error', error);
 		return res.status(status).json({ success: false, error: error.message });
 	}
@@ -89,9 +151,13 @@ export async function startTitleReview(req, res) {
 
 export async function stopTitleReview(req, res) {
 	try {
-		const applierName = await requireBetaApplierName(req.body?.applierName, res);
-		if (!applierName) return;
-		return res.json({ success: true, ...stopTitleReviewSession() });
+		const applierName = String(req.body?.applierName || req.authProfile?.profileName || req.authProfile?.applierName || '').trim();
+		if (!applierName) return res.status(400).json({ success: false, error: 'applierName is required.' });
+		const identity = titleTaskIdentity(req, applierName);
+		const task = await findActiveBackgroundTask(identity.profileId, BACKGROUND_TASK_TYPES.TITLE_REVIEW);
+		if (!task) return res.json({ success: true, stopped: false, message: 'No active session' });
+		const next = await requestBackgroundTaskCancellation(task.id);
+		return res.status(202).json({ success: true, stopped: true, sessionId: next.id, status: next.status });
 	} catch (error) {
 		console.error('POST /api/jobs/title-review/stop error', error);
 		return res.status(500).json({ success: false, error: error.message });
@@ -137,7 +203,8 @@ export async function getTitleReviewBootstrap(req, res) {
 		observeHistogram('athens_title_review_auth_duration_seconds', {}, authMs / 1_000);
 		if (!applierName) return;
 		const result = await listTitleReviewReadModel(req.query || {});
-		const session = await getTitleReviewSessionStatus({ preferredCounts: result.counts });
+		const identity = titleTaskIdentity(req, applierName);
+		const session = titleSession(await latestTitleTask(identity.profileId), result.counts || {});
 		const totalMs = performance.now() - startedAt;
 		result.meta.serverDurationMs = totalMs;
 		setReviewTiming(res, {
@@ -209,40 +276,46 @@ export async function removeTitleReviewJobs(req, res) {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const requestedIds = normalizeJobRemovalIds(req.body);
 		if (!requestedIds.length) return res.status(400).json({ success: false, error: 'Missing ids array' });
-		const eligible = await jobsCollection.find({
-			_id: { $in: requestedIds },
-			$or: [
-				{ 'titleReview.label': 'REVIEW_REQUIRED' },
-				{ 'titleReview.processingState': 'failed' },
-			],
-		}, { projection: { _id: 1 } }).toArray();
-		const ids = eligible.map((job) => String(job._id));
-		let deletedCount = 0;
-		if (ids.length) {
-			({ deletedCount } = await deleteJobDocuments({ ids, jobsCollection }));
-			if (deletedCount) invalidatePendingExtractionCount();
-			evictJobsFromJobListReadModel(ids);
-			invalidateLiveProjectedStatusCount();
-			invalidateJobListCountCache();
+		const existing = await jobsCollection.find(
+			{ _id: { $in: requestedIds } },
+			{ projection: { _id: 1, titleReview: 1 } },
+		).toArray();
+		const existingById = new Map(existing.map((job) => [String(job._id), job]));
+		const safeIds = requestedIds.filter((id) => {
+			const job = existingById.get(id);
+			return !job
+				|| job.titleReview?.label === 'REVIEW_REQUIRED'
+				|| job.titleReview?.processingState === 'failed';
+		});
+		if (!safeIds.length) {
+			return res.json({
+				success: true,
+				deletedCount: 0,
+				deletedIds: [],
+				removedCount: 0,
+				removedIds: [],
+				alreadyAbsentCount: 0,
+			});
 		}
-		invalidateTitleReviewCounts();
-		// Purge every requested id from the derived queue, including documents that
-		// were already deleted elsewhere but survived in an older Redis snapshot.
-		const snapshotPatch = await patchTitleReviewReadModel({ deletedIds: requestedIds });
-		const removedIds = [...new Set([...ids, ...(snapshotPatch.removedIds || [])])];
-		const eligibleIds = new Set(ids);
-		const alreadyAbsentCount = removedIds.filter((id) => !eligibleIds.has(id)).length;
-		if (ids.length) await Promise.allSettled([deleteScoresForJobs(ids), removeJobsFromRanking(ids)]);
-		return res.json({
+		const queued = await createBackgroundTask({
+			requestId: req.body?.requestId,
+			type: BACKGROUND_TASK_TYPES.JOB_REMOVAL,
+			...titleTaskIdentity(req, applierName),
+			payload: { recordIds: safeIds },
+			progress: {
+				total: safeIds.length,
+				targetIds: safeIds,
+				operation: 'title_review_job_removal',
+			},
+		});
+		return res.status(queued.created ? 202 : 200).json({
 			success: true,
-			deletedCount,
-			deletedIds: ids,
-			removedCount: removedIds.length,
-			removedIds,
-			alreadyAbsentCount,
+			created: queued.created,
+			duplicate: queued.duplicate === true,
+			task: publicTaskSnapshot(queued.task),
 		});
 	} catch (error) {
 		console.error('POST /api/jobs/title-review/remove error', error);
-		return res.status(500).json({ success: false, error: error.message });
+		return res.status(Number.isInteger(error?.status) ? error.status : 500).json({ success: false, error: error.message });
 	}
 }

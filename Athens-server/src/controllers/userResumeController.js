@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   listUserResumes,
   getUserResume,
@@ -7,8 +8,9 @@ import {
   deleteUserResume,
   clearUserResumeAnalysis,
 } from "../services/userResumeService.js";
-import { analyzeResumeSkills } from "../services/resumeSkillAnalysisService.js";
 import { listUserGraphs } from "../services/userKnowledgeGraph/index.js";
+import { createBackgroundTask } from "../services/backgroundTasks/taskStore.js";
+import { BACKGROUND_TASK_TYPES, publicTaskSnapshot } from "../services/backgroundTasks/taskTypes.js";
 
 function toGraphResponse(doc) {
   return {
@@ -176,13 +178,34 @@ export async function analyzeUserResumeHandler(req, res) {
       return res.status(400).json({ success: false, error: "ownerName is required" });
     }
 
-    const result = await analyzeResumeSkills(req.params.id, ownerName, { force });
-    return res.json({ success: true, ...result });
+		const profileId = String(req.authProfile?.profileId || "").trim()
+			|| ownerName.toLocaleLowerCase("en-US");
+		const queued = await createBackgroundTask({
+			requestId: String(req.body?.requestId || "").trim() || randomUUID(),
+			type: BACKGROUND_TASK_TYPES.RESUME_SKILL_ANALYSIS,
+			profileId,
+			applierName: ownerName,
+			ownerUid: String(req.auth?.uid || "").trim() || null,
+			payload: { resumeIds: [String(req.params.id)], force },
+			progress: {
+				total: 1,
+				targetIds: [String(req.params.id)],
+				operation: "resume_skill_analysis",
+			},
+		});
+		return res.status(queued.created ? 202 : 200).json({
+			success: true,
+			created: queued.created,
+			duplicate: queued.duplicate === true,
+			task: publicTaskSnapshot(queued.task),
+		});
   } catch (err) {
     console.error("POST /api/personal/user-resumes/:id/analyze error", err);
-    const status = /not found|required|Invalid|No LLM|no extractable|invalid JSON|no usable/i.test(err.message)
-      ? 400
-      : 500;
+		const status = Number.isInteger(err?.status)
+			? err.status
+			: /not found|required|Invalid/i.test(err.message)
+				? 400
+				: 500;
     return res.status(status).json({ success: false, error: err.message });
   }
 }

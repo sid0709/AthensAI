@@ -27,7 +27,6 @@ import {
 	jobStatusCountsCacheKey,
 	jobStatusCountsPendingKey,
 	jobStatusRemovedKey,
-	parseJobStatusBaseline,
 	parseJobStatusCountsCache,
 	serializeJobStatusBaseline,
 } from "./jobStatusCache.js";
@@ -45,6 +44,7 @@ const LIVE_STATUS_COUNT_TTL_MS = 60_000;
 const liveStatusCountCache = new Map();
 const statusCountWarmups = new Map();
 const statusIdBaselineCache = new Map();
+const statusIdBaselineLoads = new Map();
 
 function enabled() {
   return true;
@@ -389,50 +389,103 @@ function warmMaterializedJobStatusCounts(profileId, includeExtensionV2) {
 	return warmup;
 }
 
-async function loadStatusIdBaseline(profileId) {
+/**
+ * Build one exact profile baseline from verified v2 projections and canonical
+ * job rows for only the legacy/tampered subset. Projection state fields are
+ * never trusted unless their fingerprint validates.
+ */
+export function authoritativeJobStatusBaseline(profileId, projectionRows = [], canonicalJobsById = new Map()) {
+	const key = String(profileId || "");
+	const entries = Object.fromEntries(JOB_STATUS_STATES.map((state) => [state, []]));
+	const seen = new Set();
+	for (const projection of projectionRows) {
+		const jobId = String(projection?.jobId || "");
+		if (!jobId || seen.has(jobId)) continue;
+		let row = projectedStatusRow(key, projection);
+		let postedAt = projection?.postedAt || null;
+		if (!row) {
+			const job = canonicalJobsById.get(jobId);
+			const merged = job ? mergeJobStatusRows(job.status, key) : null;
+			row = merged ? canonicalStatusRow(key, merged) : null;
+			postedAt = job?.postedAt || job?.createdAt || postedAt;
+		}
+		const state = row ? stateOf(row) : null;
+		if (!JOB_STATUS_STATES.includes(state)) continue;
+		seen.add(jobId);
+		entries[state].push({ jobId, postedAt });
+	}
+	const baseline = emptyJobStatusBaseline();
+	for (const state of JOB_STATUS_STATES) {
+		baseline[state] = entries[state]
+			.sort((left, right) =>
+				(Date.parse(right.postedAt || 0) || 0) - (Date.parse(left.postedAt || 0) || 0) ||
+				right.jobId.localeCompare(left.jobId),
+			)
+			.map((entry) => entry.jobId);
+	}
+	return baseline;
+}
+
+async function loadCanonicalJobsForInvalidProjections(profileId, projectionRows, seededJobsById = new Map()) {
 	const key = String(profileId);
-	const cached = statusIdBaselineCache.get(key);
-	if (cached?.expiresAt > Date.now()) return cached.baseline;
-	if (cached) statusIdBaselineCache.delete(key);
-	if (isRedisReady()) {
-		const cacheKey = jobStatusBaselineCacheKey(key);
-		const raw = await getRedis().get(cacheKey);
-		if (raw) {
-			const baseline = parseJobStatusBaseline(raw, key);
-			if (baseline) {
-				statusIdBaselineCache.set(key, {
-					baseline,
-					expiresAt: Date.now() + STATUS_BASELINE_MEMORY_TTL_MS,
-				});
-				return baseline;
-			}
-			// Legacy/unversioned baselines are not authoritative. In particular, an
-			// empty pre-migration value must not hide populated Firestore projections.
-			await getRedis().del(cacheKey);
+	const invalidJobIds = [...new Set(projectionRows
+		.filter((row) => !projectedStatusRow(key, row))
+		.map((row) => String(row?.jobId || ""))
+		.filter((jobId) => jobId && !seededJobsById.has(jobId)))];
+	if (!invalidJobIds.length) return seededJobsById;
+	const firestore = getFirestoreDb();
+	const jobsById = new Map(seededJobsById);
+	const chunks = [];
+	for (let start = 0; start < invalidJobIds.length; start += 100) {
+		chunks.push(invalidJobIds.slice(start, start + 100));
+	}
+	const pages = await Promise.all(chunks.map(async (chunk) => {
+		const refs = chunk.map((jobId) => firestore.collection("jobs").doc(jobId));
+		return firestore.getAll(...refs, { fieldMask: ["status", "postedAt", "createdAt"] });
+	}));
+	for (let page = 0; page < pages.length; page += 1) {
+		const chunk = chunks[page];
+		const snapshots = pages[page];
+		for (let index = 0; index < snapshots.length; index += 1) {
+			if (snapshots[index].exists) jobsById.set(chunk[index], snapshots[index].data());
 		}
 	}
+	return jobsById;
+}
+
+async function loadStatusIdBaselineUncached(key) {
 	let baseline;
 	if (enabled()) {
-		const snapshot = await getFirestoreDb().collection("job_statuses")
-			.where("profileId", "==", key)
-			.select("jobId", "state", "postedAt", "schemaVersion", "statusRow", "statusFingerprint")
-			.get();
-		baseline = emptyJobStatusBaseline();
+		const firestore = getFirestoreDb();
+		// Legacy jobs retain statusProfileIds until their v2 projection is verified.
+		// Start that narrow indexed lookup alongside the projection read so mixed
+		// profiles do not pay hundreds of sequential document lookups.
+		const [snapshot, legacyJobsSnapshot] = await Promise.all([
+			firestore.collection("job_statuses")
+				.where("profileId", "==", key)
+				.select("jobId", "state", "postedAt", "schemaVersion", "statusRow", "statusFingerprint")
+				.get(),
+			firestore.collection("jobs")
+				.where("statusProfileIds", "array-contains", key)
+				.select("status", "postedAt", "createdAt")
+				.get()
+				.catch(() => null),
+		]);
 		const projectionRows = snapshot.docs.map((doc) => doc.data());
-		// An empty result is not proof that this profile has no statuses: it can
-		// also mean the projection collection has not been backfilled yet.
-		const projectionsValid = projectionRows.length > 0 &&
-			projectionRows.every((row) => projectedStatusRow(key, row));
-		if (projectionsValid) {
-			projectionRows.sort((left, right) =>
-				(Date.parse(right.postedAt || 0) || 0) - (Date.parse(left.postedAt || 0) || 0),
+		if (projectionRows.length) {
+			const seededJobsById = new Map((legacyJobsSnapshot?.docs || [])
+				.map((document) => [document.id, document.data()]));
+			const canonicalJobsById = await loadCanonicalJobsForInvalidProjections(
+				key,
+				projectionRows,
+				seededJobsById,
 			);
-			for (const row of projectionRows) {
-				if (JOB_STATUS_STATES.includes(row.state) && row.jobId) baseline[row.state].push(String(row.jobId));
-			}
+			baseline = authoritativeJobStatusBaseline(key, projectionRows, canonicalJobsById);
 		} else {
-			// A pre-v2 projection is never interpreted as business state. Rebuild
-			// the in-memory baseline from the canonical embedded rows instead.
+			// A profile predating the projection collection still needs the legacy
+			// source fallback. Once any projections exist, mixed rows are handled by
+			// the targeted canonical reads above instead of an all-or-nothing scan.
+			baseline = emptyJobStatusBaseline();
 			const profileValues = [key];
 			try { profileValues.unshift(new DocumentId(key)); } catch { /* string profile id */ }
 			const docs = await jobsCollection.find(
@@ -467,9 +520,24 @@ async function loadStatusIdBaseline(profileId) {
 			jobStatusBaselineCacheKey(key),
 			STATUS_BASELINE_CACHE_TTL_SEC,
 			serializeJobStatusBaseline(key, baseline),
-		);
+		).catch((error) => {
+			console.warn("[job-status-cache] baseline publication failed:", error?.message || error);
+		});
 	}
 	return baseline;
+}
+
+async function loadStatusIdBaseline(profileId) {
+	const key = String(profileId);
+	const cached = statusIdBaselineCache.get(key);
+	if (cached?.expiresAt > Date.now()) return cached.baseline;
+	if (cached) statusIdBaselineCache.delete(key);
+	const existing = statusIdBaselineLoads.get(key);
+	if (existing) return existing;
+	const pending = loadStatusIdBaselineUncached(key)
+		.finally(() => statusIdBaselineLoads.delete(key));
+	statusIdBaselineLoads.set(key, pending);
+	return pending;
 }
 
 /**
@@ -518,27 +586,23 @@ export async function readCanonicalProjectedJobStatusIds(profileId, state) {
 	return (await readCanonicalProjectedJobStatusIdsByState(profileId, [state])).get(state) || [];
 }
 
+/** Exact ordered status IDs grouped from one authoritative profile load. */
+export async function readMaterializedJobStatusIdsByState(profileId, states = JOB_STATUS_STATES) {
+	if (!profileId) return new Map();
+	const requested = [...new Set((Array.isArray(states) ? states : [states])
+		.filter((state) => JOB_STATUS_STATES.includes(state)))];
+	const baseline = await loadStatusIdBaseline(profileId);
+	return new Map(requested.map((state) => [state, [...(baseline[state] || [])]]));
+}
+
 /** Ordered status IDs without requiring a Firestore composite index. */
 export async function readMaterializedJobStatusIds(profileId, state) {
 	if (!profileId || (state !== "any" && !JOB_STATUS_STATES.includes(state))) return [];
 	const baseline = await loadStatusIdBaseline(profileId);
 	if (state === "any") {
-		if (!isRedisReady()) return [...new Set(JOB_STATUS_STATES.flatMap((item) => baseline[item] || []).map(String))];
-		const stateLists = await Promise.all(JOB_STATUS_STATES.map((item) => readMaterializedJobStatusIds(profileId, item)));
-		return [...new Set(stateLists.flat().map(String))];
+		return [...new Set(JOB_STATUS_STATES.flatMap((item) => baseline[item] || []).map(String))];
 	}
-	if (!isRedisReady()) return [...(baseline[state] || [])];
-	const [added, removed] = await Promise.all([
-		getRedis().sMembers(jobStatusAddedKey(profileId, state)),
-		getRedis().sMembers(jobStatusRemovedKey(profileId, state)),
-	]);
-	const removedIds = new Set(removed.map(String));
-	const addedIds = added.map(String);
-	const addedSet = new Set(addedIds);
-	return [
-		...addedIds,
-		...(baseline[state] || []).filter((jobId) => !removedIds.has(String(jobId)) && !addedSet.has(String(jobId))),
-	];
+	return [...(baseline[state] || [])];
 }
 
 function countDeltas(previousStatuses, statuses) {

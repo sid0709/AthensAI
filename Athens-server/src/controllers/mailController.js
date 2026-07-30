@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { resolveMailCredentials, findAccountByApplierName } from '../services/mail/credentials.js';
 import {
 	archiveMessage,
@@ -38,14 +39,44 @@ import {
 } from '../services/mail/mailSyncService.js';
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
 import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
-import { runMailAiLabelBatch } from '../services/mail/aiLabelService.js';
 import { runMailAiWrite } from '../services/mail/aiWriteService.js';
 import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import { getRedis, isRedisReady } from '../db/redis.js';
+import {
+	createBackgroundTask,
+	getBackgroundTask,
+} from '../services/backgroundTasks/taskStore.js';
+import {
+	BACKGROUND_TASK_STATUS,
+	BACKGROUND_TASK_TYPES,
+	TERMINAL_TASK_STATUSES,
+	publicTaskSnapshot,
+} from '../services/backgroundTasks/taskTypes.js';
 
 const OTP_EMAIL_LIMIT = 10;
 const mailLabelMemoryCache = new Map();
+
+function bindMailRequestAbort(req, res) {
+	const controller = new AbortController();
+	const abort = () => {
+		if (!controller.signal.aborted) {
+			controller.abort(Object.assign(new Error('Mail AI request disconnected'), { name: 'AbortError' }));
+		}
+	};
+	const close = () => {
+		if (!res.writableEnded) abort();
+	};
+	const cleanup = () => {
+		req.off('aborted', abort);
+		res.off('close', close);
+		res.off('finish', cleanup);
+	};
+	req.once('aborted', abort);
+	res.once('close', close);
+	res.once('finish', cleanup);
+	return { signal: controller.signal, cleanup };
+}
 
 function mailLabelCacheMs() {
 	return Math.max(10_000, Number(process.env.MAIL_LABEL_CACHE_MS || 5 * 60 * 1000));
@@ -324,6 +355,7 @@ export async function syncMail(req, res) {
  * Body: { applierName, companyName?, jobTitle? }.
  */
 export async function getVerificationCode(req, res) {
+	const requestAbort = bindMailRequestAbort(req, res);
 	try {
 		if (!mailMessagesCollection) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
@@ -399,6 +431,7 @@ export async function getVerificationCode(req, res) {
 			companyName,
 			jobTitle,
 			applierName,
+			signal: requestAbort.signal,
 		});
 
 		const debug = {
@@ -426,8 +459,11 @@ export async function getVerificationCode(req, res) {
 
 		return res.json({ success: true, code: null, link: null, scanned: emails.length, emails: scannedEmails, debug, via: 'imap' });
 	} catch (err) {
+		if (err?.name === 'AbortError' || requestAbort.signal.aborted) return;
 		console.error('POST /api/mail/verification-code error', err);
 		return res.status(500).json({ success: false, error: err.message });
+	} finally {
+		requestAbort.cleanup();
 	}
 }
 
@@ -755,19 +791,13 @@ export async function putMailLabelDefinitions(req, res) {
 	}
 }
 
-async function prepareMailAiLabelRun(req, res) {
+async function enqueueMailAiLabelTask(req, res) {
 	if (!mailMessagesCollection) {
 		res.status(503).json({ success: false, error: 'Database not ready' });
 		return null;
 	}
 	const applierName = await requireBetaApplier(req, res);
 	if (!applierName) return null;
-
-	const creds = await resolveMailCredentials(applierName);
-	if (!creds.ok) {
-		res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
-		return null;
-	}
 	const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
 	if (!rawMessages.length) {
 		res.status(400).json({ success: false, error: 'messages array required' });
@@ -778,31 +808,68 @@ async function prepareMailAiLabelRun(req, res) {
 		return null;
 	}
 
-	const acc = await findAccountByApplierName(applierName);
-	const profile = await decryptProfileApiKeys(acc?.autoBidProfile || {});
-	const storedDefinitions = await getUserLabelDefinitions(
-		applierName,
-		acc?.autoBidProfile?.mailLabelDefinitions,
-	);
-	const labelDefinitions = normalizeLabelDefinitions(req.body?.labelDefinitions || storedDefinitions);
-	const labelResult = await loadCachedGmailLabels(applierName, creds);
-	const allowedLabels = (labelResult.labels || []).map((label) => label.path || label.name).filter(Boolean);
-	if (!allowedLabels.length) {
-		res.status(400).json({ success: false, error: 'No custom Gmail labels found. Create labels first.' });
-		return null;
-	}
-	const messages = rawMessages
-		.map((message) => ({
-			uid: Number(message.uid),
-			mailbox: typeof message.mailbox === 'string' ? message.mailbox : undefined,
-		}))
-		.filter((message) => Number.isFinite(message.uid));
-	if (!messages.length) {
+	const inboxMailbox = folderToMailbox('inbox');
+	const messageIds = rawMessages.flatMap((message) => {
+		const uid = Number(message?.uid);
+		if (!Number.isFinite(uid)) return [];
+		const mailbox = typeof message?.mailbox === 'string' && message.mailbox.trim()
+			? message.mailbox.trim()
+			: inboxMailbox;
+		return [`${mailbox}\0${uid}`];
+	});
+	if (!messageIds.length) {
 		res.status(400).json({ success: false, error: 'No valid message UIDs provided' });
 		return null;
 	}
-	return {
+	if (req.body?.labelDefinitions && typeof req.body.labelDefinitions === 'object') {
+		await saveUserLabelDefinitions(applierName, req.body.labelDefinitions);
+	}
+	const authenticatedProfileId = String(req.authProfile?.profileId || '').trim();
+	const profileId = authenticatedProfileId || applierName.toLocaleLowerCase('en-US');
+	return createBackgroundTask({
+		requestId: String(req.body?.requestId || '').trim() || randomUUID(),
+		type: BACKGROUND_TASK_TYPES.MAIL_AI_LABEL,
+		profileId,
 		applierName,
+		ownerUid: String(req.auth?.uid || '').trim() || null,
+		payload: { messageIds },
+		progress: {
+			total: messageIds.length,
+			targetIds: messageIds,
+			operation: 'mail_ai_label',
+		},
+	});
+}
+
+/** Resolve credentials and stored configuration without putting secrets in a queue payload. */
+export async function prepareMailAiLabelTaskRun({ applierName, messageIds }) {
+	if (!mailMessagesCollection) throw new Error('Database not ready');
+	const name = String(applierName || '').trim();
+	if (!name) throw new Error('applierName is required');
+	const acc = await findAccountByApplierName(name);
+	if (!acc) throw new Error(`No account named "${name}".`);
+	if (!isBetaTier(acc.tier)) throw Object.assign(new Error('Beta workspace required.'), { status: 403 });
+	const creds = await resolveMailCredentials(name);
+	if (!creds.ok) throw new Error(creds.error);
+	const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
+	const labelDefinitions = normalizeLabelDefinitions(await getUserLabelDefinitions(
+		name,
+		acc.autoBidProfile?.mailLabelDefinitions,
+	));
+	const labelResult = await loadCachedGmailLabels(name, creds);
+	const allowedLabels = (labelResult.labels || []).map((label) => label.path || label.name).filter(Boolean);
+	if (!allowedLabels.length) throw new Error('No custom Gmail labels found. Create labels first.');
+	const inboxMailbox = folderToMailbox('inbox');
+	const messages = (Array.isArray(messageIds) ? messageIds : []).flatMap((raw) => {
+		const value = String(raw || '');
+		const separator = value.indexOf('\0');
+		const mailbox = separator >= 0 ? value.slice(0, separator) : inboxMailbox;
+		const uid = Number(separator >= 0 ? value.slice(separator + 1) : value);
+		return Number.isFinite(uid) ? [{ uid, mailbox: mailbox || inboxMailbox }] : [];
+	});
+	if (!messages.length) throw new Error('No valid message UIDs provided');
+	return {
+		applierName: name,
 		profile,
 		email: creds.email,
 		password: creds.password,
@@ -814,31 +881,28 @@ async function prepareMailAiLabelRun(req, res) {
 
 export async function postMailAiLabel(req, res) {
 	try {
-		const run = await prepareMailAiLabelRun(req, res);
-		if (!run) return;
-		const result = await runMailAiLabelBatch(run);
-
-		if (!result.ok) {
-			return res.status(400).json({ success: false, error: result.error });
-		}
-
-		return res.json({
+		const queued = await enqueueMailAiLabelTask(req, res);
+		if (!queued) return;
+		return res.status(queued.created ? 202 : 200).json({
 			success: true,
-			results: result.results,
-			usage: result.usage,
-			model: result.model,
-			processing: result.processing,
+			created: queued.created,
+			duplicate: queued.duplicate === true,
+			task: publicTaskSnapshot(queued.task),
 		});
 	} catch (err) {
 		console.error('POST /api/mail/ai-label error', err);
-		return res.status(500).json({ success: false, error: err.message });
+		return res.status(Number.isInteger(err?.status) ? err.status : 500).json({
+			success: false,
+			error: err.message,
+			code: err.code,
+		});
 	}
 }
 
 export async function postMailAiLabelStream(req, res) {
 	try {
-		const run = await prepareMailAiLabelRun(req, res);
-		if (!run) return;
+		const queued = await enqueueMailAiLabelTask(req, res);
+		if (!queued) return;
 
 		res.writeHead(200, {
 			'Content-Type': 'text/event-stream',
@@ -855,29 +919,54 @@ export async function postMailAiLabelStream(req, res) {
 			if (!res.writableEnded && !res.destroyed) res.write(': keep-alive\n\n');
 		}, 15_000);
 		heartbeat.unref?.();
-
-		let result;
+		let closed = false;
+		let lastProgress = '';
+		const sentItems = new Set();
+		const close = () => { closed = true; };
+		req.once('aborted', close);
+		res.once('close', close);
 		try {
-			result = await runMailAiLabelBatch({ ...run, onEvent: send });
+			send('task', { task: publicTaskSnapshot(queued.task) });
+			while (!closed) {
+				const task = await getBackgroundTask(queued.task.id);
+				if (!task) throw new Error('Background mail-label task expired');
+				const encodedProgress = JSON.stringify(task.progress || {});
+				if (encodedProgress !== lastProgress) {
+					lastProgress = encodedProgress;
+					send('progress', task.progress || {});
+					for (const [itemId, item] of Object.entries(task.progress?.items || {})) {
+						if (!item?.result || sentItems.has(itemId)) continue;
+						sentItems.add(itemId);
+						send('result', { result: item.result });
+					}
+				}
+				if (TERMINAL_TASK_STATUSES.has(task.status)) {
+					if (task.status === BACKGROUND_TASK_STATUS.COMPLETED
+						|| task.status === BACKGROUND_TASK_STATUS.COMPLETED_WITH_ERRORS) {
+						send('done', { success: true, ...(task.result || {}), task: publicTaskSnapshot(task) });
+					} else if (task.status === BACKGROUND_TASK_STATUS.CANCELLED) {
+						send('cancelled', { success: false, task: publicTaskSnapshot(task) });
+					} else {
+						send('error', { error: task.error || 'Mail AI labeling failed', task: publicTaskSnapshot(task) });
+					}
+					break;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 300));
+			}
 		} finally {
 			clearInterval(heartbeat);
-		}
-		if (!result.ok) {
-			send('error', { error: result.error });
-		} else {
-			send('done', {
-				success: true,
-				results: result.results,
-				usage: result.usage,
-				model: result.model,
-				processing: result.processing,
-			});
+			req.off('aborted', close);
+			res.off('close', close);
 		}
 		if (!res.writableEnded && !res.destroyed) res.end();
 	} catch (err) {
 		console.error('POST /api/mail/ai-label/stream error', err);
 		if (!res.headersSent) {
-			return res.status(500).json({ success: false, error: err.message });
+			return res.status(Number.isInteger(err?.status) ? err.status : 500).json({
+				success: false,
+				error: err.message,
+				code: err.code,
+			});
 		}
 		if (!res.writableEnded && !res.destroyed) {
 			res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
@@ -887,6 +976,7 @@ export async function postMailAiLabelStream(req, res) {
 }
 
 export async function postMailAiWrite(req, res) {
+	const requestAbort = bindMailRequestAbort(req, res);
 	try {
 		const applierName = await requireBetaApplier(req, res);
 		if (!applierName) return;
@@ -912,7 +1002,7 @@ export async function postMailAiWrite(req, res) {
 				replyContext: req.body?.replyContext,
 			},
 			profile,
-			{ applierName },
+			{ applierName, signal: requestAbort.signal },
 		);
 
 		if (!result.ok) {
@@ -921,7 +1011,10 @@ export async function postMailAiWrite(req, res) {
 
 		return res.json({ success: true, body: result.body, usage: result.usage });
 	} catch (err) {
+		if (err?.name === 'AbortError' || requestAbort.signal.aborted) return;
 		console.error('POST /api/mail/ai-write error', err);
 		return res.status(500).json({ success: false, error: err.message });
+	} finally {
+		requestAbort.cleanup();
 	}
 }

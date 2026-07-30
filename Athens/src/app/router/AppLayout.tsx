@@ -20,6 +20,7 @@ import {
 } from "../context/ResumeNavigationContext";
 import type { View } from "../types";
 import { defaultJobSearchHref } from "../features/job-search/lib/jobSearchUrlState";
+import { BackgroundTaskProvider } from "../context/BackgroundTaskContext";
 
 function AppProviders({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -66,8 +67,9 @@ function AppProviders({ children }: { children: ReactNode }) {
 
   return (
     <ApplierProvider>
-      <ProfileMatchSkillsProvider>
-        <AgentRunProvider>
+      <BackgroundTaskProvider>
+        <ProfileMatchSkillsProvider>
+          <AgentRunProvider>
           {/* Mounted here (not inside the Agents route) so its relay engines — and
               any auto-run in progress — survive navigating away from /agents. */}
           <AgentSessionsProvider>
@@ -77,8 +79,9 @@ function AppProviders({ children }: { children: ReactNode }) {
               </ResumeNavigationContext.Provider>
             </AppNavigationContext.Provider>
           </AgentSessionsProvider>
-        </AgentRunProvider>
-      </ProfileMatchSkillsProvider>
+          </AgentRunProvider>
+        </ProfileMatchSkillsProvider>
+      </BackgroundTaskProvider>
     </ApplierProvider>
   );
 }

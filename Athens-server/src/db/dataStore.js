@@ -31,6 +31,8 @@ let companyAliasesCollection;
 let jobIdentityRegistryCollection;
 let aiApiUsageCollection;
 let llmCallLogCollection;
+let backgroundTasksCollection;
+let backgroundTaskInputsCollection;
 
 function bindCollections(db) {
 	jobsCollection = db.collection('job_market');
@@ -61,6 +63,8 @@ function bindCollections(db) {
 	jobIdentityRegistryCollection = db.collection('job_identity_registry');
 	aiApiUsageCollection = db.collection(AI_API_USAGE_COLLECTION);
 	llmCallLogCollection = aiApiUsageCollection;
+	backgroundTasksCollection = db.collection('background_tasks');
+	backgroundTaskInputsCollection = db.collection('background_task_inputs');
 }
 
 export async function initDataStore() {
@@ -127,6 +131,8 @@ export async function closeDataStore() {
 	jobIdentityRegistryCollection = null;
 	aiApiUsageCollection = null;
 	llmCallLogCollection = null;
+	backgroundTasksCollection = null;
+	backgroundTaskInputsCollection = null;
 }
 
 export {
@@ -158,4 +164,6 @@ export {
 	jobIdentityRegistryCollection,
 	aiApiUsageCollection,
 	llmCallLogCollection,
+	backgroundTasksCollection,
+	backgroundTaskInputsCollection,
 };

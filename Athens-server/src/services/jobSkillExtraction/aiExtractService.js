@@ -10,6 +10,17 @@ import { recordJobSkillBatches } from '../skillDictionary/skillDictionaryStore.j
 import { indexJobRankingBatch } from '../matching/jobRankingIndex.js';
 import { decryptProfileApiKeys } from '../autoBidProfileSecrets.js';
 import { isBetaTier } from '../../lib/betaTier.js';
+import {
+  firestoreMutationLimiter,
+  indexMutationLimiter,
+} from '../backgroundTasks/resourceLimits.js';
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error('Skill extraction cancelled'), { name: 'AbortError' });
+}
 
 function numericEnv(name, fallback, minimum = 0) {
   const value = Number(process.env[name]);
@@ -183,8 +194,9 @@ function prepareExtractedJob(job, aiSkills, extractedAt) {
   };
 }
 
-async function persistExtractedJobs(rows) {
+async function persistExtractedJobs(rows, { signal } = {}) {
   if (!jobsCollection || !rows.length) return [];
+  throwIfAborted(signal);
   const extractedAt = new Date().toISOString();
   const prepared = rows.map(({ job, aiSkills }) => prepareExtractedJob(job, aiSkills, extractedAt));
   const writeOperations = prepared.map((row) => ({
@@ -206,19 +218,27 @@ async function persistExtractedJobs(rows) {
         },
       },
     }));
-  if (typeof jobsCollection.atomicBulkPatch === 'function') {
-    await jobsCollection.atomicBulkPatch(writeOperations);
-  } else {
-    await jobsCollection.bulkWrite(writeOperations, { ordered: false });
-  }
+  await firestoreMutationLimiter.run(async () => {
+    throwIfAborted(signal);
+    if (typeof jobsCollection.atomicBulkPatch === 'function') {
+      await jobsCollection.atomicBulkPatch(writeOperations);
+    } else {
+      await jobsCollection.bulkWrite(writeOperations, { ordered: false });
+    }
+  });
 
+  throwIfAborted(signal);
   await Promise.all([
     Promise.all(
-      prepared.map((row) => indexJobInRedis(row.jobId, row.skillsNormalized, row.skillTokens)),
+      prepared.map((row) => indexMutationLimiter.run(async () => {
+        throwIfAborted(signal);
+        return indexJobInRedis(row.jobId, row.skillsNormalized, row.skillTokens);
+      })),
     ).catch(() => {}),
-    recordJobSkillBatches(prepared.map((row) => row.aiSkills)).catch(() => {}),
-    indexJobRankingBatch(prepared.map((row) => row.rankingJob), { wait: true }).catch(() => {}),
+    indexMutationLimiter.run(() => recordJobSkillBatches(prepared.map((row) => row.aiSkills))).catch(() => {}),
+    indexMutationLimiter.run(() => indexJobRankingBatch(prepared.map((row) => row.rankingJob), { wait: true })).catch(() => {}),
   ]);
+  throwIfAborted(signal);
   return prepared;
 }
 
@@ -254,6 +274,7 @@ export async function resolveExtractionAuth(applierName) {
 export async function extractAndPersistJobBatch(jobs, auth, { signal } = {}) {
   const list = (Array.isArray(jobs) ? jobs : []).filter((job) => job?._id);
   if (!list.length) return { results: [], usage: null };
+  throwIfAborted(signal);
 
   const withText = list
     .map((job) => ({ job, id: String(job._id), posting: jobDescriptionText(job) }))
@@ -288,6 +309,7 @@ export async function extractAndPersistJobBatch(jobs, auth, { signal } = {}) {
       ],
     });
     usage = result?.usage || null;
+    throwIfAborted(signal);
     parsed = parseJobSkillsBatchJson(result?.content, withText.map((item) => item.id));
   }
 
@@ -295,7 +317,7 @@ export async function extractAndPersistJobBatch(jobs, auth, { signal } = {}) {
     job,
     aiSkills: parsed.get(String(job._id)) || titleFallbackSkills(job),
   }));
-  const prepared = await persistExtractedJobs(rows);
+  const prepared = await persistExtractedJobs(rows, { signal });
   return {
     results: prepared.map((row) => ({ jobId: row.jobId, skillCount: row.aiSkills.length })),
     usage,
@@ -317,7 +339,7 @@ export async function recordExtractionFailure(job, err, { catalog = 'market' } =
   if (!jobsCollection) return;
   const attempts = (Number(job.aiSkillAttempts) || 0) + 1;
   const terminal = attempts >= MAX_ATTEMPTS;
-  await jobsCollection.updateOne(
+  await firestoreMutationLimiter.run(() => jobsCollection.updateOne(
     { _id: job._id },
     {
       $set: {
@@ -327,7 +349,7 @@ export async function recordExtractionFailure(job, err, { catalog = 'market' } =
       },
       $unset: { aiSkillClaimedAt: '', aiSkillSessionId: '' },
     },
-  );
+  ));
   return { attempts, terminal };
 }
 

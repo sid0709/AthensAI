@@ -1,5 +1,6 @@
 import { API_BASE } from "@/lib/api-base";
 import { retryTransient } from "@/lib/transient-retry";
+import type { BackgroundTask } from "./backgroundTasks";
 import {
   runBatchedTitleReviewRemoval,
   type TitleReviewRemovalProgress,
@@ -11,7 +12,7 @@ export type { TitleReviewRemovalProgress, TitleReviewRemovalResult } from "./tit
 export type TitleReviewLabel = "APPROVED" | "REVIEW_REQUIRED";
 export type TitleReviewSession = {
   running: boolean;
-  status: "idle" | "running" | "completed" | "cancelled" | "failed";
+  status: "idle" | "running" | "stopping" | "completed" | "cancelled" | "failed";
   phase?: "preparing" | "processing" | "finalizing" | null;
   sessionId?: string;
   total?: number;
@@ -219,6 +220,7 @@ async function mutateTitleReviewJobs(
     removedCount?: number;
     removedIds?: string[];
     alreadyAbsentCount?: number;
+		task?: BackgroundTask;
   }>(response);
 }
 

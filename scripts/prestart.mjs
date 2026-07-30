@@ -21,6 +21,9 @@ const QUERY_TIME_RANKING_MODE = String(
 		|| (process.env.RECOMMENDATION_QUERY_TIME === 'true' ? 'on' : 'off'),
 ).trim().toLowerCase();
 const QUERY_TIME_RANKING_ENABLED = ['on', 'shadow'].includes(QUERY_TIME_RANKING_MODE);
+const RANKING_AUTO_BACKFILL = !['0', 'false', 'no', 'off'].includes(
+	String(process.env.RANKING_AUTO_BACKFILL ?? 'true').trim().toLowerCase(),
+);
 
 // Every TCP port this project owns: the four backends + the Vite UI dev server.
 const DEV_UI_PORT = Number(process.env.VITE_DEV_PORT || 9030);
@@ -30,6 +33,22 @@ function run(cmd, args, opts = {}) {
 	console.log(`> ${cmd} ${args.join(' ')}`);
 	const r = spawnSync(cmd, args, { stdio: 'inherit', cwd: ROOT, ...opts });
 	if (r.status !== 0) process.exit(r.status ?? 1);
+}
+
+async function rankingPointCount() {
+	const base = String(process.env.QDRANT_URL || 'http://127.0.0.1:6333').replace(/\/+$/, '');
+	const headers = { 'Content-Type': 'application/json' };
+	if (process.env.QDRANT_API_KEY) headers['api-key'] = process.env.QDRANT_API_KEY;
+	const response = await fetch(`${base}/collections/jobs_active/points/count`, {
+		method: 'POST',
+		headers,
+		body: JSON.stringify({ exact: true }),
+		signal: AbortSignal.timeout(5_000),
+	});
+	if (response.status === 404) return 0;
+	if (!response.ok) throw new Error(`Qdrant ranking count failed (${response.status})`);
+	const payload = await response.json();
+	return Math.max(0, Number(payload?.result?.count || 0));
 }
 
 printBanner('NextOffer Prestart', [
@@ -51,21 +70,50 @@ for (const name of ['FIREBASE_PROJECT_ID', 'FIREBASE_STORAGE_BUCKET', 'GOOGLE_AP
 }
 console.log(`[prestart] Firestore configured for project ${process.env.FIREBASE_PROJECT_ID}`);
 
-if (QUERY_TIME_RANKING_ENABLED) {
+{
 	if (process.env.SKIP_DOCKER === '1') {
 		const targets = [
 			{ host: '127.0.0.1', port: 6379, label: 'Redis' },
-			{ host: '127.0.0.1', port: 6333, label: 'Qdrant' },
+			...(QUERY_TIME_RANKING_ENABLED
+				? [{ host: '127.0.0.1', port: 6333, label: 'Qdrant' }]
+				: []),
 		];
 		for (const target of targets) {
 			if (!(await probe(target.host, target.port))) {
-				console.error(`[prestart] ${target.label} is required for query-time ranking but is not reachable on ${target.host}:${target.port}`);
+				console.error(`[prestart] ${target.label} is required but is not reachable on ${target.host}:${target.port}`);
 				process.exit(1);
 			}
 		}
 	} else {
-		console.log(`[prestart] Query-time ranking is ${QUERY_TIME_RANKING_MODE} — starting Redis + Qdrant`);
-		run('docker', ['compose', 'up', '-d', '--wait', 'redis', 'qdrant']);
+		const services = QUERY_TIME_RANKING_ENABLED ? ['redis', 'qdrant'] : ['redis'];
+		console.log(`[prestart] Starting ${services.join(' + ')} for durable background tasks${QUERY_TIME_RANKING_ENABLED ? ' and query-time ranking' : ''}`);
+		run('docker', ['compose', 'up', '-d', '--wait', ...services]);
+	}
+}
+
+// Local Docker volumes can be brand new while Firestore already contains the
+// authoritative job catalog. Production deployment performs this same guard;
+// without it Job Search starts successfully with a misleading empty snapshot.
+if (QUERY_TIME_RANKING_ENABLED) {
+	const indexed = await rankingPointCount();
+	if (indexed === 0 && RANKING_AUTO_BACKFILL) {
+		console.log('[prestart] Ranking index is empty; indexing authoritative jobs');
+		// Skill-dictionary maintenance is independent and can be slow on a shared
+		// Firestore project. The ranking bootstrap computes the same stable IDs.
+		run(
+			'npm',
+			['run', 'backfill-query-ranking', '-w', 'Athens-server', '--', '--skip-dictionary'],
+			{
+				env: {
+					...process.env,
+					RANKING_BACKFILL_BATCH: process.env.RANKING_BACKFILL_BATCH || '1000',
+				},
+			},
+		);
+	} else if (indexed === 0) {
+		console.warn('[prestart] Ranking index is empty and RANKING_AUTO_BACKFILL is disabled');
+	} else {
+		console.log(`[prestart] Ranking index ready (${indexed.toLocaleString()} jobs)`);
 	}
 }
 

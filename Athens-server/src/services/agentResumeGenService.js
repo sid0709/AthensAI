@@ -26,6 +26,8 @@ import {
   computeTitlePolicyFingerprint,
   sourceCareers,
 } from "./resumeCareerTitlePolicy.js";
+import { firestoreMutationLimiter } from "./backgroundTasks/resourceLimits.js";
+import { runWithoutBackgroundTaskContext } from "./backgroundTasks/taskContext.js";
 
 /** Render sections to PDF or read a still-valid on-disk draft (Node fs). */
 async function pdfPayloadForAgent(
@@ -35,7 +37,15 @@ async function pdfPayloadForAgent(
   applierName,
   jobId,
   titlePolicyFingerprint,
+  signal,
 ) {
+  const throwIfAborted = () => {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : Object.assign(new Error("PDF rendering cancelled"), { name: "AbortError" });
+  };
+  throwIfAborted();
   const identityFingerprint = identityContactFingerprint(identity);
   // Pass config + fingerprints so drafts rendered before templateId support
   // (or after the user changes Template/Theme/Layout / title policy / contact) are stale.
@@ -46,10 +56,12 @@ async function pdfPayloadForAgent(
     titlePolicyFingerprint,
     identityFingerprint,
   );
+  throwIfAborted();
   if (onDisk) {
     // Base64 encode off the main thread via the PDF worker pool.
     const { encodeBufferBase64 } = await import("./pdf/pdfRenderPool.js");
     const pdfBase64 = await encodeBufferBase64(onDisk.buffer);
+    throwIfAborted();
     return { pdfBase64, resumePdfPath: onDisk.draftPath };
   }
   if (!sections) throw new Error("No résumé sections to render as PDF");
@@ -62,6 +74,7 @@ async function pdfPayloadForAgent(
     titlePolicyFingerprint,
     identityFingerprint,
     asBase64: true,
+    signal,
   });
   if (!pdfBase64 && !buffer?.length) throw new Error("PDF render returned empty buffer");
   return {
@@ -258,7 +271,7 @@ function configSnapshot(body) {
 
 async function saveGenerationRun(doc) {
   if (!resumeGenerationsCollection) return null;
-  const result = await resumeGenerationsCollection.insertOne(doc);
+	const result = await firestoreMutationLimiter.run(() => resumeGenerationsCollection.insertOne(doc));
   return result.insertedId;
 }
 
@@ -440,12 +453,19 @@ export async function findAgentJobResumeStatuses(applierName, jobIds) {
  * Delete generated résumés for the given agent jobs (library docs, generation
  * runs, and on-disk draft PDFs). Only touches artifacts linked to these job ids.
  */
-export async function deleteAgentJobResumes(applierName, jobIds, { onProgress } = {}) {
+export async function deleteAgentJobResumes(applierName, jobIds, { onProgress, signal } = {}) {
   const name = cleanString(applierName);
   const ids = [...new Set((jobIds || []).map(cleanString).filter(Boolean))];
   if (!name || !ids.length) {
     return { deletedJobIds: [], failedJobIds: [], generationsDeleted: 0, resumesDeleted: 0 };
   }
+	const throwIfAborted = () => {
+		if (!signal?.aborted) return;
+		throw signal.reason instanceof Error
+			? signal.reason
+			: Object.assign(new Error('Résumé removal cancelled'), { name: 'AbortError' });
+	};
+	throwIfAborted();
 
   let generationsDeleted = 0;
   let resumesDeleted = 0;
@@ -477,6 +497,7 @@ export async function deleteAgentJobResumes(applierName, jobIds, { onProgress } 
         { projection: { _id: 1, generate_parent_job_id: 1 } },
       )
       .toArray();
+	throwIfAborted();
     for (const gen of generations) {
       const jobId = cleanString(gen.generate_parent_job_id);
       if (generationsByJob.has(jobId)) generationsByJob.get(jobId).push(gen);
@@ -485,24 +506,27 @@ export async function deleteAgentJobResumes(applierName, jobIds, { onProgress } 
 
   emitProgress("start");
   const limiter = createLimiter({ concurrency: Math.min(8, ids.length) });
-  await Promise.all(
+  const removals = await Promise.allSettled(
     ids.map((jobId) =>
       limiter.run(async () => {
+		throwIfAborted();
         active += 1;
         emitProgress("removing");
         let failed = false;
         try {
           for (const gen of generationsByJob.get(jobId) || []) {
+			throwIfAborted();
             try {
               // Rebuilding the aggregated profile after every résumé made bulk
               // removal increasingly expensive. Delete the per-résumé graph now
               // and rebuild the aggregate once after the whole batch.
-              const result = await deleteGenerationRun(String(gen._id), name, {
+							const result = await firestoreMutationLimiter.run(() => deleteGenerationRun(String(gen._id), name, {
                 rebuildProfile: false,
-              });
+							}));
               generationsDeleted += 1;
               if (result?.resumeDeleted) resumesDeleted += 1;
             } catch (err) {
+			  if (signal?.aborted || err?.name === "AbortError") throw err;
               if (!String(err?.message || "").toLowerCase().includes("not found")) {
                 failed = true;
                 console.warn("deleteAgentJobResumes generation:", err?.message || err);
@@ -519,10 +543,12 @@ export async function deleteAgentJobResumes(applierName, jobIds, { onProgress } 
               )
               .toArray();
             for (const resume of resumes) {
+			  throwIfAborted();
               try {
-                await deleteUserResume(String(resume._id), name, { rebuildProfile: false });
+								await firestoreMutationLimiter.run(() => deleteUserResume(String(resume._id), name, { rebuildProfile: false }));
                 resumesDeleted += 1;
               } catch (err) {
+				if (signal?.aborted || err?.name === "AbortError") throw err;
                 if (!String(err?.message || "").toLowerCase().includes("not found")) {
                   failed = true;
                   console.warn("deleteAgentJobResumes library:", err?.message || err);
@@ -532,14 +558,18 @@ export async function deleteAgentJobResumes(applierName, jobIds, { onProgress } 
           }
 
           try {
+			throwIfAborted();
             await deleteAgentDraftPdf(name, jobId);
           } catch (err) {
+			if (signal?.aborted || err?.name === "AbortError") throw err;
             failed = true;
             console.warn("deleteAgentJobResumes draft:", err?.message || err);
           }
         } finally {
-          if (failed) failedJobIds.add(jobId);
-          else deletedJobIds.add(jobId);
+		  if (!signal?.aborted) {
+			if (failed) failedJobIds.add(jobId);
+			else deletedJobIds.add(jobId);
+		  }
           active = Math.max(0, active - 1);
           done += 1;
           emitProgress("removing");
@@ -550,8 +580,13 @@ export async function deleteAgentJobResumes(applierName, jobIds, { onProgress } 
 
   if (resumesDeleted > 0) {
     emitProgress("finalizing");
-    await rebuildProfileGraph(name);
+	// Finish the aggregate graph after any per-résumé delete committed, even if
+	// cancellation arrived mid-batch. No new résumé item is started here.
+	await runWithoutBackgroundTaskContext(() => rebuildProfileGraph(name));
   }
+	const rejected = removals.find((result) => result.status === "rejected");
+	if (rejected?.status === "rejected") throw rejected.reason;
+	throwIfAborted();
   emitProgress("done");
 
   return {
@@ -563,7 +598,14 @@ export async function deleteAgentJobResumes(applierName, jobIds, { onProgress } 
 }
 
 /** Read or render the per-job draft PDF (stable path under .local/agent-resumes/by-job). */
-export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
+export async function resolveAgentJobDraftPdf({ applierName, jobId, signal }) {
+  const throwIfAborted = () => {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : Object.assign(new Error("PDF rendering cancelled"), { name: "AbortError" });
+  };
+  throwIfAborted();
   const name = cleanString(applierName);
   const parentId = cleanString(jobId);
   if (!name || !parentId) return null;
@@ -571,6 +613,7 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
   // Always load current Editor config first — preview must match My Resumes template.
   const savedConfig = await loadGeneratorConfig(name);
   const profile = await findProfile(name);
+  throwIfAborted();
   if (!profile) return null;
   const identity = identityFromProfile(profile);
 
@@ -578,6 +621,7 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
   // Fingerprint only gates LLM reuse in ensureAgentJobResume — otherwise View
   // résumé 404s for pre-policy / drifted generations that still have sections.
   const stored = await findExistingAgentJobResume(name, parentId);
+  throwIfAborted();
   if (!stored?.generation?.sections) return null;
 
   const jd = cleanString(stored.generation.jobDescription);
@@ -604,6 +648,7 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
     titlePolicyFingerprint,
     identityFingerprint,
   );
+  throwIfAborted();
   if (onDisk) return { buffer: onDisk.buffer, draftPath: onDisk.draftPath };
 
   const { buffer, savedPath } = await renderAgentResumePdf({
@@ -614,6 +659,7 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
     config: savedConfig,
     titlePolicyFingerprint,
     identityFingerprint,
+    signal,
   });
   if (!buffer?.length) return null;
   return { buffer, draftPath: savedPath };
@@ -666,7 +712,15 @@ export async function ensureAgentJobResume({
   forceRegenerate = false,
   deferPdf = false,
   onStep,
+  signal,
 }) {
+	const throwIfAborted = () => {
+		if (!signal?.aborted) return;
+		throw signal.reason instanceof Error
+			? signal.reason
+			: Object.assign(new Error('Resume generation cancelled'), { name: 'AbortError' });
+	};
+	throwIfAborted();
   const name = cleanString(applierName);
   const parentId = cleanString(jobId);
   const jd = cleanString(jobDescription);
@@ -675,13 +729,16 @@ export async function ensureAgentJobResume({
   if (!jd) throw new Error("jobDescription is required");
 
   const profile = await findProfile(name);
+	throwIfAborted();
   if (!profile) throw new Error(`No autoBidProfile found for ${name}`);
   const identity = identityFromProfile(profile);
   const savedConfig = await loadGeneratorConfig(name);
+	throwIfAborted();
 
   // Skills already stored on the job let us skip the AI "fetch skills" step for
   // structured jobs (steps flagged skipForStructuredJobs are dropped below).
   const jobSkills = await findJobSkills(parentId);
+	throwIfAborted();
 
   const body = buildGenerationRequestFromSavedConfig({
     applierName: name,
@@ -695,6 +752,7 @@ export async function ensureAgentJobResume({
   // Resolve the saved preference before reuse so toggling dynamic titles
   // invalidates stale generated résumés and draft PDFs.
   const prep = await prepareGeneration(body);
+	throwIfAborted();
   if (!prep.ok) {
     const err = new Error(prep.error);
     err.status = prep.status;
@@ -718,17 +776,18 @@ export async function ensureAgentJobResume({
   if (existing?.resume) {
     if (existing.recoveredJobLink) {
       try {
-        await resumeGenerationsCollection?.updateOne(
+				await firestoreMutationLimiter.run(() => resumeGenerationsCollection?.updateOne(
           { _id: existing.generation._id },
           { $set: { generate_parent_job_id: parentId } },
-        );
+				));
         if (existing.resume._id) {
-          await userResumesCollection?.updateOne(
+					await firestoreMutationLimiter.run(() => userResumesCollection?.updateOne(
             { _id: existing.resume._id },
             { $set: { generateParentJobId: parentId } },
-          );
+					));
         }
       } catch (err) {
+		if (signal?.aborted || err?.name === "AbortError") throw err;
         // Reuse remains valid even if the compatibility backfill is delayed.
         console.warn("[agent-resume-gen] recovered job-link backfill failed:", err.message);
       }
@@ -756,6 +815,7 @@ export async function ensureAgentJobResume({
       name,
       parentId,
       titlePolicyFingerprint,
+      signal,
     );
     return { ...base, ...pdf };
   }
@@ -770,6 +830,7 @@ export async function ensureAgentJobResume({
   const generated = await resumeGenLimiter.run(
     name,
     async () => {
+		throwIfAborted();
       const result = await runGeneration(
         {
           ...prep,
@@ -779,9 +840,11 @@ export async function ensureAgentJobResume({
           jobDescription: jd,
           jobSkills,
           reasoningEffort: body.reasoningEffort,
+		  signal,
         },
         onStep,
       );
+		throwIfAborted();
 
       // Skill proficiency comes from the scoring logic downstream — no LLM analysis pass.
       const skillProfile = [];
@@ -791,6 +854,7 @@ export async function ensureAgentJobResume({
       let generationId = null;
       let sync = null;
       try {
+		throwIfAborted();
         const identitySyncedAt = cleanString(profile.updatedAt) || new Date().toISOString();
         generationId = await saveGenerationRun({
           applierName: name,
@@ -819,7 +883,7 @@ export async function ensureAgentJobResume({
           finishedAt: new Date(),
         });
 
-        sync = await syncGeneratedResumeAfterRun({
+			sync = await firestoreMutationLimiter.run(() => syncGeneratedResumeAfterRun({
           generationId,
           ownerName: name,
           sections: result.sections,
@@ -835,8 +899,9 @@ export async function ensureAgentJobResume({
           isBeta: prep.isBeta,
           dynamicCareerTitles: prep.dynamicCareerTitles,
           identitySyncedAt,
-        });
+			}));
       } catch (err) {
+		if (signal?.aborted || err?.name === "AbortError") throw err;
         console.warn("[agent-resume-gen] persistence/enrichment failed (non-fatal):", err.message);
       }
 
@@ -849,6 +914,7 @@ export async function ensureAgentJobResume({
       };
     },
     {
+      signal,
       onQueued: async () => {
         if (onStep) onStep({ phase: "queued", name: "Waiting for generation slot" });
       },
@@ -871,6 +937,7 @@ export async function ensureAgentJobResume({
   };
 
   if (deferPdf) return base;
+	throwIfAborted();
 
   if (onStep) onStep({ phase: "rendering-pdf", name: "Rendering PDF" });
   const pdf = await pdfPayloadForAgent(
@@ -880,6 +947,7 @@ export async function ensureAgentJobResume({
     name,
     parentId,
     titlePolicyFingerprint,
+    signal,
   );
   return { ...base, ...pdf };
 }

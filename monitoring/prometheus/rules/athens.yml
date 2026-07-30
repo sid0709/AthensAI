@@ -137,6 +137,14 @@ groups:
         annotations:
           summary: Cluster-wide application metrics are unavailable
           description: Prometheus cannot scrape the private Athens metrics listener on port 9101.
+      - alert: AthensBackgroundWorkerMetricsDown
+        expr: up{job="athens-background-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Athens background worker metrics are unavailable
+          description: Prometheus cannot scrape the dedicated worker metrics listener on port 9102.
       - alert: AthensRedisExporterDown
         expr: up{job="redis"} == 0
         for: 2m

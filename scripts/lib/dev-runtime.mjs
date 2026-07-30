@@ -14,6 +14,7 @@ export const ROOT_DIR = ROOT;
 
 export const backendServices = [
 	{ name: 'athens-server', label: 'Athens-server', cmd: 'npm', args: ['run', 'start', '-w', 'Athens-server'], cwd: ROOT },
+	{ name: 'background-worker', label: 'Background worker', cmd: 'npm', args: ['run', 'worker:background', '-w', 'Athens-server'], cwd: ROOT, env: { BACKGROUND_TASK_WORKER: 'true' } },
 	{ name: 'avalon-relay', label: 'Avalon relay', cmd: 'npm', args: ['run', 'start', '-w', '@avalon/backend'], cwd: ROOT },
 	{ name: 'ai-bff', label: 'AI BFF', cmd: 'npm', args: ['run', 'dev', '-w', 'ai-bff'], cwd: ROOT },
 ];
@@ -81,7 +82,7 @@ export function startService(svc, onLine, onExit) {
 	const child = spawn(svc.cmd, svc.args, {
 		cwd: svc.cwd,
 		stdio: ['inherit', 'pipe', 'pipe'],
-		env: { ...process.env, FORCE_COLOR: '1', FORCE_STYLED_LOGS: '1' },
+		env: { ...process.env, ...svc.env, FORCE_COLOR: '1', FORCE_STYLED_LOGS: '1' },
 	});
 
 	wireChildOutput(child, svc.name, onLine);

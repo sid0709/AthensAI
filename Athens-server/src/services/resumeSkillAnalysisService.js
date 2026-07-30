@@ -1,6 +1,7 @@
 import { DocumentId } from "@nextoffer/shared/document-id";
 import { userResumesCollection, accountInfoCollection } from "../db/dataStore.js";
 import { chatCompletion, resolveDefaultModel } from "./llm/llmService.js";
+import { firestoreMutationLimiter } from "./backgroundTasks/resourceLimits.js";
 import { RESUME_SKILL_ANALYSIS_PROMPT } from "../config/resumeSkillAnalysisPrompt.js";
 import {
   buildUserGraphFromResume,
@@ -12,6 +13,17 @@ import { parseSkillProfileJson } from "./resumeSkillProfile.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
 import { decryptAccountDoc } from "./autoBidProfileSecrets.js";
 import { updateAccountInfoById } from "./accountInfoStore.js";
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error("Resume analysis cancelled"), { name: "AbortError" });
+}
+
+function isAbortError(error, signal) {
+  return signal?.aborted || error?.name === "AbortError";
+}
 
 async function findAccount(applierNameRaw) {
   const name = String(applierNameRaw ?? "").trim();
@@ -118,7 +130,8 @@ async function syncResumeAnalysisCatalogStackFromAnalysis(ownerName, stackName) 
   return { ok: true, stack, updatedAt };
 }
 
-async function extractSkillsWithLlm(extractedText, profile, ownerName) {
+async function extractSkillsWithLlm(extractedText, profile, ownerName, signal) {
+  throwIfAborted(signal);
   const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
@@ -135,6 +148,7 @@ async function extractSkillsWithLlm(extractedText, profile, ownerName) {
     model,
     feature: "resume-skill-analysis",
 		applierName: ownerName,
+    signal,
     messages: [
       { role: "system", content: RESUME_SKILL_ANALYSIS_PROMPT },
       { role: "user", content: `Resume text:\n\n${truncated}` },
@@ -169,8 +183,10 @@ async function loadResumeDoc(resumeId, ownerName) {
 /**
  * Analyze resume skills with LLM, build per-resume graph, merge into profile knowledge.
  */
-export async function analyzeResumeSkills(resumeId, ownerName, { force = false } = {}) {
+export async function analyzeResumeSkills(resumeId, ownerName, { force = false, signal } = {}) {
+  throwIfAborted(signal);
   const doc = await loadResumeDoc(resumeId, ownerName);
+  throwIfAborted(signal);
   const resumeIdStr = String(doc._id);
 
   if (doc.source === "generated" && doc.analyzed && Array.isArray(doc.skillProfile) && doc.skillProfile.length && !force) {
@@ -180,7 +196,9 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
       resumeName: doc.fileName,
       skills: doc.skillProfile,
     });
+    throwIfAborted(signal);
     const profileGraph = await rebuildProfileGraph(ownerName);
+    throwIfAborted(signal);
     void syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack).catch(() => {});
     return {
       alreadyAnalyzed: true,
@@ -199,7 +217,9 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
       resumeName: doc.fileName,
       skills: doc.skillProfile,
     });
+    throwIfAborted(signal);
     const profileGraph = await rebuildProfileGraph(ownerName);
+    throwIfAborted(signal);
     void syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack).catch(() => {});
     return {
       alreadyAnalyzed: true,
@@ -211,6 +231,7 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
   }
 
   const acc = await decryptAccountDoc(await findAccount(ownerName));
+  throwIfAborted(signal);
   if (!acc) throw new Error("Account not found");
 
   const profile = acc.autoBidProfile || {};
@@ -220,22 +241,24 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
   let model;
 
   try {
-		const llmResult = await extractSkillsWithLlm(doc.extractedText, profile, ownerName);
+		const llmResult = await extractSkillsWithLlm(doc.extractedText, profile, ownerName, signal);
     skillProfile = llmResult.skillProfile;
     usage = llmResult.usage;
     provider = llmResult.provider;
     model = llmResult.model;
   } catch (err) {
+    if (isAbortError(err, signal)) throw err;
     const now = new Date().toISOString();
-    await userResumesCollection.updateOne(
+		await firestoreMutationLimiter.run(() => userResumesCollection.updateOne(
       { _id: doc._id },
       { $set: { analysisError: err.message, updatedAt: now } },
-    );
+		));
     throw err;
   }
 
+  throwIfAborted(signal);
   const now = new Date().toISOString();
-  await userResumesCollection.updateOne(
+	await firestoreMutationLimiter.run(() => userResumesCollection.updateOne(
     { _id: doc._id },
     {
       $set: {
@@ -246,8 +269,9 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
         updatedAt: now,
       },
     },
-  );
+	));
 
+  throwIfAborted(signal);
   const graph = await buildUserGraphFromResume({
     applierName: ownerName,
     resumeId: resumeIdStr,
@@ -255,11 +279,15 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
     skills: skillProfile,
   });
 
-  await mergeSkillsIntoPersonalInfo(skillProfile.map((s) => s.name));
+  throwIfAborted(signal);
+	await firestoreMutationLimiter.run(() => mergeSkillsIntoPersonalInfo(skillProfile.map((s) => s.name)));
+  throwIfAborted(signal);
   const profileGraph = await rebuildProfileGraph(ownerName);
 
+  throwIfAborted(signal);
   invalidateRecommendationCache(ownerName);
-  await syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack);
+	await firestoreMutationLimiter.run(() => syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack));
+  throwIfAborted(signal);
 
   return {
     alreadyAnalyzed: false,

@@ -17,6 +17,27 @@ import { createJobRecord } from "./jobController.js";
 
 const AI_BFF_URL = (process.env.AI_BFF_URL || "http://127.0.0.1:3920").replace(/\/$/, "");
 
+function bindRequestAbort(req, res) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(Object.assign(new Error("Agent AI request disconnected"), { name: "AbortError" }));
+    }
+  };
+  const close = () => {
+    if (!res.writableEnded) abort();
+  };
+  req.once("aborted", abort);
+  res.once("close", close);
+  return {
+    signal: controller.signal,
+    cleanup() {
+      req.off("aborted", abort);
+      res.off("close", close);
+    },
+  };
+}
+
 function withTimeout(promise, timeoutMs, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -263,35 +284,46 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
 
   const requestId = String(req.headers["x-request-id"] || req.body?.requestId || randomUUID());
 
-  const upstream = await fetch(`${AI_BFF_URL}/v1/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(await getServiceAuthHeaders(AI_BFF_URL)),
-      "x-request-id": requestId,
-      ...(runId ? { "x-run-id": String(runId) } : {}),
-      "x-applier-name": applierName,
-      ...(jobId ? { "x-job-id": String(jobId) } : {}),
-      ...(feature ? { "x-feature": String(feature) } : { "x-feature": "avalon-agent-chat" }),
-    },
-    body: JSON.stringify({
-      model,
-      system,
-      messages,
-      temperature,
-      maxTokens,
-      responseSchema,
-      requestId,
-      runId,
-      applierName,
-      jobId,
-      feature: feature || "avalon-agent-chat",
-      apiKeys: {
-        ...(openaiApiKey ? { openai: openaiApiKey } : {}),
-        ...(deepseekApiKey ? { deepseek: deepseekApiKey } : {}),
+  const requestAbort = bindRequestAbort(req, res);
+  let upstream;
+  try {
+    upstream = await fetch(`${AI_BFF_URL}/v1/chat`, {
+      method: "POST",
+      signal: requestAbort.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(await getServiceAuthHeaders(AI_BFF_URL)),
+        "x-request-id": requestId,
+        ...(runId ? { "x-run-id": String(runId) } : {}),
+        "x-applier-name": applierName,
+        ...(jobId ? { "x-job-id": String(jobId) } : {}),
+        ...(feature ? { "x-feature": String(feature) } : { "x-feature": "avalon-agent-chat" }),
       },
-    }),
-  });
+      body: JSON.stringify({
+        model,
+        system,
+        messages,
+        temperature,
+        maxTokens,
+        responseSchema,
+        requestId,
+        runId,
+        applierName,
+        jobId,
+        feature: feature || "avalon-agent-chat",
+        workloadClass: "interactive",
+        apiKeys: {
+          ...(openaiApiKey ? { openai: openaiApiKey } : {}),
+          ...(deepseekApiKey ? { deepseek: deepseekApiKey } : {}),
+        },
+      }),
+    });
+  } catch (error) {
+    if (requestAbort.signal.aborted) return;
+    throw error;
+  } finally {
+    requestAbort.cleanup();
+  }
 
   const data = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {

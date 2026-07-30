@@ -1,143 +1,98 @@
-/**
- * Background session to embed jobs missing vector index entries.
- * Triggered from Job Search "Start embedding" button.
- */
-import { randomUUID } from 'crypto';
+/** Durable worker runner for jobs missing vector index entries. */
 import { jobsCollection } from '../../db/dataStore.js';
+import { mapPool } from '../../utils/concurrency.js';
 import { initQdrantCollections, isQdrantReady } from '../vectorStore/qdrantClient.js';
 import { upsertJobEmbedding } from './embeddingIngest.js';
 
-let activeSession = null;
-let cancelRequested = false;
+const INDEX_CONCURRENCY = Math.max(
+	1,
+	Math.min(8, Number.parseInt(String(process.env.BACKGROUND_INDEX_CONCURRENCY || ''), 10) || 8),
+);
+const MAX_ITEMS = Math.max(
+	1,
+	Number.parseInt(String(process.env.BACKGROUND_TASK_MAX_ITEMS || ''), 10) || 2_000,
+);
 
 /** Jobs that were never successfully embedded (Qdrant down on ingest, etc.). */
 export const MISSING_EMBEDDING_QUERY = { embedding: { $exists: false } };
+
+function throwIfAborted(signal) {
+	if (!signal?.aborted) return;
+	throw signal.reason instanceof Error
+		? signal.reason
+		: Object.assign(new Error('Job embedding cancelled'), { name: 'AbortError' });
+}
 
 export async function countMissingJobEmbeddings() {
 	if (!jobsCollection) return 0;
 	return jobsCollection.countDocuments(MISSING_EMBEDDING_QUERY);
 }
 
-async function runSessionLoop(session) {
-	const cursor = jobsCollection.find(MISSING_EMBEDDING_QUERY, {
-		projection: { _id: 1, title: 1 },
-	});
-
-	try {
-		for await (const job of cursor) {
-			if (cancelRequested) break;
-			if (session.limit != null && session.processed >= session.limit) break;
-
-			const jobId = String(job._id);
-			try {
-				const result = await upsertJobEmbedding(jobId);
-				if (result.ok) {
-					session.embedded += 1;
-					session.lastJob = { id: jobId, title: job.title || '' };
-				} else {
-					session.skipped += 1;
-					session.lastSkipReason = result.reason || 'unknown';
-				}
-			} catch (err) {
-				console.error('[job-embedding] failed', jobId, err.message);
-				session.failed += 1;
-			}
-			session.processed += 1;
-			session.remaining = Math.max(0, session.total - session.processed);
-		}
-	} finally {
-		session.running = false;
-		session.finishedAt = new Date().toISOString();
-		session.status = cancelRequested ? 'cancelled' : 'completed';
-		session.remaining = await countMissingJobEmbeddings();
-	}
-}
-
-export function getJobEmbeddingSessionStatus() {
-	if (!activeSession) {
-		return { running: false, status: 'idle' };
-	}
-	return {
-		running: activeSession.running,
-		status: activeSession.status,
-		sessionId: activeSession.id,
-		total: activeSession.total,
-		processed: activeSession.processed,
-		embedded: activeSession.embedded,
-		skipped: activeSession.skipped,
-		failed: activeSession.failed,
-		remaining: activeSession.remaining,
-		lastJob: activeSession.lastJob ?? null,
-		lastSkipReason: activeSession.lastSkipReason ?? null,
-		startedAt: activeSession.startedAt,
-		finishedAt: activeSession.finishedAt ?? null,
-		error: activeSession.error ?? null,
-	};
-}
-
-export async function getJobEmbeddingStatus() {
-	const missing = await countMissingJobEmbeddings();
-	const session = getJobEmbeddingSessionStatus();
-	return { missing, ...session };
-}
-
-export async function startJobEmbeddingSession({ limit = null } = {}) {
+export async function runJobEmbeddingTask({ limit = null, signal, onProgress } = {}) {
 	if (!jobsCollection) throw new Error('Database not ready');
-
-	if (activeSession?.running) {
-		throw new Error('Job embedding session already running');
-	}
-
 	if (!isQdrantReady()) {
-		const ok = await initQdrantCollections();
-		if (!ok) {
-			throw new Error('Qdrant is not reachable. Start it with `npm run qdrant:start` in Athens-server.');
-		}
+		const ready = await initQdrantCollections();
+		if (!ready) throw new Error('Qdrant is not reachable');
 	}
-
+	throwIfAborted(signal);
 	const missing = await countMissingJobEmbeddings();
-	if (missing === 0) {
-		return { sessionId: null, missing: 0, started: false, message: 'All jobs are already embedded' };
-	}
-
-	cancelRequested = false;
-	activeSession = {
-		id: randomUUID(),
-		running: true,
-		status: 'running',
-		total: limit != null ? Math.min(missing, Number(limit)) : missing,
+	const requested = limit == null
+		? Math.min(missing, MAX_ITEMS)
+		: Math.min(missing, MAX_ITEMS, Math.max(1, Math.floor(Number(limit) || 1)));
+	const jobs = requested > 0
+		? await jobsCollection.find(MISSING_EMBEDDING_QUERY, {
+			projection: { _id: 1, title: 1 },
+		}).limit(requested).toArray()
+		: [];
+	const session = {
+		total: jobs.length,
 		processed: 0,
 		embedded: 0,
 		skipped: 0,
 		failed: 0,
-		remaining: missing,
-		limit: limit != null ? Number(limit) : null,
+		cancelled: 0,
+		active: 0,
+		remaining: jobs.length,
 		lastJob: null,
 		lastSkipReason: null,
-		startedAt: new Date().toISOString(),
-		finishedAt: null,
+		phase: 'embedding',
 	};
-
-	void runSessionLoop(activeSession).catch((err) => {
-		console.error('[job-embedding] session error', err);
-		if (activeSession) {
-			activeSession.running = false;
-			activeSession.status = 'failed';
-			activeSession.error = err.message;
+	const report = () => onProgress?.({ ...session });
+	await report();
+	await mapPool(jobs, INDEX_CONCURRENCY, async (job) => {
+		if (signal?.aborted) {
+			session.cancelled += 1;
+			session.processed += 1;
+			session.remaining = Math.max(0, session.total - session.processed);
+			await report();
+			return;
+		}
+		session.active += 1;
+		await report();
+		try {
+			const result = await upsertJobEmbedding(String(job._id), { signal });
+			throwIfAborted(signal);
+			if (result.ok) {
+				session.embedded += 1;
+				session.lastJob = { id: String(job._id), title: job.title || '' };
+			} else {
+				session.skipped += 1;
+				session.lastSkipReason = result.reason || 'unknown';
+			}
+		} catch (error) {
+			if (signal?.aborted || error?.name === 'AbortError') session.cancelled += 1;
+			else {
+				session.failed += 1;
+				session.lastSkipReason = error?.message || String(error);
+			}
+		} finally {
+			session.active = Math.max(0, session.active - 1);
+			session.processed += 1;
+			session.remaining = Math.max(0, session.total - session.processed);
+			await report();
 		}
 	});
-
-	return {
-		sessionId: activeSession.id,
-		missing,
-		started: true,
-	};
-}
-
-export function stopJobEmbeddingSession() {
-	if (!activeSession?.running) {
-		return { stopped: false, message: 'No active session' };
-	}
-	cancelRequested = true;
-	return { stopped: true, sessionId: activeSession.id };
+	session.phase = signal?.aborted ? 'cancelled' : 'completed';
+	await report();
+	return session;
 }

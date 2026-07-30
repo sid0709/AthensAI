@@ -14,12 +14,14 @@ import { normalizeApiKey } from './api-keys.js';
 import type { AiProvider } from './providers/base.js';
 import { createProviders, resolveProvider } from './providers/registry.js';
 import { getRecordAiApiUsage } from './db.js';
+import { admissionLane, GatewayAdmissionPool } from './admission.js';
 
 const log = createLogger('ai-bff');
 
 export class AiKit {
   private readonly config: AiKitConfig;
   private readonly providers: AiProvider[];
+  private readonly admission = new GatewayAdmissionPool();
 
   constructor(config: AiKitConfig = {}) {
     this.config = config;
@@ -41,7 +43,7 @@ export class AiKit {
     return this.config.defaultModel ?? 'gpt-4o-mini';
   }
 
-  async chat(request: ChatRequest): Promise<ChatResponse> {
+  async chat(request: ChatRequest, { signal }: { signal?: AbortSignal } = {}): Promise<ChatResponse> {
     const requestedModel = request.model ?? this.config.defaultModel ?? 'gpt-4o-mini';
     const requestId = request.requestId || randomUUID();
     const openaiKey =
@@ -133,20 +135,21 @@ export class AiKit {
 
     let result;
     try {
-      result = await provider.chat({
-        model: requestedModel,
-        messages,
-        temperature: request.temperature,
-        maxTokens: request.maxTokens,
-        reasoningEffort: request.reasoningEffort,
-        topP: request.topP,
-        stop: request.stop,
-        tools: request.tools,
-        toolChoice: request.toolChoice,
-        responseSchema: request.responseSchema,
-        jsonMode: request.jsonMode,
-        stream: request.stream,
-      });
+      result = await this.admission.run(admissionLane(request), signal, () => provider.chat({
+          model: requestedModel,
+          messages,
+          temperature: request.temperature,
+          maxTokens: request.maxTokens,
+          reasoningEffort: request.reasoningEffort,
+          topP: request.topP,
+          stop: request.stop,
+          tools: request.tools,
+          toolChoice: request.toolChoice,
+          responseSchema: request.responseSchema,
+          jsonMode: request.jsonMode,
+          stream: request.stream,
+          signal,
+        }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const httpStatus =
@@ -220,6 +223,10 @@ export class AiKit {
       usage,
       raw: result.raw,
     };
+  }
+
+  getAdmissionSnapshot() {
+    return this.admission.snapshot();
   }
 }
 

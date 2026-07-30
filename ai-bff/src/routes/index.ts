@@ -17,6 +17,7 @@ export function createRoutes(kit: AiKit) {
         ok: true,
         providers: kit.getConfiguredProviders(),
         defaultModel: kit.getDefaultModel(),
+        admission: kit.getAdmissionSnapshot(),
       });
     }),
   );
@@ -36,8 +37,18 @@ export function createRoutes(kit: AiKit) {
       if (withKeys.stream) {
         throw new HttpError(501, 'Streaming is not implemented yet. Set stream: false.');
       }
-      const result = await kit.chat(withKeys);
-      res.json(result);
+      const requestAbort = requestAbortController(req, res);
+      try {
+        const result = await kit.chat(withKeys, { signal: requestAbort.signal });
+        if (!res.writableEnded && !res.destroyed) res.json(result);
+      } catch (error) {
+        // The browser is already gone, so an abort is the successful outcome.
+        // Do not forward it as a synthetic 500 after the socket has closed.
+        if (requestAbort.signal.aborted) return;
+        throw error;
+      } finally {
+        requestAbort.cleanup();
+      }
     }),
   );
 
@@ -68,6 +79,7 @@ export function createRoutes(kit: AiKit) {
         applierName: openAiBody.applierName,
         jobId: openAiBody.jobId,
         feature: openAiBody.feature,
+        workloadClass: openAiBody.workloadClass,
       }));
       const withKeys = applyBearerApiKeys(req, mapped);
 
@@ -75,8 +87,16 @@ export function createRoutes(kit: AiKit) {
         throw new HttpError(501, 'Streaming is not implemented yet. Set stream: false.');
       }
 
-      const result = await kit.chat(withKeys);
-      res.json(toOpenAiCompletion(result));
+      const requestAbort = requestAbortController(req, res);
+      try {
+        const result = await kit.chat(withKeys, { signal: requestAbort.signal });
+        if (!res.writableEnded && !res.destroyed) res.json(toOpenAiCompletion(result));
+      } catch (error) {
+        if (requestAbort.signal.aborted) return;
+        throw error;
+      } finally {
+        requestAbort.cleanup();
+      }
     }),
   );
 
@@ -103,6 +123,30 @@ export function createRoutes(kit: AiKit) {
   );
 
   return router;
+}
+
+function requestAbortController(
+  req: import('express').Request,
+  res: import('express').Response,
+) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(Object.assign(new Error('AI gateway client disconnected'), { name: 'AbortError' }));
+    }
+  };
+  const close = () => {
+    if (!res.writableEnded) abort();
+  };
+  req.once('aborted', abort);
+  res.once('close', close);
+  return {
+    signal: controller.signal,
+    cleanup() {
+      req.removeListener('aborted', abort);
+      res.removeListener('close', close);
+    },
+  };
 }
 
 function mergeCorrelation(req: import('express').Request, body: import('../types.js').ChatRequest) {

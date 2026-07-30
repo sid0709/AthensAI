@@ -13,8 +13,10 @@ export function GeneratorPage() {
     view,
     setView,
     generating,
+    stopping,
     validation,
     handleGenerate,
+    handleCancelGeneration,
     applyRun,
   } = vm;
 
@@ -27,12 +29,16 @@ export function GeneratorPage() {
         actions={
           <button
             type="button"
-            onClick={handleGenerate}
-            disabled={generating || validation.length > 0 || !applier?.name}
-            className="inline-flex items-center gap-2 px-4 h-[42px] rounded-xl bg-neutral-900 text-white text-sm hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white dark:text-neutral-900 dark:hover:bg-white/90"
+            onClick={() => void (generating ? handleCancelGeneration() : handleGenerate())}
+            disabled={stopping || (!generating && (validation.length > 0 || !applier?.name))}
+            className={`inline-flex items-center gap-2 px-4 h-[42px] rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+              generating
+                ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                : "bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-white/90"
+            }`}
           >
             <Wand2 className="w-4 h-4" />
-            {generating ? "Generating…" : "Generate"}
+            {stopping ? "Stopping…" : generating ? "Stop" : "Generate"}
           </button>
         }
       />

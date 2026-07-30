@@ -132,12 +132,19 @@ export function ResumeEditorTab({
         </div>
         <button
           type="button"
-          onClick={handleGenerate}
-          disabled={editor.generating || !draft.jobDescription.trim()}
-          className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 disabled:opacity-50 min-h-10"
+          onClick={() => {
+            if (editor.generating) void editor.cancelGeneration();
+            else void handleGenerate();
+          }}
+          disabled={editor.stopping || (!editor.generating && !draft.jobDescription.trim())}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 min-h-10 ${
+            editor.generating
+              ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+              : "bg-primary text-white hover:bg-primary/90"
+          }`}
         >
           {editor.generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-          Generate
+          {editor.stopping ? "Stopping…" : editor.generating ? "Stop" : "Generate"}
         </button>
       </div>
 

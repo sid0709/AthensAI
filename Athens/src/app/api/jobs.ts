@@ -1,5 +1,6 @@
 import { API_BASE } from "@/lib/api-base";
 import { streamSSE } from "../features/resumes/lib/sse";
+import type { BackgroundTask } from "./backgroundTasks";
 
 export type JobApiStatus = "Applied" | "Scheduled" | "Declined";
 
@@ -71,7 +72,7 @@ export async function removeJobs(
 export async function removeOtherCompanyJobs(
   companyId: string,
   keepJobId: string,
-): Promise<{ success?: boolean; deletedCount?: number; deletedIds?: string[]; error?: string }> {
+): Promise<{ success?: boolean; deletedCount?: number; deletedIds?: string[]; task?: BackgroundTask; error?: string }> {
   const res = await fetch(`${API_BASE}/jobs/company/remove-others`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

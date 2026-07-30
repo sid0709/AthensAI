@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api-base";
+import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 import type { SkillAnalysis, SkillAnalysisStatus, SkillAnalysisUsage } from "../../../types";
 
 type AnalyzeOptions = {
@@ -23,14 +24,9 @@ export function useJobSkillAnalysis(backendId?: string, initial?: SkillAnalysis)
   const [analysis, setAnalysis] = useState<SkillAnalysis>(initial || { status: "pending" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stopPoll = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const handledTasks = useRef(new Set<string>());
+  const { tasks, startTask } = useBackgroundTasks();
 
   const refresh = useCallback(async () => {
     if (!backendId) return;
@@ -39,26 +35,33 @@ export function useJobSkillAnalysis(backendId?: string, initial?: SkillAnalysis)
     return next;
   }, [backendId]);
 
-  const startPoll = useCallback(() => {
-    stopPoll();
-    pollRef.current = setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 2500);
-  }, [refresh, stopPoll]);
-
   useEffect(() => {
     if (initial) setAnalysis(initial);
   }, [initial]);
 
-  useEffect(() => {
-    return () => stopPoll();
-  }, [stopPoll]);
+  const task = useMemo(() => {
+    const exact = taskId ? tasks.find((candidate) => candidate.id === taskId) : null;
+    if (exact) return exact;
+    return tasks.find((candidate) => candidate.type === "job_analysis"
+      && Array.isArray(candidate.progress.targetIds)
+      && (candidate.progress.targetIds as string[]).includes(String(backendId || ""))) || null;
+  }, [backendId, taskId, tasks]);
 
   useEffect(() => {
-    const s = analysis.status;
-    if (s === "queued" || s === "analyzing") startPoll();
-    else stopPoll();
-  }, [analysis.status, startPoll, stopPoll]);
+    if (!task) return;
+    if (task.status === "queued" || task.status === "running" || task.status === "cancelling") {
+      setAnalysis((current) => ({ ...current, status: task.status === "queued" ? "queued" : "analyzing" }));
+      return;
+    }
+    if (handledTasks.current.has(task.id)) return;
+    handledTasks.current.add(task.id);
+    if (task.status === "failed" || task.status === "completed_with_errors") {
+      setAnalysis((current) => ({ ...current, status: "failed", error: task.error || "Analyze failed" }));
+      setError(task.error || "Analyze failed");
+      return;
+    }
+    if (task.status === "completed") void refresh().catch(() => undefined);
+  }, [refresh, task]);
 
   const analyze = useCallback(
     async (options: AnalyzeOptions = {}) => {
@@ -69,33 +72,20 @@ export function useJobSkillAnalysis(backendId?: string, initial?: SkillAnalysis)
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(backendId)}/analyze`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ applierName: options.applierName }),
-        });
-        const data = (await res.json()) as {
-          success?: boolean;
-          status?: SkillAnalysisStatus;
-          error?: string;
-        };
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || "Analyze request failed");
-        }
+        const nextTask = await startTask("job_analysis", { recordIds: [backendId] });
+        setTaskId(nextTask.id);
         setAnalysis((prev) => ({
           ...prev,
-          status: data.status || "queued",
+          status: "queued",
           queuedAt: new Date().toISOString(),
         }));
-        startPoll();
-        await refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Analyze failed");
       } finally {
         setLoading(false);
       }
     },
-    [backendId, refresh, startPoll],
+    [backendId, startTask],
   );
 
   return { analysis, loading, error, analyze, refresh };

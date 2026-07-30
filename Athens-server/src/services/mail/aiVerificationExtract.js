@@ -92,7 +92,7 @@ function mergeUsage(a, b) {
 /**
  * @param {Array<{from?:string, subject?:string, snippet?:string, body?:string, date?:any}>} emails newest-first
  * @param {object} profile applier autoBidProfile (LLM key)
- * @param {{ companyName?: string, jobTitle?: string }} [context]
+ * @param {{ companyName?: string, jobTitle?: string, applierName?: string, signal?: AbortSignal }} [context]
  * @returns {Promise<{found:boolean, code:string|null, link:string|null, emailIndex:number|null, usage?:any}>}
  */
 export async function aiExtractVerification(emails, profile, context = {}) {
@@ -108,6 +108,7 @@ export async function aiExtractVerification(emails, profile, context = {}) {
 	const companyName = String(context.companyName || "").trim();
 	const jobTitle = String(context.jobTitle || "").trim();
 	const applierName = String(context.applierName || "").trim() || undefined;
+	const signal = context.signal;
 
   // Caller already passes emails newest-first; keep that order so `emailIndex`
   // maps straight back to the caller's array (no internal re-sort / index drift).
@@ -152,6 +153,7 @@ export async function aiExtractVerification(emails, profile, context = {}) {
         { role: "user", content: selectUser },
       ],
       timeoutMs: 45000,
+			signal,
     });
     selectUsage = usage;
     const parsed = parseJsonLoose(content) || {};
@@ -164,6 +166,9 @@ export async function aiExtractVerification(emails, profile, context = {}) {
     );
     console.log(`[otp-extract] AI selected index: ${selectedIndex}`);
   } catch (err) {
+		if (err?.name === "AbortError" || signal?.aborted) {
+			throw signal?.reason instanceof Error ? signal.reason : err;
+		}
     console.warn("[otp-extract] select pass failed:", err?.message || err);
     return { found: false, code: null, link: null, emailIndex: null, usage: selectUsage, note: `select AI error: ${err?.message || err}` };
   }
@@ -209,6 +214,7 @@ export async function aiExtractVerification(emails, profile, context = {}) {
         { role: "user", content: extractUser },
       ],
       timeoutMs: 45000,
+			signal,
     });
     extractUsage = usage;
     const parsed = parseJsonLoose(content) || {};
@@ -230,6 +236,9 @@ export async function aiExtractVerification(emails, profile, context = {}) {
         : `selected #${selectedIndex} "${String(chosen.subject || "").slice(0, 60)}" but no code/link in its content`,
     };
   } catch (err) {
+		if (err?.name === "AbortError" || signal?.aborted) {
+			throw signal?.reason instanceof Error ? signal.reason : err;
+		}
     console.warn("[otp-extract] extract pass failed:", err?.message || err);
     return {
       found: false,

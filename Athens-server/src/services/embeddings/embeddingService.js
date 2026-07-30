@@ -9,6 +9,7 @@ import {
 import { accountInfoCollection } from '../../db/dataStore.js';
 import { getProvider } from '../llm/llmService.js';
 import { decryptProfileApiKeys } from '../autoBidProfileSecrets.js';
+import { assertBackgroundTaskActive } from '../backgroundTasks/taskContext.js';
 
 /** Ollama model — top MTEB English retrieval model in the Ollama library. */
 export const DEFAULT_OLLAMA_EMBED_MODEL = 'mxbai-embed-large';
@@ -77,12 +78,19 @@ export async function loadOpenaiApiKey(applierName) {
 	return String((await decryptProfileApiKeys(acc?.autoBidProfile || {}))?.openaiApiKey || '').trim();
 }
 
-async function callOllamaEmbeddings({ model, input }) {
+function embeddingSignal(signal, timeoutMs = 60_000) {
+	const timeout = AbortSignal.timeout(timeoutMs);
+	if (!signal) return timeout;
+	return typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout]) : signal;
+}
+
+async function callOllamaEmbeddings({ model, input, signal }) {
 	const baseUrl = getOllamaUrl();
 	const res = await fetch(`${baseUrl}/api/embed`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ model, input }),
+		signal: embeddingSignal(signal),
 	});
 
 	if (!res.ok) {
@@ -101,7 +109,7 @@ async function callOllamaEmbeddings({ model, input }) {
 	return vector;
 }
 
-async function callOpenAiEmbeddings({ apiKey, model, dimensions, text }) {
+async function callOpenAiEmbeddings({ apiKey, model, dimensions, text, signal }) {
 	const provider = getProvider('openai');
 	const body = {
 		model,
@@ -116,6 +124,7 @@ async function callOpenAiEmbeddings({ apiKey, model, dimensions, text }) {
 			'Content-Type': 'application/json',
 		},
 		body: JSON.stringify(body),
+		signal: embeddingSignal(signal),
 	});
 
 	if (!res.ok) {
@@ -136,7 +145,8 @@ async function callOpenAiEmbeddings({ apiKey, model, dimensions, text }) {
  * @param {object} options
  * @param {'document'|'query'} [options.role] — `query` for resume-side (search); `document` for jobs
  */
-export async function embedText(text, { applierName, role = 'document' } = {}) {
+export async function embedText(text, { applierName, role = 'document', signal } = {}) {
+	if (signal?.aborted) throw signal.reason || Object.assign(new Error('Embedding cancelled'), { name: 'AbortError' });
 	const { provider, model, dimensions } = getEmbeddingConfig();
 	const prepared = prepareEmbeddingInput(text, { role, model });
 	if (!prepared) throw new Error('Cannot embed empty text');
@@ -148,14 +158,15 @@ export async function embedText(text, { applierName, role = 'document' } = {}) {
 	if (cached) return { vector: cached, textHash: hashEmbeddingText(input), cached: true, model };
 
 	let vector;
+	await assertBackgroundTaskActive(signal);
 	if (provider === 'ollama') {
-		vector = await callOllamaEmbeddings({ model, input });
+		vector = await callOllamaEmbeddings({ model, input, signal });
 	} else if (provider === 'openai') {
 		const apiKey = await loadOpenaiApiKey(applierName);
 		if (!apiKey) {
 			throw new Error('No OpenAI API key configured (autoBidProfile.openaiApiKey)');
 		}
-		vector = await callOpenAiEmbeddings({ apiKey, model, dimensions, text: input });
+		vector = await callOpenAiEmbeddings({ apiKey, model, dimensions, text: input, signal });
 	} else {
 		throw new Error(`Unsupported embedding provider: ${provider}`);
 	}

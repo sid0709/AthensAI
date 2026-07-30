@@ -3,7 +3,7 @@ import { JobSource, JobSourceTitles } from '../config/jobSources.js';
 import { accountInfoCollection } from '../db/dataStore.js';
 import { getRedis, isRedisReady } from '../db/redis.js';
 import { extractScoreFilters, resolveApplierContext } from './jobListQuery.js';
-import { readMaterializedJobStatusIds } from './jobStatusProjectionService.js';
+import { readMaterializedJobStatusIdsByState } from './jobStatusProjectionService.js';
 import { computeCoverageScore } from './matching/coverageScore.js';
 import { getCatalogRevision } from './matching/jobRankingIndex.js';
 import { getProfileRankingVersion } from './matching/matchScoreStore.js';
@@ -285,14 +285,14 @@ async function loadProfileStatuses(applierName, account) {
   const profileId = account?.id ? String(account.id) : null;
   if (!profileId) return { profileId: null, version: '0', byJobId: new Map(), lastCheckedAt: Date.now() };
   const existing = profileStatuses.get(profileId);
-  const [version, ...stateIds] = await Promise.all([
+  const [version, stateIds] = await Promise.all([
     getStatusRevision(profileId),
-    ...STATUS_STATES.map((state) => readMaterializedJobStatusIds(profileId, state)),
+    readMaterializedJobStatusIdsByState(profileId, STATUS_STATES),
   ]);
   const byJobId = new Map();
-  STATUS_STATES.forEach((state, index) => {
-    for (const jobId of stateIds[index]) byJobId.set(String(jobId), state);
-  });
+  for (const state of STATUS_STATES) {
+    for (const jobId of stateIds.get(state) || []) byJobId.set(String(jobId), state);
+  }
   const pendingByJobId = existing?.pendingByJobId || new Map();
   for (const [jobId, pendingState] of pendingByJobId) {
     const materializedState = byJobId.get(jobId) || 'posted';

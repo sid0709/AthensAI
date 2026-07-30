@@ -14,6 +14,8 @@ import {
 	markTitleReviewReadModelChanged,
 	scheduleTitleReviewReadModelRebuild,
 } from './titleReviewReadModel.js';
+import { firestoreMutationLimiter } from '../backgroundTasks/resourceLimits.js';
+import { runWithoutBackgroundTaskContext } from '../backgroundTasks/taskContext.js';
 
 const configuredConcurrency = Number(process.env.JOB_TITLE_REVIEW_CONCURRENCY || 10);
 export const TITLE_REVIEW_CONCURRENCY = Number.isFinite(configuredConcurrency)
@@ -36,9 +38,6 @@ export const TITLE_REVIEW_LIST_PROJECTION = {
 	titleReview: 1,
 };
 
-let activeSession = null;
-let cancelRequested = false;
-const inflight = new Set();
 let countsCache = null;
 const COUNTS_CACHE_MS = 2_000;
 
@@ -83,7 +82,7 @@ async function recoverStaleLeases() {
 			'titleReview.lease.claimedAt': { $lt: cutoff },
 		}, { projection: { _id: 1 } }).limit(1_000).toArray();
 		if (!stale.length) break;
-		const result = await jobsCollection.bulkWrite(stale.map((job) => ({
+		const result = await firestoreMutationLimiter.run(() => jobsCollection.bulkWrite(stale.map((job) => ({
 			updateOne: {
 				filter: { _id: job._id, 'titleReview.processingState': 'scanning' },
 				update: {
@@ -91,7 +90,7 @@ async function recoverStaleLeases() {
 					$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
 				},
 			},
-		})), { ordered: false });
+		})), { ordered: false }));
 		recovered += result.modifiedCount || 0;
 		if (stale.length < 1_000) break;
 	}
@@ -102,35 +101,76 @@ async function recoverStaleLeases() {
 	return recovered;
 }
 
-async function claimBatch(session, limit) {
+async function releaseSessionLeases(sessionId) {
+	if (!jobsCollection || !sessionId) return 0;
+	const leased = await jobsCollection.find({
+		'titleReview.processingState': 'scanning',
+		'titleReview.lease.sessionId': sessionId,
+	}, { projection: { _id: 1 } }).limit(2_000).toArray();
+	if (!leased.length) return 0;
+	const result = await firestoreMutationLimiter.run(() => jobsCollection.bulkWrite(leased.map((job) => ({
+		updateOne: {
+			filter: { _id: job._id, 'titleReview.lease.sessionId': sessionId },
+			update: {
+				$set: { 'titleReview.processingState': 'pending' },
+				$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+			},
+		},
+	})), { ordered: false }));
+	return result.modifiedCount || 0;
+}
+
+export async function releaseTitleReviewTaskLeases(taskId) {
+	const released = await releaseSessionLeases(String(taskId || ''));
+	if (released) {
+		invalidateTitleReviewCounts();
+		await markTitleReviewReadModelChanged({ rebuild: false });
+		scheduleTitleReviewReadModelRebuild({ delayMs: 0 });
+	}
+	return released;
+}
+
+function throwIfCancelled(signal) {
+	if (!signal?.aborted) return;
+	throw signal.reason instanceof Error
+		? signal.reason
+		: Object.assign(new Error('Title review cancelled'), { name: 'AbortError' });
+}
+
+async function claimBatch(session, limit, signal) {
 	if (!jobsCollection || limit <= 0) return [];
 	const claimedJobs = [];
 	while (claimedJobs.length < limit && session.queue.length) {
+		throwIfCancelled(signal);
 		const candidates = session.queue.splice(0, limit - claimedJobs.length);
 		const claimedAt = new Date().toISOString();
-		const claimedIds = await jobsCollection.atomicClaimMany(
-			candidates.map((job) => job._id),
-			pendingTitleReviewQuery(),
-			{
-				$set: {
-					'titleReview.processingState': 'scanning',
-					'titleReview.lease.sessionId': session.id,
-					'titleReview.lease.claimedAt': claimedAt,
+		const claimedIds = await firestoreMutationLimiter.run(async () => {
+			throwIfCancelled(signal);
+			return jobsCollection.atomicClaimMany(
+				candidates.map((job) => job._id),
+				pendingTitleReviewQuery(),
+				{
+					$set: {
+						'titleReview.processingState': 'scanning',
+						'titleReview.lease.sessionId': session.id,
+						'titleReview.lease.claimedAt': claimedAt,
+					},
 				},
-			},
-		);
+			);
+		});
 		const claimed = new Set(claimedIds.map(String));
 		claimedJobs.push(...candidates.filter((job) => claimed.has(String(job._id))));
 	}
 	return claimedJobs;
 }
 
-async function loadPendingQueue() {
+async function loadPendingQueue(signal) {
 	const queue = [];
 	for await (const job of jobsCollection.findPaged(pendingTitleReviewQuery(), {
 		projection: CLAIM_PROJECTION,
 		pageSize: 1_000,
 	})) {
+		throwIfCancelled(signal);
 		queue.push(job);
 	}
 	queue.sort((left, right) => {
@@ -143,20 +183,53 @@ async function loadPendingQueue() {
 
 async function releaseBatch(jobs, sessionId) {
 	if (!jobsCollection || !jobs?.length) return;
-	await jobsCollection.bulkWrite(jobs.map((job) => ({
-		updateOne: {
-			filter: { _id: job._id, 'titleReview.lease.sessionId': sessionId },
-			update: {
-				$set: { 'titleReview.processingState': 'pending' },
-				$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+	await runWithoutBackgroundTaskContext(() => firestoreMutationLimiter.run(() =>
+		jobsCollection.bulkWrite(jobs.map((job) => ({
+			updateOne: {
+				filter: { _id: job._id, 'titleReview.lease.sessionId': sessionId },
+				update: {
+					$set: { 'titleReview.processingState': 'pending' },
+					$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+				},
 			},
-		},
-	})), { ordered: false }).catch(() => undefined);
+		})), { ordered: false }))).catch(() => undefined);
 }
 
-async function processBatch(session, auth, jobs) {
+function cancellationRequested(signal) {
+	return signal?.aborted === true;
+}
+
+function taskSessionSnapshot(session) {
+	return {
+		running: session.running,
+		status: session.status,
+		phase: session.phase,
+		sessionId: session.id,
+		total: session.total,
+		processed: session.processed,
+		approved: session.approved,
+		reviewRequired: session.reviewRequired,
+		failed: session.failed,
+		remaining: session.remaining,
+		lastBatch: session.lastBatch,
+		startedAt: session.startedAt,
+		finishedAt: session.finishedAt,
+		error: session.error,
+		concurrency: TITLE_REVIEW_CONCURRENCY,
+		batchSize: TITLE_REVIEW_BATCH_SIZE,
+		provider: session.provider,
+		model: session.model,
+		inputTokens: session.inputTokens,
+		outputTokens: session.outputTokens,
+		costUsd: session.costUsd,
+	};
+}
+
+async function processBatch(session, auth, jobs, { signal, onProgress } = {}) {
 	const controller = new AbortController();
-	inflight.add(controller);
+	const abortFromParent = () => controller.abort(signal?.reason);
+	if (signal?.aborted) abortFromParent();
+	else signal?.addEventListener('abort', abortFromParent, { once: true });
 	try {
 		const result = await classifyAndPersistTitleReviewBatch(jobs, auth, {
 			sessionId: session.id,
@@ -176,7 +249,7 @@ async function processBatch(session, auth, jobs) {
 			if (typeof result.usage.cost === 'number') session.costUsd += result.usage.cost;
 		}
 	} catch (error) {
-		if (cancelRequested || controller.signal.aborted) {
+		if (cancellationRequested(signal) || controller.signal.aborted) {
 			await releaseBatch(jobs, session.id);
 			return;
 		}
@@ -184,10 +257,11 @@ async function processBatch(session, auth, jobs) {
 		session.failed += jobs.length;
 		console.error(`[job-title-review] batch failed (${jobs.length}): ${error.message}`);
 	} finally {
-		inflight.delete(controller);
+		signal?.removeEventListener('abort', abortFromParent);
 		session.processed += jobs.length;
 		session.remaining = Math.max(0, session.total - session.processed);
 		invalidateTitleReviewCounts();
+		await onProgress?.(taskSessionSnapshot(session));
 	}
 }
 
@@ -197,7 +271,7 @@ async function processBatch(session, auth, jobs) {
  * slow or unavailable cache can never hold the progress UI in "finalizing".
  */
 export function finalizeTitleReviewSession(session, {
-	cancelled = cancelRequested,
+	cancelled = false,
 	scheduleRebuild = scheduleTitleReviewReadModelRebuild,
 	now = () => new Date().toISOString(),
 } = {}) {
@@ -211,15 +285,18 @@ export function finalizeTitleReviewSession(session, {
 	return session;
 }
 
-async function runSession(session) {
+async function runSession(session, { signal, onProgress } = {}) {
 	let auth;
 	try {
+		throwIfCancelled(signal);
 		auth = await resolveExtractionAuth(session.applierName);
+		throwIfCancelled(signal);
 	} catch (error) {
 		session.running = false;
-		session.status = 'failed';
+		session.status = cancellationRequested(signal) ? 'cancelled' : 'failed';
 		session.phase = null;
-		session.error = error.message;
+		session.error = cancellationRequested(signal) ? null : error.message;
+		await onProgress?.(taskSessionSnapshot(session));
 		return;
 	}
 
@@ -228,29 +305,33 @@ async function runSession(session) {
 
 	try {
 		session.phase = 'preparing';
-		session.queue = await loadPendingQueue();
+		await onProgress?.(taskSessionSnapshot(session));
+		session.queue = await loadPendingQueue(signal);
+		if (session.limit != null) session.queue = session.queue.slice(0, session.limit);
 		session.total = session.queue.length;
 		session.remaining = session.total;
 		session.phase = 'processing';
+		await onProgress?.(taskSessionSnapshot(session));
 		console.log(
 			`[job-title-review] starting — ${auth.providerId}/${auth.model}, ` +
 			`${TITLE_REVIEW_CONCURRENCY}× batches of ≤${TITLE_REVIEW_BATCH_SIZE}, ${session.total} job(s)`,
 		);
-		while (!cancelRequested) {
+		while (!cancellationRequested(signal)) {
 			const batches = [];
 			for (let index = 0; index < TITLE_REVIEW_CONCURRENCY; index += 1) {
 				const remaining = session.total - session.processed - batches.reduce((sum, batch) => sum + batch.length, 0);
 				if (remaining <= 0) break;
-				const batch = await claimBatch(session, Math.min(TITLE_REVIEW_BATCH_SIZE, remaining));
+				const batch = await claimBatch(session, Math.min(TITLE_REVIEW_BATCH_SIZE, remaining), signal);
 				if (!batch.length) break;
 				batches.push(batch);
 			}
 			if (!batches.length) break;
-			await Promise.all(batches.map((batch) => processBatch(session, auth, batch)));
-			await markTitleReviewReadModelChanged({ rebuild: false });
+			await Promise.all(batches.map((batch) => processBatch(session, auth, batch, { signal, onProgress })));
+			if (!cancellationRequested(signal)) await markTitleReviewReadModelChanged({ rebuild: false });
 		}
 	} finally {
-		finalizeTitleReviewSession(session);
+		finalizeTitleReviewSession(session, { cancelled: cancellationRequested(signal) });
+		await onProgress?.(taskSessionSnapshot(session));
 		console.log(
 			`[job-title-review] ${session.status} — ${session.approved} approved, ` +
 			`${session.reviewRequired} review required, ${session.failed} failed · ` +
@@ -259,58 +340,35 @@ async function runSession(session) {
 	}
 }
 
-function sessionSnapshot() {
-	if (!activeSession) return { running: false, status: 'idle' };
-	return {
-		running: activeSession.running,
-		status: activeSession.status,
-		phase: activeSession.phase,
-		sessionId: activeSession.id,
-		total: activeSession.total,
-		processed: activeSession.processed,
-		approved: activeSession.approved,
-		reviewRequired: activeSession.reviewRequired,
-		failed: activeSession.failed,
-		remaining: activeSession.remaining,
-		lastBatch: activeSession.lastBatch,
-		startedAt: activeSession.startedAt,
-		finishedAt: activeSession.finishedAt,
-		error: activeSession.error,
-		concurrency: TITLE_REVIEW_CONCURRENCY,
-		batchSize: TITLE_REVIEW_BATCH_SIZE,
-		provider: activeSession.provider,
-		model: activeSession.model,
-	};
-}
-
-export async function getTitleReviewSessionStatus({ preferredCounts = null } = {}) {
-	return { ...sessionSnapshot(), ...(preferredCounts || await getTitleReviewCounts()) };
-}
-
-export async function startTitleReviewSession({ applierName } = {}) {
+/** Worker-owned runner. It has no dependency on HTTP-process-local session state. */
+export async function runTitleReviewTask({
+	taskId,
+	applierName,
+	limit = null,
+	signal,
+	onProgress,
+} = {}) {
 	if (!jobsCollection) throw new Error('Database not ready');
-	if (activeSession?.running) throw new Error('Title review session already running');
 	const name = String(applierName || '').trim();
 	if (!name) throw new Error('applierName is required.');
-	await resolveExtractionAuth(name);
+	const id = String(taskId || randomUUID());
+	const parsedLimit = limit == null ? null : Math.max(1, Math.floor(Number(limit) || 1));
+	await releaseSessionLeases(id);
 	await recoverStaleLeases();
 	invalidateTitleReviewCounts();
-	const { pending } = await getTitleReviewCounts();
-	if (!pending) return { started: false, pending: 0, message: 'No titles are waiting for review.' };
-
-	cancelRequested = false;
-	activeSession = {
-		id: randomUUID(),
+	const session = {
+		id,
 		applierName: name,
 		queue: [],
+		limit: parsedLimit,
 		running: true,
 		status: 'running',
-		total: pending,
+		total: parsedLimit,
 		processed: 0,
 		approved: 0,
 		reviewRequired: 0,
 		failed: 0,
-		remaining: pending,
+		remaining: parsedLimit,
 		phase: 'preparing',
 		lastBatch: null,
 		provider: null,
@@ -322,20 +380,7 @@ export async function startTitleReviewSession({ applierName } = {}) {
 		finishedAt: null,
 		error: null,
 	};
-	void runSession(activeSession).catch((error) => {
-		console.error('[job-title-review] session error', error);
-		if (activeSession) {
-			activeSession.running = false;
-			activeSession.status = 'failed';
-			activeSession.error = error.message;
-		}
-	});
-	return { started: true, sessionId: activeSession.id, pending };
-}
-
-export function stopTitleReviewSession() {
-	if (!activeSession?.running) return { stopped: false, message: 'No active session' };
-	cancelRequested = true;
-	for (const controller of inflight) controller.abort();
-	return { stopped: true, sessionId: activeSession.id };
+	await onProgress?.(taskSessionSnapshot(session));
+	await runSession(session, { signal, onProgress });
+	return taskSessionSnapshot(session);
 }

@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { TITLE_POLICY_VERSION } from "./resumeCareerTitlePolicy.js";
 import { putBinaryObject, readStoredObject, storageSlug } from "./firebase/objectStore.js";
 import { getStorageBucket } from "./firebase/firebaseAdmin.js";
+import { assertBackgroundTaskActive } from "./backgroundTasks/taskContext.js";
 
 const REVIEW_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -44,6 +45,21 @@ async function pathExists(filePath) {
   } catch {
     return false;
   }
+}
+
+function abortError(signal) {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error("PDF persistence cancelled"), { name: "AbortError" });
+}
+
+async function guardWrite(signal) {
+  if (signal?.aborted) throw abortError(signal);
+  await assertBackgroundTaskActive(signal);
+}
+
+function isAbort(error, signal) {
+  return signal?.aborted || error?.name === "AbortError";
 }
 
 /** Stable draft path for applier + job id. */
@@ -116,6 +132,7 @@ export async function writeAgentDraftPdf({
   titlePolicyFingerprint,
   identityFingerprint,
   skipReviewCopy = false,
+  signal,
 }) {
   const titleFp = titlePolicyFingerprint ?? config?.titlePolicyFingerprint ?? null;
   const identityFp = identityFingerprint ?? config?.identityFingerprint ?? null;
@@ -131,12 +148,14 @@ export async function writeAgentDraftPdf({
 
   if (useCloudDrafts()) {
     const prefix = cloudDraftPrefix(applierName, jobId);
+    await guardWrite(signal);
     await putBinaryObject({
       buffer,
       objectPath: `${prefix}/draft.pdf`,
       mimeType: "application/pdf",
       metadata: { applierName, jobId, kind: "agent-resume-draft" },
     });
+    await guardWrite(signal);
     await putBinaryObject({
       buffer: Buffer.from(JSON.stringify(meta), "utf8"),
       objectPath: `${prefix}/draft.meta.json`,
@@ -144,6 +163,7 @@ export async function writeAgentDraftPdf({
       metadata: { applierName, jobId, kind: "agent-resume-draft-meta" },
     });
     if (html) {
+      await guardWrite(signal);
       await putBinaryObject({
         buffer: Buffer.from(html, "utf8"),
         objectPath: `${prefix}/draft.html`,
@@ -156,6 +176,7 @@ export async function writeAgentDraftPdf({
     if (!skipReviewCopy) {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const reviewObject = `agent-resumes/reviews/${storageSlug(applierName)}/${stamp}-${storageSlug(jobId)}.pdf`;
+      await guardWrite(signal);
       await putBinaryObject({
         buffer,
         objectPath: reviewObject,
@@ -169,18 +190,23 @@ export async function writeAgentDraftPdf({
 
   const draftPath = agentDraftPdfPath(applierName, jobId);
   const dir = path.dirname(draftPath);
+  await guardWrite(signal);
   await mkdir(dir, { recursive: true });
+  await guardWrite(signal);
   await writeFile(draftPath, buffer);
   if (html) {
+    await guardWrite(signal);
     await writeFile(path.join(dir, "draft.html"), html, "utf8");
   }
   try {
+    await guardWrite(signal);
     await writeFile(
       path.join(dir, "draft.meta.json"),
       JSON.stringify(meta),
       "utf8",
     );
-  } catch {
+  } catch (error) {
+    if (isAbort(error, signal)) throw error;
     /* meta is best-effort */
   }
 
@@ -189,12 +215,18 @@ export async function writeAgentDraftPdf({
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const reviewDir = path.join(REVIEW_ROOT, stamp);
+      await guardWrite(signal);
       await mkdir(reviewDir, { recursive: true });
       const base = `${safe(applierName) || "resume"}-${safe(jobId) || "job"}`;
       reviewPath = path.join(reviewDir, `${base}.pdf`);
+      await guardWrite(signal);
       await writeFile(reviewPath, buffer);
-      if (html) await writeFile(path.join(reviewDir, `${base}.html`), html, "utf8");
-    } catch {
+      if (html) {
+        await guardWrite(signal);
+        await writeFile(path.join(reviewDir, `${base}.html`), html, "utf8");
+      }
+    } catch (error) {
+      if (isAbort(error, signal)) throw error;
       /* review copy is best-effort */
     }
   }
@@ -262,6 +294,17 @@ export async function readAgentDraftPdf(
   }
 
   return { buffer, draftPath };
+}
+
+/** Read a PDF-lane result without assuming local disk in production. */
+export async function readAgentDraftPath(draftPathRaw) {
+  const draftPath = String(draftPathRaw || "").trim();
+  if (!draftPath) return null;
+  if (draftPath.startsWith("gcs://") || draftPath.startsWith("gs://")) {
+    const storagePath = draftPath.replace(/^g(?:c)?s:\/\//, "");
+    return readStoredObject({ object: { storagePath } });
+  }
+  return readFile(draftPath);
 }
 
 /** Remove the stable draft PDF (and sibling html/meta) so the next run re-renders. */

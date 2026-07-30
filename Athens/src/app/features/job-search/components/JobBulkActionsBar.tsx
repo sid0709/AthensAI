@@ -21,8 +21,11 @@ type JobBulkActionsBarProps = {
   onGenerateResumes?: () => void;
   onStopGenerateResumes?: () => void;
   onRemoveResumes?: () => void;
+  onStopRemoveResumes?: () => void;
   resumeGenerating?: boolean;
+  resumeStopping?: boolean;
   resumeRemoving?: boolean;
+  resumeRemovalStopping?: boolean;
   hasSelectedResumes?: boolean;
   resumeProgress?: JobResumeBulkProgress;
   loading?: boolean;
@@ -45,8 +48,11 @@ export function JobBulkActionsBar({
   onGenerateResumes,
   onStopGenerateResumes,
   onRemoveResumes,
+  onStopRemoveResumes,
   resumeGenerating = false,
+  resumeStopping = false,
   resumeRemoving = false,
+  resumeRemovalStopping = false,
   hasSelectedResumes = false,
   resumeProgress,
   loading = false,
@@ -151,11 +157,14 @@ export function JobBulkActionsBar({
                 size="sm"
                 className="h-8 gap-1.5 text-amber-700 border-amber-200 hover:bg-amber-50 hover:text-amber-800"
                 onClick={onStopGenerateResumes}
+                disabled={resumeStopping}
                 title="Stop résumé generation immediately"
               >
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                 <span className="tabular-nums whitespace-nowrap text-xs sm:text-sm">
-                  {resumeProgress ? (
+                  {resumeStopping ? (
+                    "Stopping…"
+                  ) : resumeProgress ? (
                     <>
                       <span className="sm:hidden">
                         {resumeProgress.done}/{resumeProgress.total}
@@ -190,26 +199,29 @@ export function JobBulkActionsBar({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5"
-              onClick={onRemoveResumes}
-              disabled={
-                totalSelected === 0 ||
-                loading ||
-                !hasSelectedResumes ||
-                resumeGenerating ||
-                resumeRemoving
-              }
-              title="Remove generated résumés for the selected jobs (jobs stay in the list)"
+              className={cn(
+                "h-8 gap-1.5",
+                resumeRemoving && "text-amber-700 border-amber-200 hover:bg-amber-50 hover:text-amber-800",
+              )}
+              onClick={resumeRemoving ? onStopRemoveResumes : onRemoveResumes}
+              disabled={resumeRemoving
+                ? resumeRemovalStopping || !onStopRemoveResumes
+                : totalSelected === 0 || loading || !hasSelectedResumes || resumeGenerating}
+              title={resumeRemoving
+                ? "Stop résumé removal immediately"
+                : "Remove generated résumés for the selected jobs (jobs stay in your list)"}
             >
               {resumeRemoving ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                   <span className="tabular-nums whitespace-nowrap text-xs sm:text-sm">
-                    {resumeProgress?.phase === "finalizing"
+                    {resumeRemovalStopping
+                      ? "Stopping…"
+                      : resumeProgress?.phase === "finalizing"
                       ? "Finalizing…"
                       : resumeProgress
-                        ? `${resumeProgress.done}/${resumeProgress.total} · Removing`
-                        : "Removing…"}
+                        ? `${resumeProgress.done}/${resumeProgress.total} · Stop`
+                        : "Stop"}
                   </span>
                 </>
               ) : (

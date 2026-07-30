@@ -1,31 +1,54 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import {
-  fetchTitleReviewStatus,
-  startTitleReview,
-  stopTitleReview,
-  type TitleReviewSession,
-} from "@/app/api/jobTitleReview";
+import { fetchTitleReviewStatus, type TitleReviewSession } from "@/app/api/jobTitleReview";
+import type { BackgroundTask } from "@/app/api/backgroundTasks";
+import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 
-const POLL_MS = 1000;
-const IDLE_POLL_MS = 5000;
+function taskSession(task: BackgroundTask | null, fallback: TitleReviewSession) {
+  if (!task) return fallback;
+  const progress = task.progress || {};
+  const status = task.status === "queued"
+    ? "running"
+    : task.status === "cancelling"
+      ? "stopping"
+      : task.status === "completed_with_errors" ? "completed" : task.status;
+  return {
+    ...fallback,
+    running: ["queued", "running", "cancelling"].includes(task.status),
+    status,
+    phase: (progress.phase ?? null) as TitleReviewSession["phase"],
+    sessionId: task.id,
+    total: progress.total == null ? undefined : Number(progress.total),
+    processed: Number(progress.completed ?? 0),
+    approved: Number(progress.approved ?? 0),
+    reviewRequired: Number(progress.reviewRequired ?? 0),
+    failed: Number(progress.failed ?? 0),
+    remaining: progress.remaining == null ? undefined : Number(progress.remaining),
+    startedAt: task.startedAt || undefined,
+    finishedAt: task.finishedAt,
+    error: task.error,
+    concurrency: 10,
+    batchSize: 10,
+  } satisfies TitleReviewSession;
+}
 
 export function useTitleReviewSession({
   enabled = true,
   autoLoad = true,
-  pollWhenIdle = false,
 }: { enabled?: boolean; autoLoad?: boolean; pollWhenIdle?: boolean } = {}) {
   const { applier } = useApplier();
-  const [session, setSession] = useState<TitleReviewSession>({ running: false, status: "idle" });
+  const { latestTask, startTask, cancelTask } = useBackgroundTasks();
+  const task = latestTask("title_review");
+  const [fallback, setFallback] = useState<TitleReviewSession>({ running: false, status: "idle" });
   const [loading, setLoading] = useState(false);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const session = useMemo(() => taskSession(task, fallback), [fallback, task]);
 
   const refresh = useCallback(async () => {
     if (!enabled || !applier?.name) return null;
     try {
       const next = await fetchTitleReviewStatus(applier.name);
-      setSession(next);
+      setFallback(next);
       return next;
     } catch {
       return null;
@@ -37,52 +60,40 @@ export function useTitleReviewSession({
   }, [autoLoad, refresh]);
 
   useEffect(() => {
-    if (timer.current) clearInterval(timer.current);
-    timer.current = null;
-    if (enabled && (session.running || pollWhenIdle)) {
-      timer.current = setInterval(
-        () => void refresh(),
-        session.running ? POLL_MS : IDLE_POLL_MS,
-      );
-    }
-    return () => {
-      if (timer.current) clearInterval(timer.current);
-      timer.current = null;
-    };
-  }, [enabled, pollWhenIdle, refresh, session.running]);
+    if (task && !task.status.match(/^(queued|running|cancelling)$/)) void refresh();
+  }, [refresh, task?.id, task?.status]);
 
   const start = useCallback(async () => {
     if (!applier?.name) return null;
     setLoading(true);
     try {
-      const result = await startTitleReview(applier.name);
-      if (result.started) toast.success("Title review started", { description: `${result.pending ?? 0} title(s) queued.` });
-      else toast.info(result.message || "No titles are waiting for review.");
-      await refresh();
-      return result;
+      const created = await startTask("title_review", {});
+      toast.success("Title review started", {
+        description: fallback.pending != null ? `${fallback.pending} title(s) queued.` : "Reviewing pending titles.",
+      });
+      return { success: true, started: true, sessionId: created.id, pending: fallback.pending ?? undefined };
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to start title review");
       return null;
     } finally {
       setLoading(false);
     }
-  }, [applier?.name, refresh]);
+  }, [applier?.name, fallback.pending, startTask]);
 
   const stop = useCallback(async () => {
-    if (!applier?.name) return;
+    if (!task || !["queued", "running", "cancelling"].includes(task.status)) return;
     setLoading(true);
     try {
-      await stopTitleReview(applier.name);
+      await cancelTask(task.id);
       toast.info("Stopping title review…");
-      await refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to stop title review");
     } finally {
       setLoading(false);
     }
-  }, [applier?.name, refresh]);
+  }, [cancelTask, task]);
 
-  const hydrate = useCallback((next: TitleReviewSession) => setSession(next), []);
+  const hydrate = useCallback((next: TitleReviewSession) => setFallback(next), []);
 
   return { session, loading, refresh, start, stop, hydrate };
 }

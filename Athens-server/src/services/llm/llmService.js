@@ -14,6 +14,8 @@ import {
   llmPriorityFromFeature,
 } from '../../utils/concurrency.js';
 import { getServiceAuthHeaders } from '../googleServiceAuth.js';
+import { incrementCounter, observeHistogram } from '../monitoring/metrics.js';
+import { assertBackgroundTaskActive } from '../backgroundTasks/taskContext.js';
 
 const log = createLogger('athens');
 
@@ -123,7 +125,23 @@ export function formatUsageSummary(usage) {
   return parts.join(' · ');
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(signal.reason || Object.assign(new Error('LLM request cancelled'), { name: 'AbortError' }));
+    return;
+  }
+  const timer = setTimeout(done, ms);
+  const aborted = () => {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', aborted);
+    reject(signal.reason || Object.assign(new Error('LLM request cancelled'), { name: 'AbortError' }));
+  };
+  function done() {
+    signal?.removeEventListener('abort', aborted);
+    resolve();
+  }
+  signal?.addEventListener('abort', aborted, { once: true });
+});
 
 /** Default chat timeout — generous so long completions are never cut off mid-stream. */
 const DEFAULT_CHAT_TIMEOUT_MS = Number.parseInt(String(process.env.LLM_TIMEOUT_MS || ''), 10) || 600_000;
@@ -166,7 +184,13 @@ function combinedSignal(externalSignal, timeoutMs) {
   return externalSignal.aborted ? externalSignal : timeout;
 }
 
-async function fetchRetry(url, init, { timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, retries = 4, baseDelayMs = 1000, signal } = {}) {
+async function fetchRetry(url, init, {
+	timeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
+	retries = 4,
+	baseDelayMs = 1000,
+	signal,
+	beforeAttempt,
+} = {}) {
   if (!breakerAllow()) {
     const err = new Error('ai-bff circuit open — gateway unreachable, retry shortly');
     err.status = 503;
@@ -174,6 +198,7 @@ async function fetchRetry(url, init, { timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, retr
   }
 
   for (let attempt = 0; ; attempt += 1) {
+		await beforeAttempt?.();
     let response;
     try {
       response = await fetch(url, { ...init, signal: combinedSignal(signal, timeoutMs) });
@@ -183,16 +208,18 @@ async function fetchRetry(url, init, { timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, retr
       if (signal?.aborted) throw err;
       breakerFailure();
       if (attempt >= retries) throw err;
+			incrementCounter('athens_llm_retries_total', { reason: 'network' });
       console.warn(`[llm] fetch error (attempt ${attempt + 1}/${retries + 1}) ${url} — ${err.message}, retrying...`);
-      await sleep(baseDelayMs * 2 ** attempt);
+      await sleep(baseDelayMs * 2 ** attempt, signal);
       continue;
     }
     if (response.status !== 429 && response.status < 500) return response;
     if (attempt >= retries) return response;
+		incrementCounter('athens_llm_retries_total', { reason: `http_${response.status}` });
     const retryAfter = Number(response.headers.get('retry-after'));
     const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : baseDelayMs * 2 ** attempt;
     console.warn(`[llm] status ${response.status} (attempt ${attempt + 1}/${retries + 1}) ${url} — retrying in ${Math.min(delay, 15000)}ms`);
-    await sleep(Math.min(delay, 15000));
+    await sleep(Math.min(delay, 15000), signal);
   }
 }
 
@@ -226,6 +253,7 @@ export async function chatCompletion({
     model,
     messages,
     apiKeys: p.id === 'deepseek' ? { deepseek: apiKey } : { openai: apiKey },
+    workloadClass: process.env.BACKGROUND_TASK_WORKER === 'true' ? 'background' : 'interactive',
   };
   if (jsonMode && (p.id === 'openai' || p.id === 'deepseek')) {
     body.response_format = { type: 'json_object' };
@@ -264,8 +292,15 @@ export async function chatCompletion({
   return llmAdmissionPool.run(
     priority,
     async () => {
+      if (signal?.aborted) {
+        throw signal.reason || Object.assign(new Error('LLM request cancelled'), { name: 'AbortError' });
+      }
       const admittedAt = Date.now();
       const queueWaitMs = admittedAt - startedAt;
+      observeHistogram('athens_llm_admission_wait_seconds', {
+        feature,
+        priority: priorityKey,
+      }, queueWaitMs / 1_000);
       if (queueWaitMs > 50 && process.env.LLM_LOG !== 'off') {
         log.llm({
           msg: 'chat admitted after queue wait',
@@ -294,11 +329,15 @@ export async function chatCompletion({
           },
           body: JSON.stringify(body),
         },
-        { timeoutMs, retries, signal },
+		{ timeoutMs, retries, signal, beforeAttempt: () => assertBackgroundTaskActive(signal) },
       );
 
       const data = await response.json().catch(() => ({}));
       const elapsedMs = Date.now() - startedAt;
+      observeHistogram('athens_llm_dependency_duration_seconds', {
+        feature,
+        provider: p.id,
+      }, Math.max(0, elapsedMs - queueWaitMs) / 1_000);
       if (!response.ok) {
         const providerMessage = typeof data?.error === 'string' ? data.error : data?.error?.message;
         const err = new Error(providerMessage || `${p.label} request failed (${response.status})`);
@@ -358,6 +397,7 @@ export async function chatCompletion({
       };
     },
     {
+		signal,
       onQueued: (pending) => {
         if (process.env.LLM_LOG !== 'off') {
           log.llm({
