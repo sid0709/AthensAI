@@ -10,7 +10,10 @@ import {
 
 const POLL_MS = 1000;
 
-export function useTitleReviewSession({ enabled = true }: { enabled?: boolean } = {}) {
+export function useTitleReviewSession({
+  enabled = true,
+  autoLoad = true,
+}: { enabled?: boolean; autoLoad?: boolean } = {}) {
   const { applier } = useApplier();
   const [session, setSession] = useState<TitleReviewSession>({ running: false, status: "idle" });
   const [loading, setLoading] = useState(false);
@@ -28,8 +31,8 @@ export function useTitleReviewSession({ enabled = true }: { enabled?: boolean } 
   }, [applier?.name, enabled]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (autoLoad) void refresh();
+  }, [autoLoad, refresh]);
 
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);
@@ -74,6 +77,7 @@ export function useTitleReviewSession({ enabled = true }: { enabled?: boolean } 
     }
   }, [applier?.name, refresh]);
 
-  return { session, loading, refresh, start, stop };
-}
+  const hydrate = useCallback((next: TitleReviewSession) => setSession(next), []);
 
+  return { session, loading, refresh, start, stop, hydrate };
+}

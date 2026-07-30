@@ -30,6 +30,7 @@ import {
 } from "../controllers/jobSkillExtractController.js";
 import {
 	approveTitleReviewJobs,
+	getTitleReviewBootstrap,
 	getTitleReviewStatus,
 	listTitleReviewJobs,
 	removeTitleReviewJobs,
@@ -53,6 +54,7 @@ router.post('/jobs/skill-extract/stop', stopSkillExtract);
 router.get('/jobs/title-review/status', getTitleReviewStatus);
 router.post('/jobs/title-review/start', startTitleReview);
 router.post('/jobs/title-review/stop', stopTitleReview);
+router.get('/jobs/title-review/bootstrap', getTitleReviewBootstrap);
 router.get('/jobs/title-review', listTitleReviewJobs);
 router.post('/jobs/title-review/approve', approveTitleReviewJobs);
 router.post('/jobs/title-review/remove', removeTitleReviewJobs);

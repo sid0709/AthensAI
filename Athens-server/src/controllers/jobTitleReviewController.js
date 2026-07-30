@@ -1,21 +1,24 @@
 import { jobsCollection } from '../db/dataStore.js';
 import { findAccountByApplierName } from '../services/mail/credentials.js';
 import { isBetaTier } from '../lib/betaTier.js';
-import { buildCaseInsensitiveRegexFilter } from '../utils/safeRegex.js';
 import {
-	getTitleReviewCounts,
 	getTitleReviewSessionStatus,
 	invalidateTitleReviewCounts,
 	startTitleReviewSession,
 	stopTitleReviewSession,
-	TITLE_REVIEW_LIST_PROJECTION,
 } from '../services/jobTitleReview/titleReviewSession.js';
+import {
+	listTitleReviewReadModel,
+	patchTitleReviewReadModel,
+} from '../services/jobTitleReview/titleReviewReadModel.js';
+import { TitleReviewQueryError } from '../services/jobTitleReview/titleReviewQueryService.js';
 import { syncJobTitleReviewUpdates } from '../services/jobTitleReview/titleReviewIndexSync.js';
 import { normalizeJobRemovalIds, deleteJobDocuments } from '../services/jobRemovalService.js';
 import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
 import { removeJobsFromRanking } from '../services/matching/jobRankingIndex.js';
 import { evictJobsFromJobListReadModel } from '../services/jobListReadModelService.js';
 import { invalidateLiveProjectedStatusCount } from '../services/jobStatusProjectionService.js';
+import { observeHistogram } from '../services/monitoring/metrics.js';
 import { invalidateJobListCountCache } from './jobController.js';
 
 async function requireBetaApplierName(applierNameRaw, res) {
@@ -36,9 +39,27 @@ async function requireBetaApplierName(applierNameRaw, res) {
 	return applierName;
 }
 
-function reviewCompany(job) {
-	if (typeof job?.company === 'string') return job.company;
-	return String(job?.company?.name || job?.companyName || 'Unknown');
+function setReviewTiming(res, { auth = 0, cache = 0, firestore = 0, serialization = 0, total = 0 } = {}) {
+	res.setHeader('Server-Timing', [
+		`title-review-auth;dur=${Number(auth).toFixed(1)}`,
+		`title-review-cache;dur=${Number(cache).toFixed(1)}`,
+		`title-review-firestore;dur=${Number(firestore).toFixed(1)}`,
+		`title-review-serialization;dur=${Number(serialization).toFixed(1)}`,
+		`title-review-total;dur=${Number(total).toFixed(1)}`,
+	].join(', '));
+}
+
+function titleReviewErrorResponse(error, res, startedAt, authMs = 0) {
+	const status = error instanceof TitleReviewQueryError ? error.status : 500;
+	if (error?.retryAfter) res.setHeader('Retry-After', String(error.retryAfter));
+	setReviewTiming(res, { auth: authMs, total: performance.now() - startedAt });
+	return res.status(status).json({
+		success: false,
+		error: error.message,
+		code: error.code || 'TITLE_REVIEW_REQUEST_FAILED',
+		retryable: status === 503,
+		retryAfter: error.retryAfter || undefined,
+	});
 }
 
 export async function getTitleReviewStatus(req, res) {
@@ -77,66 +98,60 @@ export async function stopTitleReview(req, res) {
 }
 
 export async function listTitleReviewJobs(req, res) {
+	const startedAt = performance.now();
+	let authMs = 0;
 	try {
+		const authStartedAt = performance.now();
 		const applierName = await requireBetaApplierName(req.query?.applierName, res);
+		authMs = performance.now() - authStartedAt;
+		observeHistogram('athens_title_review_auth_duration_seconds', {}, authMs / 1_000);
 		if (!applierName) return;
-		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
-
-		const requestedTab = String(req.query?.tab || 'unreviewed');
-		const tab = ['unreviewed', 'review_required', 'failed'].includes(requestedTab)
-			? requestedTab
-			: 'unreviewed';
-		const page = Math.max(1, Number(req.query?.page) || 1);
-		const limit = Math.max(10, Math.min(500, Number(req.query?.limit) || 50));
-		const requestedSort = String(req.query?.sort || '');
-		const sort = ['confidence_desc', 'newest', 'oldest'].includes(requestedSort)
-			? requestedSort
-			: tab === 'review_required' ? 'confidence_desc' : 'newest';
-		const sortSpec = tab === 'unreviewed'
-			? null
-			: sort === 'confidence_desc'
-				? { 'titleReview.confidence': -1, postedAt: -1, _id: -1 }
-				: { postedAt: sort === 'oldest' ? 1 : -1, _id: sort === 'oldest' ? 1 : -1 };
-		const tabQuery = tab === 'failed'
-			? { 'titleReview.processingState': 'failed' }
-			: tab === 'review_required'
-				? { 'titleReview.label': 'REVIEW_REQUIRED' }
-				: { 'titleReview.processingState': { $in: ['pending', 'scanning'] } };
-		const query = {
-			$and: [tabQuery],
-		};
-		const titleFilter = buildCaseInsensitiveRegexFilter(req.query?.q);
-		if (titleFilter) query.$and.push({ title: titleFilter });
-		const effectiveQuery = query.$and.length === 1 ? query.$and[0] : query;
-		const totalPromise = !titleFilter
-			? getTitleReviewCounts().then((counts) => {
-				if (tab === 'unreviewed') return counts.unreviewedCount ?? 0;
-				if (tab === 'review_required') return counts.reviewRequiredCount ?? 0;
-				return counts.failedCount ?? 0;
-			})
-			: jobsCollection.countDocuments(effectiveQuery);
-		const cursor = jobsCollection.find(effectiveQuery, { projection: TITLE_REVIEW_LIST_PROJECTION });
-		if (sortSpec) cursor.sort(sortSpec);
-		const [documents, total] = await Promise.all([
-			cursor.skip((page - 1) * limit).limit(limit).toArray(),
-			totalPromise,
-		]);
-		return res.json({
-			success: true,
-			data: documents.map((job) => ({
-				id: String(job._id),
-				title: String(job.title || 'Untitled role'),
-				company: reviewCompany(job),
-				source: String(job.source || 'Other'),
-				postedAt: job.postedAt || job._createdAt || null,
-				applyUrl: String(job.applyLink || job.jobLink || ''),
-				titleReview: job.titleReview || null,
-			})),
-			pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+		const result = await listTitleReviewReadModel(req.query || {});
+		const totalMs = performance.now() - startedAt;
+		result.meta.serverDurationMs = totalMs;
+		setReviewTiming(res, {
+			auth: authMs,
+			cache: result.meta.cacheLookupMs,
+			firestore: result.meta.firestoreMs,
+			serialization: result.meta.serializationMs,
+			total: totalMs,
 		});
+		res.setHeader('X-Title-Review-Revision', result.meta.revision);
+		res.setHeader('X-Title-Review-Cache', result.meta.cacheSource);
+		return res.json({ success: true, ...result });
 	} catch (error) {
 		console.error('GET /api/jobs/title-review error', error);
-		return res.status(500).json({ success: false, error: error.message });
+		return titleReviewErrorResponse(error, res, startedAt, authMs);
+	}
+}
+
+/** One authenticated round trip for the initial page, counts, and live session state. */
+export async function getTitleReviewBootstrap(req, res) {
+	const startedAt = performance.now();
+	let authMs = 0;
+	try {
+		const authStartedAt = performance.now();
+		const applierName = await requireBetaApplierName(req.query?.applierName, res);
+		authMs = performance.now() - authStartedAt;
+		observeHistogram('athens_title_review_auth_duration_seconds', {}, authMs / 1_000);
+		if (!applierName) return;
+		const result = await listTitleReviewReadModel(req.query || {});
+		const session = await getTitleReviewSessionStatus({ preferredCounts: result.counts });
+		const totalMs = performance.now() - startedAt;
+		result.meta.serverDurationMs = totalMs;
+		setReviewTiming(res, {
+			auth: authMs,
+			cache: result.meta.cacheLookupMs,
+			firestore: result.meta.firestoreMs,
+			serialization: result.meta.serializationMs,
+			total: totalMs,
+		});
+		res.setHeader('X-Title-Review-Revision', result.meta.revision);
+		res.setHeader('X-Title-Review-Cache', result.meta.cacheSource);
+		return res.json({ success: true, session, ...result });
+	} catch (error) {
+		console.error('GET /api/jobs/title-review/bootstrap error', error);
+		return titleReviewErrorResponse(error, res, startedAt, authMs);
 	}
 }
 
@@ -177,6 +192,7 @@ export async function approveTitleReviewJobs(req, res) {
 			}
 			invalidateJobListCountCache();
 			invalidateTitleReviewCounts();
+			await patchTitleReviewReadModel({ approvedIds });
 		}
 		return res.json({ success: true, approvedCount: approvedIds.length, approvedIds });
 	} catch (error) {
@@ -206,6 +222,7 @@ export async function removeTitleReviewJobs(req, res) {
 		invalidateLiveProjectedStatusCount();
 		invalidateJobListCountCache();
 		invalidateTitleReviewCounts();
+		await patchTitleReviewReadModel({ deletedIds: ids });
 		await Promise.allSettled([deleteScoresForJobs(ids), removeJobsFromRanking(ids)]);
 		return res.json({ success: true, deletedCount, deletedIds: ids });
 	} catch (error) {

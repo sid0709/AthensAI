@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "test:job-search": "tsx --test src/app/features/job-search/lib/jobSearchUrlState.test.ts src/app/features/job-search/lib/companyGroupState.test.ts",
+    "test:title-review": "tsx --test src/app/api/titleReviewRemoval.test.ts src/app/api/jobTitleReviewCache.test.ts",
     "predev": "npm run pack:extensions",
     "dev": "vite",
     "pack:extensions": "PUBLIC_ORIGIN=http://localhost:9030 EXTENSION_OUTPUT_DIR=$PWD/public/downloads bash ../docker/pack-extensions.sh"

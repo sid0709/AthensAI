@@ -86,6 +86,10 @@ import {
 } from '../services/jobRemovalService.js';
 import { setGauge } from '../services/monitoring/metrics.js';
 import { ingestJobsBulk, MAX_JOB_BULK_SIZE } from '../services/jobBulkIngest.js';
+import {
+	patchTitleReviewReadModel,
+} from '../services/jobTitleReview/titleReviewReadModel.js';
+import { mapTitleReviewDocument } from '../services/jobTitleReview/titleReviewQueryService.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -360,6 +364,13 @@ export async function createJob(req, res) {
 			});
 			void indexJobInRedis(String(result.insertedId), job.skillsNormalized, job.skillTokens).catch(() => {});
 			void indexOneJobRanking({ ...job, _id: result.insertedId }).catch(() => {});
+			if (!req.deferTitleReviewRevision) {
+				void patchTitleReviewReadModel({
+					upsertRows: [mapTitleReviewDocument({ ...job, _id: result.insertedId })],
+				}).catch((error) => {
+					console.warn('[title-review] new-job snapshot patch failed:', error?.message || error);
+				});
+			}
 		}
 
 		return res.status(201).json({
@@ -396,13 +407,37 @@ export async function createJobsBulk(req, res) {
 	const client = typeof req.get === 'function' ? req.get('x-athens-client') : '';
 	const { results, summary } = await ingestJobsBulk(
 		jobs,
-		(job) => createJobRecord(job, { client }),
+		(job) => createJobRecord(job, { client, deferTitleReviewRevision: true }),
 	);
+	if (summary.created > 0 && jobsCollection) {
+		const ids = results.filter((result) => result.created && result.insertedId).map((result) => String(result.insertedId));
+		if (ids.length) {
+			try {
+				const createdJobs = await jobsCollection.find(
+					{ _id: { $in: ids } },
+					{ projection: {
+						title: 1,
+						company: 1,
+						companyName: 1,
+						source: 1,
+						postedAt: 1,
+						_createdAt: 1,
+						applyLink: 1,
+						jobLink: 1,
+						titleReview: 1,
+					} },
+				).toArray();
+				await patchTitleReviewReadModel({ upsertRows: createdJobs.map(mapTitleReviewDocument) });
+			} catch (error) {
+				console.warn('[title-review] bulk new-job snapshot patch failed:', error?.message || error);
+			}
+		}
+	}
 	return res.status(200).json({ success: true, results, summary });
 }
 
 /** Reuse the canonical ingest path from internal controllers without an HTTP loopback. */
-export async function createJobRecord(job, { client = 'agent-manual' } = {}) {
+export async function createJobRecord(job, { client = 'agent-manual', deferTitleReviewRevision = false } = {}) {
 	let statusCode = 200;
 	let payload = null;
 	const response = {
@@ -415,7 +450,7 @@ export async function createJobRecord(job, { client = 'agent-manual' } = {}) {
 			return value;
 		},
 	};
-	await createJob({ body: job, get: () => client }, response);
+	await createJob({ body: job, get: () => client, deferTitleReviewRevision }, response);
 	return { statusCode, payload: payload || {} };
 }
 
@@ -873,6 +908,7 @@ export async function removeJobs(req, res) {
 
 		const { deletedCount } = await deleteJobDocuments({ ids, jobsCollection });
 		evictJobsFromJobListReadModel(ids);
+		await patchTitleReviewReadModel({ deletedIds: ids });
 		invalidateLiveProjectedStatusCount();
 		jobCountCache.clear();
 		void deleteScoresForJobs(ids).catch(() => {});
@@ -898,6 +934,7 @@ export async function removeOtherCompanyJobs(req, res) {
 
 		const { deletedCount } = await deleteJobDocuments({ ids, jobsCollection });
 		evictJobsFromJobListReadModel(ids);
+		await patchTitleReviewReadModel({ deletedIds: ids });
 		invalidateLiveProjectedStatusCount();
 		jobCountCache.clear();
 		void deleteScoresForJobs(ids).catch(() => {});

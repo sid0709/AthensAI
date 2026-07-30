@@ -22,6 +22,8 @@ import {
 	deriveCompanyIdentity,
 	resolveCompanyIdentity,
 } from "./companyIdentity.js";
+import { patchTitleReviewReadModel } from './jobTitleReview/titleReviewReadModel.js';
+import { mapTitleReviewDocument } from './jobTitleReview/titleReviewQueryService.js';
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -275,6 +277,11 @@ export async function promoteExternalJobToMarket(externalDoc, {
 		).catch(() => {});
 	}
 	void indexOneJobRanking({ ...marketJob, _id: insertedId }).catch(() => {});
+	void patchTitleReviewReadModel({
+		upsertRows: [mapTitleReviewDocument({ ...marketJob, _id: insertedId })],
+	}).catch((error) => {
+		console.warn('[title-review] promoted-job snapshot patch failed:', error?.message || error);
+	});
 
 	if (externalCollection) {
 		await markExternalSkippedDuplicate(externalCollection, externalDoc._id).catch((error) => {

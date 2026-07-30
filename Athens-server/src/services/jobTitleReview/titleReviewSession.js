@@ -8,6 +8,12 @@ import {
 	recordTitleReviewBatchFailure,
 	resolveExtractionAuth,
 } from './titleReviewService.js';
+import { getTitleReviewCountsNative } from './titleReviewQueryService.js';
+import {
+	getCachedTitleReviewCounts,
+	markTitleReviewReadModelChanged,
+	scheduleTitleReviewReadModelRebuild,
+} from './titleReviewReadModel.js';
 
 const configuredConcurrency = Number(process.env.JOB_TITLE_REVIEW_CONCURRENCY || 10);
 export const TITLE_REVIEW_CONCURRENCY = Number.isFinite(configuredConcurrency)
@@ -52,17 +58,8 @@ export async function getTitleReviewCounts() {
 		failedCount: null,
 	};
 	if (countsCache?.expiresAt > Date.now()) return countsCache.promise;
-	const promise = Promise.all([
-		jobsCollection.countDocuments({ 'titleReview.processingState': { $in: ['pending', 'failed'] } }),
-		jobsCollection.countDocuments({ 'titleReview.processingState': { $in: ['pending', 'scanning'] } }),
-		jobsCollection.countDocuments({ 'titleReview.label': 'REVIEW_REQUIRED' }),
-		jobsCollection.countDocuments({ 'titleReview.processingState': 'failed' }),
-	]).then(([pending, unreviewedCount, reviewRequiredCount, failedCount]) => ({
-		pending,
-		unreviewedCount,
-		reviewRequiredCount,
-		failedCount,
-	}));
+	const promise = getCachedTitleReviewCounts()
+		.then((cached) => cached || getTitleReviewCountsNative());
 	countsCache = { promise, expiresAt: Date.now() + COUNTS_CACHE_MS };
 	promise.catch(() => {
 		if (countsCache?.promise === promise) countsCache = null;
@@ -70,25 +67,10 @@ export async function getTitleReviewCounts() {
 	return promise;
 }
 
-/** Prime the two first-page reads before the API is marked ready. */
-export async function warmTitleReviewReadCache() {
-	if (!jobsCollection) return { warmed: false };
-	const results = await Promise.allSettled([
-		getTitleReviewCounts(),
-		jobsCollection.find(
-			{ 'titleReview.processingState': { $in: ['pending', 'scanning'] } },
-			{ projection: TITLE_REVIEW_LIST_PROJECTION },
-		).limit(50).toArray(),
-		jobsCollection.find(
-			{ 'titleReview.label': 'REVIEW_REQUIRED' },
-			{ projection: TITLE_REVIEW_LIST_PROJECTION },
-		).sort({ 'titleReview.confidence': -1, postedAt: -1, _id: -1 }).limit(50).toArray(),
-	]);
-	const failures = results.filter((result) => result.status === 'rejected');
-	if (failures.length) {
-		console.warn('[job-title-review] cache warmup incomplete:', failures[0].reason?.message || failures[0].reason);
-	}
-	return { warmed: failures.length === 0 };
+/** Schedule cache construction without making callers wait for Firestore scans. */
+export function warmTitleReviewReadCache() {
+	scheduleTitleReviewReadModelRebuild({ delayMs: 0 });
+	return { warming: true };
 }
 
 async function recoverStaleLeases() {
@@ -113,7 +95,10 @@ async function recoverStaleLeases() {
 		recovered += result.modifiedCount || 0;
 		if (stale.length < 1_000) break;
 	}
-	if (recovered) invalidateTitleReviewCounts();
+	if (recovered) {
+		invalidateTitleReviewCounts();
+		await markTitleReviewReadModelChanged({ rebuild: false });
+	}
 	return recovered;
 }
 
@@ -206,6 +191,26 @@ async function processBatch(session, auth, jobs) {
 	}
 }
 
+/**
+ * Publish terminal session state before any derived-cache work begins. The
+ * rebuild callback is deliberately invoked without awaiting its result so a
+ * slow or unavailable cache can never hold the progress UI in "finalizing".
+ */
+export function finalizeTitleReviewSession(session, {
+	cancelled = cancelRequested,
+	scheduleRebuild = scheduleTitleReviewReadModelRebuild,
+	now = () => new Date().toISOString(),
+} = {}) {
+	session.phase = 'finalizing';
+	session.running = false;
+	session.finishedAt = now();
+	session.status = cancelled ? 'cancelled' : 'completed';
+	if (!cancelled) session.remaining = 0;
+	session.phase = null;
+	scheduleRebuild({ delayMs: 0 });
+	return session;
+}
+
 async function runSession(session) {
 	let auth;
 	try {
@@ -242,15 +247,10 @@ async function runSession(session) {
 			}
 			if (!batches.length) break;
 			await Promise.all(batches.map((batch) => processBatch(session, auth, batch)));
+			await markTitleReviewReadModelChanged({ rebuild: false });
 		}
 	} finally {
-		session.phase = 'finalizing';
-		await warmTitleReviewReadCache();
-		session.running = false;
-		session.phase = null;
-		session.finishedAt = new Date().toISOString();
-		session.status = cancelRequested ? 'cancelled' : 'completed';
-		if (!cancelRequested) session.remaining = 0;
+		finalizeTitleReviewSession(session);
 		console.log(
 			`[job-title-review] ${session.status} — ${session.approved} approved, ` +
 			`${session.reviewRequired} review required, ${session.failed} failed · ` +
@@ -283,8 +283,8 @@ function sessionSnapshot() {
 	};
 }
 
-export async function getTitleReviewSessionStatus() {
-	return { ...sessionSnapshot(), ...(await getTitleReviewCounts()) };
+export async function getTitleReviewSessionStatus({ preferredCounts = null } = {}) {
+	return { ...sessionSnapshot(), ...(preferredCounts || await getTitleReviewCounts()) };
 }
 
 export async function startTitleReviewSession({ applierName } = {}) {

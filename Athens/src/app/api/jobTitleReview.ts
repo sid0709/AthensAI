@@ -51,11 +51,53 @@ export type TitleReviewJob = {
   } | null;
 };
 
-type JsonError = { error?: string };
+export type TitleReviewListMeta = {
+  cacheSource: "memory" | "redis" | "firestore";
+  revision: string;
+  snapshotRevision?: string;
+  stale: boolean;
+  builtAt?: string | null;
+  serverDurationMs: number;
+  cacheLookupMs?: number;
+  firestoreMs?: number;
+  serializationMs?: number;
+  returnedRows?: number;
+};
+
+export type TitleReviewListResponse = {
+  success: boolean;
+  data: TitleReviewJob[];
+  counts?: Pick<TitleReviewSession, "pending" | "unreviewedCount" | "reviewRequiredCount" | "failedCount"> | null;
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+  meta: TitleReviewListMeta;
+};
+
+export type TitleReviewBootstrapResponse = TitleReviewListResponse & {
+  session: TitleReviewSession;
+};
+
+export type TitleReviewListOptions = {
+  applierName: string;
+  tab: "unreviewed" | "review_required" | "failed";
+  page: number;
+  limit: number;
+  q?: string;
+  sort?: "confidence_desc" | "newest" | "oldest";
+};
+
+type JsonError = { error?: string; code?: string; retryAfter?: number };
 
 async function parseJson<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({})) as T & JsonError;
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || `Request failed (${response.status})`) as Error & {
+      code?: string;
+      retryAfter?: number;
+    };
+    error.code = data.code;
+    error.retryAfter = data.retryAfter;
+    throw error;
+  }
   return data;
 }
 
@@ -86,17 +128,7 @@ export async function stopTitleReview(applierName: string) {
   return parseJson<{ success: boolean; stopped: boolean; message?: string }>(response);
 }
 
-export async function fetchTitleReviewJobs(options: {
-  applierName: string;
-  tab: "unreviewed" | "review_required" | "failed";
-  page: number;
-  limit: number;
-  q?: string;
-  sort?: "confidence_desc" | "newest" | "oldest";
-}): Promise<{
-  data: TitleReviewJob[];
-  pagination: { page: number; limit: number; total: number; totalPages: number };
-}> {
+function titleReviewParams(options: TitleReviewListOptions) {
   const params = new URLSearchParams({
     applierName: options.applierName,
     tab: options.tab,
@@ -105,8 +137,60 @@ export async function fetchTitleReviewJobs(options: {
     q: options.q || "",
     sort: options.sort || "newest",
   });
-  const response = await fetch(`${API_BASE}/jobs/title-review?${params}`);
-  return parseJson(response);
+  return params;
+}
+
+export function titleReviewListCacheKey(options: TitleReviewListOptions) {
+  return titleReviewParams(options).toString();
+}
+
+const listCache = new Map<string, TitleReviewListResponse>();
+const prefetches = new Map<string, Promise<TitleReviewListResponse>>();
+
+export function getCachedTitleReviewJobs(options: TitleReviewListOptions) {
+  return listCache.get(titleReviewListCacheKey(options)) || null;
+}
+
+export function cacheTitleReviewJobs(options: TitleReviewListOptions, response: TitleReviewListResponse) {
+  const key = titleReviewListCacheKey(options);
+  listCache.set(key, response);
+  if (listCache.size > 60) listCache.delete(listCache.keys().next().value!);
+}
+
+export function invalidateTitleReviewListCache() {
+  listCache.clear();
+}
+
+export async function fetchTitleReviewJobs(
+  options: TitleReviewListOptions,
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<TitleReviewListResponse> {
+  const response = await fetch(`${API_BASE}/jobs/title-review?${titleReviewParams(options)}`, { signal });
+  return parseJson<TitleReviewListResponse>(response);
+}
+
+export async function fetchTitleReviewBootstrap(
+  options: TitleReviewListOptions,
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<TitleReviewBootstrapResponse> {
+  const response = await fetch(`${API_BASE}/jobs/title-review/bootstrap?${titleReviewParams(options)}`, { signal });
+  return parseJson<TitleReviewBootstrapResponse>(response);
+}
+
+export function prefetchTitleReviewJobs(options: TitleReviewListOptions) {
+  const key = titleReviewListCacheKey(options);
+  const cached = listCache.get(key);
+  if (cached) return Promise.resolve(cached);
+  const existing = prefetches.get(key);
+  if (existing) return existing;
+  const promise = fetchTitleReviewJobs(options)
+    .then((response) => {
+      cacheTitleReviewJobs(options, response);
+      return response;
+    })
+    .finally(() => prefetches.delete(key));
+  prefetches.set(key, promise);
+  return promise;
 }
 
 async function mutateTitleReviewJobs(

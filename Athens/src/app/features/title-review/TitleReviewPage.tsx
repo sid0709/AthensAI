@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -14,9 +15,16 @@ import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
 import {
   approveTitleReviewJobs,
+  cacheTitleReviewJobs,
+  fetchTitleReviewBootstrap,
   fetchTitleReviewJobs,
+  getCachedTitleReviewJobs,
+  invalidateTitleReviewListCache,
+  prefetchTitleReviewJobs,
   removeTitleReviewJobsWithProgress,
+  titleReviewListCacheKey,
   type TitleReviewJob,
+  type TitleReviewListOptions,
   type TitleReviewRemovalProgress,
 } from "@/app/api/jobTitleReview";
 import { PageShell } from "@/app/components/layout/PageShell";
@@ -78,9 +86,161 @@ function ExtensionSafeText({ value, className }: { value: string | number; class
   return <span ref={elementRef} className={className} data-title-review-text translate="no" />;
 }
 
+function TitleReviewRow({
+  job,
+  tab,
+  selected,
+  onSelect,
+}: {
+  job: TitleReviewJob;
+  tab: ReviewTab;
+  selected: boolean;
+  onSelect: (id: string, shiftKey: boolean) => void;
+}) {
+  const selectable = tab !== "unreviewed";
+  const scanning = job.titleReview?.processingState === "scanning";
+  return (
+    <article
+      role={selectable ? "button" : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      aria-pressed={selectable ? selected : undefined}
+      onClick={(event) => {
+        if (!selectable || (event.target as HTMLElement).closest("a,button")) return;
+        onSelect(job.id, event.shiftKey);
+      }}
+      onKeyDown={(event) => {
+        if (!selectable) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(job.id, event.shiftKey);
+        }
+      }}
+      className={cn(
+        "grid gap-2 border-b border-border/60 px-3 py-2 transition-colors lg:items-center",
+        selectable
+          ? "cursor-pointer lg:grid-cols-[auto_minmax(12rem,1.2fr)_minmax(15rem,2fr)_auto]"
+          : "lg:grid-cols-[minmax(12rem,1.2fr)_minmax(15rem,2fr)_auto]",
+        selected ? "bg-primary/[0.05]" : "hover:bg-muted/30",
+      )}
+    >
+      {selectable ? (
+        <Checkbox checked={selected} className="pointer-events-none mt-1 lg:mt-0" aria-label={`Select ${job.title}`} />
+      ) : null}
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <h2 className="truncate text-xs font-semibold leading-4 text-foreground"><ExtensionSafeText value={job.title} /></h2>
+          {job.applyUrl ? (
+            <a href={job.applyUrl} target="_blank" rel="noreferrer" className="shrink-0 text-muted-foreground hover:text-primary" title="Open job">
+              <ExternalLink className="size-3" />
+            </a>
+          ) : null}
+        </div>
+        <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-[10px] leading-3.5 text-muted-foreground">
+          <ExtensionSafeText value={job.company} /><span>·</span><ExtensionSafeText value={job.source} /><span>·</span><ExtensionSafeText value={formatDate(job.postedAt)} />
+        </div>
+      </div>
+      <div className="min-w-0 rounded-md bg-muted/40 px-2.5 py-1 text-[11px] leading-4">
+        {tab === "failed" ? (
+          <><ExtensionSafeText className="font-semibold text-destructive" value={job.titleReview?.error?.code || "FAILED"} /><ExtensionSafeText className="ml-2 text-muted-foreground" value={job.titleReview?.error?.message || "Classification failed."} /></>
+        ) : tab === "unreviewed" ? (
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            {scanning ? <Loader2 className="size-3 animate-spin" /> : null}
+            <ExtensionSafeText value={scanning ? "AI review in progress" : "Waiting for AI review"} />
+          </span>
+        ) : (
+          <ExtensionSafeText className="text-muted-foreground" value={job.titleReview?.reason || "No reason returned."} />
+        )}
+      </div>
+      <div className="text-left lg:text-right">
+        <div className="text-[9px] uppercase tracking-wide text-muted-foreground"><ExtensionSafeText value={tab === "unreviewed" ? "Status" : "Confidence"} /></div>
+        <div className={cn("text-[11px] font-bold tabular-nums", tab !== "unreviewed" && "font-mono")}><ExtensionSafeText value={tab === "unreviewed" ? (scanning ? "Reviewing" : "Waiting") : confidenceLabel(job.titleReview?.confidence)} /></div>
+      </div>
+    </article>
+  );
+}
+
+function TitleReviewRows({
+  jobs,
+  tab,
+  selectedIds,
+  onSelect,
+}: {
+  jobs: TitleReviewJob[];
+  tab: ReviewTab;
+  selectedIds: Set<string>;
+  onSelect: (id: string, shiftKey: boolean) => void;
+}) {
+  const virtualized = jobs.length > 100;
+  const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
+  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  const listRef = useCallback((node: HTMLDivElement | null) => {
+    setListElement(node);
+    setScrollElement(node?.closest<HTMLElement>("[data-page-scroll-container]") ?? null);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!listElement || !scrollElement) return;
+    const update = () => setScrollMargin(
+      listElement.getBoundingClientRect().top
+      - scrollElement.getBoundingClientRect().top
+      + scrollElement.scrollTop,
+    );
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(scrollElement);
+    return () => observer.disconnect();
+  }, [jobs.length, listElement, scrollElement]);
+
+  const virtualizer = useVirtualizer({
+    count: virtualized ? jobs.length : 0,
+    getScrollElement: () => scrollElement,
+    getItemKey: (index) => jobs[index]?.id || index,
+    estimateSize: () => 64,
+    overscan: 10,
+    scrollMargin,
+  });
+
+  if (!virtualized) {
+    return (
+      <div>
+        {jobs.map((job) => (
+          <TitleReviewRow key={job.id} job={job} tab={tab} selected={selectedIds.has(job.id)} onSelect={onSelect} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={listRef} className="relative" style={{ height: virtualizer.getTotalSize() }}>
+      {virtualizer.getVirtualItems().map((virtualRow) => {
+        const job = jobs[virtualRow.index];
+        return (
+          <div
+            key={job.id}
+            data-index={virtualRow.index}
+            ref={virtualizer.measureElement}
+            className="absolute left-0 top-0 w-full"
+            style={{ transform: `translateY(${virtualRow.start - scrollMargin}px)` }}
+          >
+            <TitleReviewRow job={job} tab={tab} selected={selectedIds.has(job.id)} onSelect={onSelect} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function TitleReviewPage() {
   const { applier } = useApplier();
-  const { session, loading: sessionLoading, refresh: refreshSession, start, stop } = useTitleReviewSession();
+  const {
+    session,
+    loading: sessionLoading,
+    refresh: refreshSession,
+    start,
+    stop,
+    hydrate: hydrateSession,
+  } = useTitleReviewSession({ autoLoad: false });
   const [tab, setTab] = useState<ReviewTab>("unreviewed");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -95,6 +255,12 @@ export function TitleReviewPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletionProgress, setDeletionProgress] = useState<DeletionProgressState | null>(null);
   const latestLoadIdRef = useRef(0);
+  const initialBootstrapRef = useRef(true);
+  const activeLoadRef = useRef<{
+    key: string;
+    controller: AbortController;
+    promise: Promise<void>;
+  } | null>(null);
   const refreshedCompletionRef = useRef<string | null>(null);
   const deletionProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -105,38 +271,82 @@ export function TitleReviewPage() {
 
   useEffect(() => () => {
     if (deletionProgressTimerRef.current) clearTimeout(deletionProgressTimerRef.current);
+    activeLoadRef.current?.controller.abort();
   }, []);
 
   useEffect(() => setPage(1), [debouncedQuery, sort, tab]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(({ force = false }: { force?: boolean } = {}) => {
     if (!applier?.name) {
       setLoading(false);
-      return;
+      return Promise.resolve();
     }
+    const options: TitleReviewListOptions = {
+      applierName: applier.name,
+      tab,
+      page,
+      limit: pageSize,
+      q: debouncedQuery,
+      sort,
+    };
+    const bootstrap = initialBootstrapRef.current;
+    const key = `${bootstrap ? "bootstrap:" : "list:"}${titleReviewListCacheKey(options)}`;
+    if (!force && activeLoadRef.current?.key === key) return activeLoadRef.current.promise;
+
+    const cached = getCachedTitleReviewJobs(options);
+    if (cached && !force) {
+      setJobs(cached.data);
+      setTotal(cached.pagination.total);
+      setLoading(false);
+    }
+
+    activeLoadRef.current?.controller.abort();
+    const controller = new AbortController();
     const loadId = ++latestLoadIdRef.current;
     setLoading(true);
     setError(null);
-    try {
-      const response = await fetchTitleReviewJobs({
-        applierName: applier.name,
-        tab,
-        page,
-        limit: pageSize,
-        q: debouncedQuery,
-        sort,
-      });
-      if (loadId !== latestLoadIdRef.current) return;
-      setJobs(response.data);
-      setTotal(response.pagination.total);
-      if (page > Math.max(1, response.pagination.totalPages)) setPage(Math.max(1, response.pagination.totalPages));
-    } catch (nextError) {
-      if (loadId !== latestLoadIdRef.current) return;
-      setError(nextError instanceof Error ? nextError.message : "Failed to load title reviews");
-    } finally {
-      if (loadId === latestLoadIdRef.current) setLoading(false);
-    }
-  }, [applier?.name, debouncedQuery, page, pageSize, sort, tab]);
+    const promise = (async () => {
+      try {
+        const response = bootstrap
+          ? await fetchTitleReviewBootstrap(options, { signal: controller.signal })
+          : await fetchTitleReviewJobs(options, { signal: controller.signal });
+        if (loadId !== latestLoadIdRef.current) return;
+        if (bootstrap) {
+          initialBootstrapRef.current = false;
+          hydrateSession(response.session);
+        }
+        cacheTitleReviewJobs(options, response);
+        setJobs(response.data);
+        setTotal(response.pagination.total);
+        if (page > Math.max(1, response.pagination.totalPages)) {
+          setPage(Math.max(1, response.pagination.totalPages));
+        }
+
+        // Prefetch only from a warmed snapshot; a cold Firestore fallback should
+        // stay focused on the page the user explicitly requested.
+        if (response.meta.cacheSource !== "firestore") {
+          setTimeout(() => {
+            if (response.pagination.page < response.pagination.totalPages) {
+              void prefetchTitleReviewJobs({ ...options, page: response.pagination.page + 1 }).catch(() => undefined);
+            }
+            if (options.tab === "review_required" && options.page === 1 && !options.q) {
+              void prefetchTitleReviewJobs({ ...options, page: 1, limit: 250 })
+                .then(() => prefetchTitleReviewJobs({ ...options, page: 1, limit: 500 }))
+                .catch(() => undefined);
+            }
+          }, 100);
+        }
+      } catch (nextError) {
+        if (controller.signal.aborted || loadId !== latestLoadIdRef.current) return;
+        setError(nextError instanceof Error ? nextError.message : "Failed to load title reviews");
+      } finally {
+        if (loadId === latestLoadIdRef.current) setLoading(false);
+        if (activeLoadRef.current?.key === key) activeLoadRef.current = null;
+      }
+    })();
+    activeLoadRef.current = { key, controller, promise };
+    return promise;
+  }, [applier?.name, debouncedQuery, hydrateSession, page, pageSize, sort, tab]);
 
   useEffect(() => {
     void load();
@@ -163,7 +373,7 @@ export function TitleReviewPage() {
     : 0;
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([load(), refreshSession()]);
+    await Promise.all([load({ force: true }), refreshSession()]);
   }, [load, refreshSession]);
 
   const changeTab = useCallback((nextTab: ReviewTab) => {
@@ -185,6 +395,7 @@ export function TitleReviewPage() {
     clearSelection();
     try {
       const result = await approveTitleReviewJobs(applier.name, ids);
+      invalidateTitleReviewListCache();
       toast.success(`Approved ${result.approvedCount ?? ids.length} title${ids.length === 1 ? "" : "s"}`);
       await refreshAll();
     } catch (nextError) {
@@ -222,6 +433,7 @@ export function TitleReviewPage() {
       const result = await removeTitleReviewJobsWithProgress(applier.name, ids, (next) => {
         setDeletionProgress({ ...next, phase: "deleting" });
       });
+      invalidateTitleReviewListCache();
       setDeletionProgress((current) => current ? { ...current, phase: "refreshing" } : current);
       await refreshAll();
       const partial = result.failedIds.length > 0;
@@ -443,11 +655,24 @@ export function TitleReviewPage() {
             </div>
           ) : null}
 
-          {loading && jobs.length === 0 ? (
-            <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 size-5 animate-spin" /> Loading title reviews…
+          {error && jobs.length > 0 ? (
+            <div className="flex items-center gap-2 border-b border-destructive/20 bg-destructive/[0.06] px-3 py-2 text-xs text-destructive">
+              <AlertTriangle className="size-3.5 shrink-0" />
+              <ExtensionSafeText value={`${error} Showing the last successful results.`} />
             </div>
-          ) : error ? (
+          ) : null}
+
+          {loading && jobs.length === 0 ? (
+            <div className="animate-pulse" aria-label="Loading title reviews">
+              {Array.from({ length: 6 }, (_, index) => (
+                <div key={index} className="grid grid-cols-[1fr_1.5fr_5rem] gap-4 border-b border-border/60 px-3 py-3">
+                  <div className="h-3 rounded bg-muted" />
+                  <div className="h-3 rounded bg-muted/80" />
+                  <div className="h-3 rounded bg-muted/70" />
+                </div>
+              ))}
+            </div>
+          ) : error && jobs.length === 0 ? (
             <div className="m-4 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
               <ExtensionSafeText value={error} />
             </div>
@@ -465,73 +690,7 @@ export function TitleReviewPage() {
               <p className="mt-1 text-sm text-muted-foreground"><ExtensionSafeText value={query ? "Try a different search." : "This queue is clear."} /></p>
             </div>
           ) : (
-            <div className="divide-y divide-border/60">
-              {jobs.map((job) => {
-                const selected = selectedIds.has(job.id);
-                const selectable = tab !== "unreviewed";
-                const scanning = job.titleReview?.processingState === "scanning";
-                return (
-                  <article
-                    key={job.id}
-                    role={selectable ? "button" : undefined}
-                    tabIndex={selectable ? 0 : undefined}
-                    aria-pressed={selectable ? selected : undefined}
-                    onClick={(event) => {
-                      if (!selectable) return;
-                      if ((event.target as HTMLElement).closest("a,button")) return;
-                      selectJob(job.id, event.shiftKey);
-                    }}
-                    onKeyDown={(event) => {
-                      if (!selectable) return;
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        selectJob(job.id, event.shiftKey);
-                      }
-                    }}
-                    className={cn(
-                      "grid gap-2 px-3 py-2.5 transition-colors lg:items-center",
-                      selectable
-                        ? "cursor-pointer lg:grid-cols-[auto_minmax(12rem,1.2fr)_minmax(15rem,2fr)_auto]"
-                        : "lg:grid-cols-[minmax(12rem,1.2fr)_minmax(15rem,2fr)_auto]",
-                      selected ? "bg-primary/[0.05]" : "hover:bg-muted/30",
-                    )}
-                  >
-                    {selectable ? (
-                      <Checkbox checked={selected} className="pointer-events-none mt-1 lg:mt-0" aria-label={`Select ${job.title}`} />
-                    ) : null}
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <h2 className="truncate text-sm font-semibold leading-5 text-foreground"><ExtensionSafeText value={job.title} /></h2>
-                        {job.applyUrl ? (
-                          <a href={job.applyUrl} target="_blank" rel="noreferrer" className="shrink-0 text-muted-foreground hover:text-primary" title="Open job">
-                            <ExternalLink className="size-3" />
-                          </a>
-                        ) : null}
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-[11px] leading-4 text-muted-foreground">
-                        <ExtensionSafeText value={job.company} /><span>·</span><ExtensionSafeText value={job.source} /><span>·</span><ExtensionSafeText value={formatDate(job.postedAt)} />
-                      </div>
-                    </div>
-                    <div className="min-w-0 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs leading-4">
-                      {tab === "failed" ? (
-                        <><ExtensionSafeText className="font-semibold text-destructive" value={job.titleReview?.error?.code || "FAILED"} /><ExtensionSafeText className="ml-2 text-muted-foreground" value={job.titleReview?.error?.message || "Classification failed."} /></>
-                      ) : tab === "unreviewed" ? (
-                        <span className="flex items-center gap-1.5 text-muted-foreground">
-                          {scanning ? <Loader2 className="size-3 animate-spin" /> : null}
-                          <ExtensionSafeText value={scanning ? "AI review in progress" : "Waiting for AI review"} />
-                        </span>
-                      ) : (
-                        <ExtensionSafeText className="text-muted-foreground" value={job.titleReview?.reason || "No reason returned."} />
-                      )}
-                    </div>
-                    <div className="text-left lg:text-right">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground"><ExtensionSafeText value={tab === "unreviewed" ? "Status" : "Confidence"} /></div>
-                      <div className={cn("text-xs font-bold tabular-nums", tab !== "unreviewed" && "font-mono")}><ExtensionSafeText value={tab === "unreviewed" ? (scanning ? "Reviewing" : "Waiting") : confidenceLabel(job.titleReview?.confidence)} /></div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+            <TitleReviewRows jobs={jobs} tab={tab} selectedIds={selectedIds} onSelect={selectJob} />
           )}
 
           <PaginationBar
