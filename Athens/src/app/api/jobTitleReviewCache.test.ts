@@ -7,6 +7,7 @@ import {
   invalidateTitleReviewListCache,
   prefetchTitleReviewJobs,
   titleReviewListCacheKey,
+  titleReviewToolbarCount,
   type TitleReviewListOptions,
   type TitleReviewListResponse,
 } from "./jobTitleReview";
@@ -49,6 +50,12 @@ test("cache keys include paging, sorting, and search state", () => {
     titleReviewListCacheKey(options),
     titleReviewListCacheKey({ ...options, sort: "newest" }),
   );
+});
+
+test("toolbar count uses the exact unreviewed title queue", () => {
+  assert.equal(titleReviewToolbarCount({ unreviewedCount: 46, pending: 44 }), 46);
+  assert.equal(titleReviewToolbarCount({ unreviewedCount: 0, pending: 44 }), 0);
+  assert.equal(titleReviewToolbarCount({ pending: 12 }), 12);
 });
 
 test("keeps the last successful list available for stale-while-revalidate rendering", () => {

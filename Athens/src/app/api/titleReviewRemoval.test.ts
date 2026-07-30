@@ -26,12 +26,16 @@ test("large title-review removals are bounded and report live progress", async (
 
   assert.deepEqual(batchSizes.sort((left, right) => right - left), [100, 100, 50]);
   assert.equal(peak, 3);
+  assert.equal(result.removedCount, 250);
   assert.equal(result.deletedCount, 250);
+  assert.equal(result.alreadyAbsentCount, 0);
   assert.equal(result.failedIds.length, 0);
   assert.deepEqual(progress.at(-1), {
     total: 250,
     processed: 250,
+    removed: 250,
     deleted: 250,
+    alreadyAbsent: 0,
     failed: 0,
     activeBatches: 0,
     completedBatches: 3,
@@ -55,9 +59,31 @@ test("a failed deletion batch does not stop successful siblings", async () => {
   });
 
   assert.equal(result.deletedCount, 50);
+  assert.equal(result.removedCount, 50);
   assert.equal(result.failedIds.length, 100);
   assert.deepEqual(result.errors, ["temporary deletion failure"]);
   assert.equal(finalProgress?.processed, 150);
   assert.equal(finalProgress?.failed, 100);
   assert.equal(finalProgress?.activeBatches, 0);
+});
+
+test("counts stale queue entries as removed without claiming they were deleted twice", async () => {
+  const ids = ["already-gone", "deleted-now"];
+
+  const result = await runBatchedTitleReviewRemoval({
+    ids,
+    removeBatch: async () => ({
+      removedCount: 2,
+      removedIds: ids,
+      deletedCount: 1,
+      deletedIds: ["deleted-now"],
+      alreadyAbsentCount: 1,
+    }),
+  });
+
+  assert.equal(result.removedCount, 2);
+  assert.deepEqual(result.removedIds, ids);
+  assert.equal(result.deletedCount, 1);
+  assert.deepEqual(result.deletedIds, ["deleted-now"]);
+  assert.equal(result.alreadyAbsentCount, 1);
 });

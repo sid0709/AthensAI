@@ -24,6 +24,7 @@ import {
 } from "./companyIdentity.js";
 import { patchTitleReviewReadModel } from './jobTitleReview/titleReviewReadModel.js';
 import { mapTitleReviewDocument } from './jobTitleReview/titleReviewQueryService.js';
+import { invalidatePendingExtractionCount } from './jobSkillExtraction/extractSession.js';
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -277,6 +278,7 @@ export async function promoteExternalJobToMarket(externalDoc, {
 		).catch(() => {});
 	}
 	void indexOneJobRanking({ ...marketJob, _id: insertedId }).catch(() => {});
+	if (marketJob.aiSkillStatus === 'pending') invalidatePendingExtractionCount();
 	void patchTitleReviewReadModel({
 		upsertRows: [mapTitleReviewDocument({ ...marketJob, _id: insertedId })],
 	}).catch((error) => {

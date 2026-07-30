@@ -54,10 +54,7 @@ test("pending skill badge counts only jobs the user's tier can process", () => {
 
 test("pending title review includes unprocessed and failed market jobs", () => {
 	assert.deepEqual(pendingTitleReviewQuery(), {
-		$or: [
-			{ "titleReview.processingState": { $exists: false } },
-			{ "titleReview.processingState": "failed" },
-		],
+		"titleReview.processingState": { $in: ["pending", "failed"] },
 	});
 });
 

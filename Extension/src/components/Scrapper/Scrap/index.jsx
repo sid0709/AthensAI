@@ -16,6 +16,7 @@ import { useRuntime } from '../../../api/runtimeContext';
 import useApi from '../../../api/useApi';
 import { API_URL } from '../../../config/env';
 import useNotification from '../../../api/useNotification';
+import { assertCompleteJob, IncompleteJobDataError } from '../../../api/jobValidation';
 import { handleClear, handleAction, handleHighlight } from '../../../contentScript/interactionBridge';
 import { athensCardSx, athensSectionLabelSx } from '../../../theme/athensTheme';
 
@@ -292,7 +293,7 @@ const ScrapComponent = () => {
 			company: {
 				name: CompanyName || "",
 				tags: CompanyTags || [],
-				logo: CompanyLogoComponent?.success ? CompanyLogo : "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQGRo4_tzLdMlx9Bzp9ZyFGo0VdeHbJt_rfYQ&s",
+				logo: CompanyLogoComponent?.success ? CompanyLogo || "" : "",
 			},
 			title: JobTitle?.success ? JobTitle.data : "",
 			details: MetaTags || {},
@@ -303,6 +304,7 @@ const ScrapComponent = () => {
 		};
 
 		console.log('Scraped job data:', resultData);
+		assertCompleteJob(resultData);
 
 		try {
 			await api.post('/jobs', resultData);
@@ -326,6 +328,12 @@ const ScrapComponent = () => {
 					await onClickListItem();
 				} catch (err) {
 					notifyFailure(err, 'Error in scrape loop');
+					if (err instanceof IncompleteJobDataError) {
+						setScrapFlag(false);
+						setProgress(0);
+						handleClear();
+						return;
+					}
 				}
 			}
 		};

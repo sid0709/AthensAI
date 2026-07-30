@@ -90,6 +90,7 @@ import {
 	patchTitleReviewReadModel,
 } from '../services/jobTitleReview/titleReviewReadModel.js';
 import { mapTitleReviewDocument } from '../services/jobTitleReview/titleReviewQueryService.js';
+import { invalidatePendingExtractionCount } from '../services/jobSkillExtraction/extractSession.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -364,6 +365,7 @@ export async function createJob(req, res) {
 			});
 			void indexJobInRedis(String(result.insertedId), job.skillsNormalized, job.skillTokens).catch(() => {});
 			void indexOneJobRanking({ ...job, _id: result.insertedId }).catch(() => {});
+			if (!req.deferSkillPendingInvalidation) invalidatePendingExtractionCount();
 			if (!req.deferTitleReviewRevision) {
 				void patchTitleReviewReadModel({
 					upsertRows: [mapTitleReviewDocument({ ...job, _id: result.insertedId })],
@@ -407,9 +409,14 @@ export async function createJobsBulk(req, res) {
 	const client = typeof req.get === 'function' ? req.get('x-athens-client') : '';
 	const { results, summary } = await ingestJobsBulk(
 		jobs,
-		(job) => createJobRecord(job, { client, deferTitleReviewRevision: true }),
+		(job) => createJobRecord(job, {
+			client,
+			deferTitleReviewRevision: true,
+			deferSkillPendingInvalidation: true,
+		}),
 	);
 	if (summary.created > 0 && jobsCollection) {
+		invalidatePendingExtractionCount();
 		const ids = results.filter((result) => result.created && result.insertedId).map((result) => String(result.insertedId));
 		if (ids.length) {
 			try {
@@ -437,7 +444,11 @@ export async function createJobsBulk(req, res) {
 }
 
 /** Reuse the canonical ingest path from internal controllers without an HTTP loopback. */
-export async function createJobRecord(job, { client = 'agent-manual', deferTitleReviewRevision = false } = {}) {
+export async function createJobRecord(job, {
+	client = 'agent-manual',
+	deferTitleReviewRevision = false,
+	deferSkillPendingInvalidation = false,
+} = {}) {
 	let statusCode = 200;
 	let payload = null;
 	const response = {
@@ -450,7 +461,12 @@ export async function createJobRecord(job, { client = 'agent-manual', deferTitle
 			return value;
 		},
 	};
-	await createJob({ body: job, get: () => client, deferTitleReviewRevision }, response);
+	await createJob({
+		body: job,
+		get: () => client,
+		deferTitleReviewRevision,
+		deferSkillPendingInvalidation,
+	}, response);
 	return { statusCode, payload: payload || {} };
 }
 
@@ -907,6 +923,7 @@ export async function removeJobs(req, res) {
 		if (!ids.length) return res.status(400).json({ success: false, error: 'Missing ids array' });
 
 		const { deletedCount } = await deleteJobDocuments({ ids, jobsCollection });
+		if (deletedCount) invalidatePendingExtractionCount();
 		evictJobsFromJobListReadModel(ids);
 		await patchTitleReviewReadModel({ deletedIds: ids });
 		invalidateLiveProjectedStatusCount();
@@ -933,6 +950,7 @@ export async function removeOtherCompanyJobs(req, res) {
 		if (!ids.length) return res.json({ success: true, deletedCount: 0, deletedIds: [] });
 
 		const { deletedCount } = await deleteJobDocuments({ ids, jobsCollection });
+		if (deletedCount) invalidatePendingExtractionCount();
 		evictJobsFromJobListReadModel(ids);
 		await patchTitleReviewReadModel({ deletedIds: ids });
 		invalidateLiveProjectedStatusCount();

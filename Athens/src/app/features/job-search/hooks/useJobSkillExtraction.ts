@@ -9,6 +9,7 @@ import {
 } from "@/app/api/jobSkillExtract";
 
 const POLL_MS = 1500;
+const IDLE_POLL_MS = 5000;
 
 export function useJobSkillExtraction() {
   const { applier } = useApplier();
@@ -35,9 +36,9 @@ export function useJobSkillExtraction() {
     }
   }, []);
 
-  const startPolling = useCallback(() => {
+  const startPolling = useCallback((intervalMs = POLL_MS) => {
     stopPolling();
-    pollRef.current = setInterval(() => void refresh(), POLL_MS);
+    pollRef.current = setInterval(() => void refresh(), intervalMs);
   }, [refresh, stopPolling]);
 
   useEffect(() => {
@@ -46,8 +47,8 @@ export function useJobSkillExtraction() {
   }, [refresh, stopPolling]);
 
   useEffect(() => {
-    if (session.running) startPolling();
-    else stopPolling();
+    startPolling(session.running ? POLL_MS : IDLE_POLL_MS);
+    return () => stopPolling();
   }, [session.running, startPolling, stopPolling]);
 
   const start = useCallback(async () => {

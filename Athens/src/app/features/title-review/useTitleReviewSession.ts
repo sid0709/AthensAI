@@ -9,11 +9,13 @@ import {
 } from "@/app/api/jobTitleReview";
 
 const POLL_MS = 1000;
+const IDLE_POLL_MS = 5000;
 
 export function useTitleReviewSession({
   enabled = true,
   autoLoad = true,
-}: { enabled?: boolean; autoLoad?: boolean } = {}) {
+  pollWhenIdle = false,
+}: { enabled?: boolean; autoLoad?: boolean; pollWhenIdle?: boolean } = {}) {
   const { applier } = useApplier();
   const [session, setSession] = useState<TitleReviewSession>({ running: false, status: "idle" });
   const [loading, setLoading] = useState(false);
@@ -37,14 +39,17 @@ export function useTitleReviewSession({
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);
     timer.current = null;
-    if (enabled && session.running) {
-      timer.current = setInterval(() => void refresh(), POLL_MS);
+    if (enabled && (session.running || pollWhenIdle)) {
+      timer.current = setInterval(
+        () => void refresh(),
+        session.running ? POLL_MS : IDLE_POLL_MS,
+      );
     }
     return () => {
       if (timer.current) clearInterval(timer.current);
       timer.current = null;
     };
-  }, [enabled, refresh, session.running]);
+  }, [enabled, pollWhenIdle, refresh, session.running]);
 
   const start = useCallback(async () => {
     if (!applier?.name) return null;

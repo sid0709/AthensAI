@@ -35,6 +35,8 @@ let activeSession = null;
 let cancelRequested = false;
 const inflight = new Set();
 const pendingCountCache = new Map();
+let pendingCountGeneration = 0;
+const pendingCountRefreshedGeneration = new Map([['all', 0], ['public', 0]]);
 const PENDING_COUNT_CACHE_MS = Math.max(
   5_000,
   Number(process.env.JOB_SKILL_PENDING_COUNT_CACHE_MS || 30_000),
@@ -76,10 +78,14 @@ export async function countPendingExtractionBreakdown(includeV2 = true) {
 
 async function countPendingExtractionCached(includeV2) {
   const key = includeV2 ? 'all' : 'public';
+  const generation = pendingCountGeneration;
   const cached = pendingCountCache.get(key);
   if (cached?.expiresAt > Date.now()) return cached.promise;
   const redisKey = `jobs:analysis:skill-pending:v1:${key}`;
-  if (isRedisReady()) {
+  // After an ingest/delete, bypass Redis until this process has recomputed the
+  // affected count from Firestore. The Redis DEL is asynchronous and must not
+  // create a brief window where the toolbar reads the old value again.
+  if (isRedisReady() && pendingCountRefreshedGeneration.get(key) === generation) {
     const stored = await getRedis().get(redisKey).catch(() => null);
     const count = stored == null ? NaN : Number(stored);
     if (Number.isFinite(count) && count >= 0) {
@@ -97,9 +103,14 @@ async function countPendingExtractionCached(includeV2) {
       throw error;
     })
     .then((count) => {
+      if (pendingCountGeneration !== generation) {
+        pendingCountCache.delete(key);
+        return count;
+      }
       if (isRedisReady()) {
         void getRedis().setEx(redisKey, PENDING_COUNT_CACHE_SEC, String(count)).catch(() => undefined);
       }
+      pendingCountRefreshedGeneration.set(key, generation);
       return count;
     });
   pendingCountCache.set(key, {
@@ -109,7 +120,8 @@ async function countPendingExtractionCached(includeV2) {
   return promise;
 }
 
-function invalidatePendingExtractionCount() {
+export function invalidatePendingExtractionCount() {
+  pendingCountGeneration += 1;
   pendingCountCache.clear();
   if (isRedisReady()) {
     void getRedis().del(

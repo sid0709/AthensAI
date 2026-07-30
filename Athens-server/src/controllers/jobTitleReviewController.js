@@ -19,6 +19,7 @@ import { removeJobsFromRanking } from '../services/matching/jobRankingIndex.js';
 import { evictJobsFromJobListReadModel } from '../services/jobListReadModelService.js';
 import { invalidateLiveProjectedStatusCount } from '../services/jobStatusProjectionService.js';
 import { observeHistogram } from '../services/monitoring/metrics.js';
+import { invalidatePendingExtractionCount } from '../services/jobSkillExtraction/extractSession.js';
 import { invalidateJobListCountCache } from './jobController.js';
 
 async function requireBetaApplierName(applierNameRaw, res) {
@@ -216,15 +217,30 @@ export async function removeTitleReviewJobs(req, res) {
 			],
 		}, { projection: { _id: 1 } }).toArray();
 		const ids = eligible.map((job) => String(job._id));
-		if (!ids.length) return res.json({ success: true, deletedCount: 0, deletedIds: [] });
-		const { deletedCount } = await deleteJobDocuments({ ids, jobsCollection });
-		evictJobsFromJobListReadModel(ids);
-		invalidateLiveProjectedStatusCount();
-		invalidateJobListCountCache();
+		let deletedCount = 0;
+		if (ids.length) {
+			({ deletedCount } = await deleteJobDocuments({ ids, jobsCollection }));
+			if (deletedCount) invalidatePendingExtractionCount();
+			evictJobsFromJobListReadModel(ids);
+			invalidateLiveProjectedStatusCount();
+			invalidateJobListCountCache();
+		}
 		invalidateTitleReviewCounts();
-		await patchTitleReviewReadModel({ deletedIds: ids });
-		await Promise.allSettled([deleteScoresForJobs(ids), removeJobsFromRanking(ids)]);
-		return res.json({ success: true, deletedCount, deletedIds: ids });
+		// Purge every requested id from the derived queue, including documents that
+		// were already deleted elsewhere but survived in an older Redis snapshot.
+		const snapshotPatch = await patchTitleReviewReadModel({ deletedIds: requestedIds });
+		const removedIds = [...new Set([...ids, ...(snapshotPatch.removedIds || [])])];
+		const eligibleIds = new Set(ids);
+		const alreadyAbsentCount = removedIds.filter((id) => !eligibleIds.has(id)).length;
+		if (ids.length) await Promise.allSettled([deleteScoresForJobs(ids), removeJobsFromRanking(ids)]);
+		return res.json({
+			success: true,
+			deletedCount,
+			deletedIds: ids,
+			removedCount: removedIds.length,
+			removedIds,
+			alreadyAbsentCount,
+		});
 	} catch (error) {
 		console.error('POST /api/jobs/title-review/remove error', error);
 		return res.status(500).json({ success: false, error: error.message });

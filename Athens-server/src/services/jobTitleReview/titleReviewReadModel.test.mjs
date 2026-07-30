@@ -128,6 +128,26 @@ test('small inserts patch a warm snapshot instead of invalidating it', async () 
 	assert.deepEqual(current.queues.unreviewed.newest.map((row) => row.id), ['new-pending']);
 });
 
+test('serializes concurrent deletions so one snapshot patch cannot restore another', async () => {
+	const initial = finalizeTitleReviewSnapshot([
+		reviewRow('delete-a', { label: 'REVIEW_REQUIRED', confidence: 0.9 }),
+		reviewRow('delete-b', { label: 'REVIEW_REQUIRED', confidence: 0.8 }),
+		reviewRow('keep', { label: 'REVIEW_REQUIRED', confidence: 0.7 }),
+	], '1');
+	titleReviewReadModelTest.seed(initial);
+
+	const [first, second] = await Promise.all([
+		patchTitleReviewReadModel({ deletedIds: ['delete-a'] }),
+		patchTitleReviewReadModel({ deletedIds: ['delete-b'] }),
+	]);
+
+	assert.deepEqual(first.removedIds, ['delete-a']);
+	assert.deepEqual(second.removedIds, ['delete-b']);
+	assert.equal(first.removedCount + second.removedCount, 2);
+	assert.deepEqual(titleReviewReadModelTest.current().entries.map((row) => row.id), ['keep']);
+	assert.equal(titleReviewReadModelTest.current().counts.reviewRequiredCount, 1);
+});
+
 test('stale snapshots expose both authoritative and snapshot revisions', () => {
 	const snapshot = finalizeTitleReviewSnapshot([
 		reviewRow('one', { label: 'REVIEW_REQUIRED', confidence: 0.9 }),

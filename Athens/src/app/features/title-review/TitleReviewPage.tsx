@@ -420,7 +420,9 @@ export function TitleReviewPage() {
       phase: "deleting",
       total: ids.length,
       processed: 0,
+      removed: 0,
       deleted: 0,
+      alreadyAbsent: 0,
       failed: 0,
       activeBatches: 0,
       completedBatches: 0,
@@ -439,8 +441,14 @@ export function TitleReviewPage() {
       const partial = result.failedIds.length > 0;
       setDeletionProgress((current) => current ? { ...current, phase: partial ? "partial" : "complete" } : current);
       if (partial) {
-        toast.error(`Removed ${result.deletedCount} job${result.deletedCount === 1 ? "" : "s"}; ${result.failedIds.length} could not be removed`, {
+        toast.error(`Removed ${result.removedCount} title${result.removedCount === 1 ? "" : "s"}; ${result.failedIds.length} could not be removed`, {
           description: result.errors[0],
+        });
+      } else if (result.removedCount === 0) {
+        toast.info("The selected titles were already absent from the review queue");
+      } else if (result.alreadyAbsentCount > 0) {
+        toast.success(`Removed ${result.removedCount} title${result.removedCount === 1 ? "" : "s"} from the review queue`, {
+          description: `${result.deletedCount} job${result.deletedCount === 1 ? " was" : "s were"} permanently deleted; ${result.alreadyAbsentCount} had already been deleted.`,
         });
       } else {
         toast.success(`Removed ${result.deletedCount} job${result.deletedCount === 1 ? "" : "s"} permanently`);
@@ -451,7 +459,7 @@ export function TitleReviewPage() {
         ...current,
         phase: "partial",
         processed: current.total,
-        failed: Math.max(current.failed, current.total - current.deleted),
+        failed: Math.max(current.failed, current.total - current.removed),
         activeBatches: 0,
       } : current);
       toast.error(nextError instanceof Error ? nextError.message : "Failed to remove jobs");
@@ -626,7 +634,9 @@ export function TitleReviewPage() {
                     : deletionProgress.phase === "refreshing"
                       ? "Deletion finished. Refreshing review counts…"
                       : deletionProgress.phase === "complete"
-                        ? `Removed ${deletionProgress.deleted.toLocaleString()} jobs permanently.`
+                        ? deletionProgress.alreadyAbsent > 0
+                          ? `Removed ${deletionProgress.removed.toLocaleString()} titles from the review queue.`
+                          : `Removed ${deletionProgress.deleted.toLocaleString()} jobs permanently.`
                         : `Deletion finished with ${deletionProgress.failed.toLocaleString()} failed items.`}
                 />
                 <ExtensionSafeText className="ml-auto font-mono text-xs tabular-nums text-muted-foreground" value={`${deletionPercent}%`} />
@@ -645,7 +655,7 @@ export function TitleReviewPage() {
                 />
               </div>
               <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                <ExtensionSafeText value={`${deletionProgress.deleted.toLocaleString()} deleted${deletionProgress.failed ? ` · ${deletionProgress.failed.toLocaleString()} failed` : ""}`} />
+                <ExtensionSafeText value={`${deletionProgress.removed.toLocaleString()} removed · ${deletionProgress.deleted.toLocaleString()} permanently deleted${deletionProgress.alreadyAbsent ? ` · ${deletionProgress.alreadyAbsent.toLocaleString()} already absent` : ""}${deletionProgress.failed ? ` · ${deletionProgress.failed.toLocaleString()} failed` : ""}`} />
                 <ExtensionSafeText
                   value={deletionProgress.phase === "deleting"
                     ? `${deletionProgress.activeBatches} active · ${deletionProgress.completedBatches}/${deletionProgress.batchCount} batches complete`

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { incrementCounter, observeHistogram, setGauge } from '../monitoring/metrics.js';
 import {
@@ -12,14 +13,34 @@ const SNAPSHOT_SCHEMA_VERSION = 1;
 const SNAPSHOT_TTL_SECONDS = 7 * 24 * 60 * 60;
 const REVISION_KEY = 'title-review:v1:revision';
 const LATEST_SNAPSHOT_KEY = 'title-review:v1:snapshot:latest';
+const SNAPSHOT_PATCH_LOCK_KEY = 'title-review:v1:snapshot:patch-lock';
 const REVISION_CHECK_TTL_MS = 500;
 const DEFAULT_REBUILD_DELAY_MS = 250;
 const MAX_REBUILD_CATCH_UP_ATTEMPTS = 5;
+const PATCH_LOCK_TTL_MS = 10_000;
+const PATCH_LOCK_WAIT_MS = 4_500;
+const READ_MAX_REVISION_SCRIPT = `
+local current = tonumber(redis.call('get', KEYS[1]) or '0')
+local candidate = tonumber(ARGV[1]) or 1
+local resolved = math.max(current, candidate)
+redis.call('set', KEYS[1], tostring(resolved))
+return tostring(resolved)
+`;
+const INCREMENT_MAX_REVISION_SCRIPT = `
+local current = tonumber(redis.call('get', KEYS[1]) or '0')
+local candidate = tonumber(ARGV[1]) or 1
+local resolved = math.max(current, candidate) + 1
+redis.call('set', KEYS[1], tostring(resolved))
+return tostring(resolved)
+`;
 
 let localRevision = 1;
 let revisionCache = { value: '1', expiresAt: 0 };
 let currentSnapshot = null;
+let currentSnapshotTrusted = false;
+let redisSnapshotsTrusted = false;
 let snapshotBuild = null;
+let snapshotPatchQueue = Promise.resolve();
 let rebuildTimer = null;
 let lastBuildFailureAt = 0;
 
@@ -146,13 +167,12 @@ export async function getTitleReviewRevision({ force = false } = {}) {
 	if (isRedisReady()) {
 		try {
 			const redis = getRedis();
-			let value = await redis.get(REVISION_KEY);
-			if (!value) {
-				await redis.set(REVISION_KEY, String(localRevision), { NX: true });
-				value = await redis.get(REVISION_KEY);
-			}
+			const value = await redis.eval(READ_MAX_REVISION_SCRIPT, {
+				keys: [REVISION_KEY],
+				arguments: [String(localRevision)],
+			});
 			if (value) localRevision = Math.max(localRevision, Number(value) || 1);
-			revisionCache = { value: String(value || localRevision), expiresAt: Date.now() + REVISION_CHECK_TTL_MS };
+			revisionCache = { value: String(localRevision), expiresAt: Date.now() + REVISION_CHECK_TTL_MS };
 			return revisionCache.value;
 		} catch (error) {
 			console.warn('[title-review] revision read failed:', error?.message || error);
@@ -166,7 +186,10 @@ export async function bumpTitleReviewRevision() {
 	let revision;
 	if (isRedisReady()) {
 		try {
-			revision = await getRedis().incr(REVISION_KEY);
+			revision = await getRedis().eval(INCREMENT_MAX_REVISION_SCRIPT, {
+				keys: [REVISION_KEY],
+				arguments: [String(localRevision)],
+			});
 		} catch (error) {
 			console.warn('[title-review] revision increment failed:', error?.message || error);
 		}
@@ -187,6 +210,36 @@ async function persistSnapshot(snapshot) {
 	return true;
 }
 
+async function withSnapshotPatchLock(operation) {
+	if (!isRedisReady()) return operation();
+	const redis = getRedis();
+	const token = `${process.pid}:${randomUUID()}`;
+	const deadline = Date.now() + PATCH_LOCK_WAIT_MS;
+	for (;;) {
+		let acquired;
+		try {
+			acquired = await redis.set(SNAPSHOT_PATCH_LOCK_KEY, token, { NX: true, PX: PATCH_LOCK_TTL_MS });
+		} catch (error) {
+			console.warn('[title-review] snapshot patch lock unavailable:', error?.message || error);
+			return operation();
+		}
+		if (acquired) {
+			try {
+				return await operation();
+			} finally {
+				await redis.eval(
+					"if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+					{ keys: [SNAPSHOT_PATCH_LOCK_KEY], arguments: [token] },
+				).catch(() => undefined);
+			}
+		}
+		if (Date.now() >= deadline) {
+			throw new Error('Timed out waiting to update the title-review snapshot');
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+
 async function loadSnapshotFromRedis(revision) {
 	if (!isRedisReady()) return null;
 	try {
@@ -199,21 +252,29 @@ async function loadSnapshotFromRedis(revision) {
 }
 
 async function exactSnapshot(revision) {
-	if (currentSnapshot?.revision === String(revision)) return { snapshot: currentSnapshot, source: 'memory' };
+	if (currentSnapshotTrusted && currentSnapshot?.revision === String(revision)) {
+		return { snapshot: currentSnapshot, source: 'memory' };
+	}
+	// Redis is a derived cache and can restart from an older persistence image.
+	// Do not trust restored snapshots in a fresh server process until one full
+	// Firestore rebuild has established the current cache epoch.
+	if (!redisSnapshotsTrusted) return null;
 	const redisSnapshot = await loadSnapshotFromRedis(revision);
 	if (!redisSnapshot) return null;
 	currentSnapshot = redisSnapshot;
+	currentSnapshotTrusted = true;
 	return { snapshot: redisSnapshot, source: 'redis' };
 }
 
 async function latestStaleSnapshot() {
-	if (currentSnapshot) return { snapshot: currentSnapshot, source: 'memory' };
-	if (!isRedisReady()) return null;
+	if (currentSnapshotTrusted && currentSnapshot) return { snapshot: currentSnapshot, source: 'memory' };
+	if (!redisSnapshotsTrusted || !isRedisReady()) return null;
 	try {
 		const raw = await getRedis().get(LATEST_SNAPSHOT_KEY);
 		const snapshot = raw ? parseSnapshot(raw) : null;
 		if (!snapshot) return null;
 		currentSnapshot = snapshot;
+		currentSnapshotTrusted = true;
 		return { snapshot, source: 'redis' };
 	} catch (error) {
 		console.warn('[title-review] latest Redis snapshot read failed:', error?.message || error);
@@ -387,8 +448,10 @@ export async function rebuildTitleReviewReadModel({ force = false } = {}) {
 				if (snapshot.revision !== revision) {
 					snapshot = finalizeTitleReviewSnapshot(Object.values(queues).flat(), revision);
 				}
-				await persistSnapshot(snapshot);
+				const persisted = await persistSnapshot(snapshot);
 				currentSnapshot = snapshot;
+				currentSnapshotTrusted = true;
+				if (persisted) redisSnapshotsTrusted = true;
 				setGauge('athens_title_review_snapshot_rows', {}, snapshot.entries.length);
 				setGauge('athens_title_review_snapshot_revision', {}, Number(revision));
 				observeHistogram('athens_title_review_snapshot_build_duration_seconds', {}, (performance.now() - startedAt) / 1_000);
@@ -455,8 +518,12 @@ export async function markTitleReviewReadModelChanged({ rebuild = true, delayMs 
 	return revision;
 }
 
-/** Patch small mutations synchronously so normal ingest never invalidates a warm queue. */
-export async function patchTitleReviewReadModel({ approvedIds = [], deletedIds = [], upsertRows = [] } = {}) {
+/**
+ * Apply one small mutation against the latest snapshot. Mutations are queued so
+ * concurrent bulk-delete requests cannot each publish a snapshot derived from
+ * the same old revision and accidentally restore one another's deleted rows.
+ */
+async function applyTitleReviewReadModelPatch({ approvedIds = [], deletedIds = [], upsertRows = [] } = {}) {
 	const previousRevision = await getTitleReviewRevision({ force: true });
 	const cached = await exactSnapshot(previousRevision);
 	const revision = await bumpTitleReviewRevision();
@@ -464,8 +531,11 @@ export async function patchTitleReviewReadModel({ approvedIds = [], deletedIds =
 	const deleted = new Set(deletedIds.map(String));
 	if (!cached?.snapshot) {
 		scheduleTitleReviewReadModelRebuild({ delayMs: 0 });
-		return { revision, patched: false };
+		return { revision, patched: false, removedCount: 0, removedIds: [] };
 	}
+	const removedIds = cached.snapshot.entries
+		.filter((row) => deleted.has(row.id))
+		.map((row) => row.id);
 	const rowsById = new Map(cached.snapshot.entries.flatMap((row) => {
 		if (deleted.has(row.id)) return [];
 		if (!approved.has(row.id)) return [[row.id, row]];
@@ -485,11 +555,23 @@ export async function patchTitleReviewReadModel({ approvedIds = [], deletedIds =
 		if (compact.id && !deleted.has(compact.id)) rowsById.set(compact.id, compact);
 	}
 	currentSnapshot = finalizeTitleReviewSnapshot([...rowsById.values()], revision, { source: 'mutation' });
-	void persistSnapshot(currentSnapshot).catch((error) => {
+	currentSnapshotTrusted = true;
+	try {
+		const persisted = await persistSnapshot(currentSnapshot);
+		if (persisted) redisSnapshotsTrusted = true;
+	} catch (error) {
 		console.warn('[title-review] patched snapshot persist failed:', error?.message || error);
 		scheduleTitleReviewReadModelRebuild({ delayMs: 0 });
-	});
-	return { revision, patched: true };
+	}
+	return { revision, patched: true, removedCount: removedIds.length, removedIds };
+}
+
+export function patchTitleReviewReadModel(options = {}) {
+	const operation = snapshotPatchQueue.then(() => withSnapshotPatchLock(
+		() => applyTitleReviewReadModelPatch(options),
+	));
+	snapshotPatchQueue = operation.catch(() => undefined);
+	return operation;
 }
 
 export function getTitleReviewReadModelState() {
@@ -510,6 +592,7 @@ export const titleReviewReadModelTest = {
 	listFromSnapshot,
 	seed(snapshot) {
 		currentSnapshot = snapshot;
+		currentSnapshotTrusted = true;
 		localRevision = Number(snapshot?.revision) || 1;
 		revisionCache = { value: String(snapshot?.revision || localRevision), expiresAt: Date.now() + REVISION_CHECK_TTL_MS };
 	},
@@ -518,7 +601,10 @@ export const titleReviewReadModelTest = {
 	},
 	reset() {
 		currentSnapshot = null;
+		currentSnapshotTrusted = false;
+		redisSnapshotsTrusted = false;
 		snapshotBuild = null;
+		snapshotPatchQueue = Promise.resolve();
 		if (rebuildTimer) clearTimeout(rebuildTimer);
 		rebuildTimer = null;
 		localRevision = 1;

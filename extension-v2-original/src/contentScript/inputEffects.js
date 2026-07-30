@@ -115,6 +115,11 @@ async function fetchAutofillAnswer(context, jobDescription) {
 				{ action: 'autofillField', payload: { context, jobDescription } },
 				(response) => {
 					clearTimeout(timeout);
+					const lastError = chrome.runtime.lastError;
+					if (lastError) {
+						reject(new Error(lastError.message));
+						return;
+					}
 					if (!response?.success) {
 						reject(new Error(response?.error || 'Autofill request failed'));
 						return;

@@ -85,6 +85,13 @@ export type TitleReviewListOptions = {
   sort?: "confidence_desc" | "newest" | "oldest";
 };
 
+/** Exact number of jobs that have not completed title classification yet. */
+export function titleReviewToolbarCount(
+  session: Pick<TitleReviewSession, "unreviewedCount" | "pending">,
+) {
+  return session.unreviewedCount ?? session.pending ?? null;
+}
+
 type JsonError = { error?: string; code?: string; retryAfter?: number };
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -209,6 +216,9 @@ async function mutateTitleReviewJobs(
     approvedIds?: string[];
     deletedCount?: number;
     deletedIds?: string[];
+    removedCount?: number;
+    removedIds?: string[];
+    alreadyAbsentCount?: number;
   }>(response);
 }
 

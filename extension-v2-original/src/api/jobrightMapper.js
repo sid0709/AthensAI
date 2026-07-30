@@ -1,6 +1,3 @@
-const DEFAULT_LOGO =
-	'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQGRo4_tzLdMlx9Bzp9ZyFGo0VdeHbJt_rfYQ&s';
-
 function asString(value) {
 	if (value == null) return '';
 	return String(value).trim();
@@ -86,7 +83,7 @@ export function mapJobrightItemToResultData(item) {
 		company: {
 			name: asString(companyResult.companyName),
 			tags: splitCategories(companyResult.companyCategories),
-			logo: asString(jobResult.jdLogo) || DEFAULT_LOGO,
+			logo: asString(jobResult.jdLogo),
 		},
 		title: asString(jobResult.jobTitle || jobResult.jobNlpTitle),
 		details: mapDetails(jobResult),
