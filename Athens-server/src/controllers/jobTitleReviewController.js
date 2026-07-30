@@ -87,7 +87,7 @@ export async function listTitleReviewJobs(req, res) {
 			? requestedTab
 			: 'unreviewed';
 		const page = Math.max(1, Number(req.query?.page) || 1);
-		const limit = Math.max(10, Math.min(100, Number(req.query?.limit) || 25));
+		const limit = Math.max(10, Math.min(500, Number(req.query?.limit) || 50));
 		const requestedSort = String(req.query?.sort || '');
 		const sort = ['confidence_desc', 'newest', 'oldest'].includes(requestedSort)
 			? requestedSort

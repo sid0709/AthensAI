@@ -1,5 +1,12 @@
 import { API_BASE } from "@/lib/api-base";
 import { retryTransient } from "@/lib/transient-retry";
+import {
+  runBatchedTitleReviewRemoval,
+  type TitleReviewRemovalProgress,
+  type TitleReviewRemovalResult,
+} from "./titleReviewRemoval";
+
+export type { TitleReviewRemovalProgress, TitleReviewRemovalResult } from "./titleReviewRemoval";
 
 export type TitleReviewLabel = "APPROVED" | "REVIEW_REQUIRED";
 export type TitleReviewSession = {
@@ -126,3 +133,21 @@ export const approveTitleReviewJobs = (applierName: string, ids: string[]) =>
 
 export const removeTitleReviewJobs = (applierName: string, ids: string[]) =>
   mutateTitleReviewJobs("remove", applierName, ids);
+
+const TITLE_REVIEW_REMOVAL_BATCH_SIZE = 100;
+const TITLE_REVIEW_REMOVAL_CONCURRENCY = 3;
+
+/** Delete large selections in bounded parallel batches so callers can render live progress. */
+export async function removeTitleReviewJobsWithProgress(
+  applierName: string,
+  ids: string[],
+  onProgress?: (progress: TitleReviewRemovalProgress) => void,
+): Promise<TitleReviewRemovalResult> {
+  return runBatchedTitleReviewRemoval({
+    ids,
+    removeBatch: (batch) => removeTitleReviewJobs(applierName, batch),
+    onProgress,
+    batchSize: TITLE_REVIEW_REMOVAL_BATCH_SIZE,
+    concurrency: TITLE_REVIEW_REMOVAL_CONCURRENCY,
+  });
+}

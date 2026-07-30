@@ -15,8 +15,9 @@ import { useApplier } from "@/context/applier-context";
 import {
   approveTitleReviewJobs,
   fetchTitleReviewJobs,
-  removeTitleReviewJobs,
+  removeTitleReviewJobsWithProgress,
   type TitleReviewJob,
+  type TitleReviewRemovalProgress,
 } from "@/app/api/jobTitleReview";
 import { PageShell } from "@/app/components/layout/PageShell";
 import { PaginationBar } from "@/app/components/shared/PaginationBar";
@@ -39,6 +40,9 @@ import { useTitleReviewSession } from "./useTitleReviewSession";
 
 type ReviewTab = "unreviewed" | "review_required" | "failed";
 type ReviewSort = "confidence_desc" | "newest" | "oldest";
+type DeletionProgressState = TitleReviewRemovalProgress & {
+  phase: "deleting" | "refreshing" | "complete" | "partial";
+};
 
 function defaultSortForTab(tab: ReviewTab): ReviewSort {
   return tab === "review_required" ? "confidence_desc" : "newest";
@@ -89,13 +93,19 @@ export function TitleReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [mutation, setMutation] = useState<"approve" | "remove" | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletionProgress, setDeletionProgress] = useState<DeletionProgressState | null>(null);
   const latestLoadIdRef = useRef(0);
   const refreshedCompletionRef = useRef<string | null>(null);
+  const deletionProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 250);
     return () => clearTimeout(timer);
   }, [query]);
+
+  useEffect(() => () => {
+    if (deletionProgressTimerRef.current) clearTimeout(deletionProgressTimerRef.current);
+  }, []);
 
   useEffect(() => setPage(1), [debouncedQuery, sort, tab]);
 
@@ -148,6 +158,9 @@ export function TitleReviewPage() {
   const progress = session.total
     ? Math.min(100, Math.round(((session.processed ?? 0) / session.total) * 100))
     : 0;
+  const deletionPercent = deletionProgress?.total
+    ? Math.min(100, Math.round((deletionProgress.processed / deletionProgress.total) * 100))
+    : 0;
 
   const refreshAll = useCallback(async () => {
     await Promise.all([load(), refreshSession()]);
@@ -185,18 +198,53 @@ export function TitleReviewPage() {
   const removeSelected = async () => {
     if (!applier?.name || selectedIds.size === 0) return;
     const ids = selectedJobs.map((job) => job.id);
-    const previous = jobs;
+    const removingIds = new Set(ids);
+    if (deletionProgressTimerRef.current) {
+      clearTimeout(deletionProgressTimerRef.current);
+      deletionProgressTimerRef.current = null;
+    }
     setDeleteOpen(false);
     setMutation("remove");
-    setJobs((current) => current.filter((job) => !selectedIds.has(job.id)));
+    setDeletionProgress({
+      phase: "deleting",
+      total: ids.length,
+      processed: 0,
+      deleted: 0,
+      failed: 0,
+      activeBatches: 0,
+      completedBatches: 0,
+      batchCount: Math.ceil(ids.length / 100),
+    });
+    setJobs((current) => current.filter((job) => !removingIds.has(job.id)));
+    setTotal((current) => Math.max(0, current - ids.length));
     clearSelection();
     try {
-      const result = await removeTitleReviewJobs(applier.name, ids);
-      toast.success(`Removed ${result.deletedCount ?? ids.length} job${ids.length === 1 ? "" : "s"} permanently`);
+      const result = await removeTitleReviewJobsWithProgress(applier.name, ids, (next) => {
+        setDeletionProgress({ ...next, phase: "deleting" });
+      });
+      setDeletionProgress((current) => current ? { ...current, phase: "refreshing" } : current);
       await refreshAll();
+      const partial = result.failedIds.length > 0;
+      setDeletionProgress((current) => current ? { ...current, phase: partial ? "partial" : "complete" } : current);
+      if (partial) {
+        toast.error(`Removed ${result.deletedCount} job${result.deletedCount === 1 ? "" : "s"}; ${result.failedIds.length} could not be removed`, {
+          description: result.errors[0],
+        });
+      } else {
+        toast.success(`Removed ${result.deletedCount} job${result.deletedCount === 1 ? "" : "s"} permanently`);
+      }
+      deletionProgressTimerRef.current = setTimeout(() => setDeletionProgress(null), partial ? 6_000 : 2_500);
     } catch (nextError) {
-      setJobs(previous);
+      setDeletionProgress((current) => current ? {
+        ...current,
+        phase: "partial",
+        processed: current.total,
+        failed: Math.max(current.failed, current.total - current.deleted),
+        activeBatches: 0,
+      } : current);
       toast.error(nextError instanceof Error ? nextError.message : "Failed to remove jobs");
+      await refreshAll();
+      deletionProgressTimerRef.current = setTimeout(() => setDeletionProgress(null), 6_000);
     } finally {
       setMutation(null);
     }
@@ -350,6 +398,51 @@ export function TitleReviewPage() {
             )}
           </div>
 
+          {deletionProgress ? (
+            <div className="border-b border-border/60 bg-destructive/[0.035] px-3 py-3" role="status" aria-live="polite">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                {deletionProgress.phase === "deleting" || deletionProgress.phase === "refreshing" ? (
+                  <Loader2 className="size-4 shrink-0 animate-spin text-destructive" />
+                ) : deletionProgress.phase === "complete" ? (
+                  <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+                ) : (
+                  <AlertTriangle className="size-4 shrink-0 text-amber-600" />
+                )}
+                <ExtensionSafeText
+                  value={deletionProgress.phase === "deleting"
+                    ? `Removing ${deletionProgress.processed.toLocaleString()} of ${deletionProgress.total.toLocaleString()} jobs…`
+                    : deletionProgress.phase === "refreshing"
+                      ? "Deletion finished. Refreshing review counts…"
+                      : deletionProgress.phase === "complete"
+                        ? `Removed ${deletionProgress.deleted.toLocaleString()} jobs permanently.`
+                        : `Deletion finished with ${deletionProgress.failed.toLocaleString()} failed items.`}
+                />
+                <ExtensionSafeText className="ml-auto font-mono text-xs tabular-nums text-muted-foreground" value={`${deletionPercent}%`} />
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className={cn(
+                    "h-full transition-[width] duration-300",
+                    deletionProgress.phase === "partial"
+                      ? "bg-amber-500"
+                      : deletionProgress.phase === "complete"
+                        ? "bg-emerald-500"
+                        : "bg-destructive",
+                  )}
+                  style={{ width: `${deletionPercent}%` }}
+                />
+              </div>
+              <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                <ExtensionSafeText value={`${deletionProgress.deleted.toLocaleString()} deleted${deletionProgress.failed ? ` · ${deletionProgress.failed.toLocaleString()} failed` : ""}`} />
+                <ExtensionSafeText
+                  value={deletionProgress.phase === "deleting"
+                    ? `${deletionProgress.activeBatches} active · ${deletionProgress.completedBatches}/${deletionProgress.batchCount} batches complete`
+                    : "The review list and counts are synchronized after cleanup."}
+                />
+              </div>
+            </div>
+          ) : null}
+
           {loading && jobs.length === 0 ? (
             <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">
               <Loader2 className="mr-2 size-5 animate-spin" /> Loading title reviews…
@@ -448,7 +541,7 @@ export function TitleReviewPage() {
             itemCount={jobs.length}
             onPageChange={setPage}
             onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
-            pageSizeOptions={[10, 25, 50, 100]}
+            pageSizeOptions={[10, 25, 50, 100, 250, 500]}
             loading={loading}
             unitLabel="titles"
             className="border-t border-border px-3"
