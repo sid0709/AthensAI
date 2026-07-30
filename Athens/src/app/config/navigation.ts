@@ -16,6 +16,7 @@ import {
   Clapperboard,
   Puzzle,
   NotebookTabs,
+  ListChecks,
   ScrollText,
   Settings,
 } from "lucide-react";
@@ -34,6 +35,7 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, comingSoon: true },
   { id: "job-board", label: "Job Search", icon: Briefcase },
+  { id: "title-review", label: "Review Titles", icon: ListChecks, beta: true },
   { id: "resumes", label: "My Resumes", icon: FileText },
   { id: "ats", label: "My Applications", icon: Share2, comingSoon: true},
   { id: "copilot", label: "Career Copilot", icon: Wand2, comingSoon: true},
@@ -53,7 +55,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
-  { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] },
+  { label: "WORKSPACE", ids: ["dashboard", "job-board", "title-review", "resumes"] },
   { label: "PIPELINE", ids: ["ats", "copilot"] },
   {
     label: "TOOLS",
@@ -66,6 +68,7 @@ export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
 export const VIEW_TITLES: Record<View, string> = {
   dashboard: "Dashboard",
   "job-board": "Job Search",
+  "title-review": "Review Titles",
   resumes: "Resume Generator",
   ats: "My Applications",
   copilot: "Career Copilot",

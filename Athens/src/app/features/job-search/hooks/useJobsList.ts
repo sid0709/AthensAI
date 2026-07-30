@@ -6,7 +6,6 @@ import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
 import { retryTransient } from "@/lib/transient-retry";
 import { JobSourceTitles } from '@/app/data/jobs/pub';
-import { JOB_TITLE_SCAN_ROLES } from "@/app/data/jobTitleRoles";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
 import { rescoreJobWithContext, type ProfileMatchContext } from "../../../lib/skill-match";
 import type { CompanyJobGroup, Job } from "../../../types";
@@ -302,13 +301,6 @@ export function buildJobsListBody(
   const remote = workModeToRemote(filters.workMode);
   if (remote) body["details.remote"] = remote;
   if (filters.seniority.length) body["details.seniority"] = filters.seniority.join(",");
-  // All roles selected ≡ no role filter (still show unscanned jobs).
-  if (
-    filters.titleRoles.length > 0 &&
-    filters.titleRoles.length < JOB_TITLE_SCAN_ROLES.length
-  ) {
-    body.titleScanned = filters.titleRoles.join(",");
-  }
   if (filters.industry !== "all") body["company.tags"] = filters.industry;
   if (filters.postedFrom) body.postedAtFrom = filters.postedFrom;
   if (filters.postedTo) body.postedAtTo = filters.postedTo;

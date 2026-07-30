@@ -121,7 +121,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "titleScanned", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
         { "fieldPath": "postedAt", "order": "DESCENDING" }
       ]
     },
@@ -131,7 +131,16 @@
       "fields": [
         { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
         { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "titleScanned", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.processingState", "order": "ASCENDING" },
         { "fieldPath": "postedAt", "order": "DESCENDING" }
       ]
     },

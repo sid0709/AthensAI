@@ -4,7 +4,7 @@ import {
 	claimPendingJobs,
 	pendingExtractionQuery,
 } from "./jobSkillExtraction/extractSession.js";
-import { pendingTitleAnalysisQuery } from "./jobTitleScan/titleScanSession.js";
+import { pendingTitleReviewQuery } from "./jobTitleReview/titleReviewSession.js";
 import {
 	parseJobSkillsBatchJson,
 	parseJobSkillsJson,
@@ -52,15 +52,12 @@ test("pending skill badge counts only jobs the user's tier can process", () => {
 	});
 });
 
-test("pending title badge uses the same unprocessed New-job policy as title analysis", () => {
-	const query = pendingTitleAnalysisQuery("applier-1");
-	assert.deepEqual(query.$and[0].$and[0].$or, [
-		{ titleScanned: { $exists: false } },
-		{ titleScanned: null },
-		{ titleScanned: "" },
-	]);
-	assert.deepEqual(query.$and[1].$or[1], {
-		status: { $not: { $elemMatch: { applier: "applier-1" } } },
+test("pending title review includes unprocessed and failed market jobs", () => {
+	assert.deepEqual(pendingTitleReviewQuery(), {
+		$or: [
+			{ "titleReview.processingState": { $exists: false } },
+			{ "titleReview.processingState": "failed" },
+		],
 	});
 });
 

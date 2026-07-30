@@ -92,9 +92,6 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
   if (listBody['details.seniority']) {
     must.push(matchKeyword('seniority', String(listBody['details.seniority']).split(',').map((v) => v.trim()).filter(Boolean)));
   }
-  if (listBody.titleScanned) {
-    must.push(matchKeyword('titleRoles', String(listBody.titleScanned).split(',').map((v) => v.trim()).filter(Boolean)));
-  }
   if (listBody.q) must.push(matchText('title', listBody.q));
   if (listBody['company.name']) must.push(matchText('companyName', listBody['company.name']));
   if (listBody['company.tags']) must.push(matchKeyword('companyTags', listBody['company.tags']));
@@ -110,6 +107,7 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
 	const mustNot = queryExcludesExtensionV2Jobs(dataQuery)
 		? [matchKeyword('version', 'v2')]
 		: [];
+	mustNot.push(matchKeyword('titleReviewLabel', 'REVIEW_REQUIRED'));
 	return { must, ...(mustNot.length ? { must_not: mustNot } : {}) };
 }
 
@@ -195,7 +193,7 @@ function supportsRedisDateTail(body = {}) {
   return allSources && !body.q && !body.postedAtFrom && !body.postedAtTo &&
     body.applied === undefined && !body.status &&
     !body['company.name'] && !body['details.position'] && !body['details.remote'] &&
-    !body['details.seniority'] && !body.titleScanned && !body['company.tags'] &&
+    !body['details.seniority'] && !body['company.tags'] &&
     !(body.aiExtracted === true || body.aiExtracted === 'true');
 }
 

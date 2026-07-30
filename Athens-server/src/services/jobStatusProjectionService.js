@@ -13,7 +13,7 @@ import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
 import { bumpStatusRevision } from "./matching/rankingCache.js";
 import { getRedis, isRedisReady } from "../db/redis.js";
 import { isBetaTier } from "../lib/betaTier.js";
-import { excludeExtensionV2JobsFilter, isExtensionV2Job } from "../config/jobMarketSchema.js";
+import { isExtensionV2Job } from "../config/jobMarketSchema.js";
 import { readDateTailPage } from "./matching/jobRankingIndex.js";
 import { getJobRankingPoints } from "./vectorStore/qdrantClient.js";
 import { observeHistogram } from "./monitoring/metrics.js";
@@ -176,12 +176,12 @@ export async function listMaterializedJobStatusPage(body = {}) {
 	if (!jobsCollection || !accountInfoCollection || !body.applierName) return null;
 	const state = stateFromBody(body);
 	if (!state) return null;
-	let hasGlobalFilters = hasUnsupportedStatusPageFilters(body);
+	// Status projections contain ids, not current catalog visibility. Always
+	// intersect them with the authoritative query so quarantined titles cannot
+	// reappear through this compatibility path.
+	let hasGlobalFilters = true;
 	const account = await resolveApplierContext(String(body.applierName).trim());
 	if (!account?.id) return null;
-	// Non-beta profiles always hydrate through the tier-filtered authoritative
-	// query so an old status projection can never reveal an extension-v2 job.
-	if (!account.isBeta) hasGlobalFilters = true;
 	const profileId = String(account.id);
 	const page = Math.max(1, Number.parseInt(body.page, 10) || 1);
 	const limit = Math.max(1, Math.min(5000, Number.parseInt(body.limit, 10) || 10));
@@ -271,10 +271,19 @@ export async function listMaterializedPostedPage(body = {}) {
 		).toArray();
 		for (const doc of fallbackDocs) cards.set(String(doc._id), doc);
 	}
-	const all = await jobsCollection.countDocuments(account.isBeta ? {} : excludeExtensionV2JobsFilter());
+	const { query: visibilityQuery } = await buildJobsListQuery(body, { includePersonalStatus: false });
+	const all = await jobsCollection.countDocuments(visibilityQuery);
+	let excludedVisible = 0;
+	const excludedIds = [...excludedJobIds];
+	for (let start = 0; start < excludedIds.length; start += 250) {
+		const chunk = excludedIds.slice(start, start + 250).map((id) => new DocumentId(id));
+		excludedVisible += await jobsCollection.countDocuments({
+			$and: [visibilityQuery, { _id: { $in: chunk } }],
+		});
+	}
 	return {
 		docs: ids.map((id) => cards.get(id)).filter(Boolean).map((doc) => ({ ...doc, status: [] })),
-		total: Math.max(0, all - excludedJobIds.size),
+		total: Math.max(0, all - excludedVisible),
 		page,
 		limit,
 		state: "posted",

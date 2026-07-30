@@ -9,7 +9,6 @@ import {
   upsertJobRankingPoints,
 } from '../vectorStore/qdrantClient.js';
 import { deriveCompanyIdentity } from '../companyIdentity.js';
-import { inferTitleScanRole } from '../../config/jobTitleScanRoles.js';
 
 const CATALOG_REVISION_KEY = 'ranking:v2:catalog-revision';
 const DATE_TAIL_KEY = 'ranking:v2:date-tail';
@@ -66,7 +65,6 @@ function compactJobCard(job, catalog) {
 		skillsCovered: job?.skillsCovered,
 		skillsRequired: job?.skillsRequired,
     skillAnalysis: job?.skillAnalysis,
-    titleScanned: job?.titleScanned,
     version: job?.version,
     extensionV2: job?.extensionV2,
     aiSkillStatus: job?.aiSkillStatus,
@@ -99,7 +97,6 @@ export function buildJobRankingPayload(job, { catalog = 'market' } = {}) {
     : { name: job?.companyName || '' };
   const details = job?.details && typeof job.details === 'object' ? job.details : {};
   const title = text(job?.title || job?.jobTitle);
-  const scannedTitleRoles = stringArray(job?.titleScanned);
   const postedAt = isoDate(job?.postedAt || job?._createdAt || job?.createdAt);
   const aiSkills = Array.isArray(job?.aiSkills) && job.aiSkills.length
     ? job.aiSkills
@@ -125,7 +122,7 @@ export function buildJobRankingPayload(job, { catalog = 'market' } = {}) {
     workMode: text(details?.remote || job?.workMode),
 		employmentType: text(details?.time || job?.employmentType),
     seniority: stringArray(details?.seniority),
-    titleRoles: scannedTitleRoles.length ? scannedTitleRoles : [inferTitleScanRole(title)],
+    titleReviewLabel: text(job?.titleReview?.label),
     source: text(job?.source) || 'Other',
     postedAt,
     extensionV2: isExtensionV2Job(job),
@@ -225,16 +222,21 @@ export async function readDateTailPage({
       if ((!includeExternal && catalog === 'external') || excludedJobIds.has(jobId)) continue;
       candidates.push({ jobId, catalog });
     }
-    const visibilityPayloads = excludeExtensionV2 && !publicTailReady && candidates.length
+    // The Redis date tail stores ordering only. Resolve current visibility from
+    // Qdrant so a newly quarantined title disappears without rebuilding Redis.
+    const visibilityPayloads = candidates.length
       ? await getJobRankingPoints(
           candidates.map((candidate) => candidate.jobId),
-          { payloadInclude: ['jobId', 'extensionV2'] },
+          { payloadInclude: ['jobId', 'extensionV2', 'titleReviewLabel'] },
         ).catch(() => [])
       : [];
     const visibleCandidates = filterDateTailCandidates(
       candidates,
       visibilityPayloads,
-      { excludeExtensionV2: excludeExtensionV2 && !publicTailReady },
+      {
+        excludeExtensionV2: excludeExtensionV2 && !publicTailReady,
+        excludeReviewRequired: true,
+      },
     );
     for (const { jobId, catalog } of visibleCandidates) {
       if (accepted++ < offset) continue;
@@ -257,14 +259,19 @@ export async function readDateTailPage({
  * Missing Qdrant payloads are hidden for non-beta users. This fails closed and
  * lets the caller fall back to the authoritative database rather than leak v2.
  */
-export function filterDateTailCandidates(candidates, payloads, { excludeExtensionV2 = false } = {}) {
-  if (!excludeExtensionV2) return candidates;
-  const publicIds = new Set(
+export function filterDateTailCandidates(candidates, payloads, {
+  excludeExtensionV2 = false,
+  excludeReviewRequired = false,
+} = {}) {
+  if (!excludeExtensionV2 && !excludeReviewRequired) return candidates;
+  const visibleIds = new Set(
     payloads
-      .filter((payload) => payload?.jobId && payload.extensionV2 !== true)
+      .filter((payload) => payload?.jobId)
+      .filter((payload) => !excludeExtensionV2 || payload.extensionV2 !== true)
+      .filter((payload) => !excludeReviewRequired || payload.titleReviewLabel !== 'REVIEW_REQUIRED')
       .map((payload) => String(payload.jobId)),
   );
-  return candidates.filter((candidate) => publicIds.has(String(candidate.jobId)));
+  return candidates.filter((candidate) => visibleIds.has(String(candidate.jobId)));
 }
 
 export async function indexOneJobRanking(job, options = {}) {

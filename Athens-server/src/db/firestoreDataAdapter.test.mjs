@@ -79,11 +79,11 @@ test("Firestore compatibility fallback keeps fields needed by nested local filte
 	const fields = collectFilterFields({
 		$and: [
 			{ sourceCatalog: "market" },
-			{ $or: [{ titleScanned: { $exists: false } }, { titleScanned: null }] },
+			{ $or: [{ "titleReview.processingState": { $exists: false } }, { "titleReview.processingState": "failed" }] },
 			{ status: { $not: { $elemMatch: { applier: "owner-1" } } } },
 		],
 	});
-	assert.deepEqual([...fields].sort(), ["sourceCatalog", "status", "titleScanned"]);
+	assert.deepEqual([...fields].sort(), ["sourceCatalog", "status", "titleReview"]);
 });
 
 test("Firestore compatibility does not probe undeployed multi-field indexes by default", () => {

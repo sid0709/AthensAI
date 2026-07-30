@@ -32,7 +32,7 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
       "Bulk status actions, bulk scraper ingest, stronger identity deduplication, and deterministic result reconciliation",
       "Automatic Firestore-to-ranking reconciliation removes orphaned cards before users can act on deleted jobs",
       "API readiness no longer waits for every profile ranking to rebuild; cache and index maintenance continue safely in the background",
-      "Title-role inference and resilient Qdrant updates keep Role filters accurate even while catalog entries change",
+      "Conservative title review quarantines ambiguous roles while keeping Job Search indexes synchronized",
       "Stable company-keyed card measurements eliminate intermittent blank gaps after expanding, filtering, or updating jobs",
       "Expanded regression coverage for Job Search, status transitions, Firestore compatibility, ranking indexes, and cache repair",
     ],

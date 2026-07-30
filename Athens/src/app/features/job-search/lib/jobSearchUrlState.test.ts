@@ -20,7 +20,6 @@ test("default Job Search state serializes every URL field in a stable order", ()
     "location=all",
     "workMode=all",
     "seniority=all",
-    "role=all",
     "industry=all",
     "postedFrom=",
     "postedTo=",
@@ -48,7 +47,6 @@ test("URL parsing round-trips repeated filters and exact open view state", () =>
   params.append("source", "Ashby");
   params.append("source", "Lever");
   params.append("seniority", "Senior");
-  params.append("role", "Data Engineer");
   params.set("skillMin", "70");
   params.set("page", "2");
   params.set("pageSize", "50");
@@ -59,7 +57,6 @@ test("URL parsing round-trips repeated filters and exact open view state", () =>
   const state = parseJobSearchUrl(params);
   assert.deepEqual(state.filters.source, ["Ashby", "Lever"]);
   assert.deepEqual(state.filters.seniority, ["Senior"]);
-  assert.deepEqual(state.filters.titleRoles, ["Data Engineer"]);
   assert.equal(state.filters.scores.skill.min, 70);
   assert.equal(state.page, 2);
   assert.equal(state.pageSize, 50);

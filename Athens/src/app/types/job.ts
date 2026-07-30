@@ -88,8 +88,6 @@ export interface Job {
   aiSkills?: { name: string; category: string; requirement: number }[];
   /** Total detected skills when list responses include only the top chips. */
   skillCount?: number;
-  /** AI title-role classification (Software Engineer, DevOps, …). */
-  titleScanned?: string | null;
   /** Ingest provenance — "v2" = extension-v2 (beta-only). */
   version?: string | null;
   /** Data catalog: job_market (default) or external_scraped_jobs. */

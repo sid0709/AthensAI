@@ -55,8 +55,6 @@ import {
 	invalidateLiveProjectedStatusCount,
 	listMaterializedPostedPage,
 	listMaterializedJobStatusPage,
-	normalizeMaterializedJobStatusCounts,
-	readMaterializedJobStatusCounts,
 	mutateJobStatus,
 	mutateJobStatusesBulk,
 } from '../services/jobStatusProjectionService.js';
@@ -78,6 +76,7 @@ import {
 	listJobsV2,
 	patchJobListViewerStatus,
 	evictJobsFromJobListReadModel,
+	listCompanyJobIdsFromReadModel,
 } from '../services/jobListReadModelService.js';
 import {
 	deleteJobDocuments,
@@ -92,6 +91,10 @@ const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
 const JOB_COUNT_CACHE_MS = Number(process.env.JOB_COUNT_CACHE_MS || 5 * 60 * 1000);
 const jobCountCache = new Map();
+
+export function invalidateJobListCountCache() {
+	jobCountCache.clear();
+}
 const jobCountRefreshes = new Map();
 
 function jobForProfile(job, profileId) {
@@ -138,34 +141,10 @@ function jobCountCacheKey(body = {}) {
 	return JSON.stringify(Object.fromEntries(Object.entries(body).sort(([left], [right]) => left.localeCompare(right))));
 }
 
-function canUseMaterializedCounts(body = {}) {
-	return Object.entries(body).every(([key, value]) => {
-		if (key === 'applierName') return true;
-		if (key === 'includeExternalScraped') return value !== true && value !== 'true';
-		if (key === 'jobSources') {
-			const selected = new Set(String(value || '').split(',').map((item) => item.trim()).filter(Boolean));
-			return JobSourceTitles.every((source) => selected.has(source));
-		}
-		if (Array.isArray(value)) return value.length === 0;
-		return value === undefined || value === null || value === '' || value === false;
-	});
-}
-
-async function materializedCountsForRequest(body = {}) {
-	if (!canUseMaterializedCounts(body) || !body.applierName) return null;
-	const account = await resolveApplierContext(String(body.applierName).trim());
-	if (!account?.id) return null;
-	// The legacy numeric snapshot predates tier visibility and contains beta-only
-	// rows. Public users always use the exact Qdrant + Redis count path below.
-	if (!account.isBeta) return null;
-	const profileId = String(account.id);
-	const includeExtensionV2 = true;
-	const [stored, authoritativeAll] = await Promise.all([
-		readMaterializedJobStatusCounts(profileId, { includeExtensionV2 }),
-		jobsCollection.countDocuments(includeExtensionV2 ? {} : excludeExtensionV2JobsFilter()),
-	]);
-	if (!stored) return null;
-	return normalizeMaterializedJobStatusCounts(stored, authoritativeAll, stored.any);
+async function materializedCountsForRequest() {
+	// Legacy status baselines include quarantined title-review jobs. Use the exact
+	// review-aware read model until those baselines carry the visibility facet.
+	return null;
 }
 
 async function calculateJobStatusCounts(body) {
@@ -463,9 +442,10 @@ export async function getJobsForRule(req, res) {
 		const account = req.query?.applierName
 			? await resolveApplierContext(String(req.query.applierName).trim())
 			: null;
+		const titleReviewVisibility = { 'titleReview.label': { $ne: 'REVIEW_REQUIRED' } };
 		const visibleQuery = account?.isBeta
-			? query
-			: { $and: [query, excludeExtensionV2JobsFilter()] };
+			? { $and: [query, titleReviewVisibility] }
+			: { $and: [query, titleReviewVisibility, excludeExtensionV2JobsFilter()] };
 		const jobs = await jobsCollection.find(visibleQuery).limit(100).toArray(); // Limit to 100 results for now
 		const responseJobs = await jobsForApplier(jobs, req.query?.applierName);
 
@@ -909,7 +889,8 @@ export async function removeOtherCompanyJobs(req, res) {
 			return res.status(400).json({ success: false, error: 'companyId and keepJobId are required' });
 		}
 
-		const ids = await findOtherCompanyJobIds({ ...input, jobsCollection });
+		const companyJobIds = await listCompanyJobIdsFromReadModel(input.companyId);
+		const ids = await findOtherCompanyJobIds({ ...input, jobsCollection, companyJobIds });
 		if (!ids.length) return res.json({ success: true, deletedCount: 0, deletedIds: [] });
 
 		const { deletedCount } = await deleteJobDocuments({ ids, jobsCollection });

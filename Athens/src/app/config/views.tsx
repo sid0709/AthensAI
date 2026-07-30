@@ -18,10 +18,12 @@ import { AppsPluginsPage } from "../features/apps-plugins/AppsPluginsPage";
 import { ChangelogPage } from "../features/changelog/ChangelogPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { NotionPage } from "../features/notion/NotionPage";
+import { TitleReviewPage } from "../features/title-review/TitleReviewPage";
 
 export const VIEW_COMPONENTS: Record<View, ComponentType> = {
   dashboard: DashboardPage,
   "job-board": JobSearchPage,
+  "title-review": TitleReviewPage,
   resumes: ResumesPage,
   ats: ApplicationsPage,
   copilot: CopilotPage,

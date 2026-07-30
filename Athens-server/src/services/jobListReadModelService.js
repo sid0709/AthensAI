@@ -11,8 +11,6 @@ import { loadProfileMatchContext } from './matching/profileSkills.js';
 import { getStatusRevision } from './matching/rankingCache.js';
 import { isJobRankingReady, scrollJobRankingPayloads } from './vectorStore/qdrantClient.js';
 import { incrementCounter, observeHistogram, setGauge } from './monitoring/metrics.js';
-import { reconcileJobTitleRoleIndex } from './jobTitleScan/titleRoleIndexSync.js';
-import { inferTitleScanRole } from '../config/jobTitleScanRoles.js';
 import { reconcileIndexedJobCatalog } from './jobRankingCatalogReconciler.js';
 import { deriveCompanyIdentity } from './companyIdentity.js';
 import {
@@ -21,9 +19,7 @@ import {
   serializeJobStatusBaseline,
 } from './jobStatusCache.js';
 
-// v2 guarantees inferred title-role facets and canonical company identities
-// when older ranking payloads do not contain them.
-const SNAPSHOT_SCHEMA_VERSION = 3;
+const SNAPSHOT_SCHEMA_VERSION = 4;
 const SNAPSHOT_TTL_SEC = 7 * 24 * 60 * 60;
 const QUERY_CACHE_MAX = 500;
 const QUERY_CACHE_TTL_MS = 60_000;
@@ -31,7 +27,7 @@ const REVISION_CHECK_TTL_MS = 1_000;
 const STATUS_STATES = ['applied', 'scheduled', 'declined', 'bid-ready', 'bid-completed'];
 const PAYLOAD_FIELDS = [
   'jobId', 'active', 'catalog', 'postedAt', 'title', 'companyName', 'companyId', 'companyTags',
-  'location', 'workMode', 'employmentType', 'seniority', 'titleRoles', 'source',
+  'location', 'workMode', 'employmentType', 'seniority', 'titleReviewLabel', 'source',
   'extensionV2', 'version', 'aiExtracted', 'aiSkills', 'card',
 ];
 
@@ -112,10 +108,7 @@ function buildEntry(payload) {
   const title = text(payload?.title || card?.title || card?.jobTitle) || 'Untitled role';
   const source = text(payload?.source || card?.source) || 'Other';
   const companyTags = list(payload?.companyTags).length ? list(payload.companyTags) : list(company.tags);
-  const indexedTitleRoles = list(payload?.titleRoles).length
-    ? list(payload.titleRoles)
-    : list(card?.titleScanned);
-  const titleRoles = indexedTitleRoles.length ? indexedTitleRoles : [inferTitleScanRole(title)];
+  const titleReviewLabel = text(payload?.titleReviewLabel || card?.titleReview?.label);
   const seniority = list(payload?.seniority).length ? list(payload.seniority) : list(details.seniority);
   const location = text(payload?.location || details.position || card?.location);
   const workMode = text(payload?.workMode || details.remote || card?.workMode);
@@ -164,7 +157,7 @@ function buildEntry(payload) {
     workModeLower: lower(workMode),
     employmentTypeLower: lower(employmentType),
     seniorityLower: seniority.map(lower),
-    titleRoles,
+    titleReviewLabel,
     source,
     postedAt,
     postedTime: Date.parse(postedAt || 0) || 0,
@@ -496,7 +489,6 @@ function filterContext(body = {}) {
     employmentType: lower(body['details.time']),
     seniority: text(body['details.seniority']).split(',').map(lower).filter(Boolean),
     tags: text(body['company.tags']).split(',').map(lower).filter(Boolean),
-    roles: text(body.titleScanned).split(',').map(text).filter(Boolean),
     aiExtracted: body.aiExtracted === true || body.aiExtracted === 'true',
     sources: selectedSources(body),
     from: text(body.postedAtFrom),
@@ -508,6 +500,7 @@ function filterContext(body = {}) {
 
 function matchesEntry(entry, body, account) {
   const filters = filterContext(body);
+  if (entry.titleReviewLabel === 'REVIEW_REQUIRED') return false;
   if (!account?.isBeta && entry.extensionV2) return false;
   if (entry.catalog === 'external' && !filters.includeExternal) return false;
   if (filters.query && !entry.titleLower.includes(filters.query)) return false;
@@ -517,7 +510,6 @@ function matchesEntry(entry, body, account) {
   if (filters.employmentType && entry.employmentTypeLower !== filters.employmentType) return false;
   if (filters.seniority.length && !filters.seniority.some((part) => entry.seniorityLower.some((value) => value.includes(part)))) return false;
   if (filters.tags.length && !filters.tags.every((tag) => entry.companyTags.some((value) => value.includes(tag)))) return false;
-  if (filters.roles.length && !filters.roles.some((role) => entry.titleRoles.includes(role))) return false;
   if (filters.aiExtracted && !entry.aiExtracted) return false;
   if (filters.sources && !filters.sources.has(entry.source)) return false;
   if (filters.from && entry.postedAt.slice(0, 10) < filters.from) return false;
@@ -640,6 +632,14 @@ function groupOrderedJobIds(ids, snapshot) {
     group.memberJobIds.push(entry.id);
   }
   return [...byCompany.values()];
+}
+
+function companyJobIds(snapshot, companyId) {
+  const normalizedCompanyId = text(companyId);
+  if (!normalizedCompanyId) return [];
+  return snapshot.entries
+    .filter((entry) => entry.companyId === normalizedCompanyId)
+    .map((entry) => entry.id);
 }
 
 function groupedJobPage({ ids, snapshot, statuses, ranking, page, limit, skip }) {
@@ -878,6 +878,12 @@ export async function countJobsV2(body = {}) {
   return { success: true, counts, warming: false, readModelVersion: snapshot.revision, statusOverlayVersion: statuses.version };
 }
 
+/** Resolve every job in the canonical company group, including legacy documents without companyId. */
+export async function listCompanyJobIdsFromReadModel(companyId) {
+  const snapshot = await ensureCatalogCurrent();
+  return companyJobIds(snapshot, companyId);
+}
+
 export function patchJobListViewerStatus({ profileId, jobId, state, version = null }) {
   const key = text(profileId);
   const cached = key ? profileStatuses.get(key) : null;
@@ -905,6 +911,23 @@ export function evictJobsFromJobListReadModel(jobIds = []) {
   queryCache.clear();
   for (const ranking of profileRankings.values()) ranking.stale = true;
   return deletedCount;
+}
+
+/** Apply title-review decisions immediately while the revision-backed snapshot refreshes. */
+export function patchJobListTitleReviewLabels(labelsByJobId = {}) {
+  if (!catalogSnapshot) return 0;
+  let updated = 0;
+  for (const [jobId, label] of Object.entries(labelsByJobId)) {
+    const entry = catalogSnapshot.byId.get(String(jobId));
+    if (!entry || (label !== 'APPROVED' && label !== 'REVIEW_REQUIRED')) continue;
+    entry.titleReviewLabel = label;
+    updated += 1;
+  }
+  if (updated) {
+    queryCache.clear();
+    for (const ranking of profileRankings.values()) ranking.stale = true;
+  }
+  return updated;
 }
 
 async function warmKnownProfiles(snapshot) {
@@ -988,10 +1011,6 @@ export async function initJobListReadModel() {
 	void (async () => {
 		await warmKnownProfiles(snapshot);
 		await reconcileCatalogSnapshot(snapshot);
-		const sync = await reconcileJobTitleRoleIndex();
-		if (sync.updated > 0) {
-			console.log(`[jobs-v2] restored ${sync.updated} title-role index entries`);
-		}
 	})().catch((error) => {
 		console.warn('[jobs-v2] background read-model maintenance failed:', error?.message || error);
 	});
@@ -1053,6 +1072,7 @@ export function getJobListReadModelState() {
 export const jobListReadModelTest = {
   buildSourceFacets,
   buildEntry,
+  companyJobIds,
   companyMemberPage,
   finalizeSnapshot,
   groupedJobPage,

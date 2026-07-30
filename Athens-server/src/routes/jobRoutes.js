@@ -29,10 +29,13 @@ import {
 	stopSkillExtract,
 } from "../controllers/jobSkillExtractController.js";
 import {
-	getTitleScanStatus,
-	startTitleScan,
-	stopTitleScan,
-} from "../controllers/jobTitleScanController.js";
+	approveTitleReviewJobs,
+	getTitleReviewStatus,
+	listTitleReviewJobs,
+	removeTitleReviewJobs,
+	startTitleReview,
+	stopTitleReview,
+} from "../controllers/jobTitleReviewController.js";
 
 const router = express.Router();
 
@@ -47,9 +50,12 @@ router.post('/jobs/list/company-members', getCompanyGroupMembers);
 router.get('/jobs/skill-extract/status', getSkillExtractStatus);
 router.post('/jobs/skill-extract/start', startSkillExtract);
 router.post('/jobs/skill-extract/stop', stopSkillExtract);
-router.get('/jobs/title-scan/status', getTitleScanStatus);
-router.post('/jobs/title-scan/start', startTitleScan);
-router.post('/jobs/title-scan/stop', stopTitleScan);
+router.get('/jobs/title-review/status', getTitleReviewStatus);
+router.post('/jobs/title-review/start', startTitleReview);
+router.post('/jobs/title-review/stop', stopTitleReview);
+router.get('/jobs/title-review', listTitleReviewJobs);
+router.post('/jobs/title-review/approve', approveTitleReviewJobs);
+router.post('/jobs/title-review/remove', removeTitleReviewJobs);
 router.get('/jobs/:id/viewer-status', getJobViewerStatus);
 router.get('/jobs/:id', getJobById);
 router.get('/jobs/:id/skill-radar', getJobSkillRadar);

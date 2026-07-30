@@ -12,6 +12,7 @@ import { BetaRoute } from "./BetaRoute";
 const {
   dashboard: DashboardPage,
   "job-board": JobSearchPage,
+  "title-review": TitleReviewPage,
   resumes: ResumesPage,
   ats: ApplicationsPage,
   copilot: CopilotPage,
@@ -45,6 +46,7 @@ export function AppRoutes() {
       >
         <Route index element={<DashboardPage />} />
         <Route path={PATHS.jobs.slice(1)} element={<JobSearchPage />} />
+        <Route path={PATHS.titleReview.slice(1)} element={<BetaRoute><TitleReviewPage /></BetaRoute>} />
         <Route path={`${PATHS.resumes.slice(1)}/:tab?`} element={<ResumesPage />} />
         <Route path={PATHS.applications.slice(1)} element={<ApplicationsPage />} />
         <Route path={PATHS.copilot.slice(1)} element={<CopilotPage />} />

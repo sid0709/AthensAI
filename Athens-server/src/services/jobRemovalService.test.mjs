@@ -61,6 +61,15 @@ test("findOtherCompanyJobIds keeps the active role and returns every sibling", a
 	assert.deepEqual(result, ["job-1", "job-3"]);
 });
 
+test("findOtherCompanyJobIds accepts canonical read-model ids for legacy documents", async () => {
+	const result = await findOtherCompanyJobIds({
+		companyId: "cmp_legacy",
+		keepJobId: "job-2",
+		companyJobIds: ["job-1", "job-2", "job-3"],
+	});
+	assert.deepEqual(result, ["job-1", "job-3"]);
+});
+
 test("findOtherCompanyJobIds rejects a stale company and active-job pairing", async () => {
 	const jobsCollection = {
 		find() {

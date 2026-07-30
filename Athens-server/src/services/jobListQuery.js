@@ -238,7 +238,6 @@ export async function buildJobsListQuery(body, { statusTab, includePersonalStatu
 		skip: _skip,
 		countsOnly: _countsOnly,
 		aiExtracted,
-		titleScanned,
 		version: _version,
 		...filters
 	} = body;
@@ -249,7 +248,7 @@ export async function buildJobsListQuery(body, { statusTab, includePersonalStatu
 		? await resolveApplierContext(applierName)
 		: { id: null, isBeta: false };
 
-	const query = { $and: [] };
+	const query = { $and: [{ 'titleReview.label': { $ne: 'REVIEW_REQUIRED' } }] };
 
 	// extension-v2 jobs (version=v2) are beta-tier only.
 	if (!isBeta) {
@@ -268,19 +267,6 @@ export async function buildJobsListQuery(body, { statusTab, includePersonalStatu
 	// Show only jobs whose skills have been AI-extracted.
 	if (aiExtracted === true || aiExtracted === 'true') {
 		query.$and.push({ aiSkillStatus: 'extracted' });
-	}
-
-	// Multi-select AI title roles (comma-separated exact titleScanned values).
-	if (titleScanned) {
-		const roles = String(titleScanned)
-			.split(',')
-			.map((s) => s.trim())
-			.filter(Boolean);
-		if (roles.length === 1) {
-			query.$and.push({ titleScanned: roles[0] });
-		} else if (roles.length > 1) {
-			query.$and.push({ titleScanned: { $in: roles } });
-		}
 	}
 
 	for (const key in filters) {

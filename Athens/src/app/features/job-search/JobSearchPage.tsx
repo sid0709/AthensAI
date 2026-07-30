@@ -6,7 +6,6 @@ import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
 import { downloadJobsCsv } from "../../hooks/useJobSearchFilters";
-import { isBetaTier } from "../../lib/beta";
 import { JobExportDialog } from "./components/JobExportDialog";
 import { JobListSkeleton } from "./components/JobListSkeleton";
 import { JobListErrorState } from "./components/JobListErrorState";
@@ -31,11 +30,9 @@ export function JobSearchPage() {
 
 function JobSearchPageContent() {
   const { applier } = useApplier();
-  const isBeta = isBetaTier(applier?.tier);
   const {
     state: urlState,
     setFilters,
-    replaceFilters,
     setPage,
     clampPage,
     setPageSize,
@@ -127,12 +124,6 @@ function JobSearchPageContent() {
   useEffect(() => {
     if (matchContext) rescoreVisibleJobs(matchContext);
   }, [matchContext, profileVersion, rescoreVisibleJobs]);
-
-  // Role filter is beta-only — clear when switching to a non-beta profile.
-  useEffect(() => {
-    if (isBeta) return;
-    if (filters.titleRoles.length) replaceFilters({ ...filters, titleRoles: [] });
-  }, [filters, isBeta, replaceFilters]);
 
   useEffect(() => {
     if (!resultsSettled) return;

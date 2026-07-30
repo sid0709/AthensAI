@@ -31,10 +31,12 @@ export function normalizeCompanySiblingRemoval(body = {}) {
 }
 
 /** Resolve a company's physical job documents, requiring the preserved job to belong to it. */
-export async function findOtherCompanyJobIds({ companyId, keepJobId, jobsCollection }) {
-	const documents = await jobsCollection
-		.find({ companyId }, { projection: { _id: 1 } })
-		.toArray();
+export async function findOtherCompanyJobIds({ companyId, keepJobId, jobsCollection, companyJobIds }) {
+	const documents = Array.isArray(companyJobIds)
+		? companyJobIds.map((id) => ({ _id: id }))
+		: await jobsCollection
+			.find({ companyId }, { projection: { _id: 1 } })
+			.toArray();
 	const ids = [...new Set(documents.map((document) => String(document?._id || "").trim()).filter(Boolean))];
 	if (!ids.includes(keepJobId)) {
 		const error = new Error("The active job no longer belongs to this company group");

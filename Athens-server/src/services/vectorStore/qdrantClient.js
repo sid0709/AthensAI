@@ -144,7 +144,7 @@ const RANKING_PAYLOAD_INDEXES = [
 	{ field_name: 'workMode', field_schema: 'keyword' },
 	{ field_name: 'employmentType', field_schema: 'keyword' },
 	{ field_name: 'seniority', field_schema: 'keyword' },
-	{ field_name: 'titleRoles', field_schema: 'keyword' },
+	{ field_name: 'titleReviewLabel', field_schema: 'keyword' },
 	{ field_name: 'extensionV2', field_schema: 'bool' },
 	{ field_name: 'version', field_schema: 'keyword' },
 	{ field_name: 'title', field_schema: 'text' },
@@ -375,29 +375,29 @@ export async function getJobRankingPoints(jobIds = [], { payloadInclude = null }
 }
 
 /**
- * Patch only the role facet on existing ranking points. Using Qdrant's payload
+ * Patch only the title-review facet on existing ranking points. Using Qdrant's payload
  * update endpoint preserves the job card and vectors already stored for each
  * point, unlike a partial point upsert.
  */
-export async function updateJobRankingTitleRoles(updates = [], {
+export async function updateJobRankingTitleReviewLabels(updates = [], {
 	wait = true,
 	collectionName = JOB_RANKINGS_ALIAS,
 } = {}) {
 	if (!isJobRankingReady() || !updates.length) return 0;
-	const roleByJobId = new Map();
+	const labelByJobId = new Map();
 	for (const update of updates) {
 		const jobId = String(update?.jobId || '').trim();
-		const role = String(update?.role || '').trim();
-		if (jobId && role) roleByJobId.set(jobId, role);
+		const label = String(update?.label || '').trim();
+		if (jobId && (label === 'APPROVED' || label === 'REVIEW_REQUIRED')) labelByJobId.set(jobId, label);
 	}
-	if (!roleByJobId.size) return 0;
+	if (!labelByJobId.size) return 0;
 
-	const idsByRole = new Map();
-	for (const [jobId, role] of roleByJobId) {
-		if (!idsByRole.has(role)) idsByRole.set(role, []);
-		idsByRole.get(role).push(jobId);
+	const idsByLabel = new Map();
+	for (const [jobId, label] of labelByJobId) {
+		if (!idsByLabel.has(label)) idsByLabel.set(label, []);
+		idsByLabel.get(label).push(jobId);
 	}
-	await Promise.all([...idsByRole].map(([role, jobIds]) =>
+	await Promise.all([...idsByLabel].map(([label, jobIds]) =>
 		qdrantFetch(
 			`/collections/${encodeURIComponent(collectionName)}/points/payload?wait=${wait ? 'true' : 'false'}`,
 			{
@@ -405,7 +405,7 @@ export async function updateJobRankingTitleRoles(updates = [], {
 				// Filter selection is intentionally tolerant of deleted jobs. A strict
 				// point-id selector rejects the whole batch when any point is absent.
 				body: {
-					payload: { titleRoles: [role] },
+					payload: { titleReviewLabel: label },
 					filter: {
 						must: [{ key: 'jobId', match: { any: jobIds } }],
 					},
@@ -413,7 +413,32 @@ export async function updateJobRankingTitleRoles(updates = [], {
 			},
 		),
 	));
-	return roleByJobId.size;
+	return labelByJobId.size;
+}
+
+/** One-time schema cleanup for payload fields that are no longer produced. */
+export async function removeJobRankingPayloadField(field, {
+	wait = true,
+	collectionName = JOB_RANKINGS_ALIAS,
+} = {}) {
+	if (!isJobRankingReady() || !field) return false;
+	await qdrantFetch(
+		`/collections/${encodeURIComponent(collectionName)}/points/payload/delete?wait=${wait ? 'true' : 'false'}`,
+		{
+			method: 'POST',
+			body: {
+				keys: [String(field)],
+				filter: { must: [{ key: 'catalog', match: { value: 'market' } }] },
+			},
+		},
+	);
+	await qdrantFetch(
+		`/collections/${encodeURIComponent(collectionName)}/index/${encodeURIComponent(field)}?wait=${wait ? 'true' : 'false'}`,
+		{ method: 'DELETE' },
+	).catch((error) => {
+		if (!/not found|doesn't exist/i.test(String(error?.message || error))) throw error;
+	});
+	return true;
 }
 
 export async function scrollJobRankingPayloads({

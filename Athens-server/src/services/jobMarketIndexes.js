@@ -22,11 +22,11 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 			{ aiSkillStatus: 1, postedAt: -1 },
 			{ partialFilterExpression: { aiSkillStatus: 'pending' } },
 		),
-		// Title-role filter + pending title-scan claims.
-		jobsCollection.createIndex({ titleScanned: 1, postedAt: -1 }),
+		// Title-review queue and quarantined-job listing.
+		jobsCollection.createIndex({ 'titleReview.label': 1, postedAt: -1 }),
 		jobsCollection.createIndex(
-			{ titleScanStatus: 1, postedAt: -1 },
-			{ partialFilterExpression: { titleScanStatus: 'scanning' } },
+			{ 'titleReview.processingState': 1, postedAt: -1 },
+			{ partialFilterExpression: { 'titleReview.processingState': 'scanning' } },
 		),
 	]);
 }

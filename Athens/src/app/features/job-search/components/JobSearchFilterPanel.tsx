@@ -7,10 +7,8 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useApplier } from "@/context/applier-context";
 import { Button } from "../../../components/ui/button";
 import { AthensSelect } from "../../../components/forms";
-import { isBetaTier } from "../../../lib/beta";
 import { cn } from "../../../lib/utils";
 import {
   countAttributeFilters,
@@ -22,10 +20,9 @@ import {
 import { ActiveFilterChips } from "./filters/ActiveFilterChips";
 import { JobFiltersSheet } from "./filters/JobFiltersSheet";
 import { JobScoreFiltersPopover } from "./filters/JobScoreFiltersPopover";
-import { JobTitleRoleFilterPopover } from "./filters/JobTitleRoleFilterPopover";
 import { MySkillsPopover } from "./MySkillsPopover";
 import { SkillExtractionButton } from "./SkillExtractionButton";
-import { TitleScanButton } from "./TitleScanButton";
+import { ReviewTitlesButton } from "./ReviewTitlesButton";
 
 const STATUS_TABS: {
   id: JobStatusTab;
@@ -120,17 +117,13 @@ export function JobSearchFilterPanel({
   showStatusTabs = true,
   showSkillsTools = true,
 }: JobSearchFilterPanelProps) {
-  const { applier } = useApplier();
-  const isBeta = isBetaTier(applier?.tier);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [chipsOpen, setChipsOpen] = useState(true);
 
   const patch = (partial: Partial<JobSearchFilterState>) => onChange({ ...filters, ...partial });
   const attributeCount = countAttributeFilters(filters);
   const scoreCount = countScoreFilters(filters);
-  const chips = getActiveFilterChips(
-    isBeta ? filters : { ...filters, titleRoles: [] },
-  );
+  const chips = getActiveFilterChips(filters);
   const hasChips = chips.length > 0;
 
   return (
@@ -204,9 +197,6 @@ export function JobSearchFilterPanel({
               className="w-[140px] shrink-0"
             />
 
-            {isBeta ? (
-              <JobTitleRoleFilterPopover filters={filters} onChange={onChange} />
-            ) : null}
           </div>
 
           <ToolbarDivider />
@@ -241,7 +231,7 @@ export function JobSearchFilterPanel({
               <ToolbarDivider />
               <div className="flex items-center gap-1.5 sm:ml-auto shrink-0">
                 <MySkillsPopover />
-                <TitleScanButton />
+                <ReviewTitlesButton />
                 <SkillExtractionButton />
               </div>
             </>
@@ -293,7 +283,6 @@ export function JobSearchFilterPanel({
           onOpenChange={setSheetOpen}
           filters={filters}
           onChange={onChange}
-          showTitleRoleFilter={isBeta}
         />
     </div>
   );

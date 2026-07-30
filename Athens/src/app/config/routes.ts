@@ -7,6 +7,7 @@ import type { View } from "../types";
 export const PATHS = {
   dashboard: "/",
   jobs: "/jobs",
+  titleReview: "/title-review",
   resumes: "/resumes",
   applications: "/applications",
   copilot: "/copilot",
@@ -43,6 +44,7 @@ export type SettingsTab = "profile" | "skills" | "notifications" | "integrations
 const VIEW_TO_BASE: Record<View, string> = {
   dashboard: PATHS.dashboard,
   "job-board": PATHS.jobs,
+  "title-review": PATHS.titleReview,
   resumes: PATHS.resumes,
   ats: PATHS.applications,
   copilot: PATHS.copilot,
@@ -93,6 +95,7 @@ export function viewFromPathname(pathname: string): View {
   const p = pathname.split("?")[0];
   if (p === PATHS.dashboard) return "dashboard";
   if (p.startsWith(PATHS.jobs)) return "job-board";
+  if (p.startsWith(PATHS.titleReview)) return "title-review";
   if (p.startsWith(PATHS.resumes)) return "resumes";
   if (p.startsWith(PATHS.applications)) return "ats";
   if (p.startsWith(PATHS.copilot)) return "copilot";
