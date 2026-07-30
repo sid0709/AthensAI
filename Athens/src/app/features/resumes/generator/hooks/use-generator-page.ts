@@ -132,6 +132,25 @@ export function useGeneratorPage() {
     }
   }, [put]);
 
+  // This preference affects server-driven Job Search and Agent runs, so persist
+  // it immediately instead of waiting for the general editor debounce. That
+  // keeps a quick navigation away from the Editor from cancelling the change.
+  const setDynamicCareerTitles = useCallback((enabled: boolean) => {
+    const next = { ...config, dynamicCareerTitles: enabled };
+    setConfig(next);
+    try {
+      localStorage.setItem(storageKey(applier?.name), JSON.stringify(next));
+    } catch {
+      /* storage unavailable */
+    }
+
+    const applierName = applier?.name;
+    if (!applierName || configHydratedFor !== configOwnerKey) return;
+    const key = `${applierName}\u0000${JSON.stringify(next)}`;
+    configSaveRef.current.queued = { applierName, config: next, key };
+    void flushConfigSave();
+  }, [applier?.name, config, configHydratedFor, configOwnerKey, flushConfigSave]);
+
   // Reference tokens a prompt can use, resolved from the JD + profile careers.
   // Mirrors the backend substitution in resumeGenController so the chip previews
   // match what generation will actually inject. {companyN} are 1-based by role.
@@ -643,6 +662,7 @@ export function useGeneratorPage() {
       provider: config.provider,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      dynamicCareerTitles: config.dynamicCareerTitles,
       templateId: config.templateId,
       template: { columns: template.columns, sidebar: template.sidebar, heading: template.heading, headingAlign: template.headingAlign },
       theme: config.theme,
@@ -786,6 +806,7 @@ export function useGeneratorPage() {
     applier,
     config,
     setConfig,
+    setDynamicCareerTitles,
     identity,
     setIdentity,
     loadingProfile,

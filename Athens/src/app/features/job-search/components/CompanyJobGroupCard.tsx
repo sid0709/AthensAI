@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Building2,
   ChevronDown,
@@ -6,9 +6,19 @@ import {
   Loader2,
   MapPin,
   RefreshCw,
+  Trash2,
   Wifi,
 } from "lucide-react";
 import { Badge } from "../../../components/ui";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../../components/ui/alert-dialog";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
 import type { BadgeVariant, CompanyJobGroup, Job } from "../../../types";
@@ -60,6 +70,7 @@ type CompanyJobGroupCardProps = {
   resumeStates?: Record<string, JobResumeGenerationState>;
   onGenerateResume?: (job: Job) => void;
   onLoadMore?: (companyId: string) => void;
+  onRemoveOtherJobs?: (activeJob: Job) => Promise<void>;
   loadingMore?: boolean;
   memberError?: string;
 };
@@ -116,9 +127,12 @@ export function CompanyJobGroupCard({
   resumeStates,
   onGenerateResume,
   onLoadMore,
+  onRemoveOtherJobs,
   loadingMore = false,
   memberError,
 }: CompanyJobGroupCardProps) {
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
+  const [removePending, setRemovePending] = useState(false);
   const activeJob = group.jobs.find((job) => job.id === activeJobId) ?? group.jobs[0];
   if (!activeJob) return null;
 
@@ -208,6 +222,18 @@ export function CompanyJobGroupCard({
               {Math.min(group.jobs.length, matchingJobCount).toLocaleString()} of {matchingJobCount.toLocaleString()} roles loaded
             </span>
             <div className="flex items-center gap-2">
+              {onRemoveOtherJobs ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setRemoveDialogOpen(true)}
+                >
+                  <Trash2 className="size-3.5" />
+                  Delete other roles
+                </Button>
+              ) : null}
               {group.nextMemberOffset != null && !memberError ? (
                 <Button
                   type="button"
@@ -228,6 +254,42 @@ export function CompanyJobGroupCard({
           </div>
         </div>
       ) : null}
+
+      <AlertDialog open={removeDialogOpen} onOpenChange={(open) => !removePending && setRemoveDialogOpen(open)}>
+        <AlertDialogContent className="sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Trash2 className="size-5 shrink-0 text-destructive" />
+              Permanently delete other roles?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-relaxed">
+              This permanently deletes every other role at {group.company.name}, including roles that haven&apos;t been loaded here yet.
+              <span className="mt-2 block font-medium text-foreground">
+                {activeJob.title} will be kept.
+              </span>
+              This action can&apos;t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removePending}>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={removePending}
+              onClick={() => {
+                setRemovePending(true);
+                void onRemoveOtherJobs?.(activeJob)
+                  .then(() => setRemoveDialogOpen(false))
+                  .catch(() => undefined)
+                  .finally(() => setRemovePending(false));
+              }}
+            >
+              {removePending ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none" /> : <Trash2 className="size-4" />}
+              {removePending ? "Deleting…" : "Delete other roles"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

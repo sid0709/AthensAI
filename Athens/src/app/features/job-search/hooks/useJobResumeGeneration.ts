@@ -28,6 +28,9 @@ export type JobResumeBulkProgress = {
   active: number;
   /** Fractional jobs from in-flight SSE steps (0..active) — drives the progress bar. */
   partial?: number;
+  /** Bulk removal reports a final cleanup phase after all jobs are processed. */
+  phase?: "start" | "removing" | "finalizing" | "done";
+  failed?: number;
 };
 
 export type JobResumeGenerationState = {
@@ -332,24 +335,49 @@ export function useJobResumeGeneration(jobs: Job[]) {
       }
 
       setBulkRemoving(true);
+      setBulkProgress({ done: 0, total: withResumes.length, active: 0, phase: "start" });
       try {
-        await deleteJobsGeneratedResumes(
+        const result = await deleteJobsGeneratedResumes(
           applier.name,
           withResumes.map((job) => job.backendId || job.id),
+          (progress) => {
+            setBulkProgress({
+              done: progress.done,
+              total: progress.total,
+              active: progress.active,
+              phase: progress.phase,
+              failed: progress.failed,
+            });
+          },
         );
-        const clearedUiIds = new Set(withResumes.map((job) => job.id));
+        const uiIdByBackendId = new Map(
+          withResumes.map((job) => [job.backendId || job.id, job.id]),
+        );
+        const clearedUiIds = new Set(
+          result.deletedJobIds.flatMap((jobId) => {
+            const uiId = uiIdByBackendId.get(jobId);
+            return uiId ? [uiId] : [];
+          }),
+        );
         setResumeStates((prev) => {
           const next = { ...prev };
           for (const jobId of clearedUiIds) delete next[jobId];
           return next;
         });
-        toast.success(
-          `Removed ${withResumes.length} generated ${withResumes.length === 1 ? "résumé" : "résumés"}`,
-        );
+        if (result.failedJobIds.length > 0) {
+          toast.warning(
+            `Removed ${result.deletedJobIds.length}/${withResumes.length} résumés (${result.failedJobIds.length} failed)`,
+          );
+        } else {
+          toast.success(
+            `Removed ${withResumes.length} generated ${withResumes.length === 1 ? "résumé" : "résumés"}`,
+          );
+        }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to remove résumés");
       } finally {
         setBulkRemoving(false);
+        setBulkProgress(null);
       }
     },
     [applier, bulkRemoving, bulkRunning],

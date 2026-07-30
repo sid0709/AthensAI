@@ -81,7 +81,7 @@ export function identityContactFingerprint(identity) {
 
 /**
  * Fingerprint of the visual config + title policy + identity header that affect the draft PDF.
- * Pass `titlePolicyFingerprint` / `identityFingerprint` so Beta/profile/JD/contact
+ * Pass `titlePolicyFingerprint` / `identityFingerprint` so title preference/profile/JD/contact
  * changes invalidate cached drafts.
  */
 export function agentPdfRenderFingerprint(config, titlePolicyFingerprint, identityFingerprint) {

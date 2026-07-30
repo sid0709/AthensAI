@@ -9,12 +9,13 @@ import {
 } from "../db/dataStore.js";
 import { syncGeneratedResumeAfterRun, deleteGenerationRun } from "./generatedResumeService.js";
 import { deleteUserResume } from "./userResumeService.js";
+import { rebuildProfileGraph } from "./userKnowledgeGraph/index.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
 import { readAgentDraftPdf, deleteAgentDraftPdf, identityContactFingerprint } from "./agentResumeDraftService.js";
 import { prepareGeneration, runGeneration } from "../controllers/resumeGenController.js";
-import { resumeGenLimiter } from "../utils/concurrency.js";
+import { createLimiter, resumeGenLimiter } from "../utils/concurrency.js";
 import {
   buildGenerationRequestFromSavedConfig,
   loadGeneratorConfig,
@@ -25,7 +26,6 @@ import {
   computeTitlePolicyFingerprint,
   sourceCareers,
 } from "./resumeCareerTitlePolicy.js";
-import { isBetaTier } from "../lib/betaTier.js";
 
 /** Render sections to PDF or read a still-valid on-disk draft (Node fs). */
 async function pdfPayloadForAgent(
@@ -86,20 +86,6 @@ async function findAccountForKit(applierNameRaw) {
     acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, { projection });
   }
   return acc ? await decryptAccountDoc(acc) : null;
-}
-
-async function resolveIsBeta(applierNameRaw) {
-  const name = cleanString(applierNameRaw);
-  if (!name || !accountInfoCollection) return false;
-  let acc = await accountInfoCollection.findOne({ name }, { projection: { tier: 1 } });
-  if (!acc) {
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    acc = await accountInfoCollection.findOne(
-      { name: { $regex: new RegExp(`^${esc}$`, "i") } },
-      { projection: { tier: 1 } },
-    );
-  }
-  return isBetaTier(acc?.tier);
 }
 
 async function loadRawGeneratorConfig(applierName) {
@@ -259,6 +245,7 @@ function configSnapshot(body) {
     provider: body.provider,
     model: body.model,
     reasoningEffort: body.reasoningEffort ?? null,
+    dynamicCareerTitles: body.dynamicCareerTitles === true,
     templateId: body.templateId ?? null,
     template: body.template ?? null,
     theme: body.theme ?? null,
@@ -453,16 +440,35 @@ export async function findAgentJobResumeStatuses(applierName, jobIds) {
  * Delete generated résumés for the given agent jobs (library docs, generation
  * runs, and on-disk draft PDFs). Only touches artifacts linked to these job ids.
  */
-export async function deleteAgentJobResumes(applierName, jobIds) {
+export async function deleteAgentJobResumes(applierName, jobIds, { onProgress } = {}) {
   const name = cleanString(applierName);
   const ids = [...new Set((jobIds || []).map(cleanString).filter(Boolean))];
   if (!name || !ids.length) {
-    return { deletedJobIds: [], generationsDeleted: 0, resumesDeleted: 0 };
+    return { deletedJobIds: [], failedJobIds: [], generationsDeleted: 0, resumesDeleted: 0 };
   }
 
   let generationsDeleted = 0;
   let resumesDeleted = 0;
+  let active = 0;
+  let done = 0;
   const deletedJobIds = new Set();
+  const failedJobIds = new Set();
+
+  const emitProgress = (phase) => {
+    if (typeof onProgress !== "function") return;
+    onProgress({
+      phase,
+      done,
+      total: ids.length,
+      left: Math.max(0, ids.length - done),
+      active,
+      failed: failedJobIds.size,
+      generationsDeleted,
+      resumesDeleted,
+    });
+  };
+
+  const generationsByJob = new Map(ids.map((id) => [id, []]));
 
   if (resumeGenerationsCollection) {
     const generations = await resumeGenerationsCollection
@@ -473,47 +479,84 @@ export async function deleteAgentJobResumes(applierName, jobIds) {
       .toArray();
     for (const gen of generations) {
       const jobId = cleanString(gen.generate_parent_job_id);
-      try {
-        const result = await deleteGenerationRun(String(gen._id), name);
-        generationsDeleted += 1;
-        if (result?.resumeDeleted) resumesDeleted += 1;
-        if (jobId) deletedJobIds.add(jobId);
-      } catch (err) {
-        if (!String(err?.message || "").toLowerCase().includes("not found")) {
-          console.warn("deleteAgentJobResumes generation:", err?.message || err);
-        }
-      }
+      if (generationsByJob.has(jobId)) generationsByJob.get(jobId).push(gen);
     }
   }
 
-  // Catch library résumés that were never linked via libraryResumeId / generationId.
-  if (userResumesCollection) {
-    const resumes = await userResumesCollection
-      .find(
-        { ownerName: name, generateParentJobId: { $in: ids }, source: "generated" },
-        { projection: { _id: 1, generateParentJobId: 1 } },
-      )
-      .toArray();
-    for (const resume of resumes) {
-      const jobId = cleanString(resume.generateParentJobId);
-      try {
-        await deleteUserResume(String(resume._id), name);
-        resumesDeleted += 1;
-        if (jobId) deletedJobIds.add(jobId);
-      } catch (err) {
-        if (!String(err?.message || "").toLowerCase().includes("not found")) {
-          console.warn("deleteAgentJobResumes library:", err?.message || err);
-        }
-      }
-    }
-  }
+  emitProgress("start");
+  const limiter = createLimiter({ concurrency: Math.min(8, ids.length) });
+  await Promise.all(
+    ids.map((jobId) =>
+      limiter.run(async () => {
+        active += 1;
+        emitProgress("removing");
+        let failed = false;
+        try {
+          for (const gen of generationsByJob.get(jobId) || []) {
+            try {
+              // Rebuilding the aggregated profile after every résumé made bulk
+              // removal increasingly expensive. Delete the per-résumé graph now
+              // and rebuild the aggregate once after the whole batch.
+              const result = await deleteGenerationRun(String(gen._id), name, {
+                rebuildProfile: false,
+              });
+              generationsDeleted += 1;
+              if (result?.resumeDeleted) resumesDeleted += 1;
+            } catch (err) {
+              if (!String(err?.message || "").toLowerCase().includes("not found")) {
+                failed = true;
+                console.warn("deleteAgentJobResumes generation:", err?.message || err);
+              }
+            }
+          }
 
-  for (const jobId of ids) {
-    await deleteAgentDraftPdf(name, jobId);
+          // Catch library résumés that were never linked from a generation run.
+          if (userResumesCollection) {
+            const resumes = await userResumesCollection
+              .find(
+                { ownerName: name, generateParentJobId: jobId, source: "generated" },
+                { projection: { _id: 1 } },
+              )
+              .toArray();
+            for (const resume of resumes) {
+              try {
+                await deleteUserResume(String(resume._id), name, { rebuildProfile: false });
+                resumesDeleted += 1;
+              } catch (err) {
+                if (!String(err?.message || "").toLowerCase().includes("not found")) {
+                  failed = true;
+                  console.warn("deleteAgentJobResumes library:", err?.message || err);
+                }
+              }
+            }
+          }
+
+          try {
+            await deleteAgentDraftPdf(name, jobId);
+          } catch (err) {
+            failed = true;
+            console.warn("deleteAgentJobResumes draft:", err?.message || err);
+          }
+        } finally {
+          if (failed) failedJobIds.add(jobId);
+          else deletedJobIds.add(jobId);
+          active = Math.max(0, active - 1);
+          done += 1;
+          emitProgress("removing");
+        }
+      }),
+    ),
+  );
+
+  if (resumesDeleted > 0) {
+    emitProgress("finalizing");
+    await rebuildProfileGraph(name);
   }
+  emitProgress("done");
 
   return {
     deletedJobIds: [...deletedJobIds],
+    failedJobIds: [...failedJobIds],
     generationsDeleted,
     resumesDeleted,
   };
@@ -546,9 +589,8 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
     generateParentJobId: parentId,
     structuredJob: true,
   });
-  const isBeta = await resolveIsBeta(name);
   const titlePolicyFingerprint = computeTitlePolicyFingerprint({
-    isBeta,
+    dynamicCareerTitles: body.dynamicCareerTitles,
     jobDescription: jd,
     careers: sourceCareers(identity),
     config: body,
@@ -650,7 +692,8 @@ export async function ensureAgentJobResume({
     structuredJob: true,
   });
 
-  // Resolve Beta + fingerprint before reuse so stale title-policy caches regenerate.
+  // Resolve the saved preference before reuse so toggling dynamic titles
+  // invalidates stale generated résumés and draft PDFs.
   const prep = await prepareGeneration(body);
   if (!prep.ok) {
     const err = new Error(prep.error);
@@ -659,7 +702,7 @@ export async function ensureAgentJobResume({
   }
 
   const titlePolicyFingerprint = computeTitlePolicyFingerprint({
-    isBeta: prep.isBeta,
+    dynamicCareerTitles: prep.dynamicCareerTitles,
     jobDescription: jd,
     careers: sourceCareers(identity),
     config: body,
@@ -718,7 +761,7 @@ export async function ensureAgentJobResume({
   }
 
   console.info(
-    `[agent-resume-gen] ${name} job ${parentId.slice(0, 8)}… — provider=${body.provider} model=${body.model} beta=${prep.isBeta} deferPdf=${Boolean(deferPdf)}`,
+    `[agent-resume-gen] ${name} job ${parentId.slice(0, 8)}… — provider=${body.provider} model=${body.model} dynamicTitles=${prep.dynamicCareerTitles} deferPdf=${Boolean(deferPdf)}`,
   );
 
   const startedAt = new Date();
@@ -767,6 +810,7 @@ export async function ensureAgentJobResume({
           analyzedAt: skillProfile.length > 0 ? new Date() : null,
           generate_parent_job_id: parentId,
           isBeta: Boolean(prep.isBeta),
+          dynamicCareerTitles: Boolean(prep.dynamicCareerTitles),
           titlePolicyVersion: TITLE_POLICY_VERSION,
           titlePolicyFingerprint,
           identitySyncedAt,
@@ -789,6 +833,7 @@ export async function ensureAgentJobResume({
           titlePolicyFingerprint,
           titlePolicyVersion: TITLE_POLICY_VERSION,
           isBeta: prep.isBeta,
+          dynamicCareerTitles: prep.dynamicCareerTitles,
           identitySyncedAt,
         });
       } catch (err) {

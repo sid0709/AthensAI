@@ -1,11 +1,11 @@
 /**
  * Shared career-title policy for résumé generation (Resume Editor, Job Search, Agent).
- * Beta: JD-aware concise titles with reconciliation. Non-Beta: exact Profile titles.
+ * Dynamic titles enabled: JD-aware concise titles. Disabled: exact Profile titles.
  */
 import { createHash } from "node:crypto";
 
 /** Bump when prompting, validation, or reconciliation rules change. */
-export const TITLE_POLICY_VERSION = 1;
+export const TITLE_POLICY_VERSION = 2;
 
 const cleanString = (v) => String(v ?? "").trim();
 
@@ -27,8 +27,8 @@ export function isStackedOrMalformedTitle(title) {
   return false;
 }
 
-/** Concise conventional résumé title suitable for Beta acceptance. */
-export function isAcceptableBetaTitle(title) {
+/** Concise conventional résumé title suitable for dynamic-title acceptance. */
+export function isAcceptableDynamicTitle(title) {
   const t = cleanString(title);
   if (!t) return false;
   if (isStackedOrMalformedTitle(t)) return false;
@@ -55,12 +55,12 @@ function formatAuthoritativeCareers(careers) {
 /**
  * Mandatory Experience-step appendix. Enforced again in reconcileExperienceTitles.
  */
-export function buildExperienceTitleGuidance({ isBeta, jobDescription, careers }) {
+export function buildExperienceTitleGuidance({ dynamicCareerTitles, jobDescription, careers }) {
   const list = Array.isArray(careers) ? careers : [];
-  if (!isBeta) {
+  if (!dynamicCareerTitles) {
     return `
 
-TITLE POLICY (mandatory — non-Beta):
+TITLE POLICY (mandatory — dynamic career titles disabled):
 - Keep each experience job title EXACTLY as given in the candidate profile / Profile Settings.
 - Do not rename, rephrase, shorten, expand, or tailor titles to the job description.
 - You may rewrite bullets only; company names and dates stay as given.`;
@@ -73,7 +73,7 @@ TITLE POLICY (mandatory — non-Beta):
 
   return `
 
-TITLE POLICY (mandatory — Beta):
+TITLE POLICY (mandatory — dynamic career titles enabled):
 Target job description:
 <<<
 ${jd}
@@ -95,8 +95,8 @@ Rules for job titles:
 }
 
 /** Append title policy to an Experience final-step prompt (tokens already applied). */
-export function appendExperienceTitlePolicy(prompt, { isBeta, jobDescription, careers }) {
-  return `${cleanString(prompt)}${buildExperienceTitleGuidance({ isBeta, jobDescription, careers })}`;
+export function appendExperienceTitlePolicy(prompt, { dynamicCareerTitles, jobDescription, careers }) {
+  return `${cleanString(prompt)}${buildExperienceTitleGuidance({ dynamicCareerTitles, jobDescription, careers })}`;
 }
 
 function experienceListFromSection(section) {
@@ -109,11 +109,11 @@ function experienceListFromSection(section) {
 /**
  * Reconcile model Experience JSON against Profile careers.
  * - Always preserve career count/order, company, and dates from Profile Settings.
- * - Non-Beta: titles are always the Profile titles.
- * - Beta: accept valid suggested titles; fall back to source for empty/malformed/stacked.
+ * - Dynamic titles disabled: titles are always the Profile titles.
+ * - Dynamic titles enabled: accept valid suggestions; fall back for empty/malformed/stacked.
  * - Bullets (and optional location) come from the model when present.
  */
-export function reconcileExperienceTitles(section, identity, isBeta) {
+export function reconcileExperienceTitles(section, identity, dynamicCareerTitles) {
   const careers = sourceCareers(identity);
   const modelList = experienceListFromSection(section);
 
@@ -121,9 +121,9 @@ export function reconcileExperienceTitles(section, identity, isBeta) {
     const model = modelList[i] && typeof modelList[i] === "object" ? modelList[i] : {};
     const sourceTitle = cleanString(career?.title);
     let title = sourceTitle;
-    if (isBeta) {
+    if (dynamicCareerTitles) {
       const suggested = cleanString(model.title);
-      if (isAcceptableBetaTitle(suggested)) title = suggested;
+      if (isAcceptableDynamicTitle(suggested)) title = suggested;
     }
 
     const bullets = Array.isArray(model.bullets)
@@ -145,12 +145,16 @@ export function reconcileExperienceTitles(section, identity, isBeta) {
 }
 
 /** Apply title policy to a full sections object (mutates experience in place via replace). */
-export function applyTitlePolicyToSections(sections, identity, isBeta) {
+export function applyTitlePolicyToSections(sections, identity, dynamicCareerTitles) {
   if (!sections || typeof sections !== "object") return sections;
   if (!sections.experience) return sections;
   return {
     ...sections,
-    experience: reconcileExperienceTitles(sections.experience, identity, Boolean(isBeta)),
+    experience: reconcileExperienceTitles(
+      sections.experience,
+      identity,
+      Boolean(dynamicCareerTitles),
+    ),
   };
 }
 
@@ -170,11 +174,11 @@ export function titlePolicyConfigSlice(config) {
 }
 
 /**
- * Fingerprint for cache/reuse invalidation: policy version, Beta state, JD,
+ * Fingerprint for cache/reuse invalidation: policy version, saved preference, JD,
  * source careers, and relevant saved generator config.
  */
 export function computeTitlePolicyFingerprint({
-  isBeta,
+  dynamicCareerTitles,
   jobDescription,
   careers,
   config,
@@ -187,7 +191,7 @@ export function computeTitlePolicyFingerprint({
   }));
   const payload = {
     v: TITLE_POLICY_VERSION,
-    beta: Boolean(isBeta),
+    dynamicCareerTitles: Boolean(dynamicCareerTitles),
     jd: cleanString(jobDescription),
     careers: careerRows,
     config: titlePolicyConfigSlice(config),

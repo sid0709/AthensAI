@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import { removeJobs } from "../../api/jobs";
+import { removeJobs, removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
@@ -18,7 +18,7 @@ import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { runWithConcurrency } from "./lib/run-with-concurrency";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
-import { isExternalJob } from "../../types/job";
+import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
 import { useProfileMatchSkills } from "./hooks/useProfileMatchSkills";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
 import { JOB_SEARCH_PAGE_SIZES } from "./lib/jobSearchUrlState";
@@ -61,7 +61,7 @@ function JobSearchPageContent() {
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
   const { profileVersion, matchContext } = useProfileMatchSkills();
 
-  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, resultsSettled, countsLoading, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, removeJobsById, refreshStatusCounts, rescoreVisibleJobs, loadCompanyMembers, memberLoadingIds, memberErrors } =
+  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, resultsSettled, countsLoading, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, rescoreVisibleJobs, loadCompanyMembers, memberLoadingIds, memberErrors } =
     useJobsList(filters, removedIds, profileVersion, page, pageSize);
 
   useEffect(() => {
@@ -276,6 +276,24 @@ function JobSearchPageContent() {
     }
   };
 
+  const handleRemoveOtherCompanyJobs = async (group: CompanyJobGroup, activeJob: Job) => {
+    try {
+      const keepJobId = activeJob.backendId || activeJob.id;
+      const res = await removeCompanySiblingJobs(group.companyId, keepJobId);
+      if (!res?.success) throw new Error(res?.error || "Delete failed");
+      removeOtherCompanyJobs(group.companyId, keepJobId);
+      const deletedCount = res.deletedCount
+        ?? Math.max(0, (group.matchingJobCount ?? group.jobs.length) - 1);
+      toast.success(
+        `Deleted ${deletedCount} other role${deletedCount === 1 ? "" : "s"} at ${group.company.name}`,
+      );
+      void refreshStatusCounts();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete other roles");
+      throw error;
+    }
+  };
+
   const toggleBookmark = (id: string) => {
     setBookmarkedIds((prev) => {
       const next = new Set(prev);
@@ -400,6 +418,7 @@ function JobSearchPageContent() {
             onExpandedChange={handleCompanyExpandedChange}
             onActiveJobChange={handleActiveJobChange}
             onLoadCompanyMembers={(companyId) => void loadCompanyMembers(companyId, { focusJobId: activeJobIds[companyId] })}
+            onRemoveOtherCompanyJobs={handleRemoveOtherCompanyJobs}
             memberLoadingIds={memberLoadingIds}
             memberErrors={memberErrors}
             layout={showGrid ? "grid" : "list"}

@@ -39,6 +39,8 @@ export function applyHistoryRun(
       provider: rc.provider === "deepseek" ? "deepseek" : "openai",
       model: typeof rc.model === "string" ? rc.model : c.model,
       reasoningEffort: (rc.reasoningEffort as ReasoningEffort) ?? c.reasoningEffort,
+      dynamicCareerTitles:
+        typeof rc.dynamicCareerTitles === "boolean" ? rc.dynamicCareerTitles : c.dynamicCareerTitles,
       templateId: typeof rc.templateId === "string" ? rc.templateId : c.templateId,
       theme: { ...c.theme, ...((rc.theme as Partial<ResumeTheme>) ?? {}) },
       layout: Array.isArray(rc.layout) && (rc.layout as LayoutSection[]).length ? (rc.layout as LayoutSection[]) : c.layout,

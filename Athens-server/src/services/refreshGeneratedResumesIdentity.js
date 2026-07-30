@@ -26,17 +26,12 @@ import {
   loadDecryptedAutoBidProfile,
 } from "./autoBidProfileSecrets.js";
 import { sectionsToText } from "./generatedResumeText.js";
-import { loadGeneratorConfig, buildGenerationRequestFromSavedConfig } from "./resumeGenerationService.js";
+import { loadGeneratorConfig } from "./resumeGenerationService.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
 import {
   deleteAgentDraftPdf,
   identityContactFingerprint,
 } from "./agentResumeDraftService.js";
-import {
-  computeTitlePolicyFingerprint,
-  sourceCareers,
-  TITLE_POLICY_VERSION,
-} from "./resumeCareerTitlePolicy.js";
 import { createLimiter } from "../utils/concurrency.js";
 import { storeUserResumeContent } from "./userResumeService.js";
 
@@ -62,6 +57,11 @@ export function needsIdentitySync(generation, profileUpdatedAt) {
   if (!profileMs) return true;
   const syncedMs = toMs(generation?.identitySyncedAt);
   return syncedMs < profileMs;
+}
+
+/** Identity-only refreshes must keep the policy fingerprint that produced the sections. */
+export function titlePolicyFingerprintForIdentityRefresh(generation) {
+  return cleanString(generation?.titlePolicyFingerprint) || null;
 }
 
 async function resolveIsBeta(applierName) {
@@ -197,7 +197,6 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
   const identity = identityFromProfile(profile);
   const identityFingerprint = identityContactFingerprint(identity);
   const savedConfig = await loadGeneratorConfig(name);
-  const isBeta = true;
 
   const generations = await resumeGenerationsCollection
     .find({
@@ -262,21 +261,10 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
 
           const extractedText = sectionsToText(gen.sections, identity);
           const jobId = cleanString(gen.generate_parent_job_id);
-          const jd = cleanString(gen.jobDescription);
-          const body = buildGenerationRequestFromSavedConfig({
-            applierName: name,
-            jobDescription: jd,
-            savedConfig,
-            identity,
-            generateParentJobId: jobId || undefined,
-            structuredJob: Boolean(jobId),
-          });
-          const titlePolicyFingerprint = computeTitlePolicyFingerprint({
-            isBeta,
-            jobDescription: jd,
-            careers: sourceCareers(identity),
-            config: body,
-          });
+          // Contact/header refreshes do not regenerate Experience content. Keep
+          // the fingerprint that produced these sections so a later preference,
+          // prompt, JD, or career change still forces real regeneration.
+          const titlePolicyFingerprint = titlePolicyFingerprintForIdentityRefresh(gen);
           const now = new Date();
 
           await resumeGenerationsCollection.updateOne(
@@ -284,9 +272,6 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
             {
               $set: {
                 identity,
-                titlePolicyFingerprint,
-                titlePolicyVersion: TITLE_POLICY_VERSION,
-                isBeta: true,
                 identityRefreshedAt: now,
                 // Watermark: this résumé matches profile.updatedAt
                 identitySyncedAt: profileUpdatedAt,

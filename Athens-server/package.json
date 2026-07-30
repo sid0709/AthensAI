@@ -13,7 +13,7 @@
 		"test:external-jobs": "node --test src/services/externalScrapedJobsListQuery.test.mjs",
 		"test:ai-usage": "node --test src/services/aiUsageQuery.test.mjs",
 		"test:resume-templates": "node --test src/services/resumeTemplate.test.mjs",
-		"test:resume-gen": "node --test src/controllers/resumeGenController.test.mjs src/services/resumeCareerTitlePolicy.test.mjs src/lib/betaTier.test.mjs src/services/agentResumeReuse.test.mjs src/services/refreshGeneratedResumesIdentity.test.mjs",
+		"test:resume-gen": "node --test src/controllers/resumeGenController.test.mjs src/services/resumeCareerTitlePolicy.test.mjs src/services/resumeGenerationService.test.mjs src/lib/betaTier.test.mjs src/services/agentResumeReuse.test.mjs src/services/refreshGeneratedResumesIdentity.test.mjs",
 		"test:concurrency": "node --test src/utils/concurrency.test.mjs",
 		"firebase:normalize-job-statuses": "node src/scripts/normalizeJobStatuses.js",
 		"firebase:repair-job-status-caches": "node src/scripts/repairJobStatusCaches.js",

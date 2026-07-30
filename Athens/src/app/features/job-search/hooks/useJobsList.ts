@@ -10,7 +10,7 @@ import { JOB_TITLE_SCAN_ROLES } from "@/app/data/jobTitleRoles";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
 import { rescoreJobWithContext, type ProfileMatchContext } from "../../../lib/skill-match";
 import type { CompanyJobGroup, Job } from "../../../types";
-import { mergeCompanyMembers, removeCompanyJobs } from "../lib/companyGroupState";
+import { keepOnlyCompanyJob, mergeCompanyMembers, removeCompanyJobs } from "../lib/companyGroupState";
 import type {
   JobSearchFilterState,
   JobScoreFilters,
@@ -655,6 +655,17 @@ export function useJobsList(
     });
   }, []);
 
+  const removeOtherCompanyJobs = useCallback((companyId: string, keepJobId: string) => {
+    invalidateJobListCaches();
+    setRawGroups((previous) => {
+      const result = keepOnlyCompanyJob(previous, companyId, keepJobId);
+      if (result.removedJobs) {
+        setTotalJobs((value) => Math.max(0, value - result.removedJobs));
+      }
+      return result.groups;
+    });
+  }, []);
+
   const refreshStatusCounts = useCallback(async () => {
     if (!applierReady) return;
     setCountsLoading(true);
@@ -806,6 +817,7 @@ export function useJobsList(
     rankingStatus,
     patchJob,
     removeJobsById,
+		removeOtherCompanyJobs,
 		loadCompanyMembers,
 		memberLoadingIds,
     memberErrors,

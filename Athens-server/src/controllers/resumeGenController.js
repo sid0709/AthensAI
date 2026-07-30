@@ -182,10 +182,12 @@ export async function prepareGeneration(body) {
   const bad = Object.entries(finalsByPurpose).find(([, n]) => n !== 1);
   if (bad) return { ok: false, status: 400, error: `${bad[0]} must have exactly one final step (found ${bad[1]}).` };
 
-  // Beta entitlement from Firestore account_info.tier only — ignore any client-supplied flag.
+  // Tier remains server-resolved metadata. Dynamic titles are a saved generator
+  // preference available to every tier and are enabled only by an explicit boolean.
   const isBeta = isBetaTier(await resolveAccountTier(body.applierName));
+  const dynamicCareerTitles = body.dynamicCareerTitles === true;
 
-  return { ok: true, providerId, model, steps, apiKey, isBeta };
+  return { ok: true, providerId, model, steps, apiKey, isBeta, dynamicCareerTitles };
 }
 
 /**
@@ -206,7 +208,20 @@ function canParallelizeFinals(steps) {
   return true;
 }
 
-export async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, jobSkills, reasoningEffort, isBeta = false }, onStep) {
+export async function runGeneration({
+  providerId,
+  apiKey,
+  model,
+  steps,
+  systemInstruction,
+  identity,
+  applierName,
+  jobDescription,
+  jobSkills,
+  reasoningEffort,
+  isBeta = false,
+  dynamicCareerTitles = false,
+}, onStep) {
   // Substitute reference tokens in any prompt with real values:
   //   {job_description}                          → the JD text the user typed
   //   {job_skills}                               → skills pre-fetched for a structured job
@@ -218,7 +233,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
       const key = match.slice(1, -1).toLowerCase();
       return Object.prototype.hasOwnProperty.call(tokenMap, key) ? tokenMap[key] : match;
     });
-  const beta = Boolean(isBeta);
+  const dynamicTitles = Boolean(dynamicCareerTitles);
   const careers = sourceCareers(identity);
 
   const prefixMessages = [
@@ -236,7 +251,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
     let userContent = applyTokens(step.prompt || "");
     if (step.purpose === "experience") {
       userContent = appendExperienceTitlePolicy(userContent, {
-        isBeta: beta,
+        dynamicCareerTitles: dynamicTitles,
         jobDescription,
         careers,
       });
@@ -262,7 +277,11 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
     try {
       output = parseJsonLoose(content);
       if (step.purpose === "experience") {
-        output = applyTitlePolicyToSections({ experience: output }, identity, beta).experience;
+        output = applyTitlePolicyToSections(
+          { experience: output },
+          identity,
+          dynamicTitles,
+        ).experience;
       }
     } catch (err) {
       if (Number.isInteger(err?.status)) throw err;
@@ -298,7 +317,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
       let userContent = applyTokens(step.prompt || "");
       if (isFinal && step.purpose === "experience") {
         userContent = appendExperienceTitlePolicy(userContent, {
-          isBeta: beta,
+          dynamicCareerTitles: dynamicTitles,
           jobDescription,
           careers,
         });
@@ -327,7 +346,11 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
         try {
           output = parseJsonLoose(content);
           if (step.purpose === "experience") {
-            output = applyTitlePolicyToSections({ experience: output }, identity, beta).experience;
+            output = applyTitlePolicyToSections(
+              { experience: output },
+              identity,
+              dynamicTitles,
+            ).experience;
           }
           if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
         } catch (err) {
@@ -344,8 +367,14 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
   }
 
   // Safety net if Experience was produced outside the final-step branch shape.
-  const reconciled = applyTitlePolicyToSections(sections, identity, beta);
-  return { sections: reconciled, perStep, usage, isBeta: beta };
+  const reconciled = applyTitlePolicyToSections(sections, identity, dynamicTitles);
+  return {
+    sections: reconciled,
+    perStep,
+    usage,
+    isBeta: Boolean(isBeta),
+    dynamicCareerTitles: dynamicTitles,
+  };
 }
 
 /** Persist the finished run and sync it into the résumé library. */
@@ -356,8 +385,11 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
   const techStack = null;
   const skillAnalysisError = null;
   const isBeta = Boolean(prep.isBeta ?? result.isBeta);
+  const dynamicCareerTitles = Boolean(
+    prep.dynamicCareerTitles ?? result.dynamicCareerTitles,
+  );
   const titlePolicyFingerprint = computeTitlePolicyFingerprint({
-    isBeta,
+    dynamicCareerTitles,
     jobDescription: body.jobDescription,
     careers: sourceCareers(body.identity),
     config: body,
@@ -388,6 +420,7 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
     analyzed: skillProfile.length > 0,
     analyzedAt: skillProfile.length > 0 ? new Date() : null,
     isBeta,
+    dynamicCareerTitles,
     titlePolicyVersion: TITLE_POLICY_VERSION,
     titlePolicyFingerprint,
     identitySyncedAt,
@@ -410,6 +443,7 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
       titlePolicyFingerprint,
       titlePolicyVersion: TITLE_POLICY_VERSION,
       isBeta,
+      dynamicCareerTitles,
       identitySyncedAt,
     });
   } catch (syncErr) {
@@ -423,6 +457,7 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
     skillAnalysisError,
     generationId,
     isBeta,
+    dynamicCareerTitles,
     titlePolicyFingerprint,
     titlePolicyVersion: TITLE_POLICY_VERSION,
   };
@@ -446,6 +481,7 @@ function configSnapshot(body) {
     provider: body.provider,
     model: body.model,
     reasoningEffort: body.reasoningEffort ?? null,
+    dynamicCareerTitles: body.dynamicCareerTitles === true,
     templateId: body.templateId ?? null,
     template: body.template ?? null,
     theme: body.theme ?? null,
@@ -969,6 +1005,49 @@ export async function deleteAgentJobResumesHandler(req, res) {
     console.warn("POST /api/personal/agent-job-resumes/delete error:", err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
+}
+
+/**
+ * POST /personal/agent-job-resumes/delete/stream — remove generated résumés
+ * while streaming per-job progress to the Job Search bulk action bar.
+ */
+export async function deleteAgentJobResumesStreamHandler(req, res) {
+  const applierName = cleanString(req.body?.applierName);
+  const jobIds = Array.isArray(req.body?.jobIds) ? req.body.jobIds : [];
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  if (!applierName) {
+    send("error", { error: "applierName is required", status: 400 });
+    return res.end();
+  }
+  if (!jobIds.length) {
+    send("error", { error: "jobIds is required", status: 400 });
+    return res.end();
+  }
+
+  try {
+    const { deleteAgentJobResumes } = await import("../services/agentResumeGenService.js");
+    const result = await deleteAgentJobResumes(applierName, jobIds, {
+      onProgress: (evt) => send("progress", evt),
+    });
+    send("done", { success: true, ...result });
+  } catch (err) {
+    const status = Number.isInteger(err?.status) ? err.status : 500;
+    console.warn(
+      `POST /api/personal/agent-job-resumes/delete/stream failed (${status}): ${err.message}`,
+    );
+    send("error", { error: err.message, status });
+  }
+  res.end();
 }
 
 /** POST /personal/resume-generate/for-agent-job/stream — SSE progress for agent résumé generation. */

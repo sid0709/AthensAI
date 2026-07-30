@@ -14,6 +14,30 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "job-search-at-scale",
+    version: "0.5.0",
+    title: "Job Search at Scale",
+    date: "2026-07-29",
+    merge: "main · Job Search v2",
+    branch: "main",
+    summary:
+      "Turn Job Search into a fast, resilient career command center for exploring, ranking, and managing thousands of opportunities.",
+    tags: ["Job Search", "Personalization", "Reliability"],
+    current: true,
+    changes: [
+      "Company-grouped results keep related roles together, with expandable role trays and focused-job deep links",
+      "Shareable URL state preserves filters, sorting, pagination, view mode, expanded company, and focused role",
+      "A compact Qdrant-backed read model ranks roughly 15,000 jobs with per-profile skill coverage and fast source facets",
+      "Durable per-profile status projections power exact Applied, Scheduled, Declined, Bid Ready, and Bid Completed workflows",
+      "Bulk status actions, bulk scraper ingest, stronger identity deduplication, and deterministic result reconciliation",
+      "Automatic Firestore-to-ranking reconciliation removes orphaned cards before users can act on deleted jobs",
+      "API readiness no longer waits for every profile ranking to rebuild; cache and index maintenance continue safely in the background",
+      "Title-role inference and resilient Qdrant updates keep Role filters accurate even while catalog entries change",
+      "Stable company-keyed card measurements eliminate intermittent blank gaps after expanding, filtering, or updating jobs",
+      "Expanded regression coverage for Job Search, status transitions, Firestore compatibility, ranking indexes, and cache repair",
+    ],
+  },
+  {
     id: "session-based-bid-recording",
     version: "0.4.0",
     title: "Session-based Bid Recording",
@@ -23,7 +47,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Keep one complete recording per job application, even when bidders move through verification links and multiple tabs.",
     tags: ["Bid Monitor", "Recording", "Chrome Extension"],
-    current: true,
     changes: [
       "Application sessions group multiple tab recordings under the same Bid Ready job",
       "Side-panel Start/Stop plus toolbar-icon capture (Chrome requires toolbar invoke for tab recording)",

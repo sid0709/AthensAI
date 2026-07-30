@@ -107,6 +107,8 @@ export type GeneratorConfig = {
   provider: ProviderId;
   model: string;
   reasoningEffort: ReasoningEffort;
+  /** Allow the model to replace Profile Settings career titles with concise JD-aligned titles. */
+  dynamicCareerTitles: boolean;
   templateId: string;
   uploadedTemplate?: UploadedTemplateManifest;
   theme: ResumeTheme;

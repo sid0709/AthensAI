@@ -10,6 +10,7 @@ import {
 	getCompanyGroupMembers,
 	applyToJob,
 	removeJobs,
+	removeOtherCompanyJobs,
 	updateJobStatus,
 	unapplyFromJob,
 	updateJobBidStatus,
@@ -57,6 +58,7 @@ router.get('/jobs/:id/skill-analysis', getJobSkillAnalysis);
 router.get('/jobs/rule/:name', getJobsForRule);
 router.delete('/jobs/rule/:name', removeJobsForRule);
 router.post('/jobs/remove', removeJobs);
+router.post('/jobs/company/remove-others', removeOtherCompanyJobs);
 router.post('/jobs/bid-status/bulk', updateJobsBidStatusBulk);
 router.post('/jobs/:id/apply', applyToJob);
 router.post('/jobs/:id/status', updateJobStatus);

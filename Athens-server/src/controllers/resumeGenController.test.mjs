@@ -8,7 +8,6 @@ import {
   computeTitlePolicyFingerprint,
   sourceCareers,
 } from "../services/resumeCareerTitlePolicy.js";
-import { isBetaTier } from "../lib/betaTier.js";
 
 test("formatCompanyToken formats full career entry as natural sentence", () => {
   const result = formatCompanyToken({
@@ -104,7 +103,7 @@ test("buildTokenMap maps company1 and company2 from careers array", () => {
   assert.equal(map.company1_title, undefined);
 });
 
-test("shared title policy: runGeneration-shaped Experience step reconciles non-Beta titles", () => {
+test("shared title policy keeps Profile titles when the saved preference is disabled", () => {
   const identity = {
     careers: [
       { title: "Software Engineer", company: "Acme", period: "2020 – 2022", description: "Java" },
@@ -113,11 +112,11 @@ test("shared title policy: runGeneration-shaped Experience step reconciles non-B
   };
   // Mirrors runGeneration final experience step: append policy then reconcile.
   const prompt = appendExperienceTitlePolicy("Write experience bullets.", {
-    isBeta: false,
+    dynamicCareerTitles: false,
     jobDescription: "Backend role",
     careers: sourceCareers(identity),
   });
-  assert.match(prompt, /TITLE POLICY \(mandatory — non-Beta\)/);
+  assert.match(prompt, /TITLE POLICY \(mandatory — dynamic career titles disabled\)/);
 
   const modelOutput = {
     experiences: [
@@ -131,7 +130,7 @@ test("shared title policy: runGeneration-shaped Experience step reconciles non-B
   assert.equal(reconciled.experience.experiences[0].company, "Acme");
 });
 
-test("shared title policy: Beta Experience step keeps valid tailored titles", () => {
+test("shared title policy keeps valid tailored titles when the preference is enabled", () => {
   const identity = {
     careers: [
       { title: "Software Engineer", company: "Acme", period: "2020 – 2022", description: "Java" },
@@ -139,11 +138,11 @@ test("shared title policy: Beta Experience step keeps valid tailored titles", ()
     ],
   };
   const prompt = appendExperienceTitlePolicy("Write experience.", {
-    isBeta: true,
+    dynamicCareerTitles: true,
     jobDescription: "Looking for a backend engineer",
     careers: sourceCareers(identity),
   });
-  assert.match(prompt, /TITLE POLICY \(mandatory — Beta\)/);
+  assert.match(prompt, /TITLE POLICY \(mandatory — dynamic career titles enabled\)/);
   assert.match(prompt, /Looking for a backend engineer/);
 
   const modelOutput = {
@@ -157,12 +156,7 @@ test("shared title policy: Beta Experience step keeps valid tailored titles", ()
   assert.equal(reconciled.experience.experiences[1].title, "Senior Backend Engineer");
 });
 
-test("generation persistence fingerprint tracks Beta entitlement and policy version", () => {
-  // prepareGeneration resolves isBeta via isBetaTier(account.tier); finalizeGenerationRun
-  // persists computeTitlePolicyFingerprint — stale fingerprints must not reuse.
-  assert.equal(isBetaTier("pro"), false);
-  assert.equal(isBetaTier("beta"), true);
-
+test("generation persistence fingerprint tracks the saved preference instead of account tier", () => {
   const body = {
     jobDescription: "JD",
     identity: {
@@ -171,19 +165,19 @@ test("generation persistence fingerprint tracks Beta entitlement and policy vers
     systemInstruction: "sys",
     steps: [{ purpose: "experience", kind: "final", prompt: "p" }],
   };
-  const nonBetaFp = computeTitlePolicyFingerprint({
-    isBeta: false,
+  const staticFp = computeTitlePolicyFingerprint({
+    dynamicCareerTitles: false,
     jobDescription: body.jobDescription,
     careers: sourceCareers(body.identity),
     config: body,
   });
-  const betaFp = computeTitlePolicyFingerprint({
-    isBeta: true,
+  const dynamicFp = computeTitlePolicyFingerprint({
+    dynamicCareerTitles: true,
     jobDescription: body.jobDescription,
     careers: sourceCareers(body.identity),
     config: body,
   });
-  assert.notEqual(nonBetaFp, betaFp);
-  assert.equal(TITLE_POLICY_VERSION, 1);
-  assert.equal(nonBetaFp.length, 40);
+  assert.notEqual(staticFp, dynamicFp);
+  assert.equal(TITLE_POLICY_VERSION, 2);
+  assert.equal(staticFp.length, 40);
 });

@@ -16,6 +16,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Field, Dropdown } from "../adapters/ui";
+import { Checkbox } from "@/app/components/ui/checkbox";
 import { DesignModal } from "../components/design-modal";
 import { SectionLayoutPanel, TemplatePanel, ThemePanel } from "../components/document-design-panels";
 import { PreviewToolbar, type DesignPanel } from "../components/preview-toolbar";
@@ -39,6 +40,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     applier,
     config,
     setConfig,
+    setDynamicCareerTitles,
     theme,
     layout,
     steps,
@@ -353,6 +355,22 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               <code className="rounded bg-sky-500/15 text-sky-600 dark:text-sky-300 px-1">{JOB_DESC_TOKEN}</code> — it is
               substituted with this text at generation time.
             </p>
+            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+              <Checkbox
+                checked={config.dynamicCareerTitles}
+                onCheckedChange={(checked) => setDynamicCareerTitles(checked === true)}
+                aria-label="Dynamically tailor career titles"
+                className="mt-0.5"
+              />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-neutral-700 dark:text-white/80">
+                  Dynamically tailor career titles
+                </span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
+                  When checked, the model may use concise, job-aligned titles supported by each role. This saved choice also applies to Job Search and Agent résumé generation. When unchecked, Profile Settings titles stay exact.
+                </span>
+              </span>
+            </label>
           </div>
 
           <div className={cardCls}>

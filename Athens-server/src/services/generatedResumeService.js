@@ -43,6 +43,7 @@ export async function syncGeneratedResumeAfterRun({
   titlePolicyFingerprint,
   titlePolicyVersion,
   isBeta,
+  dynamicCareerTitles,
   identitySyncedAt,
 }) {
   if (!userResumesCollection || !sections || !ownerName) return null;
@@ -112,6 +113,7 @@ export async function syncGeneratedResumeAfterRun({
     titlePolicyFingerprint: fingerprint,
     titlePolicyVersion: policyVersion,
     isBeta: Boolean(isBeta),
+    dynamicCareerTitles: Boolean(dynamicCareerTitles),
     identitySyncedAt: syncedAt,
     identityRefreshedAt: now,
     uploadedAt: now,
@@ -153,6 +155,7 @@ export async function syncGeneratedResumeAfterRun({
                 titlePolicyFingerprint: fingerprint,
                 titlePolicyVersion: policyVersion,
                 isBeta: Boolean(isBeta),
+                dynamicCareerTitles: Boolean(dynamicCareerTitles),
               }
             : {}),
         },
@@ -176,7 +179,7 @@ export async function syncGeneratedResumeAfterRun({
 }
 
 /** Delete a generation run and its linked generated library resume (if any). */
-export async function deleteGenerationRun(id, ownerName) {
+export async function deleteGenerationRun(id, ownerName, { rebuildProfile = true } = {}) {
   if (!resumeGenerationsCollection) throw new Error("Database not ready");
   const name = cleanString(ownerName);
   if (!name) throw new Error("applierName is required");
@@ -195,7 +198,7 @@ export async function deleteGenerationRun(id, ownerName) {
   const resumeId = cleanString(run.libraryResumeId);
   if (resumeId) {
     try {
-      await deleteUserResume(resumeId, name);
+      await deleteUserResume(resumeId, name, { rebuildProfile });
       resumeDeleted = true;
     } catch (err) {
       if (!String(err?.message || "").toLowerCase().includes("not found")) throw err;
@@ -206,7 +209,7 @@ export async function deleteGenerationRun(id, ownerName) {
       generationId: String(_id),
     });
     if (linked) {
-      await deleteUserResume(String(linked._id), name);
+      await deleteUserResume(String(linked._id), name, { rebuildProfile });
       resumeDeleted = true;
     }
   }

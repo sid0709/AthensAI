@@ -30,6 +30,7 @@ import {
   getAgentJobResumePdf,
   getAgentJobResumesStatus,
   deleteAgentJobResumesHandler,
+  deleteAgentJobResumesStreamHandler,
   getGeneratorConfig,
 	saveGeneratorConfig,
   listGenerations,
@@ -96,6 +97,7 @@ router.post('/personal/resume-generate/for-agent-job/stream', generateResumeForA
 router.get('/personal/agent-job-resume/:jobId/pdf', getAgentJobResumePdf);
 router.post('/personal/agent-job-resumes/status', getAgentJobResumesStatus);
 router.post('/personal/agent-job-resumes/delete', deleteAgentJobResumesHandler);
+router.post('/personal/agent-job-resumes/delete/stream', deleteAgentJobResumesStreamHandler);
 router.get('/personal/resume-generator/config', getGeneratorConfig);
 router.put('/personal/resume-generator/config', saveGeneratorConfig);
 router.get('/personal/resume-generations', listGenerations);

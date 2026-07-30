@@ -81,6 +81,8 @@ import {
 } from '../services/jobListReadModelService.js';
 import {
 	deleteJobDocuments,
+	findOtherCompanyJobIds,
+	normalizeCompanySiblingRemoval,
 	normalizeJobRemovalIds,
 } from '../services/jobRemovalService.js';
 import { setGauge } from '../services/monitoring/metrics.js';
@@ -896,6 +898,31 @@ export async function removeJobs(req, res) {
 	} catch (err) {
 		console.error('POST /api/jobs/remove error', err);
 		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function removeOtherCompanyJobs(req, res) {
+	try {
+		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
+		const input = normalizeCompanySiblingRemoval(req.body);
+		if (!input) {
+			return res.status(400).json({ success: false, error: 'companyId and keepJobId are required' });
+		}
+
+		const ids = await findOtherCompanyJobIds({ ...input, jobsCollection });
+		if (!ids.length) return res.json({ success: true, deletedCount: 0, deletedIds: [] });
+
+		const { deletedCount } = await deleteJobDocuments({ ids, jobsCollection });
+		evictJobsFromJobListReadModel(ids);
+		invalidateLiveProjectedStatusCount();
+		jobCountCache.clear();
+		void deleteScoresForJobs(ids).catch(() => {});
+		void removeJobsFromRanking(ids).catch(() => {});
+		return res.json({ success: true, deletedCount, deletedIds: ids });
+	} catch (err) {
+		console.error('POST /api/jobs/company/remove-others error', err);
+		const status = err?.code === 'COMPANY_GROUP_CHANGED' ? 409 : 500;
+		return res.status(status).json({ success: false, error: err.message });
 	}
 }
 

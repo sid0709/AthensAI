@@ -14,6 +14,7 @@ type JobListViewProps = {
   activeJobIds?: Record<string, string>;
   onActiveJobChange?: (companyId: string, jobId: string) => void;
   onLoadCompanyMembers?: (companyId: string) => void;
+  onRemoveOtherCompanyJobs?: (group: CompanyJobGroup, activeJob: Job) => Promise<void>;
   memberLoadingIds?: Set<string>;
   memberErrors?: Record<string, string>;
   layout?: "list" | "grid";
@@ -40,6 +41,7 @@ export function JobListView({
   activeJobIds,
   onActiveJobChange,
   onLoadCompanyMembers,
+  onRemoveOtherCompanyJobs,
   memberLoadingIds,
   memberErrors,
   layout = "list",
@@ -111,6 +113,9 @@ export function JobListView({
         resumeStates={resumeStates}
         onGenerateResume={onGenerateResume}
         onLoadMore={onLoadCompanyMembers}
+        onRemoveOtherJobs={onRemoveOtherCompanyJobs
+          ? (activeJob) => onRemoveOtherCompanyJobs(group, activeJob)
+          : undefined}
         loadingMore={memberLoadingIds?.has(group.companyId)}
         memberError={memberErrors?.[group.companyId]}
       />

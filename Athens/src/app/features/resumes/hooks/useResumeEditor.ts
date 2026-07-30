@@ -225,6 +225,7 @@ export function useResumeEditor() {
       provider: draft.provider,
       model: draft.model,
       reasoningEffort: draft.reasoningEffort === "default" ? undefined : draft.reasoningEffort,
+      dynamicCareerTitles: draft.dynamicCareerTitles === true,
       templateId: resolveTemplateId(draft.templateId),
       template: { layout: draft.templateId },
       theme: draft.theme,

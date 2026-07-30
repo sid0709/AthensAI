@@ -65,7 +65,7 @@ export function JobBulkActionsBar({
   return (
     <div className={cn("space-y-0", className)}>
       <div
-        aria-busy={loading}
+        aria-busy={loading || resumeGenerating || resumeRemoving}
         className={cn(
           "flex items-center gap-3 px-3 py-2.5",
           !embedded && "rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-sm",
@@ -100,7 +100,7 @@ export function JobBulkActionsBar({
           </span>
         </label>
 
-        {resumeGenerating && resumeProgress ? (
+        {(resumeGenerating || resumeRemoving) && resumeProgress ? (
           <div className="hidden sm:flex flex-1 min-w-[6rem] max-w-xs items-center gap-2">
             <Progress value={progressPct} className="h-1.5 flex-1" />
             <span className="text-[11px] tabular-nums text-muted-foreground whitespace-nowrap">
@@ -202,12 +202,23 @@ export function JobBulkActionsBar({
               title="Remove generated résumés for the selected jobs (jobs stay in the list)"
             >
               {resumeRemoving ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  <span className="tabular-nums whitespace-nowrap text-xs sm:text-sm">
+                    {resumeProgress?.phase === "finalizing"
+                      ? "Finalizing…"
+                      : resumeProgress
+                        ? `${resumeProgress.done}/${resumeProgress.total} · Removing`
+                        : "Removing…"}
+                  </span>
+                </>
               ) : (
-                <FileX className="w-3.5 h-3.5" />
+                <>
+                  <FileX className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Remove résumés</span>
+                  <span className="sm:hidden">Résumés</span>
+                </>
               )}
-              <span className="hidden sm:inline">Remove résumés</span>
-              <span className="sm:hidden">Résumés</span>
             </Button>
           ) : null}
           <Button
