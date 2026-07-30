@@ -99,6 +99,7 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
   if (listBody.aiExtracted === true || listBody.aiExtracted === 'true') {
     must.push(matchKeyword('aiExtracted', true));
   }
+	must.push(matchKeyword('titleReviewLabel', 'APPROVED'));
 
   // Non-beta queries contain the canonical Firestore exclusion.
   if (queryExcludesExtensionV2Jobs(dataQuery)) {
@@ -107,7 +108,6 @@ export function buildJobRankingFilter(listBody = {}, { includeExternal = false, 
 	const mustNot = queryExcludesExtensionV2Jobs(dataQuery)
 		? [matchKeyword('version', 'v2')]
 		: [];
-	mustNot.push(matchKeyword('titleReviewLabel', 'REVIEW_REQUIRED'));
 	return { must, ...(mustNot.length ? { must_not: mustNot } : {}) };
 }
 

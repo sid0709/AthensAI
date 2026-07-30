@@ -42,6 +42,7 @@ import {
 	initJobListReadModel,
 	isJobListV2Enabled,
 } from "./src/services/jobListReadModelService.js";
+import { warmTitleReviewReadCache } from "./src/services/jobTitleReview/titleReviewSession.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -302,6 +303,7 @@ async function startHttpWorker({ clustered }) {
 	if (isJobListV2Enabled()) {
 		await runStartupStep("Job-list read model and profile caches", () => initJobListReadModel());
 	}
+	await runStartupStep("Title-review first-page cache", () => warmTitleReviewReadCache());
 	databaseReady = true;
 	console.log(`[startup] API ready (${formatStartupDuration(Date.now() - startupStartedAt)} total)`);
 	if (!clustered) {

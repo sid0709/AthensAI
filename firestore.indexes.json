@@ -130,6 +130,16 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.confidence", "order": "DESCENDING" },
+        { "fieldPath": "postedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
         { "fieldPath": "extensionV2", "order": "ASCENDING" },
         { "fieldPath": "titleReview.label", "order": "ASCENDING" },
         { "fieldPath": "postedAt", "order": "DESCENDING" }

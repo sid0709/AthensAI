@@ -3,10 +3,12 @@ import { findAccountByApplierName } from '../services/mail/credentials.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import { buildCaseInsensitiveRegexFilter } from '../utils/safeRegex.js';
 import {
+	getTitleReviewCounts,
 	getTitleReviewSessionStatus,
 	invalidateTitleReviewCounts,
 	startTitleReviewSession,
 	stopTitleReviewSession,
+	TITLE_REVIEW_LIST_PROJECTION,
 } from '../services/jobTitleReview/titleReviewSession.js';
 import { syncJobTitleReviewUpdates } from '../services/jobTitleReview/titleReviewIndexSync.js';
 import { normalizeJobRemovalIds, deleteJobDocuments } from '../services/jobRemovalService.js';
@@ -80,27 +82,44 @@ export async function listTitleReviewJobs(req, res) {
 		if (!applierName) return;
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 
-		const tab = req.query?.tab === 'failed' ? 'failed' : 'review_required';
+		const requestedTab = String(req.query?.tab || 'unreviewed');
+		const tab = ['unreviewed', 'review_required', 'failed'].includes(requestedTab)
+			? requestedTab
+			: 'unreviewed';
 		const page = Math.max(1, Number(req.query?.page) || 1);
 		const limit = Math.max(10, Math.min(100, Number(req.query?.limit) || 25));
-		const sort = req.query?.sort === 'oldest' ? 1 : -1;
+		const requestedSort = String(req.query?.sort || '');
+		const sort = ['confidence_desc', 'newest', 'oldest'].includes(requestedSort)
+			? requestedSort
+			: tab === 'review_required' ? 'confidence_desc' : 'newest';
+		const sortSpec = tab === 'unreviewed'
+			? null
+			: sort === 'confidence_desc'
+				? { 'titleReview.confidence': -1, postedAt: -1, _id: -1 }
+				: { postedAt: sort === 'oldest' ? 1 : -1, _id: sort === 'oldest' ? 1 : -1 };
+		const tabQuery = tab === 'failed'
+			? { 'titleReview.processingState': 'failed' }
+			: tab === 'review_required'
+				? { 'titleReview.label': 'REVIEW_REQUIRED' }
+				: { 'titleReview.processingState': { $in: ['pending', 'scanning'] } };
 		const query = {
-			$and: [
-				tab === 'failed'
-					? { 'titleReview.processingState': 'failed' }
-					: { 'titleReview.label': 'REVIEW_REQUIRED' },
-			],
+			$and: [tabQuery],
 		};
 		const titleFilter = buildCaseInsensitiveRegexFilter(req.query?.q);
 		if (titleFilter) query.$and.push({ title: titleFilter });
 		const effectiveQuery = query.$and.length === 1 ? query.$and[0] : query;
+		const totalPromise = !titleFilter
+			? getTitleReviewCounts().then((counts) => {
+				if (tab === 'unreviewed') return counts.unreviewedCount ?? 0;
+				if (tab === 'review_required') return counts.reviewRequiredCount ?? 0;
+				return counts.failedCount ?? 0;
+			})
+			: jobsCollection.countDocuments(effectiveQuery);
+		const cursor = jobsCollection.find(effectiveQuery, { projection: TITLE_REVIEW_LIST_PROJECTION });
+		if (sortSpec) cursor.sort(sortSpec);
 		const [documents, total] = await Promise.all([
-			jobsCollection.find(effectiveQuery, { projection: { description: 0, jobDescription: 0 } })
-				.sort({ postedAt: sort, _id: sort })
-				.skip((page - 1) * limit)
-				.limit(limit)
-				.toArray(),
-			jobsCollection.countDocuments(effectiveQuery),
+			cursor.skip((page - 1) * limit).limit(limit).toArray(),
+			totalPromise,
 		]);
 		return res.json({
 			success: true,

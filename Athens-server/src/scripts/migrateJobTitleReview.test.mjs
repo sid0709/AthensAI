@@ -2,11 +2,40 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JOB_MARKET_MODEL_VERSION } from '../config/jobMarketSchema.js';
 import {
+  backfillPendingTitleReviewState,
   cleanupLegacyTitleReviewFields,
   legacyTitleReviewCleanupFilter,
   legacyTitleReviewCleanupUpdate,
+  pendingTitleReviewBackfillFilter,
   rebuildTitleReviewRankingPayloads,
 } from './migrateJobTitleReview.js';
+
+test('pending-state backfill targets only title reviews without a state', () => {
+  assert.deepEqual(pendingTitleReviewBackfillFilter(), {
+    'titleReview.processingState': { $exists: false },
+  });
+});
+
+test('pending-state backfill uses guarded bounded writes', async () => {
+  const operations = [];
+  const collection = {
+    findPaged: async function* () {
+      yield { _id: 'one' };
+      yield { _id: 'two' };
+      yield { _id: 'three' };
+    },
+    bulkWrite: async (batch) => {
+      operations.push(...batch);
+      return { modifiedCount: batch.length };
+    },
+  };
+  const result = await backfillPendingTitleReviewState(collection, { batchSize: 2 });
+  assert.deepEqual(result, { total: 3, updated: 3, dryRun: false });
+  assert.equal(operations.length, 3);
+  assert.ok(operations.every(({ updateOne }) =>
+    updateOne.filter['titleReview.processingState']?.$exists === false &&
+    updateOne.update.$set['titleReview.processingState'] === 'pending'));
+});
 
 test('title-review migration permanently unsets every legacy field and stamps the schema', () => {
   assert.deepEqual(legacyTitleReviewCleanupUpdate(), {

@@ -191,7 +191,10 @@ export async function classifyAndPersistTitleReviewBatch(jobs, auth, {
 			// stale lease and let the current title be classified in a later batch.
 			await collection.updateOne(
 				{ _id: operation.item._id, 'titleReview.lease.sessionId': sessionId },
-				{ $unset: { titleReview: '' } },
+				{
+					$set: { 'titleReview.processingState': 'pending' },
+					$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+				},
 			);
 			return { ...operation, persisted: false };
 		}));

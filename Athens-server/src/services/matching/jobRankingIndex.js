@@ -235,7 +235,7 @@ export async function readDateTailPage({
       visibilityPayloads,
       {
         excludeExtensionV2: excludeExtensionV2 && !publicTailReady,
-        excludeReviewRequired: true,
+        requireApprovedTitle: true,
       },
     );
     for (const { jobId, catalog } of visibleCandidates) {
@@ -261,14 +261,14 @@ export async function readDateTailPage({
  */
 export function filterDateTailCandidates(candidates, payloads, {
   excludeExtensionV2 = false,
-  excludeReviewRequired = false,
+  requireApprovedTitle = false,
 } = {}) {
-  if (!excludeExtensionV2 && !excludeReviewRequired) return candidates;
+  if (!excludeExtensionV2 && !requireApprovedTitle) return candidates;
   const visibleIds = new Set(
     payloads
       .filter((payload) => payload?.jobId)
       .filter((payload) => !excludeExtensionV2 || payload.extensionV2 !== true)
-      .filter((payload) => !excludeReviewRequired || payload.titleReviewLabel !== 'REVIEW_REQUIRED')
+      .filter((payload) => !requireApprovedTitle || payload.titleReviewLabel === 'APPROVED')
       .map((payload) => String(payload.jobId)),
   );
   return candidates.filter((candidate) => visibleIds.has(String(candidate.jobId)));

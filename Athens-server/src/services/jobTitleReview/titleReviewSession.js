@@ -18,6 +18,17 @@ const STALE_LEASE_MS = Number.isFinite(configuredStaleLeaseMs)
 	? Math.max(60_000, configuredStaleLeaseMs)
 	: 15 * 60_000;
 const CLAIM_PROJECTION = { title: 1, postedAt: 1, titleReview: 1 };
+export const TITLE_REVIEW_LIST_PROJECTION = {
+	title: 1,
+	company: 1,
+	companyName: 1,
+	source: 1,
+	postedAt: 1,
+	_createdAt: 1,
+	applyLink: 1,
+	jobLink: 1,
+	titleReview: 1,
+};
 
 let activeSession = null;
 let cancelRequested = false;
@@ -30,25 +41,25 @@ export function invalidateTitleReviewCounts() {
 }
 
 export function pendingTitleReviewQuery() {
-	return {
-		$or: [
-			{ 'titleReview.processingState': { $exists: false } },
-			{ 'titleReview.processingState': 'failed' },
-		],
-	};
+	return { 'titleReview.processingState': { $in: ['pending', 'failed'] } };
 }
 
 export async function getTitleReviewCounts() {
-	if (!jobsCollection) return { pending: null, reviewRequiredCount: null, failedCount: null };
+	if (!jobsCollection) return {
+		pending: null,
+		unreviewedCount: null,
+		reviewRequiredCount: null,
+		failedCount: null,
+	};
 	if (countsCache?.expiresAt > Date.now()) return countsCache.promise;
 	const promise = Promise.all([
-		jobsCollection.countDocuments({}),
-		jobsCollection.countDocuments({ 'titleReview.processingState': 'completed' }),
-		jobsCollection.countDocuments({ 'titleReview.processingState': 'scanning' }),
+		jobsCollection.countDocuments({ 'titleReview.processingState': { $in: ['pending', 'failed'] } }),
+		jobsCollection.countDocuments({ 'titleReview.processingState': { $in: ['pending', 'scanning'] } }),
 		jobsCollection.countDocuments({ 'titleReview.label': 'REVIEW_REQUIRED' }),
 		jobsCollection.countDocuments({ 'titleReview.processingState': 'failed' }),
-	]).then(([total, completed, scanning, reviewRequiredCount, failedCount]) => ({
-		pending: Math.max(0, total - completed - scanning),
+	]).then(([pending, unreviewedCount, reviewRequiredCount, failedCount]) => ({
+		pending,
+		unreviewedCount,
 		reviewRequiredCount,
 		failedCount,
 	}));
@@ -57,6 +68,27 @@ export async function getTitleReviewCounts() {
 		if (countsCache?.promise === promise) countsCache = null;
 	});
 	return promise;
+}
+
+/** Prime the two first-page reads before the API is marked ready. */
+export async function warmTitleReviewReadCache() {
+	if (!jobsCollection) return { warmed: false };
+	const results = await Promise.allSettled([
+		getTitleReviewCounts(),
+		jobsCollection.find(
+			{ 'titleReview.processingState': { $in: ['pending', 'scanning'] } },
+			{ projection: TITLE_REVIEW_LIST_PROJECTION },
+		).limit(50).toArray(),
+		jobsCollection.find(
+			{ 'titleReview.label': 'REVIEW_REQUIRED' },
+			{ projection: TITLE_REVIEW_LIST_PROJECTION },
+		).sort({ 'titleReview.confidence': -1, postedAt: -1, _id: -1 }).limit(50).toArray(),
+	]);
+	const failures = results.filter((result) => result.status === 'rejected');
+	if (failures.length) {
+		console.warn('[job-title-review] cache warmup incomplete:', failures[0].reason?.message || failures[0].reason);
+	}
+	return { warmed: failures.length === 0 };
 }
 
 async function recoverStaleLeases() {
@@ -72,7 +104,10 @@ async function recoverStaleLeases() {
 		const result = await jobsCollection.bulkWrite(stale.map((job) => ({
 			updateOne: {
 				filter: { _id: job._id, 'titleReview.processingState': 'scanning' },
-				update: { $unset: { titleReview: '' } },
+				update: {
+					$set: { 'titleReview.processingState': 'pending' },
+					$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+				},
 			},
 		})), { ordered: false });
 		recovered += result.modifiedCount || 0;
@@ -126,7 +161,10 @@ async function releaseBatch(jobs, sessionId) {
 	await jobsCollection.bulkWrite(jobs.map((job) => ({
 		updateOne: {
 			filter: { _id: job._id, 'titleReview.lease.sessionId': sessionId },
-			update: { $unset: { titleReview: '' } },
+			update: {
+				$set: { 'titleReview.processingState': 'pending' },
+				$unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+			},
 		},
 	})), { ordered: false }).catch(() => undefined);
 }
@@ -175,18 +213,24 @@ async function runSession(session) {
 	} catch (error) {
 		session.running = false;
 		session.status = 'failed';
+		session.phase = null;
 		session.error = error.message;
 		return;
 	}
 
 	session.provider = auth.providerId;
 	session.model = auth.model;
-	console.log(
-		`[job-title-review] starting — ${auth.providerId}/${auth.model}, ` +
-		`${TITLE_REVIEW_CONCURRENCY}× batches of ≤${TITLE_REVIEW_BATCH_SIZE}, ${session.total} job(s)`,
-	);
 
 	try {
+		session.phase = 'preparing';
+		session.queue = await loadPendingQueue();
+		session.total = session.queue.length;
+		session.remaining = session.total;
+		session.phase = 'processing';
+		console.log(
+			`[job-title-review] starting — ${auth.providerId}/${auth.model}, ` +
+			`${TITLE_REVIEW_CONCURRENCY}× batches of ≤${TITLE_REVIEW_BATCH_SIZE}, ${session.total} job(s)`,
+		);
 		while (!cancelRequested) {
 			const batches = [];
 			for (let index = 0; index < TITLE_REVIEW_CONCURRENCY; index += 1) {
@@ -200,7 +244,10 @@ async function runSession(session) {
 			await Promise.all(batches.map((batch) => processBatch(session, auth, batch)));
 		}
 	} finally {
+		session.phase = 'finalizing';
+		await warmTitleReviewReadCache();
 		session.running = false;
+		session.phase = null;
 		session.finishedAt = new Date().toISOString();
 		session.status = cancelRequested ? 'cancelled' : 'completed';
 		if (!cancelRequested) session.remaining = 0;
@@ -217,6 +264,7 @@ function sessionSnapshot() {
 	return {
 		running: activeSession.running,
 		status: activeSession.status,
+		phase: activeSession.phase,
 		sessionId: activeSession.id,
 		total: activeSession.total,
 		processed: activeSession.processed,
@@ -247,15 +295,14 @@ export async function startTitleReviewSession({ applierName } = {}) {
 	await resolveExtractionAuth(name);
 	await recoverStaleLeases();
 	invalidateTitleReviewCounts();
-	const queue = await loadPendingQueue();
-	const pending = queue.length;
+	const { pending } = await getTitleReviewCounts();
 	if (!pending) return { started: false, pending: 0, message: 'No titles are waiting for review.' };
 
 	cancelRequested = false;
 	activeSession = {
 		id: randomUUID(),
 		applierName: name,
-		queue,
+		queue: [],
 		running: true,
 		status: 'running',
 		total: pending,
@@ -264,6 +311,7 @@ export async function startTitleReviewSession({ applierName } = {}) {
 		reviewRequired: 0,
 		failed: 0,
 		remaining: pending,
+		phase: 'preparing',
 		lastBatch: null,
 		provider: null,
 		model: null,

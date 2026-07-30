@@ -17,6 +17,51 @@ import { rebuildAlgoliaJobs } from '../services/search/algoliaJobs.js';
 const BATCH_SIZE = 200;
 const LEGACY_FIELDS = ['titleScanned', 'titleScannedAt', 'titleScanStatus', 'titleScanError'];
 
+export function pendingTitleReviewBackfillFilter() {
+	return { 'titleReview.processingState': { $exists: false } };
+}
+
+export async function backfillPendingTitleReviewState(collection, {
+	dryRun = false,
+	batchSize = BATCH_SIZE,
+	onProgress = () => undefined,
+} = {}) {
+	const filter = pendingTitleReviewBackfillFilter();
+	const jobs = [];
+	if (typeof collection.findPaged === 'function') {
+		for await (const job of collection.findPaged(filter, {
+			projection: { _id: 1 },
+			pageSize: Math.max(1_000, batchSize),
+		})) jobs.push(job);
+	} else {
+		for await (const job of collection.find(filter, { projection: { _id: 1 } })) jobs.push(job);
+	}
+	const total = jobs.length;
+	if (dryRun) return { total, updated: 0, dryRun: true };
+	let updated = 0;
+	let operations = [];
+	const flush = async () => {
+		if (!operations.length) return;
+		const result = typeof collection.atomicBulkPatch === 'function'
+			? await collection.atomicBulkPatch(operations, { skipOutbox: true })
+			: await collection.bulkWrite(operations, { ordered: false });
+		updated += result.modifiedCount || 0;
+		operations = [];
+		onProgress({ total, updated });
+	};
+	for (const job of jobs) {
+		operations.push({
+			updateOne: {
+				filter: { _id: job._id, 'titleReview.processingState': { $exists: false } },
+				update: { $set: { 'titleReview.processingState': 'pending' } },
+			},
+		});
+		if (operations.length >= batchSize) await flush();
+	}
+	await flush();
+	return { total, updated, dryRun: false };
+}
+
 export function legacyTitleReviewCleanupFilter() {
 	return {
 		$or: [
@@ -98,9 +143,19 @@ export async function rebuildTitleReviewRankingPayloads(collection, {
 
 async function main() {
 	const dryRun = process.argv.includes('--dry-run');
+	const pendingOnly = process.argv.includes('--pending-only');
 	await initDataStore();
 	if (!jobsCollection) throw new Error('Firestore not ready');
 	try {
+		const pendingBackfill = await backfillPendingTitleReviewState(jobsCollection, {
+			dryRun,
+			onProgress: ({ total, updated }) => console.log(`[title-review-pending] ${updated}/${total} jobs updated`),
+		});
+		console.log(`[title-review-pending] ${pendingBackfill.total} job(s) require an indexed pending state`);
+		if (pendingOnly) {
+			console.log(`[title-review-pending] ${dryRun ? 'dry run complete' : 'complete'}`, pendingBackfill);
+			return;
+		}
 		const cleanup = await cleanupLegacyTitleReviewFields(jobsCollection, {
 			dryRun,
 			onProgress: ({ total, updated }) => console.log(`[title-review-migration] ${updated}/${total} jobs updated`),

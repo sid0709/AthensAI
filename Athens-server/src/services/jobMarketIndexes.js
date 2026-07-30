@@ -24,10 +24,8 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 		),
 		// Title-review queue and quarantined-job listing.
 		jobsCollection.createIndex({ 'titleReview.label': 1, postedAt: -1 }),
-		jobsCollection.createIndex(
-			{ 'titleReview.processingState': 1, postedAt: -1 },
-			{ partialFilterExpression: { 'titleReview.processingState': 'scanning' } },
-		),
+		jobsCollection.createIndex({ 'titleReview.label': 1, 'titleReview.confidence': -1, postedAt: -1 }),
+		jobsCollection.createIndex({ 'titleReview.processingState': 1, postedAt: -1 }),
 	]);
 }
 

@@ -339,6 +339,9 @@ export async function createJob(req, res) {
 		job.matchScoreStatus = 'pending';
 		// Queue for AI skill extraction (run manually from the Extract skills button).
 		job.aiSkillStatus = 'pending';
+		// A queryable state keeps the title-review queue indexed. Missing-field
+		// checks force Firestore to scan the entire catalog.
+		job.titleReview = { processingState: 'pending' };
 		Object.assign(job, attachStaticScoreFields({ ...job, skills }));
 		// Re-assert after static fields — distinct from sourceVersion / modelVersion.
 		stampJobMarketIngestVersion(job, ingest);
@@ -442,7 +445,7 @@ export async function getJobsForRule(req, res) {
 		const account = req.query?.applierName
 			? await resolveApplierContext(String(req.query.applierName).trim())
 			: null;
-		const titleReviewVisibility = { 'titleReview.label': { $ne: 'REVIEW_REQUIRED' } };
+		const titleReviewVisibility = { 'titleReview.label': 'APPROVED' };
 		const visibleQuery = account?.isBeta
 			? { $and: [query, titleReviewVisibility] }
 			: { $and: [query, titleReviewVisibility, excludeExtensionV2JobsFilter()] };

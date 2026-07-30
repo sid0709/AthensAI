@@ -47,8 +47,8 @@ test('retrieval filter includes industry, extraction, and non-beta clauses', () 
   assert.ok(filter.must.some((clause) => clause.key === 'companyTags'));
   assert.ok(filter.must.some((clause) => clause.key === 'aiExtracted'));
   assert.ok(filter.must.some((clause) => clause.key === 'extensionV2'));
+  assert.ok(filter.must.some((clause) => clause.key === 'titleReviewLabel' && clause.match?.value === 'APPROVED'));
   assert.ok(filter.must_not.some((clause) => clause.key === 'version' && clause.match?.value === 'v2'));
-  assert.ok(filter.must_not.some((clause) => clause.key === 'titleReviewLabel' && clause.match?.value === 'REVIEW_REQUIRED'));
 });
 
 test('ranking payload marks both v2 provenance shapes as beta-only', () => {
@@ -72,7 +72,7 @@ test('non-beta date tail fails closed for v2 and missing ranking payloads', () =
   assert.deepEqual(filterDateTailCandidates(candidates, payloads), candidates);
 });
 
-test('date tail excludes review-required jobs while retaining unprocessed jobs', () => {
+test('date tail includes only approved-title jobs', () => {
   const candidates = [
     { jobId: 'approved', catalog: 'market' },
     { jobId: 'review', catalog: 'market' },
@@ -85,8 +85,8 @@ test('date tail excludes review-required jobs while retaining unprocessed jobs',
     { jobId: 'unprocessed' },
   ];
   assert.deepEqual(
-    filterDateTailCandidates(candidates, payloads, { excludeReviewRequired: true }),
-    [candidates[0], candidates[2]],
+    filterDateTailCandidates(candidates, payloads, { requireApprovedTitle: true }),
+    [candidates[0]],
   );
 });
 

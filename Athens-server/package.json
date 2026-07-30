@@ -38,6 +38,8 @@
 		"cleanup-job-market-fields": "node src/scripts/cleanupJobMarketFields.js",
 		"migrate-job-title-review": "node src/scripts/migrateJobTitleReview.js",
 		"migrate-job-title-review:dry-run": "node src/scripts/migrateJobTitleReview.js --dry-run",
+		"backfill-title-review-pending": "node src/scripts/migrateJobTitleReview.js --pending-only",
+		"backfill-title-review-pending:dry-run": "node src/scripts/migrateJobTitleReview.js --pending-only --dry-run",
 		"monitoring:rollup": "node src/scripts/rollupMonitoring.js",
 		"test:monitoring": "node --test src/services/monitoring/*.test.mjs",
 		"test:firestore-adapter": "node --test src/db/firestoreDataAdapter.test.mjs",

@@ -5,6 +5,7 @@ export type TitleReviewLabel = "APPROVED" | "REVIEW_REQUIRED";
 export type TitleReviewSession = {
   running: boolean;
   status: "idle" | "running" | "completed" | "cancelled" | "failed";
+  phase?: "preparing" | "processing" | "finalizing" | null;
   sessionId?: string;
   total?: number;
   processed?: number;
@@ -13,6 +14,7 @@ export type TitleReviewSession = {
   failed?: number;
   remaining?: number;
   pending?: number | null;
+  unreviewedCount?: number | null;
   reviewRequiredCount?: number | null;
   failedCount?: number | null;
   concurrency?: number;
@@ -30,7 +32,7 @@ export type TitleReviewJob = {
   postedAt?: string | null;
   applyUrl?: string;
   titleReview: {
-    processingState: "scanning" | "completed" | "failed";
+    processingState: "pending" | "scanning" | "completed" | "failed";
     label?: TitleReviewLabel;
     aiLabel?: TitleReviewLabel;
     originalTitle?: string;
@@ -79,11 +81,11 @@ export async function stopTitleReview(applierName: string) {
 
 export async function fetchTitleReviewJobs(options: {
   applierName: string;
-  tab: "review_required" | "failed";
+  tab: "unreviewed" | "review_required" | "failed";
   page: number;
   limit: number;
   q?: string;
-  sort?: "newest" | "oldest";
+  sort?: "confidence_desc" | "newest" | "oldest";
 }): Promise<{
   data: TitleReviewJob[];
   pagination: { page: number; limit: number; total: number; totalPages: number };
@@ -124,4 +126,3 @@ export const approveTitleReviewJobs = (applierName: string, ids: string[]) =>
 
 export const removeTitleReviewJobs = (applierName: string, ids: string[]) =>
   mutateTitleReviewJobs("remove", applierName, ids);
-

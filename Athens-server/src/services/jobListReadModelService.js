@@ -500,7 +500,7 @@ function filterContext(body = {}) {
 
 function matchesEntry(entry, body, account) {
   const filters = filterContext(body);
-  if (entry.titleReviewLabel === 'REVIEW_REQUIRED') return false;
+  if (entry.titleReviewLabel !== 'APPROVED') return false;
   if (!account?.isBeta && entry.extensionV2) return false;
   if (entry.catalog === 'external' && !filters.includeExternal) return false;
   if (filters.query && !entry.titleLower.includes(filters.query)) return false;

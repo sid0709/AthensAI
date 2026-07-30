@@ -5,7 +5,7 @@ import {
   classifyAndPersistTitleReviewBatch,
   parseTitleReviewJson,
 } from './titleReviewService.js';
-import { TITLE_REVIEW_CONCURRENCY } from './titleReviewSession.js';
+import { TITLE_REVIEW_CONCURRENCY, pendingTitleReviewQuery } from './titleReviewSession.js';
 import { buildJobsListQuery } from '../jobListQuery.js';
 
 const expected = [
@@ -69,9 +69,15 @@ test('throughput guardrails cap each request at ten titles and ten concurrent re
   assert.ok(TITLE_REVIEW_CONCURRENCY >= 1 && TITLE_REVIEW_CONCURRENCY <= 10);
 });
 
-test('compatibility Job Search hides only explicit review-required decisions', async () => {
+test('the review session claims only indexed pending and failed states', () => {
+  assert.deepEqual(pendingTitleReviewQuery(), {
+    'titleReview.processingState': { $in: ['pending', 'failed'] },
+  });
+});
+
+test('compatibility Job Search shows only explicitly approved titles', async () => {
   const { query } = await buildJobsListQuery({});
-  assert.ok(query.$and.some((clause) => clause['titleReview.label']?.$ne === 'REVIEW_REQUIRED'));
+  assert.ok(query.$and.some((clause) => clause['titleReview.label'] === 'APPROVED'));
 });
 
 test('invalid model rows store failure metadata without classification fields', async () => {
@@ -130,5 +136,8 @@ test('stale title or lease responses never persist or synchronize an AI label', 
   assert.equal(synchronized, false);
   assert.equal(writes[0].filter.title, 'Software Engineer');
   assert.equal(writes[0].filter['titleReview.lease.sessionId'], 'old-session');
-  assert.deepEqual(writes[1].update, { $unset: { titleReview: '' } });
+  assert.deepEqual(writes[1].update, {
+    $set: { 'titleReview.processingState': 'pending' },
+    $unset: { 'titleReview.lease': '', 'titleReview.error': '' },
+  });
 });

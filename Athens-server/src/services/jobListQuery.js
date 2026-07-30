@@ -248,7 +248,9 @@ export async function buildJobsListQuery(body, { statusTab, includePersonalStatu
 		? await resolveApplierContext(applierName)
 		: { id: null, isBeta: false };
 
-	const query = { $and: [{ 'titleReview.label': { $ne: 'REVIEW_REQUIRED' } }] };
+	// Fail closed: a job enters Job Search only after a valid AI decision or a
+	// manual reviewer has explicitly approved it.
+	const query = { $and: [{ 'titleReview.label': 'APPROVED' }] };
 
 	// extension-v2 jobs (version=v2) are beta-tier only.
 	if (!isBeta) {

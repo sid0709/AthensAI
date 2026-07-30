@@ -165,6 +165,7 @@ function payload(jobId, overrides = {}) {
     companyId: 'acme',
     source: 'LinkedIn',
     postedAt: '2026-07-01T00:00:00.000Z',
+    titleReviewLabel: 'APPROVED',
     aiSkills: Array.from({ length: 12 }, (_, index) => ({
       name: `Skill ${index + 1}`,
       category: 'hard',
@@ -222,12 +223,15 @@ test('filters operate entirely on the compact in-memory projection', () => {
   assert.equal(matchesEntry(entry, { q: 'nurse', jobSources: 'LinkedIn' }, account), false);
 });
 
-test('review-required jobs are quarantined while approved and unprocessed jobs remain visible', () => {
-  const unprocessed = buildEntry(payload('unprocessed', { title: 'Java Full Stack Developer' }));
+test('only approved jobs are visible after title-review gating', () => {
+  const unprocessed = buildEntry(payload('unprocessed', {
+    title: 'Java Full Stack Developer',
+    titleReviewLabel: undefined,
+  }));
   const approved = buildEntry(payload('approved', { titleReviewLabel: 'APPROVED' }));
   const quarantined = buildEntry(payload('quarantined', { titleReviewLabel: 'REVIEW_REQUIRED' }));
   const account = { isBeta: true };
-  assert.equal(matchesEntry(unprocessed, {}, account), true);
+  assert.equal(matchesEntry(unprocessed, {}, account), false);
   assert.equal(matchesEntry(approved, {}, account), true);
   assert.equal(matchesEntry(quarantined, {}, account), false);
 });

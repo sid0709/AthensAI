@@ -105,6 +105,7 @@ export function mapExternalDocToMarketJob(externalDoc) {
 		},
 		aiSkillStatus: extracted ? "extracted" : "pending",
 		matchScoreStatus: "pending",
+		titleReview: { processingState: "pending" },
 	};
 
 	const postedAgo = clean(externalDoc.postedAgo);
