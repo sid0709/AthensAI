@@ -106,8 +106,30 @@ function dispatch(type, payload, transferList) {
  */
 export async function renderPdfInWorker(opts = {}) {
 	return pdfRenderLimiter.run(async () => {
-		const result = await dispatch("render", opts);
-		if (opts.asBase64) {
+		const { signal, ...renderOptions } = opts;
+		if (signal?.aborted) {
+			throw signal.reason || Object.assign(new Error("PDF rendering cancelled"), { name: "AbortError" });
+		}
+		const dispatched = dispatch("render", renderOptions);
+		const result = signal
+			? await new Promise((resolve, reject) => {
+				const aborted = () => reject(
+					signal.reason || Object.assign(new Error("PDF rendering cancelled"), { name: "AbortError" }),
+				);
+				signal.addEventListener("abort", aborted, { once: true });
+				dispatched.then(
+					(value) => {
+						signal.removeEventListener("abort", aborted);
+						resolve(value);
+					},
+					(error) => {
+						signal.removeEventListener("abort", aborted);
+						reject(error);
+					},
+				);
+			})
+			: await dispatched;
+		if (renderOptions.asBase64) {
 			return { base64: result.base64, byteLength: result.byteLength };
 		}
 		return {

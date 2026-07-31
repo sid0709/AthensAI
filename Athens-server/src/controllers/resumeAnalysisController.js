@@ -6,6 +6,27 @@ import { listUserResumesForOwner } from "../services/userResumeService.js";
 import { emptyResumeCatalog } from "../services/resumeCatalogService.js";
 import { decryptAccountDoc } from "../services/autoBidProfileSecrets.js";
 
+function bindRequestAbort(req, res) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(Object.assign(new Error("Resume analysis request disconnected"), { name: "AbortError" }));
+    }
+  };
+  const close = () => {
+    if (!res.writableEnded) abort();
+  };
+  const cleanup = () => {
+    req.off("aborted", abort);
+    res.off("close", close);
+    res.off("finish", cleanup);
+  };
+  req.once("aborted", abort);
+  res.once("close", close);
+  res.once("finish", cleanup);
+  return { signal: controller.signal, cleanup };
+}
+
 async function findAccount(applierNameRaw) {
   const name = String(applierNameRaw ?? "").trim();
   if (!name || !accountInfoCollection) return null;
@@ -18,7 +39,7 @@ async function findAccount(applierNameRaw) {
   return acc;
 }
 
-async function analyzeJobDescription(jobDescription, profile, applierName) {
+async function analyzeJobDescription(jobDescription, profile, applierName, signal) {
   const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
@@ -30,6 +51,7 @@ async function analyzeJobDescription(jobDescription, profile, applierName) {
     model,
     feature: "job-match-analysis",
 		applierName,
+    signal,
     messages: [
       { role: "system", content: JOB_ANALYSIS_PROMPT },
       { role: "user", content: `Job description:\n\n${jobDescription}` },
@@ -45,6 +67,7 @@ async function analyzeJobDescription(jobDescription, profile, applierName) {
 }
 
 export async function analyzeResumeMatch(req, res) {
+  const requestAbort = bindRequestAbort(req, res);
   try {
     const applierName = String(req.body?.applierName ?? "").trim();
     const jobDescription = String(req.body?.jobDescription ?? "").trim();
@@ -72,7 +95,10 @@ export async function analyzeResumeMatch(req, res) {
           ? acc.resumeCatalog
           : emptyResumeCatalog();
 
-		const analysis = await analyzeJobDescription(jobDescription, profile, applierName);
+		const analysis = await analyzeJobDescription(jobDescription, profile, applierName, requestAbort.signal);
+    if (requestAbort.signal.aborted) {
+      throw requestAbort.signal.reason || Object.assign(new Error("Resume analysis cancelled"), { name: "AbortError" });
+    }
     const rankedStacks = rankResumes(analysis.skillProfileText, catalog, topN);
     const uploaded = await listUserResumesForOwner(applierName);
     const rankedUploads = rankUploadedResumes(analysis.skillProfileText, uploaded, catalog, topN);
@@ -87,8 +113,11 @@ export async function analyzeResumeMatch(req, res) {
       model: analysis.model,
     });
   } catch (err) {
+		if (err?.name === "AbortError" || requestAbort.signal.aborted) return;
     console.error("POST /api/personal/resume-analysis error", err);
     const status = /not found|required|No LLM/i.test(err.message) ? 400 : 500;
     return res.status(status).json({ success: false, error: err.message });
+  } finally {
+    requestAbort.cleanup();
   }
 }

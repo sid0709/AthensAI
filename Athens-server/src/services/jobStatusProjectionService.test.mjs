@@ -5,6 +5,7 @@ import {
   canUseMaterializedStatusPageForTier,
   canonicalJobCatalog,
   canonicalProjectedStatusIds,
+  authoritativeJobStatusBaseline,
   normalizeMaterializedJobStatusCounts,
 	normalizeBulkStatusJobs,
 	reduceJobStatuses,
@@ -203,5 +204,43 @@ test("canonical projection reads ignore legacy and tampered rows without discard
 	assert.deepEqual(
 		canonicalProjectedStatusIds("profile-1", "bid-ready", [legacy, tampered, valid]),
 		["ready-job"],
+	);
+});
+
+test("mixed status baselines keep verified rows and recover legacy rows only from canonical jobs", () => {
+	const verified = buildStatusProjectionData({
+		profileId: "profile-1",
+		jobId: "verified-job",
+		job: { postedAt: "2026-07-30T00:00:00.000Z" },
+		statuses: [{ applier: "profile-1", appliedDate: "2026-07-30T00:00:00.000Z" }],
+	});
+	const legacy = {
+		profileId: "profile-1",
+		jobId: "legacy-job",
+		state: "declined",
+		postedAt: "2026-07-29T00:00:00.000Z",
+	};
+	const stale = { ...legacy, jobId: "deleted-job" };
+	const canonicalJobs = new Map([[
+		"legacy-job",
+		{
+			postedAt: "2026-07-29T00:00:00.000Z",
+			status: [{
+				applier: "profile-1",
+				appliedDate: "2026-07-28T00:00:00.000Z",
+				scheduledDate: "2026-07-29T00:00:00.000Z",
+			}],
+		},
+	]]);
+
+	assert.deepEqual(
+		authoritativeJobStatusBaseline("profile-1", [legacy, stale, verified], canonicalJobs),
+		{
+			applied: ["verified-job"],
+			scheduled: ["legacy-job"],
+			declined: [],
+			"bid-ready": [],
+			"bid-completed": [],
+		},
 	);
 });

@@ -1,5 +1,4 @@
-import dotenv from "dotenv";
-dotenv.config();
+import "dotenv/config";
 
 import cluster from "node:cluster";
 import os from "node:os";
@@ -18,7 +17,6 @@ import {
 	closeExtensionScraperSocket,
 	initExtensionScraperSocket,
 } from "./src/services/extensionScraperSocket.js";
-import { startJobAnalysisWorker, stopJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 import { startLocalSearchOutboxWorker, stopLocalSearchOutboxWorker } from "./src/services/search/localOutboxWorker.js";
 import { startJobStatusOutboxWorker, stopJobStatusOutboxWorker } from "./src/services/jobStatusOutboxWorker.js";
@@ -26,7 +24,13 @@ import { shutdownPool as shutdownImapPool } from "./src/services/mail/imapPool.j
 import { shutdownPdfPool } from "./src/services/pdf/pdfRenderPool.js";
 import statusRoutes from "./src/routes/statusRoutes.js";
 import statusAdminRoutes from "./src/routes/statusAdminRoutes.js";
-import { metricsMiddleware, renderMetrics, startAggregateMetricsServer, stopAggregateMetricsServer } from "./src/services/monitoring/metrics.js";
+import {
+	metricsMiddleware,
+	renderMetrics,
+	startAggregateMetricsServer,
+	startEventLoopDelayMetrics,
+	stopAggregateMetricsServer,
+} from "./src/services/monitoring/metrics.js";
 import { startMonitoringLoop } from "./src/services/monitoring/monitorLoop.js";
 import { markForegroundActivity } from "./src/services/runtimeLoad.js";
 import { initJobRankingCollection, initQdrantCollections } from "./src/services/vectorStore/qdrantClient.js";
@@ -42,6 +46,7 @@ import {
 	initJobListReadModel,
 	isJobListV2Enabled,
 } from "./src/services/jobListReadModelService.js";
+import { warmTitleReviewReadCache } from "./src/services/jobTitleReview/titleReviewSession.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -61,6 +66,7 @@ import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
 import firebaseRoutes from "./src/routes/firebaseRoutes.js";
 import bidResultsRoutes from "./src/routes/bidResultsRoutes.js";
 import jobAnalyzeRoutes from "./src/routes/jobAnalyzeRoutes.js";
+import backgroundTaskRoutes from "./src/routes/backgroundTaskRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 import { requireFirebaseAuth } from "./src/middleware/firebaseAuth.js";
 import internalTaskRoutes from "./src/routes/internalTaskRoutes.js";
@@ -220,6 +226,7 @@ function createApp() {
 	app.use("/api", firebaseRoutes);
 	app.use("/api", bidResultsRoutes);
 	app.use("/api", jobAnalyzeRoutes);
+	app.use("/api", backgroundTaskRoutes);
 	app.use("/api", statusRoutes);
 	app.use("/api", statusAdminRoutes);
 
@@ -249,7 +256,7 @@ async function startBackgroundWorkers() {
 	const startupStartedAt = Date.now();
 	await runStartupStep("Firestore connection and job-identity maintenance", () => initDataStore());
 	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled() || isJobListV2Enabled();
-	await runStartupStep("Redis connection", () => initRedis({ force: rankingIndexNeeded }));
+	await runStartupStep("Redis connection", () => initRedis({ force: true }));
 	if (rankingIndexNeeded) {
 		await runStartupStep("Qdrant collections", () => initQdrantCollections());
 		await runStartupStep("Qdrant ranking indexes", () => initJobRankingCollection());
@@ -263,7 +270,6 @@ async function startBackgroundWorkers() {
 		console.error("[job-identity] historical cleanup failed:", error?.message || error);
 	});
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
-		startJobAnalysisWorker();
 		if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 		startLocalSearchOutboxWorker();
 		startJobStatusOutboxWorker();
@@ -273,6 +279,7 @@ async function startBackgroundWorkers() {
 
 async function startHttpWorker({ clustered }) {
 	const startupStartedAt = Date.now();
+	const stopEventLoopMetrics = startEventLoopDelayMetrics({ role: "web" });
 	const app = createApp();
 	const server = http.createServer(app);
 	initExtensionScraperSocket(server);
@@ -290,7 +297,7 @@ async function startHttpWorker({ clustered }) {
 
 	await runStartupStep("Firestore connection and job-identity maintenance", () => initDataStore());
 	const needsJobRankingIndex = isQueryTimeRankingIndexEnabled() || isJobListV2Enabled();
-	await runStartupStep("Redis connection", () => initRedis({ force: needsJobRankingIndex }));
+	await runStartupStep("Redis connection", () => initRedis({ force: true }));
 	if (needsJobRankingIndex) {
 		await runStartupStep("Qdrant collections", () => initQdrantCollections());
 		const rankingReady = await runStartupStep("Qdrant ranking indexes", () => initJobRankingCollection());
@@ -302,6 +309,7 @@ async function startHttpWorker({ clustered }) {
 	if (isJobListV2Enabled()) {
 		await runStartupStep("Job-list read model and profile caches", () => initJobListReadModel());
 	}
+	await runStartupStep("Title-review first-page cache", () => warmTitleReviewReadCache());
 	databaseReady = true;
 	console.log(`[startup] API ready (${formatStartupDuration(Date.now() - startupStartedAt)} total)`);
 	if (!clustered) {
@@ -320,9 +328,9 @@ async function startHttpWorker({ clustered }) {
 		const force = setTimeout(() => process.exit(1), 15_000);
 		force.unref?.();
 		try {
+			stopEventLoopMetrics();
 			await closeExtensionScraperSocket();
 			if (!clustered) {
-				stopJobAnalysisWorker();
 				stopMatchScoreWorker();
 				stopLocalSearchOutboxWorker();
 				stopJobStatusOutboxWorker();
@@ -373,7 +381,6 @@ async function startPrimary() {
 		if (shuttingDown) return;
 		shuttingDown = true;
 		console.log(`[athens] primary ${signal} — stopping workers`);
-		stopJobAnalysisWorker();
 		stopMatchScoreWorker();
 		stopLocalSearchOutboxWorker();
 		stopJobStatusOutboxWorker();
@@ -408,7 +415,6 @@ async function main() {
 	if (!clustered) {
 		// Single process also owns background workers (cluster primary runs them instead).
 		if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
-			startJobAnalysisWorker();
 			if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 			startLocalSearchOutboxWorker();
 			startJobStatusOutboxWorker();

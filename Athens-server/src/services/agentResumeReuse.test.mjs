@@ -36,13 +36,13 @@ test("title-policy fingerprint change invalidates agent draft PDF cache", async 
   const config = { templateId: "classic", theme: { accent: "#111" }, layout: [{ type: "summary" }] };
   const careers = [{ title: "Engineer", company: "Acme", period: "2020 – 2021", description: "Java" }];
   const fpA = computeTitlePolicyFingerprint({
-    isBeta: false,
+    dynamicCareerTitles: false,
     jobDescription: "JD A",
     careers,
     config,
   });
   const fpB = computeTitlePolicyFingerprint({
-    isBeta: true,
+    dynamicCareerTitles: true,
     jobDescription: "JD A",
     careers,
     config,

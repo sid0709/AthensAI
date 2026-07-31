@@ -1,6 +1,10 @@
 import { DEEPSEEK_MODELS } from "@nextoffer/shared/models";
 import { resumeGeneratorConfigCollection } from "../db/dataStore.js";
-import { defaultGeneratorConfig, stepsToPlan } from "../config/resumeGeneratorDefaults.js";
+import {
+  defaultGeneratorConfig,
+  LEGACY_TIERED_EXPERIENCE_PROMPT,
+  stepsToPlan,
+} from "../config/resumeGeneratorDefaults.js";
 import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
 import { findAccountByApplierName } from "./mail/credentials.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
@@ -20,6 +24,24 @@ function sameValue(left, right) {
   return normalizedKey(left) === normalizedKey(right);
 }
 
+function migrateLegacyTitlePrompt(step) {
+  if (
+    step?.purpose !== "experience"
+    || step?.kind !== "final"
+    || cleanString(step.prompt) !== LEGACY_TIERED_EXPERIENCE_PROMPT
+  ) {
+    return step;
+  }
+  const current = defaultGeneratorConfig().steps.find(
+    (candidate) => candidate.purpose === "experience" && candidate.kind === "final",
+  );
+  return { ...step, prompt: current?.prompt ?? step.prompt };
+}
+
+function migrateStoredSteps(steps) {
+  return Array.isArray(steps) ? steps.map(migrateLegacyTitlePrompt) : steps;
+}
+
 function configUpdatedAt(configRecord) {
   const value = configRecord?.updatedAt;
   const date = value?.toDate instanceof Function ? value.toDate() : value;
@@ -35,15 +57,17 @@ function configUpdatedAt(configRecord) {
 export function isDefaultGeneratorPipeline(config) {
   if (!config || typeof config !== "object") return true;
   const base = defaultGeneratorConfig();
+  if ((config.dynamicCareerTitles === true) !== base.dynamicCareerTitles) return false;
   if (cleanString(config.systemInstruction) !== cleanString(base.systemInstruction)) return false;
   if (!Array.isArray(config.steps) || config.steps.length !== base.steps.length) return false;
   return base.steps.every((defaultStep) => {
     const step = config.steps.find((candidate) =>
       candidate?.purpose === defaultStep.purpose && candidate?.kind === defaultStep.kind,
     );
+    const migratedStep = migrateLegacyTitlePrompt(step);
     return step
-      && cleanString(step.prompt) === cleanString(defaultStep.prompt)
-      && cleanString(step.schema) === cleanString(defaultStep.schema);
+      && cleanString(migratedStep.prompt) === cleanString(defaultStep.prompt)
+      && cleanString(migratedStep.schema) === cleanString(defaultStep.schema);
   });
 }
 
@@ -58,6 +82,14 @@ export function selectGeneratorConfigRecord(records, { applierName, profileId } 
 
   const newest = (items) => [...items].sort((left, right) => configUpdatedAt(right) - configUpdatedAt(left))[0] || null;
   const exact = unique.filter((record) => sameValue(record.applierName, applierName));
+  // Once the checkbox exists on the canonical record, both true and false are
+  // deliberate saved values and must beat an older authored alias.
+  const exactWithDynamicTitlePreference = exact.filter(
+    (record) => typeof record.config?.dynamicCareerTitles === "boolean",
+  );
+  if (exactWithDynamicTitlePreference.length) {
+    return { record: newest(exactWithDynamicTitlePreference), source: "applier-name" };
+  }
   const exactAuthored = exact.filter((record) => !isDefaultGeneratorPipeline(record.config));
   if (exactAuthored.length) return { record: newest(exactAuthored), source: "applier-name" };
 
@@ -152,12 +184,15 @@ export function mergeStoredConfig(saved) {
     provider,
     model: resolveResumeModel(provider, saved.model ?? base.model),
     reasoningEffort: saved.reasoningEffort ?? base.reasoningEffort,
+    dynamicCareerTitles: saved.dynamicCareerTitles === true,
     templateId: saved.templateId ?? base.templateId,
     theme: { ...base.theme, ...(saved.theme ?? {}) },
     layout: Array.isArray(saved.layout) && saved.layout.length ? saved.layout : base.layout,
     systemInstruction: saved.systemInstruction ?? base.systemInstruction,
     jobDescription: saved.jobDescription ?? base.jobDescription,
-    steps: Array.isArray(saved.steps) && saved.steps.length ? saved.steps : base.steps,
+    steps: Array.isArray(saved.steps) && saved.steps.length
+      ? migrateStoredSteps(saved.steps)
+      : base.steps,
   };
 }
 
@@ -198,6 +233,7 @@ export function buildGenerationRequestFromSavedConfig({
     provider: PROVIDERS[provider] ? provider : "openai",
     model,
     reasoningEffort,
+    dynamicCareerTitles: config.dynamicCareerTitles,
     templateId: config.templateId,
     template: config.templateId ? { layout: config.templateId } : config.template,
     theme: config.theme,

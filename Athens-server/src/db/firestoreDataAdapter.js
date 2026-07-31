@@ -88,6 +88,29 @@ function canTryCompositeQuery(plan) {
 	return plan.clauses.length <= 1 || String(process.env.FIRESTORE_TRY_COMPOSITE_QUERIES || "").toLowerCase() === "true";
 }
 
+function isTitleReviewClause(clause) {
+	return String(clause?.field || "").startsWith("titleReview.");
+}
+
+function shouldTryCompositeQuery(plan) {
+	// Title-review endpoints ship with their required composite indexes. Probe
+	// those indexes even when generic compatibility probes are disabled; code 9
+	// still falls back safely while an index is deploying.
+	return canTryCompositeQuery(plan) || plan.clauses.some(isTitleReviewClause);
+}
+
+function shouldPreferFilterFirstOrdering(queryPlan, firstSort = null) {
+	// Review queues are normally sparse. Fetching the matching label/state rows
+	// and sorting that small set locally is dramatically cheaper than walking the
+	// whole catalog in postedAt order looking for enough matches.
+	// Confidence is different: only classified rows contain the field, and the
+	// highest-confidence rows are dense with REVIEW_REQUIRED decisions. Its
+	// built-in single-field order is the cheaper fallback while the composite
+	// index is still deploying.
+	if (firstSort?.[0] === 'titleReview.confidence') return false;
+	return queryPlan.clauses.some((clause) => isTitleReviewClause(clause) && clause.operator === "==");
+}
+
 function selectBoundingClause(clauses = []) {
 	const score = (clause) => {
 		if (clause.field === "sourceCatalog") return -100;
@@ -681,11 +704,20 @@ class FirestoreCollection {
 		const inequalityField = plan.clauses.find((clause) => [">", ">=", "<", "<="].includes(clause.operator))?.field;
 		const indexedSortSupported = sortEntries.every(([field, direction]) => field === "_id" || [1, -1].includes(Number(direction))) &&
 			(!inequalityField || !nativeOrderEntries.length || nativeOrderEntries[0][0] === inequalityField);
+		const confidenceQueueFallback = nativeOrderEntries[0]?.[0] === 'titleReview.confidence'
+			&& plan.clauses.some((clause) => clause.field === 'titleReview.label');
 
 		// Prefer the exact composite query whenever its index exists. Firestore
 		// returns code 9 while an index is missing/building; only then do we use the
 		// bounded compatibility path below.
-		if (plan.complete && (canTryCompositeQuery(plan) || this.collectionName === 'mail_messages') && plan.clauses.length > 0 && nativeOrderEntries.length > 0 && indexedSortSupported) {
+		if (
+			plan.complete &&
+			(shouldTryCompositeQuery(plan) || this.collectionName === 'mail_messages') &&
+			plan.clauses.length > 0 &&
+			(nativeOrderEntries.length > 0 || sortEntries.length === 0) &&
+			indexedSortSupported &&
+			!confidenceQueueFallback
+		) {
 			let indexedQuery = this._queryFromPlan(plan);
 			for (const [field, direction] of nativeOrderEntries) indexedQuery = indexedQuery.orderBy(field, Number(direction) < 0 ? "desc" : "asc");
 			if (selectedFields.length) indexedQuery = indexedQuery.select(...selectedFields);
@@ -731,7 +763,8 @@ class FirestoreCollection {
 		let orderedTarget = null;
 		const firstSort = sortEntries.find(([field, direction]) => field !== "_id" && [1, -1].includes(Number(direction)));
 		const orderedLocalFilter = this.sourceCatalog && !nativeSort && firstSort && !inequalityField && hints.limit != null;
-		if (orderedLocalFilter) {
+		const filterFirstOrdering = orderedLocalFilter && shouldPreferFilterFirstOrdering(queryPlan, firstSort);
+		if (orderedLocalFilter && !filterFirstOrdering) {
 			// Use the built-in single-field sort index to read the newest candidates,
 			// then apply equality filters locally. Grow the window only when filtering
 			// did not produce enough rows for the requested page.
@@ -759,7 +792,7 @@ class FirestoreCollection {
 			error.code = "FIRESTORE_COMPAT_SCAN_LIMIT";
 			throw error;
 		}
-		if (orderedLocalFilter && snapshot.size >= maxScan && orderedMatchedCount < orderedTarget) {
+		if (orderedLocalFilter && !filterFirstOrdering && snapshot.size >= maxScan && orderedMatchedCount < orderedTarget) {
 			const error = new Error(`[firestore-adapter] ${this.collectionName} ordered query reached scan limit ${maxScan} before page ${orderedTarget}`);
 			error.code = "FIRESTORE_COMPAT_SCAN_LIMIT";
 			throw error;
@@ -780,6 +813,10 @@ class FirestoreCollection {
 				...projectionEntries
 					.filter(([field, included]) => field !== "_id" && Boolean(included))
 					.map(([field]) => field),
+				// In fallback mode the native plan may omit unsupported predicates
+				// such as `$exists`. Keep their top-level fields so local matching does
+				// not mistake an omitted projection for a genuinely missing value.
+				...collectFilterFields(effectiveFilter),
 				...plan.clauses.map((clause) => clause.field),
 			])]
 			: [];
@@ -1022,7 +1059,7 @@ class FirestoreCollection {
 		if (cached && cached.expiresAt > Date.now()) return cached.promise;
 		const load = async () => {
 			try {
-				if (!canTryCompositeQuery(plan) && this.collectionName !== 'mail_messages') return (await this._read(filter)).length;
+				if (!shouldTryCompositeQuery(plan) && this.collectionName !== 'mail_messages') return (await this._read(filter)).length;
 				return (await this._queryFromPlan(plan).count().get()).data().count;
 			} catch (error) {
 				if (Number(error?.code) !== 9) throw error;
@@ -1183,7 +1220,7 @@ class FirestoreCollection {
 		return claimed;
 	}
 	/** Apply exact-id field patches in one Firestore commit. */
-	async atomicBulkPatch(operations) {
+	async atomicBulkPatch(operations, { skipOutbox = false } = {}) {
 		const rows = operations.map((operation) => {
 			const spec = operation?.updateOne;
 			const id = spec?.filter?._id;
@@ -1202,7 +1239,7 @@ class FirestoreCollection {
 					setPath(data, path, FieldValue.delete());
 				}
 				batch.update(this.ref.doc(row.id), data);
-				if (this.sourceCatalog) {
+				if (this.sourceCatalog && !skipOutbox) {
 					const outboxRef = this.db.firestore.collection('search_outbox').doc();
 					batch.set(outboxRef, {
 						jobId: row.id,
@@ -1219,6 +1256,55 @@ class FirestoreCollection {
 		this._invalidateCaches();
 		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
 		return { acknowledged: true, modifiedCount: rows.length };
+	}
+	/** Apply exact-id conditional patches in one transaction and report which ids matched. */
+	async atomicBulkConditionalPatch(operations, { skipOutbox = false } = {}) {
+		const rows = operations.map((operation) => {
+			const spec = operation?.updateOne;
+			const id = spec?.filter?._id;
+			if (!id || !spec?.update || Object.keys(spec.update).some((key) => !['$set', '$unset'].includes(key))) {
+				throw new Error(`atomicBulkConditionalPatch received an unsupported ${this.collectionName} operation`);
+			}
+			return {
+				id: String(comparable(id)),
+				filter: this._filterWithCatalog(spec.filter),
+				update: spec.update,
+			};
+		});
+		const outboxIds = [];
+		const modifiedIds = await this.db.firestore.runTransaction(async (transaction) => {
+			const refs = rows.map((row) => this.ref.doc(row.id));
+			const snapshots = await transaction.getAll(...refs);
+			const changed = [];
+			for (let index = 0; index < snapshots.length; index += 1) {
+				const snapshot = snapshots[index];
+				const row = rows[index];
+				if (!snapshot.exists) continue;
+				const current = decodeDoc(snapshot.id, snapshot.data());
+				if (!matches(current, row.filter)) continue;
+				const data = encode(row.update.$set || {});
+				for (const path of Object.keys(row.update.$unset || {})) {
+					setPath(data, path, FieldValue.delete());
+				}
+				transaction.update(refs[index], data);
+				if (this.sourceCatalog && !skipOutbox) {
+					const outboxRef = this.db.firestore.collection('search_outbox').doc();
+					transaction.set(outboxRef, {
+						jobId: row.id,
+						operation: 'upsert',
+						status: 'pending',
+						attempts: 0,
+						createdAt: new Date(),
+					});
+					outboxIds.push(outboxRef.id);
+				}
+				changed.push(row.id);
+			}
+			return changed;
+		});
+		this._invalidateCaches();
+		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
+		return { acknowledged: true, modifiedCount: modifiedIds.length, modifiedIds };
 	}
 	async bulkWrite(operations) {
 		const totals = { acknowledged: true, insertedCount: 0, modifiedCount: 0, deletedCount: 0, upsertedCount: 0 };
@@ -1264,6 +1350,8 @@ export const firestoreAdapterTest = {
 	queryPlanCoversAllClauses,
 	collectFilterFields,
 	canTryCompositeQuery,
+	shouldTryCompositeQuery,
+	shouldPreferFilterFirstOrdering,
 	conjunctiveDocumentIds,
 	resolveUpsertDocumentId,
 };

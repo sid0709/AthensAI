@@ -9,7 +9,6 @@ import {
   JOB_SENIORITIES,
   JOB_WORK_MODES,
 } from "../../../data/jobs";
-import { JOB_TITLE_SCAN_ROLES } from "../../../data/jobTitleRoles";
 import { JobSourceTitles } from "../../../data/jobs/pub";
 
 export const JOB_SEARCH_PAGE_SIZES = [10, 25, 50, 100] as const;
@@ -31,7 +30,6 @@ export const DEFAULT_JOB_SEARCH_URL_STATE: JobSearchUrlState = {
     ...DEFAULT_JOB_FILTERS,
     source: [],
     seniority: [],
-    titleRoles: [],
     scores: {
       overall: { ...DEFAULT_JOB_FILTERS.scores.overall },
       skill: { ...DEFAULT_JOB_FILTERS.scores.skill },
@@ -110,7 +108,6 @@ function normalizedScoreRange(minRaw: string | null, maxRaw: string | null) {
 export function parseJobSearchUrl(params: URLSearchParams): JobSearchUrlState {
   const source = multiParam(params, "source", JobSourceTitles);
   const seniority = multiParam(params, "seniority", JOB_SENIORITIES.filter((value) => value !== "all"));
-  const titleRoles = multiParam(params, "role", JOB_TITLE_SCAN_ROLES);
   const requestedPageSize = boundedInteger(params.get("pageSize"), 25, 1, 100);
   const pageSize = JOB_SEARCH_PAGE_SIZES.includes(requestedPageSize as JobSearchUrlState["pageSize"])
     ? requestedPageSize as JobSearchUrlState["pageSize"]
@@ -127,7 +124,6 @@ export function parseJobSearchUrl(params: URLSearchParams): JobSearchUrlState {
       location: oneOf(params.get("location"), JOB_LOCATIONS, "all"),
       workMode: oneOf(params.get("workMode"), JOB_WORK_MODES, "all"),
       seniority,
-      titleRoles,
       industry: oneOf(params.get("industry"), JOB_INDUSTRIES, "all"),
       postedFrom: validDate(params.get("postedFrom")),
       postedTo: validDate(params.get("postedTo")),
@@ -158,7 +154,6 @@ export function serializeJobSearchUrl(state: JobSearchUrlState): URLSearchParams
   params.set("location", filters.location);
   params.set("workMode", filters.workMode);
   appendMulti(params, "seniority", filters.seniority);
-  appendMulti(params, "role", filters.titleRoles);
   params.set("industry", filters.industry);
   params.set("postedFrom", filters.postedFrom);
   params.set("postedTo", filters.postedTo);

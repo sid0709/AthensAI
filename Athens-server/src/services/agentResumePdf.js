@@ -7,6 +7,7 @@
 import { htmlToPdf } from "../controllers/resumePdfController.js";
 import { templateById } from "../config/resumeTemplates.js";
 import { writeAgentDraftPdf } from "./agentResumeDraftService.js";
+import { assertBackgroundTaskActive } from "./backgroundTasks/taskContext.js";
 
 const esc = (v) =>
   String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -348,7 +349,16 @@ export async function renderAgentResumePdf({
   identityFingerprint,
   skipReviewCopy = false,
   asBase64 = false,
+  signal,
 }) {
+  const throwIfAborted = () => {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : Object.assign(new Error("PDF rendering cancelled"), { name: "AbortError" });
+  };
+  throwIfAborted();
+  await assertBackgroundTaskActive(signal);
   const theme = (config && config.theme) || {};
   const html = sectionsToHtml(sections, identity, config);
   // When asBase64 is requested we still need a Buffer for the on-disk draft —
@@ -360,7 +370,11 @@ export async function renderAgentResumePdf({
     font: fontStack(theme.font),
     baseSizePt: Number(theme.baseSize) || 10.5,
     fontLinks: fontLinks(theme.font),
+    signal,
   });
+
+  throwIfAborted();
+  await assertBackgroundTaskActive(signal);
 
   const { draftPath, reviewPath } = await writeAgentDraftPdf({
     buffer,
@@ -371,6 +385,7 @@ export async function renderAgentResumePdf({
     titlePolicyFingerprint: titlePolicyFingerprint ?? config?.titlePolicyFingerprint,
     identityFingerprint: identityFingerprint ?? config?.identityFingerprint,
     skipReviewCopy,
+    signal,
   });
 
   if (asBase64) {

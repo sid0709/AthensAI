@@ -1,12 +1,13 @@
 import { calculateCost, resolveModelPricing, DEFAULT_DEEPSEEK_MODEL } from './pricing.js';
 import { isValidApiKey } from './api-keys.js';
 import { estimateTokens, parseChatRequest } from './validation.js';
+import { admissionLane, GatewayAdmissionPool } from './admission.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`FAIL: ${message}`);
 }
 
-function runTests() {
+async function runTests() {
   assert(!isValidApiKey('sk-...'), 'placeholder sk-... rejected');
   assert(!isValidApiKey(''), 'empty rejected');
 
@@ -53,7 +54,28 @@ function runTests() {
   const billedCost = calculateCost('gpt-4o-mini-2024-07-18', billedUsage);
   assert(billedCost.totalUsd === 0.00045, `billed model cost ${billedCost.totalUsd}`);
 
+  assert(admissionLane({ messages: [{ role: 'user', content: 'x' }] }) === 'interactive', 'default workload is interactive');
+  assert(admissionLane({
+    messages: [{ role: 'user', content: 'x' }],
+    workloadClass: 'background',
+    feature: 'job-title-review',
+  }) === 'title', 'title review gets a fair background lane');
+
+  const pool = new GatewayAdmissionPool({ globalConcurrency: 1, interactiveConcurrency: 1 });
+  let releaseFirst!: () => void;
+  const first = pool.run('resume', undefined, () => new Promise<void>((resolve) => { releaseFirst = resolve; }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert(pool.snapshot().active === 1, 'gateway global ceiling is enforced');
+  const controller = new AbortController();
+  let secondStarted = false;
+  const second = pool.run('title', controller.signal, async () => { secondStarted = true; });
+  controller.abort(Object.assign(new Error('cancelled'), { name: 'AbortError' }));
+  await second.catch(() => undefined);
+  assert(!secondStarted, 'cancelled queued work never starts a provider call');
+  releaseFirst();
+  await first;
+
   console.log('ai-bff ok');
 }
 
-runTests();
+await runTests();

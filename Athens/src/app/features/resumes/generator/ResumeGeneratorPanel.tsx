@@ -34,7 +34,19 @@ export function ResumeGeneratorPanel({
   onLoadIntoEditor,
 }: ResumeGeneratorPanelProps) {
   const vm = useGeneratorPage();
-  const { applier, theme, view, setView, generating, validation, handleGenerate, setConfig, applyRun } = vm;
+  const {
+    applier,
+    theme,
+    view,
+    setView,
+    generating,
+    stopping,
+    validation,
+    handleGenerate,
+    handleCancelGeneration,
+    setConfig,
+    applyRun,
+  } = vm;
 
   const effectiveView = activeView ?? view;
 
@@ -66,12 +78,16 @@ export function ResumeGeneratorPanel({
         <div className="flex justify-end mb-4">
           <button
             type="button"
-            onClick={() => void onGenerate()}
-            disabled={generating || validation.length > 0 || !applier?.name}
-            className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 disabled:opacity-50 min-h-10"
+            onClick={() => void (generating ? handleCancelGeneration() : onGenerate())}
+            disabled={stopping || (!generating && (validation.length > 0 || !applier?.name))}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 min-h-10 ${
+              generating
+                ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                : "bg-primary text-white hover:bg-primary/90"
+            }`}
           >
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-            {generating ? "Generating…" : "Generate"}
+            {stopping ? "Stopping…" : generating ? "Stop" : "Generate"}
           </button>
         </div>
       )}

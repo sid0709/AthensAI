@@ -5,15 +5,15 @@
  * Env knobs:
  *   RESUME_GEN_GLOBAL_CONCURRENCY (default 32)
  *   RESUME_GEN_PER_USER_CONCURRENCY (default 12)
- *   PDF_RENDER_CONCURRENCY (default 16)
+ *   PDF_RENDER_CONCURRENCY (default 2)
  *   LLM_GLOBAL_CONCURRENCY (default 48)
  *   MAIL_AI_LABEL_CONCURRENCY (default 8)
  */
 
 export const DEFAULT_RESUME_GEN_GLOBAL_CONCURRENCY = 32;
 export const DEFAULT_RESUME_GEN_PER_USER_CONCURRENCY = 12;
-/** Match resume throughput — override via PDF_RENDER_CONCURRENCY. */
-export const DEFAULT_PDF_RENDER_CONCURRENCY = 16;
+/** Keep Chromium isolated and bounded — override via PDF_RENDER_CONCURRENCY. */
+export const DEFAULT_PDF_RENDER_CONCURRENCY = 2;
 export const DEFAULT_LLM_GLOBAL_CONCURRENCY = 48;
 export const DEFAULT_MAIL_AI_LABEL_CONCURRENCY = 8;
 
@@ -29,6 +29,12 @@ export const LLM_PRIORITY = {
 function envInt(name, fallback) {
 	const n = Number.parseInt(String(process.env[name] ?? ''), 10);
 	return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function limiterAbortError(signal) {
+	return signal?.reason instanceof Error
+		? signal.reason
+		: Object.assign(new Error('Queued work cancelled'), { name: 'AbortError' });
 }
 
 export function getResumeGenGlobalConcurrency() {
@@ -61,7 +67,7 @@ export function llmPriorityFromFeature(feature) {
 	if (/^agent|otp|verification|avalon|form-analyz|injection|recover|verify/.test(f)) return 'agent';
 	if (/resume/.test(f)) return 'resume';
 	if (/mail|label|ai-write|ai-label/.test(f)) return 'mail';
-	if (/skill|extract|match-score|embedding/.test(f)) return 'skill';
+	if (/skill|extract|match-score|embedding|title-review/.test(f)) return 'skill';
 	return 'other';
 }
 
@@ -185,20 +191,31 @@ export function createFairLimiter({ globalConcurrency, perKeyConcurrency }) {
 				continue;
 			}
 			waiters.splice(i, 1);
+			waiter.signal?.removeEventListener('abort', waiter.onAbort);
 			grant(waiter.key);
 			waiter.resolve(makeRelease(waiter.key));
 			// Do not increment i — next item shifted into this index.
 		}
 	}
 
-	function acquire(key) {
+	function acquire(key, signal) {
 		const normalizedKey = String(key ?? '');
-		return new Promise((resolve) => {
+		if (signal?.aborted) return Promise.reject(limiterAbortError(signal));
+		return new Promise((resolve, reject) => {
 			if (waiters.length === 0 && canGrant(normalizedKey)) {
 				grant(normalizedKey);
 				resolve(makeRelease(normalizedKey));
 			} else {
-				waiters.push({ key: normalizedKey, resolve });
+				const waiter = { key: normalizedKey, resolve, reject, signal, onAbort: null };
+				waiter.onAbort = () => {
+					const index = waiters.indexOf(waiter);
+					if (index < 0) return;
+					waiters.splice(index, 1);
+					reject(limiterAbortError(signal));
+					tryDrain();
+				};
+				signal?.addEventListener('abort', waiter.onAbort, { once: true });
+				waiters.push(waiter);
 				tryDrain();
 			}
 		});
@@ -213,7 +230,7 @@ export function createFairLimiter({ globalConcurrency, perKeyConcurrency }) {
 		const normalizedKey = String(key ?? '');
 		const needsWait = waiters.length > 0 || !canGrant(normalizedKey);
 		if (needsWait && opts.onQueued) await opts.onQueued();
-		const releaseSlot = await acquire(normalizedKey);
+		const releaseSlot = await acquire(normalizedKey, opts.signal);
 		try {
 			return await fn();
 		} finally {
@@ -237,39 +254,66 @@ export function createFairLimiter({ globalConcurrency, perKeyConcurrency }) {
 }
 
 /**
- * Priority admission pool: lower priority number is served first.
- * Within the same priority, FIFO.
+ * Priority admission pool with aging: lower priority numbers start first, but
+ * a continuously busy high-priority band cannot starve older background work.
+ * Within the same effective priority, FIFO.
  *
- * @param {{ concurrency: number }} opts
+ * @param {{ concurrency: number, agingMs?: number }} opts
  */
-export function createPriorityLimiter({ concurrency }) {
+export function createPriorityLimiter({ concurrency, agingMs = 1_000 }) {
 	const max = Math.max(1, concurrency);
+	const ageEveryMs = Math.max(1, Number(agingMs) || 1_000);
 	let active = 0;
-	/** @type {Array<{ priority: number, seq: number, resolve: () => void }>} */
+	/** @type {Array<{ priority: number, seq: number, enqueuedAt: number, resolve: () => void }>} */
 	const waiters = [];
 	let seq = 0;
 
 	function sortWaiters() {
-		waiters.sort((a, b) => a.priority - b.priority || a.seq - b.seq);
+		const now = Date.now();
+		const effective = (waiter) => Math.max(
+			LLM_PRIORITY.agent,
+			waiter.priority - Math.floor((now - waiter.enqueuedAt) / ageEveryMs),
+		);
+		waiters.sort((a, b) => effective(a) - effective(b) || a.seq - b.seq);
 	}
 
 	function tryDrain() {
 		sortWaiters();
 		while (active < max && waiters.length > 0) {
 			active++;
-			const { resolve } = waiters.shift();
+			const waiter = waiters.shift();
+			waiter.signal?.removeEventListener('abort', waiter.onAbort);
+			const { resolve } = waiter;
 			resolve();
 		}
 	}
 
-	function acquire(priority = LLM_PRIORITY.other) {
+	function acquire(priority = LLM_PRIORITY.other, signal) {
 		const p = Number.isFinite(priority) ? priority : LLM_PRIORITY.other;
-		return new Promise((resolve) => {
+		if (signal?.aborted) return Promise.reject(limiterAbortError(signal));
+		return new Promise((resolve, reject) => {
 			if (active < max && waiters.length === 0) {
 				active++;
 				resolve();
 			} else {
-				waiters.push({ priority: p, seq: seq++, resolve });
+				const waiter = {
+					priority: p,
+					seq: seq++,
+					enqueuedAt: Date.now(),
+					resolve,
+					reject,
+					signal,
+					onAbort: null,
+				};
+				waiter.onAbort = () => {
+					const index = waiters.indexOf(waiter);
+					if (index < 0) return;
+					waiters.splice(index, 1);
+					reject(limiterAbortError(signal));
+					tryDrain();
+				};
+				signal?.addEventListener('abort', waiter.onAbort, { once: true });
+				waiters.push(waiter);
 				tryDrain();
 			}
 		});
@@ -289,7 +333,7 @@ export function createPriorityLimiter({ concurrency }) {
 	async function run(priority, fn, opts = {}) {
 		const needsWait = active >= max || waiters.length > 0;
 		if (needsWait && opts.onQueued) await opts.onQueued(waiters.length + 1);
-		await acquire(priority);
+		await acquire(priority, opts.signal);
 		try {
 			return await fn();
 		} finally {

@@ -63,6 +63,7 @@ export const chatRequestSchema = z.object({
   applierName: z.string().optional(),
   jobId: z.string().optional(),
   feature: z.string().optional(),
+  workloadClass: z.enum(['background', 'interactive']).optional(),
 });
 
 export type ParsedChatRequest = z.infer<typeof chatRequestSchema>;

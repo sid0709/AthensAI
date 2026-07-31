@@ -1,5 +1,7 @@
 import { findElements, waitForElements } from './elementFinder';
 
+/* global chrome */
+
 function setNativeValue(element, value) {
 	if (!element) return;
 	const proto = element instanceof HTMLTextAreaElement
@@ -681,6 +683,11 @@ async function requestLocalFileFromBackend(filePath) {
 			chrome.runtime.sendMessage(
 				{ action: 'readLocalFile', payload: { path: filePath } },
 				(response) => {
+					const lastError = chrome.runtime.lastError;
+					if (lastError) {
+						resolve({ success: false, error: lastError.message });
+						return;
+					}
 					if (!response?.success) {
 						resolve({ success: false, error: response?.error || 'readLocalFile failed' });
 						return;

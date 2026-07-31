@@ -69,7 +69,8 @@ function pingContentScript(tabId) {
 		const timer = setTimeout(() => resolve(false), 3000);
 		chrome.tabs.sendMessage(tabId, { action: 'scraper:ping' }, { frameId: 0 }, (response) => {
 			clearTimeout(timer);
-			resolve(Boolean(response?.ok) && !chrome.runtime.lastError);
+			const lastError = chrome.runtime.lastError;
+			resolve(Boolean(response?.ok) && !lastError);
 		});
 	});
 }
@@ -631,9 +632,10 @@ function waitForTabComplete(tabId, timeoutMs = 60000) {
 		};
 
 		chrome.tabs.get(tabId, (tab) => {
-			if (chrome.runtime.lastError) {
+			const lastError = chrome.runtime.lastError;
+			if (lastError) {
 				clearTimeout(timeout);
-				reject(new Error(chrome.runtime.lastError.message));
+				reject(new Error(lastError.message));
 				return;
 			}
 			if (tab?.status === 'complete') {
@@ -655,11 +657,12 @@ function sendMessageToTab(targetTabId, message) {
 			}
 
 			chrome.tabs.sendMessage(targetTabId, message, { frameId: 0 }, () => {
-				if (!chrome.runtime.lastError) {
+				const lastError = chrome.runtime.lastError;
+				if (!lastError) {
 					resolve(true);
 					return;
 				}
-				const lastErrorMessage = chrome.runtime.lastError?.message || '';
+				const lastErrorMessage = lastError.message || '';
 				if (!/Receiving end does not exist|Could not establish connection/i.test(lastErrorMessage)) {
 					resolve(false);
 					return;
@@ -668,8 +671,8 @@ function sendMessageToTab(targetTabId, message) {
 				ensureContentScriptInjected(targetTabId)
 					.then(() => {
 						chrome.tabs.sendMessage(targetTabId, message, { frameId: 0 }, () => {
-							void chrome.runtime.lastError;
-							resolve(!chrome.runtime.lastError);
+							const retryError = chrome.runtime.lastError;
+							resolve(!retryError);
 						});
 					})
 					.catch(() => {

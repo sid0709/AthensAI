@@ -26,21 +26,24 @@ import {
   loadDecryptedAutoBidProfile,
 } from "./autoBidProfileSecrets.js";
 import { sectionsToText } from "./generatedResumeText.js";
-import { loadGeneratorConfig, buildGenerationRequestFromSavedConfig } from "./resumeGenerationService.js";
+import { loadGeneratorConfig } from "./resumeGenerationService.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
 import {
   deleteAgentDraftPdf,
   identityContactFingerprint,
 } from "./agentResumeDraftService.js";
-import {
-  computeTitlePolicyFingerprint,
-  sourceCareers,
-  TITLE_POLICY_VERSION,
-} from "./resumeCareerTitlePolicy.js";
 import { createLimiter } from "../utils/concurrency.js";
 import { storeUserResumeContent } from "./userResumeService.js";
+import { firestoreMutationLimiter } from "./backgroundTasks/resourceLimits.js";
 
 const cleanString = (v) => String(v ?? "").trim();
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error("Résumé identity refresh cancelled"), { name: "AbortError" });
+}
 
 /** How many generations to update in parallel (Firestore + library + PDF). */
 const DEFAULT_REFRESH_CONCURRENCY = 16;
@@ -62,6 +65,50 @@ export function needsIdentitySync(generation, profileUpdatedAt) {
   if (!profileMs) return true;
   const syncedMs = toMs(generation?.identitySyncedAt);
   return syncedMs < profileMs;
+}
+
+/** Identity-only refreshes must keep the policy fingerprint that produced the sections. */
+export function titlePolicyFingerprintForIdentityRefresh(generation) {
+  return cleanString(generation?.titlePolicyFingerprint) || null;
+}
+
+/** PDF-lane entry point. It reloads all sensitive résumé/profile data by id. */
+export async function renderIdentityRefreshedGenerationPdf({ applierName, generationId, jobId, signal }) {
+  throwIfAborted(signal);
+  if (!resumeGenerationsCollection) throw new Error("Database not ready");
+  const name = cleanString(applierName);
+  const parentJobId = cleanString(jobId);
+  let _id;
+  try {
+    _id = new DocumentId(String(generationId));
+  } catch {
+    throw new Error("Invalid generation id for PDF refresh");
+  }
+  const generation = await resumeGenerationsCollection.findOne({ _id, applierName: name });
+  throwIfAborted(signal);
+  if (!generation?.sections || !parentJobId) throw new Error("Generation is unavailable for PDF refresh");
+  const profile = await loadDecryptedAutoBidProfile(name);
+  throwIfAborted(signal);
+  if (!profile) throw new Error(`No autoBidProfile found for ${name}`);
+  const identity = identityFromProfile(profile);
+  const savedConfig = await loadGeneratorConfig(name);
+  const titlePolicyFingerprint = titlePolicyFingerprintForIdentityRefresh(generation);
+  const identityFingerprint = identityContactFingerprint(identity);
+  throwIfAborted(signal);
+  await deleteAgentDraftPdf(name, parentJobId);
+  throwIfAborted(signal);
+  const rendered = await renderAgentResumePdf({
+    sections: generation.sections,
+    identity,
+    applierName: name,
+    jobId: parentJobId,
+    config: savedConfig,
+    titlePolicyFingerprint,
+    identityFingerprint,
+    skipReviewCopy: true,
+    signal,
+  });
+  return { buffer: rendered.buffer, draftPath: rendered.savedPath };
 }
 
 async function resolveIsBeta(applierName) {
@@ -91,7 +138,8 @@ async function findAccountDoc(applierName) {
   return acc;
 }
 
-async function setProfileResumeUpdatedAt(applierName, resumeUpdatedAt) {
+async function setProfileResumeUpdatedAt(applierName, resumeUpdatedAt, signal) {
+  throwIfAborted(signal);
   const acc = await findAccountDoc(applierName);
   if (!acc?._id || !accountInfoCollection) return;
   const existing = await decryptProfileApiKeys(acc.autoBidProfile || {});
@@ -99,10 +147,14 @@ async function setProfileResumeUpdatedAt(applierName, resumeUpdatedAt) {
     ...existing,
     resumeUpdatedAt,
   });
-  await accountInfoCollection.updateOne({ _id: acc._id }, { $set: { autoBidProfile: next } });
+  await firestoreMutationLimiter.run(async () => {
+    throwIfAborted(signal);
+    await accountInfoCollection.updateOne({ _id: acc._id }, { $set: { autoBidProfile: next } });
+  });
 }
 
-async function updateLibraryResumeText({ generationId, resumeId, ownerName, extractedText, identitySyncedAt }) {
+async function updateLibraryResumeText({ generationId, resumeId, ownerName, extractedText, identitySyncedAt, signal }) {
+  throwIfAborted(signal);
   if (!userResumesCollection || (!generationId && !resumeId)) return false;
   let filter;
   if (resumeId) {
@@ -118,12 +170,15 @@ async function updateLibraryResumeText({ generationId, resumeId, ownerName, extr
   if (!existing) return false;
   const now = new Date().toISOString();
   const buffer = Buffer.from(extractedText || "Generated resume", "utf8");
-  const stored = await storeUserResumeContent({
-    resumeId: existing._id,
-    ownerName,
-    fileName: existing.fileName || "generated-resume.txt",
-    mimeType: existing.mimeType || "text/plain",
-    buffer,
+  const stored = await firestoreMutationLimiter.run(async () => {
+    throwIfAborted(signal);
+    return storeUserResumeContent({
+      resumeId: existing._id,
+      ownerName,
+      fileName: existing.fileName || "generated-resume.txt",
+      mimeType: existing.mimeType || "text/plain",
+      buffer,
+    });
   });
   const patch = {
     extractedText,
@@ -135,10 +190,13 @@ async function updateLibraryResumeText({ generationId, resumeId, ownerName, extr
     identitySyncedAt,
     identityRefreshedAt: now,
   };
-  const byGen = await userResumesCollection.updateOne(
-    { _id: existing._id },
-    { $set: patch },
-  );
+  const byGen = await firestoreMutationLimiter.run(async () => {
+    throwIfAborted(signal);
+    return userResumesCollection.updateOne(
+      { _id: existing._id },
+      { $set: patch },
+    );
+  });
   return byGen.matchedCount > 0;
 }
 
@@ -162,12 +220,15 @@ function emitProgress(onProgress, state) {
 
 /**
  * @param {string} applierNameRaw
- * @param {{ onProgress?: (evt: object) => void, forceAll?: boolean }} [opts]
+ * @param {{ onProgress?: (evt: object) => void, forceAll?: boolean, signal?: AbortSignal, renderPdf?: (input: object) => Promise<object> }} [opts]
  * @returns {Promise<object>}
  */
 export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {}) {
   const onProgress = opts.onProgress;
   const forceAll = Boolean(opts.forceAll);
+  const signal = opts.signal;
+  const renderPdf = typeof opts.renderPdf === "function" ? opts.renderPdf : null;
+  throwIfAborted(signal);
   const name = cleanString(applierNameRaw);
   if (!name) {
     const err = new Error("applierName is required");
@@ -187,6 +248,7 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
   }
 
   const profile = await loadDecryptedAutoBidProfile(name);
+  throwIfAborted(signal);
   if (!profile) {
     const err = new Error(`No autoBidProfile found for ${name}`);
     err.status = 404;
@@ -197,7 +259,6 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
   const identity = identityFromProfile(profile);
   const identityFingerprint = identityContactFingerprint(identity);
   const savedConfig = await loadGeneratorConfig(name);
-  const isBeta = true;
 
   const generations = await resumeGenerationsCollection
     .find({
@@ -230,7 +291,7 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
 
   if (total === 0) {
     // All generations already match this profile version — stamp the watermark.
-    await setProfileResumeUpdatedAt(name, profileUpdatedAt);
+    await setProfileResumeUpdatedAt(name, profileUpdatedAt, signal);
     counters.phase = "done";
     counters.resumeUpdatedAt = profileUpdatedAt;
     emitProgress(onProgress, counters);
@@ -252,6 +313,7 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
   await Promise.all(
     stale.map((gen) =>
       limiter.run(async () => {
+        throwIfAborted(signal);
         counters.active += 1;
         emitProgress(onProgress, { ...counters, phase: "progress" });
         try {
@@ -262,37 +324,26 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
 
           const extractedText = sectionsToText(gen.sections, identity);
           const jobId = cleanString(gen.generate_parent_job_id);
-          const jd = cleanString(gen.jobDescription);
-          const body = buildGenerationRequestFromSavedConfig({
-            applierName: name,
-            jobDescription: jd,
-            savedConfig,
-            identity,
-            generateParentJobId: jobId || undefined,
-            structuredJob: Boolean(jobId),
-          });
-          const titlePolicyFingerprint = computeTitlePolicyFingerprint({
-            isBeta,
-            jobDescription: jd,
-            careers: sourceCareers(identity),
-            config: body,
-          });
+          // Contact/header refreshes do not regenerate Experience content. Keep
+          // the fingerprint that produced these sections so a later preference,
+          // prompt, JD, or career change still forces real regeneration.
+          const titlePolicyFingerprint = titlePolicyFingerprintForIdentityRefresh(gen);
           const now = new Date();
 
-          await resumeGenerationsCollection.updateOne(
-            { _id: gen._id },
-            {
-              $set: {
-                identity,
-                titlePolicyFingerprint,
-                titlePolicyVersion: TITLE_POLICY_VERSION,
-                isBeta: true,
-                identityRefreshedAt: now,
-                // Watermark: this résumé matches profile.updatedAt
-                identitySyncedAt: profileUpdatedAt,
+          await firestoreMutationLimiter.run(async () => {
+            throwIfAborted(signal);
+            await resumeGenerationsCollection.updateOne(
+              { _id: gen._id },
+              {
+                $set: {
+                  identity,
+                  identityRefreshedAt: now,
+                  // Watermark: this résumé matches profile.updatedAt
+                  identitySyncedAt: profileUpdatedAt,
+                },
               },
-            },
-          );
+            );
+          });
 
           const generationId = String(gen._id);
           const libraryUpdated = await updateLibraryResumeText({
@@ -300,6 +351,7 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
             ownerName: name,
             extractedText,
             identitySyncedAt: profileUpdatedAt,
+            signal,
           });
 
           if (!libraryUpdated && gen.libraryResumeId && userResumesCollection) {
@@ -308,27 +360,39 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
               ownerName: name,
               extractedText,
               identitySyncedAt: profileUpdatedAt,
+              signal,
             });
           }
 
           if (jobId) {
+            throwIfAborted(signal);
             await deleteAgentDraftPdf(name, jobId);
-            // htmlToPdf already uses pdfRenderLimiter — do not nest another acquire.
-            await renderAgentResumePdf({
-              sections: gen.sections,
-              identity,
-              applierName: name,
-              jobId,
-              config: savedConfig,
-              titlePolicyFingerprint,
-              identityFingerprint,
-              skipReviewCopy: true,
-            });
+            if (renderPdf) {
+              await renderPdf({
+                applierName: name,
+                generationId,
+                jobId,
+                signal,
+              });
+            } else {
+              // Direct callers retain legacy behavior; HTTP adapters use the PDF lane.
+              await renderAgentResumePdf({
+                sections: gen.sections,
+                identity,
+                applierName: name,
+                jobId,
+                config: savedConfig,
+                titlePolicyFingerprint,
+                identityFingerprint,
+                skipReviewCopy: true,
+              });
+            }
             counters.pdfs += 1;
           }
 
           counters.updated += 1;
         } catch (err) {
+          if (signal?.aborted || err?.name === "AbortError") throw err;
           counters.failed += 1;
           console.warn(
             `[refresh-identity] failed for generation ${String(gen?._id)}:`,
@@ -343,10 +407,12 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
     ),
   );
 
+  throwIfAborted(signal);
+
   // Only advance profile.resumeUpdatedAt when every stale résumé succeeded.
   let resumeUpdatedAt = profile.resumeUpdatedAt || null;
   if (counters.failed === 0) {
-    await setProfileResumeUpdatedAt(name, profileUpdatedAt);
+    await setProfileResumeUpdatedAt(name, profileUpdatedAt, signal);
     resumeUpdatedAt = profileUpdatedAt;
   }
 

@@ -1,5 +1,6 @@
 import cluster from 'node:cluster';
 import http from 'node:http';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 
 const counters = new Map();
 const gauges = new Map();
@@ -8,6 +9,7 @@ const LATENCY_BUCKETS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 const METRIC_MESSAGE = 'athens:metric';
 
 let aggregateServer = null;
+const eventLoopMonitors = new Set();
 
 function key(name, labels = {}) {
 	return `${name}|${Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join(',')}`;
@@ -104,6 +106,31 @@ export function setHealthStateMetrics(component, status, checkedAt = new Date())
 	for (const candidate of statuses) setGauge('athens_health_state', { component, status: candidate }, candidate === status ? 1 : 0);
 	setGauge('athens_health_severity', { component }, severity[status] ?? 4);
 	setGauge('athens_health_check_timestamp_seconds', { component }, new Date(checkedAt).getTime() / 1000);
+}
+
+/** Publish event-loop delay from each HTTP/worker process without blocking it. */
+export function startEventLoopDelayMetrics({ role = 'web', intervalMs = 5_000 } = {}) {
+	const histogram = monitorEventLoopDelay({ resolution: 20 });
+	histogram.enable();
+	const timer = setInterval(() => {
+		const nanosToSeconds = (value) => Number.isFinite(value) ? value / 1e9 : 0;
+		setGauge('athens_event_loop_delay_seconds', { role, quantile: 'p50' }, nanosToSeconds(histogram.percentile(50)));
+		setGauge('athens_event_loop_delay_seconds', { role, quantile: 'p95' }, nanosToSeconds(histogram.percentile(95)));
+		setGauge('athens_event_loop_delay_seconds', { role, quantile: 'max' }, nanosToSeconds(histogram.max));
+		histogram.reset();
+	}, Math.max(1_000, Number(intervalMs) || 5_000));
+	timer.unref?.();
+	const stop = () => {
+		clearInterval(timer);
+		histogram.disable();
+		eventLoopMonitors.delete(stop);
+	};
+	eventLoopMonitors.add(stop);
+	return stop;
+}
+
+export function stopEventLoopDelayMetrics() {
+	for (const stop of [...eventLoopMonitors]) stop();
 }
 
 /**

@@ -25,11 +25,13 @@ import {
 	getLlmModels,
   generateResume,
   generateResumeStream,
+  getResumeGenerationTaskResult,
   generateResumeForAgentJob,
   generateResumeForAgentJobStream,
   getAgentJobResumePdf,
   getAgentJobResumesStatus,
   deleteAgentJobResumesHandler,
+  deleteAgentJobResumesStreamHandler,
   getGeneratorConfig,
 	saveGeneratorConfig,
   listGenerations,
@@ -91,11 +93,13 @@ router.post('/personal/resume-catalog/validate', validateResumeCatalogHandler);
 router.get('/personal/llm-models', getLlmModels);
 router.post('/personal/resume-generate', generateResume);
 router.post('/personal/resume-generate/stream', generateResumeStream);
+router.get('/personal/resume-generation-tasks/:inputId', getResumeGenerationTaskResult);
 router.post('/personal/resume-generate/for-agent-job', generateResumeForAgentJob);
 router.post('/personal/resume-generate/for-agent-job/stream', generateResumeForAgentJobStream);
 router.get('/personal/agent-job-resume/:jobId/pdf', getAgentJobResumePdf);
 router.post('/personal/agent-job-resumes/status', getAgentJobResumesStatus);
 router.post('/personal/agent-job-resumes/delete', deleteAgentJobResumesHandler);
+router.post('/personal/agent-job-resumes/delete/stream', deleteAgentJobResumesStreamHandler);
 router.get('/personal/resume-generator/config', getGeneratorConfig);
 router.put('/personal/resume-generator/config', saveGeneratorConfig);
 router.get('/personal/resume-generations', listGenerations);

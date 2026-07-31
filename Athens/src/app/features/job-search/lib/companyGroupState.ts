@@ -40,6 +40,38 @@ export type CompanyGroupRemoval = {
   needsDirectoryRefresh: boolean;
 };
 
+export type CompanySiblingRemoval = {
+  groups: CompanyJobGroup[];
+  removedJobs: number;
+};
+
+/** Keep one active role and remove every other role represented by its company group. */
+export function keepOnlyCompanyJob(
+  groups: CompanyJobGroup[],
+  companyId: string,
+  keepJobId: string,
+): CompanySiblingRemoval {
+  let removedJobs = 0;
+  const nextGroups = groups.map((group) => {
+    if (group.companyId !== companyId) return group;
+    const keptJob = group.jobs.find(
+      (job) => job.id === keepJobId || job.backendId === keepJobId,
+    );
+    if (!keptJob) return group;
+
+    removedJobs = Math.max(0, (group.matchingJobCount ?? group.jobs.length) - 1);
+    return {
+      ...group,
+      jobs: [keptJob],
+      matchingJobCount: 1,
+      nextMemberOffset: null,
+      memberOrder: { [keptJob.id]: 0 },
+    };
+  });
+
+  return { groups: nextGroups, removedJobs };
+}
+
 export function removeCompanyJobs(
   groups: CompanyJobGroup[],
   shouldRemove: (job: Job) => boolean,

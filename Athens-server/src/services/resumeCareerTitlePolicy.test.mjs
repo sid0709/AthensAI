@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   TITLE_POLICY_VERSION,
   isStackedOrMalformedTitle,
-  isAcceptableBetaTitle,
+  isAcceptableDynamicTitle,
   reconcileExperienceTitles,
   applyTitlePolicyToSections,
   appendExperienceTitlePolicy,
@@ -36,7 +36,7 @@ test("isStackedOrMalformedTitle detects slash and keyword piles", () => {
   assert.equal(isStackedOrMalformedTitle("Senior Backend Engineer"), false);
 });
 
-test("non-Beta reconcile overwrites titles with Profile Settings titles", () => {
+test("disabled dynamic titles overwrite suggestions with Profile Settings titles", () => {
   const section = {
     experiences: [
       {
@@ -63,7 +63,7 @@ test("non-Beta reconcile overwrites titles with Profile Settings titles", () => 
   assert.equal(out.experiences[1].company, "Globex");
 });
 
-test("Beta reconcile accepts valid JD-aligned titles", () => {
+test("enabled dynamic titles accept valid JD-aligned titles for any account tier", () => {
   const section = {
     experiences: [
       { company: "Acme", title: "Java Engineer", bullets: ["a"] },
@@ -77,7 +77,7 @@ test("Beta reconcile accepts valid JD-aligned titles", () => {
   assert.equal(out.experiences[1].period, "2022 – Present");
 });
 
-test("Beta reconcile falls back for stacked / empty / missing model rows", () => {
+test("enabled dynamic titles fall back for stacked / empty / missing model rows", () => {
   const section = {
     experiences: [
       { title: "Senior/Staff Backend/Java Engineer", bullets: ["kept"] },
@@ -121,38 +121,38 @@ test("applyTitlePolicyToSections leaves non-experience sections untouched", () =
   assert.equal(out.experience.experiences[1].title, "Senior Software Engineer");
 });
 
-test("Beta guidance appendix includes JD and authoritative sequence", () => {
+test("enabled dynamic-title guidance includes JD and authoritative sequence", () => {
   const prompt = appendExperienceTitlePolicy("Base prompt.", {
-    isBeta: true,
+    dynamicCareerTitles: true,
     jobDescription: "Need a backend engineer",
     careers: identity.careers,
   });
-  assert.match(prompt, /TITLE POLICY \(mandatory — Beta\)/);
+  assert.match(prompt, /TITLE POLICY \(mandatory — dynamic career titles enabled\)/);
   assert.match(prompt, /Need a backend engineer/);
   assert.match(prompt, /Acme/);
   assert.match(prompt, /slash or keyword stacking/i);
   assert.match(prompt, /Base prompt\./);
 });
 
-test("non-Beta guidance requires exact Profile titles", () => {
+test("disabled dynamic-title guidance requires exact Profile titles", () => {
   const prompt = appendExperienceTitlePolicy("Base.", {
-    isBeta: false,
+    dynamicCareerTitles: false,
     jobDescription: "ignored for titles",
     careers: identity.careers,
   });
-  assert.match(prompt, /non-Beta/);
+  assert.match(prompt, /dynamic career titles disabled/);
   assert.match(prompt, /EXACTLY/);
 });
 
-test("title policy fingerprint changes with Beta, JD, careers, and policy version", () => {
+test("title policy fingerprint changes with the saved preference, JD, careers, and policy version", () => {
   const base = {
-    isBeta: false,
+    dynamicCareerTitles: false,
     jobDescription: "JD A",
     careers: identity.careers,
     config: { systemInstruction: "sys", steps: [{ purpose: "experience", kind: "final", prompt: "p" }] },
   };
   const a = computeTitlePolicyFingerprint(base);
-  const b = computeTitlePolicyFingerprint({ ...base, isBeta: true });
+  const b = computeTitlePolicyFingerprint({ ...base, dynamicCareerTitles: true });
   const c = computeTitlePolicyFingerprint({ ...base, jobDescription: "JD B" });
   const d = computeTitlePolicyFingerprint({
     ...base,
@@ -163,7 +163,7 @@ test("title policy fingerprint changes with Beta, JD, careers, and policy versio
   assert.notEqual(a, b);
   assert.notEqual(a, c);
   assert.notEqual(a, d);
-  assert.equal(TITLE_POLICY_VERSION, 1);
+  assert.equal(TITLE_POLICY_VERSION, 2);
 });
 
 test("agent PDF render fingerprint includes title policy fingerprint", () => {
@@ -174,12 +174,12 @@ test("agent PDF render fingerprint includes title policy fingerprint", () => {
   assert.equal(agentPdfRenderFingerprint(config, "abc123"), withFp);
 });
 
-test("isAcceptableBetaTitle rejects multi-and piles", () => {
-  assert.equal(isAcceptableBetaTitle("Engineer and Manager and Lead"), false);
-  assert.equal(isAcceptableBetaTitle("Senior Backend Engineer"), true);
+test("isAcceptableDynamicTitle rejects multi-and piles", () => {
+  assert.equal(isAcceptableDynamicTitle("Engineer and Manager and Lead"), false);
+  assert.equal(isAcceptableDynamicTitle("Senior Backend Engineer"), true);
 });
 
-test("Beta accepts realistic multi-role seniority progression", () => {
+test("dynamic titles accept realistic multi-role seniority progression", () => {
   const progressionIdentity = {
     careers: [
       {
@@ -217,7 +217,7 @@ test("Beta accepts realistic multi-role seniority progression", () => {
   assert.equal(out.experiences[2].period, "2023 – Present");
 });
 
-test("Beta accepts discipline transitions when titles are concise", () => {
+test("dynamic titles accept discipline transitions when titles are concise", () => {
   const transitionIdentity = {
     careers: [
       {
@@ -249,7 +249,7 @@ test("Beta accepts discipline transitions when titles are concise", () => {
   assert.equal(out.experiences[1].period, "2021 – Present");
 });
 
-test("Beta and non-Beta always preserve authoritative company and dates over model values", () => {
+test("enabled and disabled dynamic titles preserve authoritative company and dates", () => {
   const section = {
     experiences: [
       {
@@ -266,8 +266,8 @@ test("Beta and non-Beta always preserve authoritative company and dates over mod
       },
     ],
   };
-  for (const isBeta of [true, false]) {
-    const out = reconcileExperienceTitles(section, identity, isBeta);
+  for (const dynamicCareerTitles of [true, false]) {
+    const out = reconcileExperienceTitles(section, identity, dynamicCareerTitles);
     assert.equal(out.experiences[0].company, "Acme");
     assert.equal(out.experiences[0].period, "2020 – 2022");
     assert.equal(out.experiences[1].company, "Globex");
@@ -276,9 +276,9 @@ test("Beta and non-Beta always preserve authoritative company and dates over mod
   }
 });
 
-test("Beta guidance mentions domain transitions and chronological plausibility", () => {
+test("dynamic-title guidance mentions domain transitions and chronological plausibility", () => {
   const prompt = appendExperienceTitlePolicy("Base.", {
-    isBeta: true,
+    dynamicCareerTitles: true,
     jobDescription: "Full stack role",
     careers: identity.careers,
   });

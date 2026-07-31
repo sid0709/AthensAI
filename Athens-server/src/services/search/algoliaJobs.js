@@ -25,7 +25,7 @@ function record(id, data) {
 		source: data.source || "",
 		sourceCatalog: data.sourceCatalog || "market",
 		postedAt: data.postedAt || data.createdAt || null,
-		titleScanned: data.titleScanned || "",
+		titleReviewLabel: data.titleReview?.label || "",
 		skills: data.skills || data.aiSkills?.map?.((skill) => skill.name) || [],
 	};
 }

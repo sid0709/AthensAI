@@ -55,6 +55,8 @@ export interface ChatRequest {
   applierName?: string;
   jobId?: string;
   feature?: string;
+  /** Gateway admission class. Background workers identify themselves here. */
+  workloadClass?: 'background' | 'interactive';
 }
 
 export interface TokenUsage {
@@ -137,4 +139,5 @@ export type ProviderChatParams = {
   responseSchema?: JsonSchemaDefinition;
   jsonMode?: boolean;
   stream?: boolean;
+  signal?: AbortSignal;
 };

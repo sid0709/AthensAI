@@ -168,10 +168,6 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     skillHighlights,
     aiSkills,
     skillCount: typeof doc.aiSkillCount === "number" ? doc.aiSkillCount : aiSkills?.length,
-    titleScanned:
-      typeof doc.titleScanned === "string" && doc.titleScanned.trim()
-        ? doc.titleScanned.trim()
-        : null,
     version:
       typeof doc.version === "string" && doc.version.trim()
         ? doc.version.trim()

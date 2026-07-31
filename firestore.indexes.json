@@ -121,7 +121,26 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "titleScanned", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.confidence", "order": "DESCENDING" },
         { "fieldPath": "postedAt", "order": "DESCENDING" }
       ]
     },
@@ -131,8 +150,26 @@
       "fields": [
         { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
         { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "titleScanned", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
         { "fieldPath": "postedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.processingState", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
+        { "fieldPath": "titleReview.processingState", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "ASCENDING" }
       ]
     },
     {
@@ -369,6 +406,21 @@
     }
   ],
   "fieldOverrides": [
+    {
+      "collectionGroup": "background_task_inputs",
+      "fieldPath": "request",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "background_task_inputs",
+      "fieldPath": "partialSections",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "background_task_inputs",
+      "fieldPath": "result",
+      "indexes": []
+    },
     {
       "collectionGroup": "jobs",
       "fieldPath": "description",

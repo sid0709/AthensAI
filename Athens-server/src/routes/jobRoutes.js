@@ -10,6 +10,7 @@ import {
 	getCompanyGroupMembers,
 	applyToJob,
 	removeJobs,
+	removeOtherCompanyJobs,
 	updateJobStatus,
 	unapplyFromJob,
 	updateJobBidStatus,
@@ -28,10 +29,14 @@ import {
 	stopSkillExtract,
 } from "../controllers/jobSkillExtractController.js";
 import {
-	getTitleScanStatus,
-	startTitleScan,
-	stopTitleScan,
-} from "../controllers/jobTitleScanController.js";
+	approveTitleReviewJobs,
+	getTitleReviewBootstrap,
+	getTitleReviewStatus,
+	listTitleReviewJobs,
+	removeTitleReviewJobs,
+	startTitleReview,
+	stopTitleReview,
+} from "../controllers/jobTitleReviewController.js";
 
 const router = express.Router();
 
@@ -46,9 +51,13 @@ router.post('/jobs/list/company-members', getCompanyGroupMembers);
 router.get('/jobs/skill-extract/status', getSkillExtractStatus);
 router.post('/jobs/skill-extract/start', startSkillExtract);
 router.post('/jobs/skill-extract/stop', stopSkillExtract);
-router.get('/jobs/title-scan/status', getTitleScanStatus);
-router.post('/jobs/title-scan/start', startTitleScan);
-router.post('/jobs/title-scan/stop', stopTitleScan);
+router.get('/jobs/title-review/status', getTitleReviewStatus);
+router.post('/jobs/title-review/start', startTitleReview);
+router.post('/jobs/title-review/stop', stopTitleReview);
+router.get('/jobs/title-review/bootstrap', getTitleReviewBootstrap);
+router.get('/jobs/title-review', listTitleReviewJobs);
+router.post('/jobs/title-review/approve', approveTitleReviewJobs);
+router.post('/jobs/title-review/remove', removeTitleReviewJobs);
 router.get('/jobs/:id/viewer-status', getJobViewerStatus);
 router.get('/jobs/:id', getJobById);
 router.get('/jobs/:id/skill-radar', getJobSkillRadar);
@@ -57,6 +66,7 @@ router.get('/jobs/:id/skill-analysis', getJobSkillAnalysis);
 router.get('/jobs/rule/:name', getJobsForRule);
 router.delete('/jobs/rule/:name', removeJobsForRule);
 router.post('/jobs/remove', removeJobs);
+router.post('/jobs/company/remove-others', removeOtherCompanyJobs);
 router.post('/jobs/bid-status/bulk', updateJobsBidStatusBulk);
 router.post('/jobs/:id/apply', applyToJob);
 router.post('/jobs/:id/status', updateJobStatus);

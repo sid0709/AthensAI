@@ -1,26 +1,54 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import {
-  fetchSkillExtractStatus,
-  startSkillExtract,
-  stopSkillExtract,
-  type SkillExtractSession,
-} from "@/app/api/jobSkillExtract";
+import { fetchSkillExtractStatus, type SkillExtractSession } from "@/app/api/jobSkillExtract";
+import type { BackgroundTask } from "@/app/api/backgroundTasks";
+import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 
-const POLL_MS = 1500;
+function sessionFromTask(task: BackgroundTask | null): SkillExtractSession | null {
+  if (!task) return null;
+  const progress = task.progress || {};
+  const status: SkillExtractSession["status"] = task.status === "queued"
+    ? "running"
+    : task.status === "cancelling"
+      ? "stopping"
+      : task.status === "completed_with_errors" ? "completed" : task.status;
+  return {
+    running: ["queued", "running", "cancelling"].includes(task.status),
+    status,
+    sessionId: task.id,
+    total: progress.total as number | null | undefined,
+    processed: Number(progress.completed ?? 0),
+    extracted: Number(progress.extracted ?? 0),
+    failed: Number(progress.failed ?? 0),
+    retried: Number(progress.retried ?? 0),
+    cancelled: Number(progress.cancelled ?? 0),
+    remaining: progress.remaining as number | null | undefined,
+    phase: progress.phase as SkillExtractSession["phase"],
+    inflight: Number(progress.active ?? 0),
+    lastJob: progress.lastJob as SkillExtractSession["lastJob"],
+    startedAt: task.startedAt || undefined,
+    finishedAt: task.finishedAt,
+    error: task.error,
+    concurrency: 8,
+    batchSize: 8,
+    jobsPerWave: 64,
+  };
+}
 
 export function useJobSkillExtraction() {
   const { applier } = useApplier();
-  const [session, setSession] = useState<SkillExtractSession>({ running: false, status: "idle" });
+  const { latestTask, startTask, cancelTask } = useBackgroundTasks();
+  const task = latestTask("skill_extraction");
+  const [fallback, setFallback] = useState<SkillExtractSession>({ running: false, status: "idle" });
   const [pending, setPending] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const session = useMemo(() => sessionFromTask(task) || fallback, [fallback, task]);
 
   const refresh = useCallback(async () => {
     try {
       const status = await fetchSkillExtractStatus(applier?.name);
-      setSession(status);
+      setFallback(status);
       setPending(status.pending ?? null);
       return status;
     } catch {
@@ -28,61 +56,44 @@ export function useJobSkillExtraction() {
     }
   }, [applier?.name]);
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  const startPolling = useCallback(() => {
-    stopPolling();
-    pollRef.current = setInterval(() => void refresh(), POLL_MS);
-  }, [refresh, stopPolling]);
-
   useEffect(() => {
     void refresh();
-    return () => stopPolling();
-  }, [refresh, stopPolling]);
+  }, [refresh]);
 
   useEffect(() => {
-    if (session.running) startPolling();
-    else stopPolling();
-  }, [session.running, startPolling, stopPolling]);
+    if (task && !task.status.match(/^(queued|running|cancelling)$/)) void refresh();
+  }, [refresh, task?.id, task?.status]);
 
   const start = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await startSkillExtract(applier?.name);
-      if (result.started) {
-        toast.success("Skill extraction started", {
-          description: result.pending != null || pending != null
-            ? `${result.pending ?? pending} job(s) queued.`
-            : "Processing jobs that do not have extracted skills.",
-        });
-      } else {
-        toast.info(result.message || "No jobs pending extraction.");
-      }
-      await refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to start extraction");
+      const created = await startTask("skill_extraction", {});
+      toast.success("Skill extraction started", {
+        description: pending != null
+          ? `${pending} job(s) queued.`
+          : "Processing jobs that do not have extracted skills.",
+      });
+      return created;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to start extraction");
+      return null;
     } finally {
       setLoading(false);
     }
-  }, [applier?.name, pending, refresh]);
+  }, [pending, startTask]);
 
   const stop = useCallback(async () => {
+    if (!task || !["queued", "running", "cancelling"].includes(task.status)) return;
     setLoading(true);
     try {
-      await stopSkillExtract();
+      await cancelTask(task.id);
       toast.info("Stopping extraction…");
-      await refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to stop extraction");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to stop extraction");
     } finally {
       setLoading(false);
     }
-  }, [refresh]);
+  }, [cancelTask, task]);
 
   return { session, pending, loading, isRunning: session.running, start, stop, refresh };
 }

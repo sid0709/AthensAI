@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { CompanyJobGroup, Job } from "../../../types";
-import { mergeCompanyMembers, removeCompanyJobs } from "./companyGroupState";
+import { keepOnlyCompanyJob, mergeCompanyMembers, removeCompanyJobs } from "./companyGroupState";
 
 function job(id: string): Job {
   return { id, backendId: id, companyId: "acme" } as Job;
@@ -76,4 +76,17 @@ test("an unloaded replacement requests a directory refresh", () => {
   assert.deepEqual(result.groups[0].jobs, []);
   assert.equal(result.needsDirectoryRefresh, true);
   assert.equal(result.removedGroups, 0);
+});
+
+test("keeping one role removes loaded and unloaded company siblings", () => {
+  const result = keepOnlyCompanyJob(
+    [group(["primary", "active", "member-2"], 8, 3)],
+    "acme",
+    "active",
+  );
+  assert.deepEqual(result.groups[0].jobs.map(({ id }) => id), ["active"]);
+  assert.equal(result.groups[0].matchingJobCount, 1);
+  assert.equal(result.groups[0].nextMemberOffset, null);
+  assert.deepEqual(result.groups[0].memberOrder, { active: 0 });
+  assert.equal(result.removedJobs, 7);
 });

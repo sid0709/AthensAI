@@ -231,7 +231,7 @@ export async function setPrimaryUserResume(id, ownerName) {
   return toSummary({ ...doc, isPrimary: true, updatedAt: now });
 }
 
-export async function deleteUserResume(id, ownerName) {
+export async function deleteUserResume(id, ownerName, { rebuildProfile = true } = {}) {
   if (!userResumesCollection) throw new Error("Database not ready");
   const name = cleanString(ownerName);
   if (!name) throw new Error("ownerName is required");
@@ -255,7 +255,7 @@ export async function deleteUserResume(id, ownerName) {
       applierName: name,
       resumeId: String(documentId),
     });
-    await rebuildProfileGraph(name);
+    if (rebuildProfile) await rebuildProfileGraph(name);
   }
 
   if (doc.isPrimary) {

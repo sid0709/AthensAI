@@ -34,6 +34,7 @@ import {
 	JOBRIGHT_APPLY_URL,
 } from '../../../api/swanApi';
 import { mapJobrightItemToResultData } from '../../../api/jobrightMapper';
+import { assertCompleteJob, IncompleteJobDataError } from '../../../api/jobValidation';
 
 const PAGE_SIZE = 10;
 const PAGE_DELAY_MS = 800;
@@ -246,10 +247,7 @@ const ScrapComponent = () => {
 
 			const item = jobs[i];
 			const { resultData, jobrightJobId } = mapJobrightItemToResultData(item);
-			if (!resultData.title) {
-				setStats((s) => ({ ...s, errors: s.errors + 1 }));
-				continue;
-			}
+			assertCompleteJob(resultData);
 
 			setProgress(40 + Math.round(((i + 1) / jobs.length) * 40));
 
@@ -342,6 +340,12 @@ const ScrapComponent = () => {
 					await waitMs(PAGE_DELAY_MS);
 				} catch (err) {
 					if (!active || !scrapFlagRef.current) break;
+
+					if (err instanceof IncompleteJobDataError) {
+						setStats((s) => ({ ...s, errors: s.errors + 1 }));
+						await stopScraping(err.message);
+						break;
+					}
 
 					if (err?.sessionDead) {
 						await stopScraping(err.message);

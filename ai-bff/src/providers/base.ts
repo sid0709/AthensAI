@@ -38,8 +38,9 @@ function isOpenAiReasoningModel(model: string) {
 async function createCompletion(
   client: OpenAI,
   body: ChatCompletionCreateParamsNonStreaming,
+  signal?: AbortSignal,
 ): Promise<ChatCompletion> {
-  return client.chat.completions.create(body);
+  return client.chat.completions.create(body, { signal });
 }
 
 export function createOpenAiCompatibleProvider(
@@ -88,7 +89,7 @@ export function createOpenAiCompatibleProvider(
 
       let completion: ChatCompletion;
       try {
-        completion = await createCompletion(client, body);
+        completion = await createCompletion(client, body, params.signal);
       } catch (error) {
         // Some DeepSeek models reject json_object — fall back to prompt-only JSON
         if (
@@ -97,13 +98,18 @@ export function createOpenAiCompatibleProvider(
           structured.responseFormat &&
           isResponseFormatError(error)
         ) {
+          if (params.signal?.aborted) {
+            throw params.signal.reason instanceof Error
+              ? params.signal.reason
+              : Object.assign(new Error('AI request cancelled'), { name: 'AbortError' });
+          }
           const fallback = prepareStructuredChat(id, params.messages, params.responseSchema);
           fallback.responseFormat = undefined;
           completion = await createCompletion(client, {
             ...body,
             messages: fallback.messages,
             response_format: undefined,
-          });
+          }, params.signal);
         } else {
           throw error;
         }

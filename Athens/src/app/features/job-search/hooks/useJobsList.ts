@@ -6,11 +6,10 @@ import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
 import { retryTransient } from "@/lib/transient-retry";
 import { JobSourceTitles } from '@/app/data/jobs/pub';
-import { JOB_TITLE_SCAN_ROLES } from "@/app/data/jobTitleRoles";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
 import { rescoreJobWithContext, type ProfileMatchContext } from "../../../lib/skill-match";
 import type { CompanyJobGroup, Job } from "../../../types";
-import { mergeCompanyMembers, removeCompanyJobs } from "../lib/companyGroupState";
+import { keepOnlyCompanyJob, mergeCompanyMembers, removeCompanyJobs } from "../lib/companyGroupState";
 import type {
   JobSearchFilterState,
   JobScoreFilters,
@@ -302,13 +301,6 @@ export function buildJobsListBody(
   const remote = workModeToRemote(filters.workMode);
   if (remote) body["details.remote"] = remote;
   if (filters.seniority.length) body["details.seniority"] = filters.seniority.join(",");
-  // All roles selected ≡ no role filter (still show unscanned jobs).
-  if (
-    filters.titleRoles.length > 0 &&
-    filters.titleRoles.length < JOB_TITLE_SCAN_ROLES.length
-  ) {
-    body.titleScanned = filters.titleRoles.join(",");
-  }
   if (filters.industry !== "all") body["company.tags"] = filters.industry;
   if (filters.postedFrom) body.postedAtFrom = filters.postedFrom;
   if (filters.postedTo) body.postedAtTo = filters.postedTo;
@@ -655,6 +647,17 @@ export function useJobsList(
     });
   }, []);
 
+  const removeOtherCompanyJobs = useCallback((companyId: string, keepJobId: string) => {
+    invalidateJobListCaches();
+    setRawGroups((previous) => {
+      const result = keepOnlyCompanyJob(previous, companyId, keepJobId);
+      if (result.removedJobs) {
+        setTotalJobs((value) => Math.max(0, value - result.removedJobs));
+      }
+      return result.groups;
+    });
+  }, []);
+
   const refreshStatusCounts = useCallback(async () => {
     if (!applierReady) return;
     setCountsLoading(true);
@@ -806,6 +809,7 @@ export function useJobsList(
     rankingStatus,
     patchJob,
     removeJobsById,
+		removeOtherCompanyJobs,
 		loadCompanyMembers,
 		memberLoadingIds,
     memberErrors,

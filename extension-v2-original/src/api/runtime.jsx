@@ -40,7 +40,14 @@ export const RuntimeProvider = ({ children }) => {
 			console.warn('chrome.runtime.sendMessage not available');
 			return;
 		}
-		chrome.runtime.sendMessage(message);
+		try {
+			const pending = chrome.runtime.sendMessage(message);
+			pending?.catch?.(() => {
+				// The receiver can disappear during a tab or extension reload.
+			});
+		} catch {
+			// The extension context was invalidated during reload.
+		}
 	}, []);
 
 	const addListener = useCallback((fn) => {

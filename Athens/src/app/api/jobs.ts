@@ -1,5 +1,6 @@
 import { API_BASE } from "@/lib/api-base";
 import { streamSSE } from "../features/resumes/lib/sse";
+import type { BackgroundTask } from "./backgroundTasks";
 
 export type JobApiStatus = "Applied" | "Scheduled" | "Declined";
 
@@ -67,6 +68,24 @@ export async function removeJobs(
   return parseJson(res);
 }
 
+/** Permanently delete every role for a company except the active role. */
+export async function removeOtherCompanyJobs(
+  companyId: string,
+  keepJobId: string,
+  taskProfileId?: string,
+): Promise<{ success?: boolean; deletedCount?: number; deletedIds?: string[]; task?: BackgroundTask; error?: string }> {
+  const res = await fetch(`${API_BASE}/jobs/company/remove-others`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      companyId,
+      keepJobId,
+      ...(taskProfileId ? { profileId: taskProfileId } : {}),
+    }),
+  });
+  return parseJson(res);
+}
+
 /** Fetch a job's full detail (incl. description) by document id. Returns "" if unavailable. */
 export async function fetchJobDescription(
   jobId: string,
@@ -109,35 +128,73 @@ export async function fetchJobsWithGeneratedResumes(
 export type DeleteJobsGeneratedResumesResult = {
   success: boolean;
   deletedJobIds: string[];
+  failedJobIds: string[];
   generationsDeleted: number;
   resumesDeleted: number;
   error?: string;
+};
+
+export type DeleteJobsGeneratedResumesProgress = {
+  phase: "start" | "removing" | "finalizing" | "done";
+  done: number;
+  total: number;
+  active: number;
+  failed: number;
 };
 
 /** Remove generated résumés for the given jobs (not the jobs themselves). */
 export async function deleteJobsGeneratedResumes(
   applierName: string,
   jobIds: string[],
+  onProgress?: (progress: DeleteJobsGeneratedResumesProgress) => void,
+  signal?: AbortSignal,
 ): Promise<DeleteJobsGeneratedResumesResult> {
   if (!applierName || jobIds.length === 0) {
-    return { success: true, deletedJobIds: [], generationsDeleted: 0, resumesDeleted: 0 };
+    return {
+      success: true,
+      deletedJobIds: [],
+      failedJobIds: [],
+      generationsDeleted: 0,
+      resumesDeleted: 0,
+    };
   }
-  const res = await fetch(`${API_BASE}/personal/agent-job-resumes/delete`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ applierName, jobIds }),
-  });
-  const data = (await res.json().catch(() => ({}))) as Partial<DeleteJobsGeneratedResumesResult> & {
-    error?: string;
-  };
-  if (!res.ok || !data.success) {
-    throw new Error(data.error || "Failed to remove generated résumés");
-  }
+
+  let donePayload: Record<string, unknown> | null = null;
+  let streamError: string | null = null;
+  await streamSSE(
+    `${API_BASE}/personal/agent-job-resumes/delete/stream`,
+    { applierName, jobIds },
+    (event, data) => {
+      if (event === "progress") {
+        onProgress?.({
+          phase: String(data.phase ?? "removing") as DeleteJobsGeneratedResumesProgress["phase"],
+          done: Number(data.done ?? 0),
+          total: Number(data.total ?? jobIds.length),
+          active: Number(data.active ?? 0),
+          failed: Number(data.failed ?? 0),
+        });
+      } else if (event === "done") {
+        donePayload = data;
+      } else if (event === "error") {
+        streamError = String(data.error ?? "Failed to remove generated résumés");
+      }
+    },
+    signal,
+  );
+
+  if (streamError) throw new Error(streamError);
+  const result = donePayload as Record<string, unknown> | null;
+  if (!result || !result.success) throw new Error("Removal ended without a result");
   return {
     success: true,
-    deletedJobIds: Array.isArray(data.deletedJobIds) ? data.deletedJobIds : [],
-    generationsDeleted: data.generationsDeleted ?? 0,
-    resumesDeleted: data.resumesDeleted ?? 0,
+    deletedJobIds: Array.isArray(result.deletedJobIds)
+      ? result.deletedJobIds.map(String)
+      : [],
+    failedJobIds: Array.isArray(result.failedJobIds)
+      ? result.failedJobIds.map(String)
+      : [],
+    generationsDeleted: Number(result.generationsDeleted ?? 0),
+    resumesDeleted: Number(result.resumesDeleted ?? 0),
   };
 }
 

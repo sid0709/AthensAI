@@ -1,5 +1,11 @@
 import { DocumentId } from "@nextoffer/shared/document-id";
-import { accountInfoCollection, resumeGeneratorConfigCollection, resumeGenerationsCollection } from "../db/dataStore.js";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  accountInfoCollection,
+  backgroundTaskInputsCollection,
+  resumeGeneratorConfigCollection,
+  resumeGenerationsCollection,
+} from "../db/dataStore.js";
 import { syncGeneratedResumeAfterRun, deleteGenerationRun } from "../services/generatedResumeService.js";
 import { renderAgentResumePdf } from "../services/agentResumePdf.js";
 import {
@@ -14,8 +20,19 @@ import {
 } from "../services/llm/llmService.js";
 import { loadDecryptedAutoBidProfile } from "../services/autoBidProfileSecrets.js";
 import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.js";
-import { resumeGenLimiter } from "../utils/concurrency.js";
 import { isBetaTier } from "../lib/betaTier.js";
+import {
+  createBackgroundTask,
+  getBackgroundTask,
+} from "../services/backgroundTasks/taskStore.js";
+import {
+  BACKGROUND_TASK_TYPES,
+  TERMINAL_TASK_STATUSES,
+  publicTaskSnapshot,
+} from "../services/backgroundTasks/taskTypes.js";
+import { firestoreMutationLimiter } from "../services/backgroundTasks/resourceLimits.js";
+import { renderResumePdfInBackgroundLane } from "../services/backgroundTasks/pdfLane.js";
+import { readAgentDraftPath } from "../services/agentResumeDraftService.js";
 import {
   TITLE_POLICY_VERSION,
   appendExperienceTitlePolicy,
@@ -25,6 +42,169 @@ import {
 } from "../services/resumeCareerTitlePolicy.js";
 
 const cleanString = (v) => String(v ?? "").trim();
+const BACKGROUND_INPUT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
+
+function resumeTaskIdentity(req, applierName) {
+  const name = cleanString(applierName || req.authProfile?.profileName || req.authProfile?.applierName);
+  return {
+    applierName: name,
+    profileId: cleanString(req.authProfile?.profileId || req.body?.profileId)
+      || name.toLocaleLowerCase("en-US"),
+    ownerUid: cleanString(req.auth?.uid) || null,
+  };
+}
+
+function persistedGenerationRequest(body, applierName) {
+  return {
+    applierName,
+    provider: body.provider ?? null,
+    model: body.model ?? null,
+    reasoningEffort: body.reasoningEffort ?? null,
+    dynamicCareerTitles: body.dynamicCareerTitles === true,
+    templateId: body.templateId ?? null,
+    template: body.template ?? null,
+    theme: body.theme ?? null,
+    layout: body.layout ?? null,
+    identity: body.identity ?? null,
+    identitySyncedAt: body.identitySyncedAt ?? null,
+    systemInstruction: body.systemInstruction ?? null,
+    jobDescription: body.jobDescription ?? null,
+    steps: Array.isArray(body.steps) ? body.steps : [],
+  };
+}
+
+async function enqueueStoredResumeGeneration(req, body) {
+  if (!backgroundTaskInputsCollection) {
+    throw Object.assign(new Error("Database not ready"), { status: 503 });
+  }
+  const identity = resumeTaskIdentity(req, body.applierName);
+  if (!identity.applierName) throw Object.assign(new Error("applierName is required"), { status: 400 });
+  if (!Array.isArray(body.steps) || !body.steps.length) {
+    throw Object.assign(new Error("steps are required"), { status: 400 });
+  }
+  const requestId = cleanString(body.requestId || req.body?.requestId) || randomUUID();
+  const inputId = createHash("sha256")
+    .update(`${identity.profileId}\0${requestId}\0resume-generation`)
+    .digest("hex");
+  const createdAt = new Date();
+  const input = {
+    _id: inputId,
+    kind: BACKGROUND_TASK_TYPES.RESUME_GENERATION,
+    requestId,
+    profileId: identity.profileId,
+    applierName: identity.applierName,
+    ownerUid: identity.ownerUid,
+    status: "queued",
+    request: persistedGenerationRequest(body, identity.applierName),
+    partialSections: {},
+    result: null,
+    error: null,
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt: new Date(createdAt.getTime() + BACKGROUND_INPUT_RETENTION_MS),
+  };
+  await backgroundTaskInputsCollection.updateOne(
+    { _id: inputId },
+    { $setOnInsert: input },
+    { upsert: true },
+  );
+  try {
+    const queued = await createBackgroundTask({
+      requestId,
+      type: BACKGROUND_TASK_TYPES.RESUME_GENERATION,
+      ...identity,
+      payload: { requestRecordIds: [inputId], deferPdf: true },
+      progress: { total: 1, operation: "editor_generation", inputId },
+    });
+    return { ...queued, inputId };
+  } catch (error) {
+    await backgroundTaskInputsCollection.updateOne(
+      { _id: inputId, status: "queued" },
+      { $set: { status: "failed", error: error.message, updatedAt: new Date() } },
+    ).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function enqueueAgentResumeGeneration(req, body) {
+  const identity = resumeTaskIdentity(req, body.applierName);
+  const jobId = cleanString(body.jobId);
+  if (!identity.applierName) throw Object.assign(new Error("applierName is required"), { status: 400 });
+  if (!jobId) throw Object.assign(new Error("jobId is required"), { status: 400 });
+  return createBackgroundTask({
+    requestId: cleanString(body.requestId) || randomUUID(),
+    type: BACKGROUND_TASK_TYPES.RESUME_GENERATION,
+    ...identity,
+    payload: {
+      jobIds: [jobId],
+      forceRegenerate: body.forceRegenerate === true,
+      deferPdf: body.deferPdf === true,
+    },
+    progress: { total: 1, operation: "agent_job_resume", jobId },
+  });
+}
+
+async function enqueueAgentResumeRemoval(req, body) {
+  const identity = resumeTaskIdentity(req, body.applierName);
+  const jobIds = Array.isArray(body.jobIds)
+    ? [...new Set(body.jobIds.map(cleanString).filter(Boolean))]
+    : [];
+  if (!identity.applierName) throw Object.assign(new Error("applierName is required"), { status: 400 });
+  if (!jobIds.length) throw Object.assign(new Error("jobIds is required"), { status: 400 });
+  return createBackgroundTask({
+    requestId: cleanString(body.requestId) || randomUUID(),
+    type: BACKGROUND_TASK_TYPES.RESUME_REMOVAL,
+    ...identity,
+    payload: { recordIds: jobIds },
+    progress: { total: jobIds.length, operation: "agent_resume_removal" },
+  });
+}
+
+async function enqueueResumeIdentityRefresh(req, body) {
+  const identity = resumeTaskIdentity(req, body.applierName);
+  if (!identity.applierName) throw Object.assign(new Error("applierName is required"), { status: 400 });
+  return createBackgroundTask({
+    requestId: cleanString(body.requestId) || randomUUID(),
+    type: BACKGROUND_TASK_TYPES.RESUME_IDENTITY_REFRESH,
+    ...identity,
+    payload: { forceAll: body.forceAll === true },
+    progress: { total: null, operation: "resume_identity_refresh" },
+  });
+}
+
+function bindRequestAbort(req, res, message = "Client disconnected") {
+  const controller = new AbortController();
+  const abort = () => {
+    if (controller.signal.aborted) return;
+    controller.abort(Object.assign(new Error(message), { name: "AbortError" }));
+  };
+  const onClose = () => {
+    if (!res.writableEnded) abort();
+  };
+  function cleanup() {
+    req.off("aborted", abort);
+    res.off("close", onClose);
+    res.off("finish", cleanup);
+  }
+  req.once("aborted", abort);
+  res.once("close", onClose);
+  res.once("finish", cleanup);
+  return {
+    signal: controller.signal,
+    cleanup,
+  };
+}
+
+function isAbortError(err) {
+  return err?.name === "AbortError" || err?.code === "ABORT_ERR";
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error("Operation cancelled"), { name: "AbortError" });
+}
 
 /** Resolve an applier's autoBidProfile (exact, then case-insensitive). */
 async function findProfile(applierNameRaw) {
@@ -182,10 +362,12 @@ export async function prepareGeneration(body) {
   const bad = Object.entries(finalsByPurpose).find(([, n]) => n !== 1);
   if (bad) return { ok: false, status: 400, error: `${bad[0]} must have exactly one final step (found ${bad[1]}).` };
 
-  // Beta entitlement from Firestore account_info.tier only — ignore any client-supplied flag.
+  // Tier remains server-resolved metadata. Dynamic titles are a saved generator
+  // preference available to every tier and are enabled only by an explicit boolean.
   const isBeta = isBetaTier(await resolveAccountTier(body.applierName));
+  const dynamicCareerTitles = body.dynamicCareerTitles === true;
 
-  return { ok: true, providerId, model, steps, apiKey, isBeta };
+  return { ok: true, providerId, model, steps, apiKey, isBeta, dynamicCareerTitles };
 }
 
 /**
@@ -206,7 +388,28 @@ function canParallelizeFinals(steps) {
   return true;
 }
 
-export async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, jobSkills, reasoningEffort, isBeta = false }, onStep) {
+export async function runGeneration({
+  providerId,
+  apiKey,
+  model,
+  steps,
+  systemInstruction,
+  identity,
+  applierName,
+  jobDescription,
+  jobSkills,
+  reasoningEffort,
+  isBeta = false,
+  dynamicCareerTitles = false,
+  signal,
+}, onStep) {
+	const throwIfAborted = () => {
+		if (!signal?.aborted) return;
+		throw signal.reason instanceof Error
+			? signal.reason
+			: Object.assign(new Error('Resume generation cancelled'), { name: 'AbortError' });
+	};
+	throwIfAborted();
   // Substitute reference tokens in any prompt with real values:
   //   {job_description}                          → the JD text the user typed
   //   {job_skills}                               → skills pre-fetched for a structured job
@@ -218,7 +421,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
       const key = match.slice(1, -1).toLowerCase();
       return Object.prototype.hasOwnProperty.call(tokenMap, key) ? tokenMap[key] : match;
     });
-  const beta = Boolean(isBeta);
+  const dynamicTitles = Boolean(dynamicCareerTitles);
   const careers = sourceCareers(identity);
 
   const prefixMessages = [
@@ -230,13 +433,14 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
   let usage = EMPTY_USAGE();
 
   const runOneFinal = async (step, index, total) => {
+	throwIfAborted();
     const name = step.name || `Step ${index}`;
     if (onStep) onStep({ phase: "step-start", index, total, name, purpose: step.purpose, kind: step.kind });
 
     let userContent = applyTokens(step.prompt || "");
     if (step.purpose === "experience") {
       userContent = appendExperienceTitlePolicy(userContent, {
-        isBeta: beta,
+        dynamicCareerTitles: dynamicTitles,
         jobDescription,
         careers,
       });
@@ -256,13 +460,19 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
       reasoningEffort,
       feature: `resume-generate:${step.purpose || step.kind || "step"}`,
       applierName,
+      signal,
     });
+		throwIfAborted();
 
     let output;
     try {
       output = parseJsonLoose(content);
       if (step.purpose === "experience") {
-        output = applyTitlePolicyToSections({ experience: output }, identity, beta).experience;
+        output = applyTitlePolicyToSections(
+          { experience: output },
+          identity,
+          dynamicTitles,
+        ).experience;
       }
     } catch (err) {
       if (Number.isInteger(err?.status)) throw err;
@@ -291,6 +501,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
     // Fine-tune / dependent pipelines keep a growing multi-turn conversation.
     const messages = [...prefixMessages];
     for (let i = 0; i < steps.length; i += 1) {
+		throwIfAborted();
       const step = steps[i] || {};
       const isFinal = step.kind === "final";
       if (onStep) onStep({ phase: "step-start", index: i + 1, total: steps.length, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind });
@@ -298,7 +509,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
       let userContent = applyTokens(step.prompt || "");
       if (isFinal && step.purpose === "experience") {
         userContent = appendExperienceTitlePolicy(userContent, {
-          isBeta: beta,
+          dynamicCareerTitles: dynamicTitles,
           jobDescription,
           careers,
         });
@@ -318,7 +529,9 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
         reasoningEffort,
         feature: `resume-generate:${step.purpose || step.kind || "step"}`,
         applierName,
+        signal,
       });
+		throwIfAborted();
       messages.push({ role: "assistant", content });
       usage = addUsage(usage, stepUsage);
 
@@ -327,7 +540,11 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
         try {
           output = parseJsonLoose(content);
           if (step.purpose === "experience") {
-            output = applyTitlePolicyToSections({ experience: output }, identity, beta).experience;
+            output = applyTitlePolicyToSections(
+              { experience: output },
+              identity,
+              dynamicTitles,
+            ).experience;
           }
           if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
         } catch (err) {
@@ -344,20 +561,31 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
   }
 
   // Safety net if Experience was produced outside the final-step branch shape.
-  const reconciled = applyTitlePolicyToSections(sections, identity, beta);
-  return { sections: reconciled, perStep, usage, isBeta: beta };
+  const reconciled = applyTitlePolicyToSections(sections, identity, dynamicTitles);
+	throwIfAborted();
+  return {
+    sections: reconciled,
+    perStep,
+    usage,
+    isBeta: Boolean(isBeta),
+    dynamicCareerTitles: dynamicTitles,
+  };
 }
 
 /** Persist the finished run and sync it into the résumé library. */
-async function finalizeGenerationRun({ prep, body, result, startedAt }) {
+export async function finalizeGenerationRun({ prep, body, result, startedAt, signal }) {
+  throwIfAborted(signal);
   // Skill proficiency is derived by the scoring logic downstream, so no separate
   // LLM analysis pass runs here — the generation ends at the section steps.
   const skillProfile = [];
   const techStack = null;
   const skillAnalysisError = null;
   const isBeta = Boolean(prep.isBeta ?? result.isBeta);
+  const dynamicCareerTitles = Boolean(
+    prep.dynamicCareerTitles ?? result.dynamicCareerTitles,
+  );
   const titlePolicyFingerprint = computeTitlePolicyFingerprint({
-    isBeta,
+    dynamicCareerTitles,
     jobDescription: body.jobDescription,
     careers: sourceCareers(body.identity),
     config: body,
@@ -366,16 +594,20 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
   let identitySyncedAt = cleanString(body.identitySyncedAt) || new Date().toISOString();
   try {
     const profile = await loadDecryptedAutoBidProfile(body.applierName);
+    throwIfAborted(signal);
     if (profile?.updatedAt) identitySyncedAt = cleanString(profile.updatedAt) || identitySyncedAt;
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) throw err;
     /* keep fallback */
   }
 
-  const generationId = await saveGenerationRun({
+  throwIfAborted(signal);
+	const generationId = await saveGenerationRun({
     applierName: cleanString(body.applierName) || null,
     provider: prep.providerId,
     model: prep.model,
     status: "completed",
+    backgroundTaskInputId: cleanString(body.backgroundTaskInputId) || null,
     config: configSnapshot(body),
     identity: body.identity ?? null,
     jobDescription: cleanString(body.jobDescription) || null,
@@ -388,6 +620,7 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
     analyzed: skillProfile.length > 0,
     analyzedAt: skillProfile.length > 0 ? new Date() : null,
     isBeta,
+    dynamicCareerTitles,
     titlePolicyVersion: TITLE_POLICY_VERSION,
     titlePolicyFingerprint,
     identitySyncedAt,
@@ -396,8 +629,9 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
     finishedAt: new Date(),
   });
 
+  throwIfAborted(signal);
   try {
-    await syncGeneratedResumeAfterRun({
+		await firestoreMutationLimiter.run(() => syncGeneratedResumeAfterRun({
       generationId,
       ownerName: cleanString(body.applierName),
       sections: result.sections,
@@ -410,9 +644,12 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
       titlePolicyFingerprint,
       titlePolicyVersion: TITLE_POLICY_VERSION,
       isBeta,
+      dynamicCareerTitles,
       identitySyncedAt,
-    });
+		}));
+    throwIfAborted(signal);
   } catch (syncErr) {
+    if (isAbortError(syncErr)) throw syncErr;
     console.warn("[resume-generate] library sync failed:", syncErr.message);
   }
 
@@ -423,6 +660,7 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
     skillAnalysisError,
     generationId,
     isBeta,
+    dynamicCareerTitles,
     titlePolicyFingerprint,
     titlePolicyVersion: TITLE_POLICY_VERSION,
   };
@@ -432,10 +670,11 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
 async function saveGenerationRun(doc) {
   try {
     if (resumeGenerationsCollection) {
-      const result = await resumeGenerationsCollection.insertOne(doc);
+			const result = await firestoreMutationLimiter.run(() => resumeGenerationsCollection.insertOne(doc));
       return result.insertedId;
     }
   } catch (err) {
+		if (err?.name === "AbortError") throw err;
     console.warn("[resume_generations] insert failed:", err.message);
   }
   return null;
@@ -446,6 +685,7 @@ function configSnapshot(body) {
     provider: body.provider,
     model: body.model,
     reasoningEffort: body.reasoningEffort ?? null,
+    dynamicCareerTitles: body.dynamicCareerTitles === true,
     templateId: body.templateId ?? null,
     template: body.template ?? null,
     theme: body.theme ?? null,
@@ -461,31 +701,19 @@ function configSnapshot(body) {
  * the run, returns the full result + usage.
  */
 export async function generateResume(req, res) {
-  const body = req.body || {};
-  const prep = await prepareGeneration(body);
-  if (!prep.ok) return res.status(prep.status).json({ success: false, error: prep.error });
-  const startedAt = new Date();
   try {
-    const result = await resumeGenLimiter.run(cleanString(body.applierName) || "anonymous", () =>
-      runGeneration({ ...prep, systemInstruction: body.systemInstruction, identity: body.identity, applierName: body.applierName, jobDescription: body.jobDescription, reasoningEffort: body.reasoningEffort }),
-    );
-    const finalized = await finalizeGenerationRun({ prep, body, result, startedAt });
-    return res.json({ success: true, provider: prep.providerId, model: prep.model, ...finalized });
+    const queued = await enqueueStoredResumeGeneration(req, req.body || {});
+    return res.status(queued.created ? 202 : 200).json({
+      success: true,
+      created: queued.created,
+      duplicate: queued.duplicate === true,
+      inputId: queued.inputId,
+      task: publicTaskSnapshot(queued.task),
+    });
   } catch (err) {
     const status = Number.isInteger(err?.status) ? err.status : 500;
-    const friendly = status === 429 ? `${err.message} — rate limited; wait a few seconds and try again.` : err.message;
-    console.warn(`POST /api/personal/resume-generate failed (${status}): ${err.message}`);
-    await saveGenerationRun({
-      applierName: cleanString(body.applierName) || null,
-      provider: prep.providerId,
-      model: prep.model,
-      status: "failed",
-      error: err.message,
-      config: configSnapshot(body),
-      startedAt,
-      finishedAt: new Date(),
-    });
-    return res.status(status === 429 ? 429 : 500).json({ success: false, error: friendly, status });
+    console.warn(`POST /api/personal/resume-generate enqueue failed (${status}): ${err.message}`);
+    return res.status(status).json({ success: false, error: err.message, status });
   }
 }
 
@@ -503,65 +731,89 @@ export async function generateResumeStream(req, res) {
     "X-Accel-Buffering": "no",
   });
   const send = (event, data) => {
+    if (res.destroyed || res.writableEnded) return;
     res.write(`event: ${event}\n`);
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  const prep = await prepareGeneration(body);
-  if (!prep.ok) {
-    send("error", { error: prep.error, status: prep.status });
-    return res.end();
-  }
-  send("start", { provider: prep.providerId, model: prep.model, total: prep.steps.length });
-
-  const startedAt = new Date();
+  let closed = false;
+  req.once("close", () => { closed = true; });
   try {
-    const result = await resumeGenLimiter.run(
-      cleanString(body.applierName) || "anonymous",
-      () =>
-        runGeneration(
-          { ...prep, systemInstruction: body.systemInstruction, identity: body.identity, applierName: body.applierName, jobDescription: body.jobDescription, reasoningEffort: body.reasoningEffort },
-          (evt) => send("step", evt),
-        ),
-      {
-        onQueued: async () => {
-          send("step", { phase: "queued", name: "Waiting for generation slot" });
-        },
-      },
-    );
-    const finalized = await finalizeGenerationRun({
-      prep,
-      body,
-      result,
-      startedAt,
-      onStep: (evt) => send("step", evt),
+    const queued = await enqueueStoredResumeGeneration(req, body);
+    send("start", {
+      taskId: queued.task.id,
+      inputId: queued.inputId,
+      total: Array.isArray(body.steps) ? body.steps.length : 0,
+      queued: true,
     });
-    send("done", {
-      provider: prep.providerId,
-      model: prep.model,
-      sections: finalized.sections,
-      usage: finalized.usage,
-      skillProfile: finalized.skillProfile,
-      techStack: finalized.techStack,
-      skillAnalysisError: finalized.skillAnalysisError,
-    });
+    let lastStep = "";
+    while (!closed) {
+      const task = await getBackgroundTask(queued.task.id);
+      if (!task) throw Object.assign(new Error("Background generation task was not found"), { status: 404 });
+      const item = task.progress?.items?.[queued.inputId];
+      const stepKey = JSON.stringify([item?.status, item?.stepRevision, item?.step]);
+      if (item && stepKey !== lastStep) {
+        lastStep = stepKey;
+        send("step", item.stepEvent || {
+          phase: item.status === "queued" ? "queued" : item.status,
+          name: item.step || "Generating résumé",
+        });
+      }
+      if (TERMINAL_TASK_STATUSES.has(task.status)) {
+        if (task.status === "completed" || task.status === "completed_with_errors") {
+          const input = await backgroundTaskInputsCollection.findOne({ _id: queued.inputId });
+          if (input?.status === "completed" && input.result) {
+            send("done", input.result);
+          } else {
+            send("error", { error: input?.error || "Resume generation did not produce a result", status: 500 });
+          }
+        } else {
+          send("error", {
+            error: task.status === "cancelled" ? "Resume generation cancelled" : task.error || "Resume generation failed",
+            status: task.status === "cancelled" ? 499 : 500,
+          });
+        }
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
   } catch (err) {
     const status = Number.isInteger(err?.status) ? err.status : 500;
-    const friendly = status === 429 ? `${err.message} — rate limited; wait a few seconds and try again.` : err.message;
-    console.warn(`stream resume-generate failed (${status}): ${err.message}`);
-    await saveGenerationRun({
-      applierName: cleanString(body.applierName) || null,
-      provider: prep.providerId,
-      model: prep.model,
-      status: "failed",
-      error: err.message,
-      config: configSnapshot(body),
-      startedAt,
-      finishedAt: new Date(),
-    });
-    send("error", { error: friendly, status });
+    if (!closed) {
+      console.warn(`stream resume-generate failed (${status}): ${err.message}`);
+      send("error", { error: err.message, status });
+    }
+  } finally {
+    if (!res.destroyed && !res.writableEnded) res.end();
   }
-  res.end();
+}
+
+/** Fetch generated/partial editor output without putting résumé content in Redis. */
+export async function getResumeGenerationTaskResult(req, res) {
+  try {
+    if (!backgroundTaskInputsCollection) return res.status(503).json({ success: false, error: "Database not ready" });
+    const input = await backgroundTaskInputsCollection.findOne({ _id: cleanString(req.params.inputId) });
+    if (!input) return res.status(404).json({ success: false, error: "Resume generation input not found" });
+    const uid = cleanString(req.auth?.uid);
+    const applierName = cleanString(req.authProfile?.profileName || req.authProfile?.applierName || req.query?.applierName);
+    if (input.ownerUid && input.ownerUid !== uid) {
+      return res.status(403).json({ success: false, error: "Resume generation access denied" });
+    }
+    if (!input.ownerUid && applierName && applierName.toLocaleLowerCase("en-US") !== String(input.applierName || "").toLocaleLowerCase("en-US")) {
+      return res.status(403).json({ success: false, error: "Resume generation access denied" });
+    }
+    return res.status(input.status === "completed" || input.status === "failed" ? 200 : 202).json({
+      success: input.status !== "failed",
+      inputId: String(input._id),
+      status: input.status,
+      partialSections: input.partialSections || {},
+      result: input.result || null,
+      error: input.error || null,
+      updatedAt: input.updatedAt || null,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
 }
 
 /** GET /personal/resume-generator/config?applierName= — load saved config. */
@@ -897,15 +1149,25 @@ export async function deleteGeneration(req, res) {
 
 /** GET /personal/agent-job-resume/:jobId/pdf?applierName= — stream on-disk draft PDF for Agent preview. */
 export async function getAgentJobResumePdf(req, res) {
+	const requestAbort = bindRequestAbort(req, res, "PDF request disconnected");
   try {
     const applierName = cleanString(req.query?.applierName);
     const jobId = cleanString(req.params?.jobId);
     if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
     if (!jobId) return res.status(400).json({ success: false, error: "jobId is required" });
 
-    const { resolveAgentJobDraftPdf } = await import("../services/agentResumeGenService.js");
-    const draft = await resolveAgentJobDraftPdf({ applierName, jobId });
-    if (!draft?.buffer?.length) {
+		const draft = await renderResumePdfInBackgroundLane({
+			taskId: `interactive-${randomUUID()}`,
+			profileId: cleanString(req.authProfile?.profileId)
+				|| String((await accountInfoCollection?.findOne(
+					{ name: applierName },
+					{ projection: { _id: 1 } },
+				))?._id || ''),
+			jobId,
+			signal: requestAbort.signal,
+		});
+		const buffer = draft?.draftPath ? await readAgentDraftPath(draft.draftPath) : null;
+    if (!buffer?.length) {
       return res.status(404).json({ success: false, error: "No draft PDF for this job yet — generate résumé first" });
     }
 
@@ -924,10 +1186,14 @@ export async function getAgentJobResumePdf(req, res) {
     const safeName = String(displayName).replace(/[^\w.\-()+ ]+/g, "_").trim() || "resume";
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${safeName}.pdf"`);
-    return res.end(draft.buffer);
+    return res.end(buffer);
   } catch (err) {
+		if (isAbortError(err) && requestAbort.signal.aborted) return;
     console.warn("GET /api/personal/agent-job-resume/:jobId/pdf error:", err.message);
-    return res.status(500).json({ success: false, error: err.message });
+		const status = Number.isInteger(err?.status) ? err.status : 500;
+		return res.status(status).json({ success: false, error: err.message });
+	} finally {
+		requestAbort.cleanup();
   }
 }
 
@@ -957,17 +1223,80 @@ export async function getAgentJobResumesStatus(req, res) {
  */
 export async function deleteAgentJobResumesHandler(req, res) {
   try {
-    const applierName = cleanString(req.body?.applierName);
-    const jobIds = Array.isArray(req.body?.jobIds) ? req.body.jobIds : [];
-    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
-    if (!jobIds.length) return res.status(400).json({ success: false, error: "jobIds is required" });
-
-    const { deleteAgentJobResumes } = await import("../services/agentResumeGenService.js");
-    const result = await deleteAgentJobResumes(applierName, jobIds);
-    return res.json({ success: true, ...result });
+    const queued = await enqueueAgentResumeRemoval(req, req.body || {});
+    return res.status(queued.created ? 202 : 200).json({
+      success: true,
+      created: queued.created,
+      task: publicTaskSnapshot(queued.task),
+    });
   } catch (err) {
+    const status = Number.isInteger(err?.status) ? err.status : 500;
     console.warn("POST /api/personal/agent-job-resumes/delete error:", err.message);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(status).json({ success: false, error: err.message });
+  }
+}
+
+/**
+ * POST /personal/agent-job-resumes/delete/stream — remove generated résumés
+ * while streaming per-job progress to the Job Search bulk action bar.
+ */
+export async function deleteAgentJobResumesStreamHandler(req, res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event, data) => {
+    if (res.destroyed || res.writableEnded) return;
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  let closed = false;
+  req.once("close", () => { closed = true; });
+  try {
+    const queued = await enqueueAgentResumeRemoval(req, req.body || {});
+    let lastProgress = "";
+    while (!closed) {
+      const task = await getBackgroundTask(queued.task.id);
+      if (!task) throw Object.assign(new Error("Background removal task was not found"), { status: 404 });
+      const progress = task.progress || {};
+      const progressKey = JSON.stringify(progress);
+      if (progressKey !== lastProgress) {
+        lastProgress = progressKey;
+        send("progress", {
+          phase: progress.phase || task.status,
+          done: progress.completed || 0,
+          total: progress.total || 0,
+          left: progress.remaining || 0,
+          active: progress.active || 0,
+          failed: progress.failed || 0,
+        });
+      }
+      if (TERMINAL_TASK_STATUSES.has(task.status)) {
+        if (task.status === "completed" || task.status === "completed_with_errors") {
+          send("done", { success: true, ...(task.result || {}) });
+        } else {
+          send("error", {
+            error: task.status === "cancelled" ? "Resume removal cancelled" : task.error || "Resume removal failed",
+            status: task.status === "cancelled" ? 499 : 500,
+          });
+        }
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  } catch (err) {
+    if (!closed) {
+      const status = Number.isInteger(err?.status) ? err.status : 500;
+      console.warn(
+        `POST /api/personal/agent-job-resumes/delete/stream failed (${status}): ${err.message}`,
+      );
+      send("error", { error: err.message, status });
+    }
+  } finally {
+    if (!res.destroyed && !res.writableEnded) res.end();
   }
 }
 
@@ -981,65 +1310,75 @@ export async function generateResumeForAgentJobStream(req, res) {
     "X-Accel-Buffering": "no",
   });
   const send = (event, data) => {
+    if (res.destroyed || res.writableEnded) return;
     res.write(`event: ${event}\n`);
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
+  let closed = false;
+  req.once("close", () => { closed = true; });
   try {
-    const applierName = cleanString(body.applierName);
+    const queued = await enqueueAgentResumeGeneration(req, body);
     const jobId = cleanString(body.jobId);
-    const jobDescription = cleanString(body.jobDescription);
-    if (!applierName) {
-      send("error", { error: "applierName is required" });
-      return res.end();
+    send("start", { taskId: queued.task.id, jobId, queued: true });
+    let lastStep = "";
+    while (!closed) {
+      const task = await getBackgroundTask(queued.task.id);
+      if (!task) throw Object.assign(new Error("Background generation task was not found"), { status: 404 });
+      const item = task.progress?.items?.[jobId];
+      const stepKey = JSON.stringify([item?.status, item?.step]);
+      if (item && stepKey !== lastStep) {
+        lastStep = stepKey;
+        send("step", {
+          phase: item.status === "queued" ? "queued" : item.status,
+          name: item.step || "Generating résumé",
+        });
+      }
+      if (TERMINAL_TASK_STATUSES.has(task.status)) {
+        if ((task.status === "completed" || task.status === "completed_with_errors") && item?.status === "completed") {
+          let pdf = null;
+          if (!body.deferPdf) {
+						const path = cleanString(item.resumePdfPath);
+						if (!path) throw new Error("Background PDF render did not return a draft path");
+						const buffer = await readAgentDraftPath(path);
+						if (!buffer?.length) throw new Error("Background PDF render returned an empty draft");
+						pdf = { buffer, draftPath: path };
+          }
+          send("done", {
+            ...item,
+            pdfBase64: pdf?.buffer?.toString("base64") || "",
+            resumePdfPath: pdf?.draftPath || item.resumePdfPath || null,
+          });
+        } else {
+          send("error", {
+            error: item?.error || (task.status === "cancelled" ? "Resume generation cancelled" : task.error || "Resume generation failed"),
+            status: task.status === "cancelled" ? 499 : 500,
+          });
+        }
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
-    if (!jobId) {
-      send("error", { error: "jobId is required" });
-      return res.end();
-    }
-    if (!jobDescription) {
-      send("error", { error: "jobDescription is required" });
-      return res.end();
-    }
-
-    const { ensureAgentJobResume } = await import("../services/agentResumeGenService.js");
-    const result = await ensureAgentJobResume({
-      applierName,
-      jobId,
-      jobDescription,
-      forceRegenerate: Boolean(body.forceRegenerate),
-      deferPdf: Boolean(body.deferPdf),
-      onStep: (evt) => send("step", evt),
-    });
-    send("done", result);
   } catch (err) {
-    const status = Number.isInteger(err?.status) ? err.status : 500;
-    console.warn(`POST /api/personal/resume-generate/for-agent-job/stream failed (${status}): ${err.message}`);
-    send("error", { error: err.message, status });
+    if (!closed) {
+      const status = Number.isInteger(err?.status) ? err.status : 500;
+      console.warn(`POST /api/personal/resume-generate/for-agent-job/stream failed (${status}): ${err.message}`);
+      send("error", { error: err.message, status });
+    }
+  } finally {
+    if (!res.destroyed && !res.writableEnded) res.end();
   }
-  res.end();
 }
 
 /** POST /personal/resume-generate/for-agent-job — agent autobid per-job resume (reuse or generate). */
 export async function generateResumeForAgentJob(req, res) {
   try {
-    const body = req.body || {};
-    const applierName = cleanString(body.applierName);
-    const jobId = cleanString(body.jobId);
-    const jobDescription = cleanString(body.jobDescription);
-    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
-    if (!jobId) return res.status(400).json({ success: false, error: "jobId is required" });
-    if (!jobDescription) return res.status(400).json({ success: false, error: "jobDescription is required" });
-
-    const { ensureAgentJobResume } = await import("../services/agentResumeGenService.js");
-    const result = await ensureAgentJobResume({
-      applierName,
-      jobId,
-      jobDescription,
-      forceRegenerate: Boolean(body.forceRegenerate),
-      deferPdf: Boolean(body.deferPdf),
+    const queued = await enqueueAgentResumeGeneration(req, req.body || {});
+    return res.status(queued.created ? 202 : 200).json({
+      success: true,
+      created: queued.created,
+      task: publicTaskSnapshot(queued.task),
     });
-    return res.json({ success: true, ...result });
   } catch (err) {
     const status = Number.isInteger(err?.status) ? err.status : 500;
     console.warn(`POST /api/personal/resume-generate/for-agent-job failed (${status}): ${err.message}`);
@@ -1057,11 +1396,12 @@ export async function generateResumeForAgentJob(req, res) {
  */
 export async function refreshGeneratedResumesIdentityHandler(req, res) {
   try {
-    const applierName = cleanString(req.body?.applierName);
-    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
-    const { refreshGeneratedResumesIdentity } = await import("../services/refreshGeneratedResumesIdentity.js");
-    const result = await refreshGeneratedResumesIdentity(applierName);
-    return res.json({ success: true, ...result });
+		const queued = await enqueueResumeIdentityRefresh(req, req.body || {});
+		return res.status(queued.created ? 202 : 200).json({
+			success: true,
+			created: queued.created,
+			task: publicTaskSnapshot(queued.task),
+		});
   } catch (err) {
     const status = Number.isInteger(err?.status) ? err.status : 500;
     console.warn(`POST /api/personal/resume-generations/refresh-identity failed (${status}): ${err.message}`);
@@ -1078,7 +1418,6 @@ export async function refreshGeneratedResumesIdentityHandler(req, res) {
  * (done / left / active) while bulk-updating generated résumés.
  */
 export async function refreshGeneratedResumesIdentityStreamHandler(req, res) {
-  const applierName = cleanString(req.body?.applierName);
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache, no-transform",
@@ -1090,27 +1429,56 @@ export async function refreshGeneratedResumesIdentityStreamHandler(req, res) {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  if (!applierName) {
-    send("error", { error: "applierName is required", status: 400 });
-    return res.end();
-  }
-
+	let closed = false;
+	req.once("close", () => { closed = true; });
   try {
-    const { refreshGeneratedResumesIdentity } = await import("../services/refreshGeneratedResumesIdentity.js");
-    const result = await refreshGeneratedResumesIdentity(applierName, {
-      onProgress: (evt) => send("progress", evt),
-    });
-    send("done", { success: true, ...result });
+		const queued = await enqueueResumeIdentityRefresh(req, req.body || {});
+		let lastProgress = "";
+		while (!closed) {
+			const task = await getBackgroundTask(queued.task.id);
+			if (!task) throw Object.assign(new Error("Background refresh task was not found"), { status: 404 });
+			const progress = task.progress || {};
+			const progressKey = JSON.stringify(progress);
+			if (progressKey !== lastProgress) {
+				lastProgress = progressKey;
+				send("progress", {
+					phase: progress.phase || task.status,
+					done: progress.completed || 0,
+					total: progress.total || 0,
+					left: progress.remaining || 0,
+					active: progress.active || 0,
+					updated: progress.updated || 0,
+					pdfs: progress.pdfs || 0,
+					skipped: progress.skipped || 0,
+					failed: progress.failed || 0,
+					alreadyCurrent: progress.alreadyCurrent || 0,
+					profileUpdatedAt: progress.profileUpdatedAt || null,
+					resumeUpdatedAt: progress.resumeUpdatedAt || null,
+				});
+			}
+			if (TERMINAL_TASK_STATUSES.has(task.status)) {
+				if (task.status === "completed" || task.status === "completed_with_errors") {
+					send("done", { success: true, ...(task.result || {}) });
+				} else {
+					send("error", {
+						error: task.status === "cancelled" ? "Résumé refresh cancelled" : task.error || "Résumé refresh failed",
+						status: task.status === "cancelled" ? 499 : 500,
+					});
+				}
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 300));
+		}
   } catch (err) {
     const status = Number.isInteger(err?.status) ? err.status : 500;
     console.warn(
       `POST /api/personal/resume-generations/refresh-identity/stream failed (${status}): ${err.message}`,
     );
-    send("error", {
+		if (!closed) send("error", {
       error: err.message,
       status,
       ...(err.betaRequired ? { betaRequired: true } : {}),
     });
   }
-  res.end();
+	if (!res.destroyed && !res.writableEnded) res.end();
 }

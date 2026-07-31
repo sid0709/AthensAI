@@ -5,6 +5,11 @@ import { useApi } from "@/api/useApi";
 import { API_BASE } from "@/lib/api-base";
 import { retryTransient } from "@/lib/transient-retry";
 import { useApplier } from "@/context/applier-context";
+import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
+import {
+  enqueueResumeGenerationRequest,
+  getResumeGenerationTaskResult,
+} from "@/app/api/backgroundTasks";
 import { buildResumeModel } from "../build-resume-model";
 import { templateById } from "../constants/templates";
 import {
@@ -17,9 +22,8 @@ import {
   fontStack,
 } from "../constants/defaults";
 import { JOB_DESC_TOKEN } from "../constants/tokens";
-import { normalizeGenerated, mergeGeneratedSection } from "../utils/content";
+import { mergeGeneratedSection, normalizeGenerated } from "../utils/content";
 import { identityFromProfile, isValidJson, storageKey } from "../utils/identity";
-import { streamSSE } from "../utils/sse";
 import {
   deleteResumeTemplate,
   fetchResumeTemplates,
@@ -66,6 +70,7 @@ export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
 export function useGeneratorPage() {
   const { get, put } = useApi(API_BASE);
   const { applier } = useApplier();
+  const { tasks: backgroundTasks, adoptTask, cancelTask, waitForTask } = useBackgroundTasks();
   const { notify } = useNotify();
 
   const [config, setConfig] = useState<GeneratorConfig>(defaultConfig);
@@ -97,6 +102,18 @@ export function useGeneratorPage() {
   // would overwrite the just-loaded run. Reset on a genuine applier change so
   // normal config restore still works after switching accounts.
   const externalLoadRef = useRef(false);
+	const restoredRevisions = useRef(new Map<string, number>());
+	const terminalHandled = useRef(new Set<string>());
+	const restorationInFlight = useRef(new Set<string>());
+	const editorGenerationTask = backgroundTasks
+		.filter((candidate) => candidate.type === "resume_generation"
+			&& candidate.progress?.operation === "editor_generation")
+		.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0] || null;
+	const activeEditorGenerationTask = editorGenerationTask
+		&& ["queued", "running", "cancelling"].includes(editorGenerationTask.status)
+		? editorGenerationTask
+		: null;
+	const stopping = activeEditorGenerationTask?.status === "cancelling";
   // Track which applier owns the hydrated config. A boolean can remain true for
   // one render after an applier switch and persist the previous user's config.
   const configOwnerKey = applier?.name ?? "default";
@@ -131,6 +148,25 @@ export function useGeneratorPage() {
       state.inFlight = false;
     }
   }, [put]);
+
+  // This preference affects server-driven Job Search and Agent runs, so persist
+  // it immediately instead of waiting for the general editor debounce. That
+  // keeps a quick navigation away from the Editor from cancelling the change.
+  const setDynamicCareerTitles = useCallback((enabled: boolean) => {
+    const next = { ...config, dynamicCareerTitles: enabled };
+    setConfig(next);
+    try {
+      localStorage.setItem(storageKey(applier?.name), JSON.stringify(next));
+    } catch {
+      /* storage unavailable */
+    }
+
+    const applierName = applier?.name;
+    if (!applierName || configHydratedFor !== configOwnerKey) return;
+    const key = `${applierName}\u0000${JSON.stringify(next)}`;
+    configSaveRef.current.queued = { applierName, config: next, key };
+    void flushConfigSave();
+  }, [applier?.name, config, configHydratedFor, configOwnerKey, flushConfigSave]);
 
   // Reference tokens a prompt can use, resolved from the JD + profile careers.
   // Mirrors the backend substitution in resumeGenController so the chip previews
@@ -643,6 +679,7 @@ export function useGeneratorPage() {
       provider: config.provider,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      dynamicCareerTitles: config.dynamicCareerTitles,
       templateId: config.templateId,
       template: { columns: template.columns, sidebar: template.sidebar, heading: template.heading, headingAlign: template.headingAlign },
       theme: config.theme,
@@ -654,6 +691,69 @@ export function useGeneratorPage() {
     }),
     [applier?.name, config, identity, plan, template],
   );
+
+	useEffect(() => {
+		if (!applier?.name) return;
+		const task = editorGenerationTask;
+		if (!task) return;
+		const inputId = String(task.progress?.inputId || "");
+		if (!inputId) return;
+		const item = task.progress?.items?.[inputId];
+		const active = ["queued", "running", "cancelling"].includes(task.status);
+		if (active) {
+			setGenerating(true);
+			setGenProgress((current) => current || { steps: [], cumulative: null, done: false });
+		}
+
+		const revision = Number(item?.stepRevision ?? 0);
+		const terminal = ["completed", "completed_with_errors", "failed", "cancelled"].includes(task.status);
+		const previousRevision = restoredRevisions.current.get(task.id) ?? -1;
+		const shouldReadPartial = active && revision > previousRevision;
+		const shouldReadTerminal = terminal && !terminalHandled.current.has(task.id);
+		if (!shouldReadPartial && !shouldReadTerminal) return;
+
+		if (shouldReadTerminal && (task.status === "failed" || task.status === "cancelled")) {
+			terminalHandled.current.add(task.id);
+			setGenerating(false);
+			notify({
+				title: task.status === "cancelled" ? "Generation cancelled" : "Generation failed",
+				description: task.error || "The background generation did not complete.",
+				tone: task.status === "cancelled" ? "warning" : "error",
+			});
+			return;
+		}
+
+		const readKey = `${task.id}:${terminal ? task.status : revision}`;
+		if (restorationInFlight.current.has(readKey)) return;
+		restorationInFlight.current.add(readKey);
+		if (shouldReadPartial) restoredRevisions.current.set(task.id, revision);
+		if (shouldReadTerminal) terminalHandled.current.add(task.id);
+		void getResumeGenerationTaskResult(inputId, applier.name)
+			.then((stored) => {
+				const sections = (stored.result?.sections || stored.partialSections || {}) as Record<string, unknown>;
+				if (stored.result?.sections) {
+					setGenerated(normalizeGenerated(sections));
+				} else if (Object.keys(sections).length) {
+					setGenerated((current) => Object.entries(sections).reduce(
+						(next, [purpose, output]) => mergeGeneratedSection(next, purpose, output),
+						current,
+					));
+				}
+				if (stored.result?.usage) setUsage(stored.result.usage as UsageBreakdown);
+				if (shouldReadTerminal) {
+					setGenerating(false);
+					setGenProgress({
+						steps: [],
+						cumulative: (stored.result?.usage as UsageBreakdown) ?? null,
+						done: true,
+					});
+				}
+			})
+			.catch(() => {
+				if (shouldReadTerminal) terminalHandled.current.delete(task.id);
+			})
+			.finally(() => restorationInFlight.current.delete(readKey));
+	}, [applier?.name, editorGenerationTask, notify]);
 
   // Download a full JSON trace of the generation: config, resolved prompts,
   // per-step model output + token/cost, totals, and the assembled sections.
@@ -733,63 +833,62 @@ export function useGeneratorPage() {
     setUsage(null);
     setGenerated(null);
     setGenProgress({ steps: [], cumulative: null, done: false });
-    let failed = false;
     try {
-      await streamSSE(`${API_BASE}/personal/resume-generate/stream`, requestPayload, (event, data) => {
-        if (event === "step") {
-          if (data.phase === "step-start") {
-            setGenProgress((p) => ({
-              steps: [
-                ...(p?.steps ?? []),
-                { index: data.index as number, name: String(data.name), purpose: String(data.purpose), kind: String(data.kind), status: "running" },
-              ],
-              cumulative: p?.cumulative ?? null,
-              done: false,
-            }));
-          } else if (data.phase === "step-done") {
-            setGenProgress((p) => ({
-              steps: (p?.steps ?? []).map((s) =>
-                s.index === data.index ? { ...s, status: "done", usage: data.usage as UsageBreakdown, output: data.output } : s,
-              ),
-              cumulative: (data.cumulative as UsageBreakdown) ?? p?.cumulative ?? null,
-              done: false,
-            }));
-            // Update the preview section the moment its FINAL step finishes —
-            // experience can render before skills/summary are even started.
-            if (data.kind === "final" && data.output != null) {
-              setGenerated((prev) => mergeGeneratedSection(prev, String(data.purpose), data.output));
-            }
-          }
-        } else if (event === "done") {
-          setUsage((data.usage as UsageBreakdown) ?? null);
-          setGenerated(normalizeGenerated(data.sections as Record<string, unknown> | undefined));
-          setGenProgress((p) => (p ? { ...p, cumulative: (data.usage as UsageBreakdown) ?? p.cumulative, done: true } : p));
-          notify({ title: "Resume generated", description: "Result is shown in the live preview.", tone: "success" });
-        } else if (event === "error") {
-          failed = true;
-          const status = data.status as number | undefined;
-          notify({
-            title: status === 429 ? "Rate limited" : "Generation failed",
-            description: String(data.error || "Generation failed — see backend logs."),
-            tone: status === 429 ? "warning" : "error",
-          });
-        }
+      const queued = await enqueueResumeGenerationRequest(requestPayload);
+      adoptTask(queued.task);
+      setGenProgress({
+        steps: [],
+        cumulative: null,
+        done: false,
       });
-    } catch {
-      if (!failed) notify({ title: "Generation failed", description: "Lost connection to the backend stream.", tone: "error" });
+      const terminal = await waitForTask(queued.task.id);
+			terminalHandled.current.add(queued.task.id);
+      if (terminal.status === "failed" || terminal.status === "completed_with_errors") {
+        throw new Error(terminal.error || "Resume generation failed");
+      }
+      if (terminal.status === "cancelled") throw new Error("Resume generation cancelled");
+      const stored = await getResumeGenerationTaskResult(queued.inputId, applier.name);
+      if (!stored.result) throw new Error(stored.error || "Resume generation did not produce a result");
+      const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
+      setUsage(nextUsage);
+      setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
+      setGenProgress({ steps: [], cumulative: nextUsage, done: true });
+      notify({ title: "Resume generated", description: "Result is shown in the live preview.", tone: "success" });
+    } catch (error) {
+      notify({
+        title: "Generation failed",
+        description: error instanceof Error ? error.message : "Generation failed — see backend logs.",
+        tone: "error",
+      });
     } finally {
       setGenerating(false);
     }
   };
 
+	const handleCancelGeneration = async () => {
+		if (!activeEditorGenerationTask) return;
+		try {
+			await cancelTask(activeEditorGenerationTask.id);
+			notify({ title: "Stopping generation…", description: "No new model step will start.", tone: "warning" });
+		} catch (error) {
+			notify({
+				title: "Could not stop generation",
+				description: error instanceof Error ? error.message : "Cancellation failed.",
+				tone: "error",
+			});
+		}
+	};
+
   return {
     applier,
     config,
     setConfig,
+    setDynamicCareerTitles,
     identity,
     setIdentity,
     loadingProfile,
     generating,
+    stopping,
     planJson,
     setPlanJson,
     models,
@@ -841,6 +940,7 @@ export function useGeneratorPage() {
     handleDownloadLog,
     handlePreviewEdit,
     handleGenerate,
+    handleCancelGeneration,
     applyRun,
   };
 }

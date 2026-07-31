@@ -6,6 +6,7 @@ import { jobListReadModelTest } from './jobListReadModelService.js';
 const {
   buildEntry,
   buildSourceFacets,
+  companyJobIds,
   companyMemberPage,
   finalizeSnapshot,
   groupedJobPage,
@@ -38,6 +39,7 @@ test('legacy jobs derive a stable company identity without a database migration'
   assert.equal(groups.length, 1);
   assert.match(groups[0].companyId, /^cmp_/);
   assert.deepEqual(groups[0].memberJobIds, ['legacy-1', 'legacy-2']);
+  assert.deepEqual(companyJobIds(snapshot, groups[0].companyId), ['legacy-1', 'legacy-2']);
 });
 
 test('grouped pages paginate companies while retaining the matching job total', () => {
@@ -163,6 +165,7 @@ function payload(jobId, overrides = {}) {
     companyId: 'acme',
     source: 'LinkedIn',
     postedAt: '2026-07-01T00:00:00.000Z',
+    titleReviewLabel: 'APPROVED',
     aiSkills: Array.from({ length: 12 }, (_, index) => ({
       name: `Skill ${index + 1}`,
       category: 'hard',
@@ -204,7 +207,7 @@ test('filters operate entirely on the compact in-memory projection', () => {
   const entry = buildEntry(payload('job-1', {
     companyTags: ['Software'],
     seniority: ['Senior'],
-    titleRoles: ['Software Engineer'],
+    titleReviewLabel: 'APPROVED',
   }));
   const account = { isBeta: true };
   assert.equal(matchesEntry(entry, {
@@ -215,20 +218,22 @@ test('filters operate entirely on the compact in-memory projection', () => {
     'details.time': 'Full-time',
     'details.seniority': 'Senior',
     'company.tags': 'Software',
-    titleScanned: 'Software Engineer',
     jobSources: 'LinkedIn',
   }, account), true);
   assert.equal(matchesEntry(entry, { q: 'nurse', jobSources: 'LinkedIn' }, account), false);
 });
 
-test('unscanned jobs use a deterministic title-role fallback', () => {
-  const software = buildEntry(payload('software', { title: 'Java Full Stack Developer' }));
-  const platform = buildEntry(payload('platform', { title: 'Senior Platform Engineer' }));
+test('only approved jobs are visible after title-review gating', () => {
+  const unprocessed = buildEntry(payload('unprocessed', {
+    title: 'Java Full Stack Developer',
+    titleReviewLabel: undefined,
+  }));
+  const approved = buildEntry(payload('approved', { titleReviewLabel: 'APPROVED' }));
+  const quarantined = buildEntry(payload('quarantined', { titleReviewLabel: 'REVIEW_REQUIRED' }));
   const account = { isBeta: true };
-  assert.deepEqual(software.titleRoles, ['Software Engineer']);
-  assert.deepEqual(platform.titleRoles, ['DevOps']);
-  assert.equal(matchesEntry(software, { titleScanned: 'Software Engineer' }, account), true);
-  assert.equal(matchesEntry(software, { titleScanned: 'DevOps' }, account), false);
+  assert.equal(matchesEntry(unprocessed, {}, account), false);
+  assert.equal(matchesEntry(approved, {}, account), true);
+  assert.equal(matchesEntry(quarantined, {}, account), false);
 });
 
 test('status changes overlay a cached catalog ordering without rebuilding it', () => {

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api-base";
 import { useApplier } from "@/context/applier-context";
+import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
+import {
+  enqueueResumeGenerationRequest,
+  getResumeGenerationTaskResult,
+} from "@/app/api/backgroundTasks";
 import { createDefaultEditorDraft } from "../../../data/resumes/seedDocument";
 import { fetchAutoBidProfile } from "../../../services/profileApi";
 import {
@@ -20,10 +25,10 @@ import {
 } from "../lib/generatorDefaults";
 import { generatorStorageKey, identityFromProfile } from "../lib/identityFromProfile";
 import { sectionsToDocument } from "../lib/sectionsToDocument";
-import { streamSSE } from "../lib/sse";
 
 export function useResumeEditor() {
   const { applier, applierReady } = useApplier();
+  const { tasks: backgroundTasks, adoptTask, cancelTask, waitForTask } = useBackgroundTasks();
   const [draft, setDraft] = useState<EditorDraft | null>(null);
   const [generatorIdentity, setGeneratorIdentity] = useState<GeneratorIdentity | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +39,18 @@ export function useResumeEditor() {
   const [usage, setUsage] = useState<{ totalTokens?: number; cost?: number } | null>(null);
   const [generatedSections, setGeneratedSections] = useState<Partial<Record<SectionId, boolean>>>({});
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const restoredRevisions = useRef(new Map<string, number>());
+	const terminalHandled = useRef(new Set<string>());
+	const restorationInFlight = useRef(new Set<string>());
+	const editorGenerationTask = backgroundTasks
+		.filter((candidate) => candidate.type === "resume_generation"
+			&& candidate.progress?.operation === "editor_generation")
+		.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0] || null;
+	const activeEditorGenerationTask = editorGenerationTask
+		&& ["queued", "running", "cancelling"].includes(editorGenerationTask.status)
+		? editorGenerationTask
+		: null;
+	const stopping = activeEditorGenerationTask?.status === "cancelling";
 
   const persist = useCallback(async (next: EditorDraft) => {
     setDraft(next);
@@ -161,6 +178,64 @@ export function useResumeEditor() {
     };
   }, [draft, applier?.name]);
 
+	useEffect(() => {
+		if (!draft || !applier?.name) return;
+		const task = editorGenerationTask;
+		if (!task) return;
+		const inputId = String(task.progress?.inputId || "");
+		if (!inputId) return;
+		const item = task.progress?.items?.[inputId];
+		const active = ["queued", "running", "cancelling"].includes(task.status);
+		setGenerating(active);
+		setGenerateStep(active
+			? String(item?.step || (task.status === "cancelling" ? "Stopping…" : "Queued in background…"))
+			: null);
+
+		const revision = Number(item?.stepRevision ?? 0);
+		const terminal = ["completed", "completed_with_errors", "failed", "cancelled"].includes(task.status);
+		const previousRevision = restoredRevisions.current.get(task.id) ?? -1;
+		const shouldReadPartial = active && revision > previousRevision;
+		const shouldReadTerminal = terminal && !terminalHandled.current.has(task.id);
+		if (!shouldReadPartial && !shouldReadTerminal) return;
+		const readKey = `${task.id}:${terminal ? task.status : revision}`;
+		if (restorationInFlight.current.has(readKey)) return;
+		restorationInFlight.current.add(readKey);
+		if (shouldReadPartial) restoredRevisions.current.set(task.id, revision);
+		if (shouldReadTerminal) terminalHandled.current.add(task.id);
+		void getResumeGenerationTaskResult(inputId, applier.name)
+			.then(async (stored) => {
+				const sections = (stored.result?.sections || stored.partialSections || {}) as Record<string, unknown>;
+				if (Object.keys(sections).length) {
+					const identity = draft.generatorIdentity ?? generatorIdentity;
+					if (identity) {
+						const document = sectionsToDocument(
+							sections as Parameters<typeof sectionsToDocument>[0],
+							identity,
+							draft.document,
+						);
+						await persist({ ...draft, document, generatorIdentity: identity });
+					}
+					setGeneratedSections({
+						summary: Boolean(sections.summary),
+						skills: Boolean(sections.skills),
+						experience: Boolean(sections.experience),
+					});
+				}
+				if (stored.result?.usage) {
+					setUsage(stored.result.usage as { totalTokens?: number; cost?: number });
+				}
+			})
+			.catch(() => {
+				if (shouldReadTerminal) terminalHandled.current.delete(task.id);
+			})
+			.finally(() => restorationInFlight.current.delete(readKey));
+	}, [applier?.name, draft, editorGenerationTask, generatorIdentity, persist]);
+
+	const cancelGeneration = useCallback(async () => {
+		if (!activeEditorGenerationTask) return;
+		await cancelTask(activeEditorGenerationTask.id);
+	}, [activeEditorGenerationTask, cancelTask]);
+
   const updateDraft = useCallback(
     (patch: Partial<EditorDraft>) => {
       if (!draft) return;
@@ -225,6 +300,7 @@ export function useResumeEditor() {
       provider: draft.provider,
       model: draft.model,
       reasoningEffort: draft.reasoningEffort === "default" ? undefined : draft.reasoningEffort,
+      dynamicCareerTitles: draft.dynamicCareerTitles === true,
       templateId: resolveTemplateId(draft.templateId),
       template: { layout: draft.templateId },
       theme: draft.theme,
@@ -241,35 +317,20 @@ export function useResumeEditor() {
     };
 
     try {
-      let sections: Record<string, unknown> = {};
-      await streamSSE(`${API_BASE.replace(/\/$/, "")}/personal/resume-generate/stream`, payload, (event, data) => {
-        if (event === "step") {
-          const phase = data.phase as string;
-          const name = data.name as string;
-          const purpose = data.purpose as SectionId | undefined;
-          if (phase === "step-start") setGenerateStep(`Running: ${name}…`);
-          if (phase === "step-done") {
-            if (data.cumulative) setUsage(data.cumulative as { totalTokens?: number; cost?: number });
-            if (purpose && data.output && (purpose === "summary" || purpose === "skills" || purpose === "experience")) {
-              sections = { ...sections, [purpose]: data.output };
-              setGeneratedSections((prev) => ({ ...prev, [purpose]: true }));
-              const document = sectionsToDocument(
-                sections as Parameters<typeof sectionsToDocument>[0],
-                identity,
-                draft.document,
-              );
-              setDraft((prev) => (prev ? { ...prev, document, generatorIdentity: identity } : prev));
-            }
-          }
-        }
-        if (event === "done") {
-          sections = (data.sections as Record<string, unknown>) ?? sections;
-          if (data.usage) setUsage(data.usage as { totalTokens?: number; cost?: number });
-        }
-        if (event === "error") {
-          throw new Error(String(data.error ?? "Generation failed"));
-        }
-      });
+      const queued = await enqueueResumeGenerationRequest(payload);
+      adoptTask(queued.task);
+      setGenerateStep("Queued in background…");
+      const terminal = await waitForTask(queued.task.id);
+      if (terminal.status === "failed" || terminal.status === "completed_with_errors") {
+        throw new Error(terminal.error || "Generation failed");
+      }
+      if (terminal.status === "cancelled") throw new Error("Generation cancelled");
+			terminalHandled.current.add(queued.task.id);
+      const stored = await getResumeGenerationTaskResult(queued.inputId, applier.name);
+      if (!stored.result) throw new Error(stored.error || "Generation did not produce a result");
+      const sections = (stored.result.sections as Record<string, unknown>) || {};
+      if (stored.result.usage) setUsage(stored.result.usage as { totalTokens?: number; cost?: number });
+      setGeneratedSections({ summary: true, skills: true, experience: true });
 
       const document = sectionsToDocument(sections as Parameters<typeof sectionsToDocument>[0], identity, draft.document);
       await persist({ ...draft, document, generatorIdentity: identity, templateId: resolveTemplateId(draft.templateId) });
@@ -280,7 +341,7 @@ export function useResumeEditor() {
       setGenerating(false);
       setGenerateStep(null);
     }
-  }, [draft, applier?.name, generatorIdentity, persist]);
+  }, [adoptTask, draft, applier?.name, generatorIdentity, persist, waitForTask]);
 
   const exportResume = useCallback(
     async (format: "pdf" | "docx") => {
@@ -353,6 +414,7 @@ export function useResumeEditor() {
     loading,
     loadingProfile,
     generating,
+    stopping,
     generateStep,
     models,
     usage,
@@ -362,6 +424,7 @@ export function useResumeEditor() {
     reloadProfile,
     resetDraft,
     generate,
+    cancelGeneration,
     exportResume,
     updateIdentity,
     setRefinementSteps,

@@ -34,9 +34,11 @@ export async function htmlToPdf({
 	baseSizePt,
 	fontLinks,
 	asBase64 = false,
+	signal,
 } = {}) {
 	const body = typeof html === "string" ? html : "";
 	if (!body.trim()) throw new Error("html is required");
+	if (signal?.aborted) throw signal.reason || Object.assign(new Error("PDF rendering cancelled"), { name: "AbortError" });
 	const result = await renderPdfInWorker({
 		html: body,
 		paper: paper === "a4" ? "a4" : "letter",
@@ -45,6 +47,7 @@ export async function htmlToPdf({
 		baseSizePt,
 		fontLinks,
 		asBase64,
+		signal,
 	});
 	if (asBase64) return result.base64;
 	return result.buffer;

@@ -12,6 +12,8 @@ const {
 	queryPlanCoversAllClauses,
 	collectFilterFields,
 	canTryCompositeQuery,
+	shouldTryCompositeQuery,
+	shouldPreferFilterFirstOrdering,
 	conjunctiveDocumentIds,
 	resolveUpsertDocumentId,
 } = firestoreAdapterTest;
@@ -79,16 +81,30 @@ test("Firestore compatibility fallback keeps fields needed by nested local filte
 	const fields = collectFilterFields({
 		$and: [
 			{ sourceCatalog: "market" },
-			{ $or: [{ titleScanned: { $exists: false } }, { titleScanned: null }] },
+			{ $or: [{ "titleReview.processingState": { $exists: false } }, { "titleReview.processingState": "failed" }] },
 			{ status: { $not: { $elemMatch: { applier: "owner-1" } } } },
 		],
 	});
-	assert.deepEqual([...fields].sort(), ["sourceCatalog", "status", "titleScanned"]);
+	assert.deepEqual([...fields].sort(), ["sourceCatalog", "status", "titleReview"]);
 });
 
 test("Firestore compatibility does not probe undeployed multi-field indexes by default", () => {
 	assert.equal(canTryCompositeQuery({ clauses: [{ field: "source" }, { field: "sourceCatalog" }] }), false);
 	assert.equal(canTryCompositeQuery({ clauses: [{ field: "sourceCatalog" }] }), true);
+});
+
+test("title-review queues use their composite index and filter-first fallback", () => {
+	const plan = buildNativeQueryPlan({
+		$and: [
+			{ sourceCatalog: "market" },
+			{ "titleReview.label": "REVIEW_REQUIRED" },
+		],
+	});
+	assert.equal(shouldTryCompositeQuery(plan), true);
+	const fallback = buildFallbackQueryPlan(plan, "job_market");
+	assert.equal(fallback.clauses[0].field, "titleReview.label");
+	assert.equal(shouldPreferFilterFirstOrdering(fallback), true);
+	assert.equal(shouldPreferFilterFirstOrdering(fallback, ["titleReview.confidence", -1]), false);
 });
 
 test("Firestore compatibility extracts Algolia document IDs for authoritative point reloads", () => {

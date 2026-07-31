@@ -3,6 +3,10 @@
 const PURPOSES = ["summary", "skills", "experience"];
 const SECTION_LABEL = { summary: "Summary", skills: "Skills", experience: "Experience" };
 
+/** Exact default used before dynamic titles became a saved, tier-independent preference. */
+export const LEGACY_TIERED_EXPERIENCE_PROMPT =
+  "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow server policy: Beta accounts may use concise JD-aligned titles with a plausible career progression; all other accounts keep Profile Settings titles exactly. Return JSON matching the schema.";
+
 function defaultSchemaFor(purpose) {
   switch (purpose) {
     case "summary":
@@ -71,7 +75,7 @@ function defaultPromptFor(purpose, kind) {
     case "skills":
       return "Group the candidate's most relevant skills into labeled categories (e.g. Programming Languages, Frameworks, Databases, Cloud & DevOps) for the target role. Return JSON matching the schema.";
     case "experience":
-      return "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow server policy: Beta accounts may use concise JD-aligned titles with a plausible career progression; all other accounts keep Profile Settings titles exactly. Return JSON matching the schema.";
+      return "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow the saved Dynamic career titles preference: when enabled, use concise JD-aligned titles with a plausible career progression; otherwise keep Profile Settings titles exactly. Return JSON matching the schema.";
     default:
       return "";
   }
@@ -109,6 +113,7 @@ export function defaultGeneratorConfig() {
     provider: "openai",
     model: "gpt-5-nano",
     reasoningEffort: "low",
+    dynamicCareerTitles: false,
     templateId: "classic",
     theme,
     layout: [

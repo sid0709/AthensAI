@@ -8,7 +8,7 @@ test('ranking payload carries indexed global filter fields', () => {
     title: 'Senior Engineer',
     company: { name: 'Athens', tags: ['SaaS'] },
     details: { position: 'Seattle', remote: 'Hybrid', seniority: ['Senior'] },
-    titleScanned: ['Software Engineer'],
+    titleReview: { label: 'REVIEW_REQUIRED' },
     source: 'LinkedIn',
     aiSkills: [{ name: 'React', category: 'hard', requirement: 5 }],
   });
@@ -18,7 +18,7 @@ test('ranking payload carries indexed global filter fields', () => {
   assert.equal(payload.card.title, 'Senior Engineer');
   assert.equal(payload.card.company.name, 'Athens');
   assert.equal(payload.card.status, undefined);
-  assert.deepEqual(payload.titleRoles, ['Software Engineer']);
+  assert.equal(payload.titleReviewLabel, 'REVIEW_REQUIRED');
   assert.equal(payload.rankingSchemaVersion, 4);
   assert.match(payload.companyId, /^cmp_/);
   assert.equal(payload.card.companyId, payload.companyId);
@@ -30,19 +30,8 @@ test('jobs without extracted skills remain countable but cannot match a real ski
   assert.deepEqual(point.skillsSparse, { indices: [0], values: [1] });
 });
 
-test('unscanned jobs receive a title-derived role facet', () => {
-  assert.deepEqual(
-    buildJobRankingPayload({ title: 'Machine Learning Engineer' }).titleRoles,
-    ['AI engineer'],
-  );
-  assert.deepEqual(
-    buildJobRankingPayload({ title: 'Senior Data Platform Engineer' }).titleRoles,
-    ['Data Engineer'],
-  );
-  assert.deepEqual(
-    buildJobRankingPayload({ title: 'Cloud Engineer' }).titleRoles,
-    ['Others'],
-  );
+test('unreviewed jobs carry no quarantine label', () => {
+  assert.equal(buildJobRankingPayload({ title: 'Machine Learning Engineer' }).titleReviewLabel, '');
 });
 
 test('legacy string skills are retained in compact reranking payloads', () => {
@@ -58,6 +47,7 @@ test('retrieval filter includes industry, extraction, and non-beta clauses', () 
   assert.ok(filter.must.some((clause) => clause.key === 'companyTags'));
   assert.ok(filter.must.some((clause) => clause.key === 'aiExtracted'));
   assert.ok(filter.must.some((clause) => clause.key === 'extensionV2'));
+  assert.ok(filter.must.some((clause) => clause.key === 'titleReviewLabel' && clause.match?.value === 'APPROVED'));
   assert.ok(filter.must_not.some((clause) => clause.key === 'version' && clause.match?.value === 'v2'));
 });
 
@@ -80,6 +70,24 @@ test('non-beta date tail fails closed for v2 and missing ranking payloads', () =
   ];
   assert.deepEqual(filterDateTailCandidates(candidates, payloads, { excludeExtensionV2: true }), [candidates[0]]);
   assert.deepEqual(filterDateTailCandidates(candidates, payloads), candidates);
+});
+
+test('date tail includes only approved-title jobs', () => {
+  const candidates = [
+    { jobId: 'approved', catalog: 'market' },
+    { jobId: 'review', catalog: 'market' },
+    { jobId: 'unprocessed', catalog: 'market' },
+    { jobId: 'missing-payload', catalog: 'market' },
+  ];
+  const payloads = [
+    { jobId: 'approved', titleReviewLabel: 'APPROVED' },
+    { jobId: 'review', titleReviewLabel: 'REVIEW_REQUIRED' },
+    { jobId: 'unprocessed' },
+  ];
+  assert.deepEqual(
+    filterDateTailCandidates(candidates, payloads, { requireApprovedTitle: true }),
+    [candidates[0]],
+  );
 });
 
 test('v2 exclusion is detected in indexed and compatibility query shapes', () => {

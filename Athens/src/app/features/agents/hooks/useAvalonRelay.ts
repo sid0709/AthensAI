@@ -33,9 +33,9 @@ import {
   fetchJobDescription,
   fetchJobsWithGeneratedResumes,
   fetchSubmissionKitResume,
-  generateJobResumeStream,
   type ResumeSectionPurpose,
 } from "../../../api/jobs";
+import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 import { isBetaTier } from "../../../lib/beta";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { clampJobBudgetUsd, loadJobBudgetUsd, saveJobBudgetUsd } from "../lib/agentBudget";
@@ -294,6 +294,7 @@ function loadPersistedQueue(persistKey: string): PersistedQueueState | null {
 }
 
 export function useAvalonRelay(applicantContext: string, applierName = "", options?: AvalonRelayOptions) {
+  const { startTask, waitForTask, cancelTask } = useBackgroundTasks();
   const persistKey = options?.persistKey;
   const initialPersisted = useMemo(() => (persistKey ? loadPersistedQueue(persistKey) : null), [persistKey]);
   const persistSession = options?.persist !== false;
@@ -971,21 +972,49 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           : `Loading or generating tailored résumé for "${job.title}"…`,
         true,
       );
-      const gen = await generateJobResumeStream(
-        {
-          applierName,
-          jobId: job.id,
-          jobDescription: jd,
-          forceRegenerate: options?.forceRegenerate,
-        },
-        (progress) => {
-          if (progress.stepLabel) setResumeGenerateStep(progress.stepLabel);
-          if (Object.keys(progress.completedSections).length > 0) {
-            setResumeGeneratedSections((prev) => ({ ...prev, ...progress.completedSections }));
-          }
-        },
-        runSignal(),
-      );
+      const task = await startTask("resume_generation", {
+        jobIds: [job.id],
+        forceRegenerate: options?.forceRegenerate === true,
+        deferPdf: false,
+        origin: "avalon",
+      });
+      setResumeGenerateStep("Queued in background…");
+      let terminal;
+      try {
+        terminal = await waitForTask(task.id, runSignal());
+      } catch (error) {
+        if (isAbortError(error)) void cancelTask(task.id).catch(() => undefined);
+        throw error;
+      }
+      const item = terminal.progress.items?.[job.id];
+      if (terminal.status === "cancelled") throw new DOMException("Résumé generation stopped", "AbortError");
+      if (terminal.status === "failed" || terminal.status === "completed_with_errors" || item?.status !== "completed") {
+        throw new Error(item?.error || terminal.error || "Résumé generation failed");
+      }
+      const draft = await fetchAgentJobResumePdf(applierName, job.id, runSignal());
+      const rawUsage = item.usage as {
+        inputTokens?: number;
+        cachedTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        costUsd?: number;
+        cost?: number;
+      } | undefined;
+      const gen = {
+        ...draft,
+        reused: item.reused === true,
+        generationId: typeof item.generationId === "string" ? item.generationId : null,
+        resumePdfPath: typeof item.resumePdfPath === "string" ? item.resumePdfPath : null,
+        model: typeof item.model === "string" ? item.model : null,
+        provider: typeof item.provider === "string" ? item.provider : null,
+        usage: rawUsage ? {
+          promptTokens: rawUsage.inputTokens ?? 0,
+          cachedTokens: rawUsage.cachedTokens,
+          completionTokens: rawUsage.outputTokens ?? 0,
+          totalTokens: rawUsage.totalTokens ?? 0,
+          costUsd: rawUsage.costUsd ?? rawUsage.cost,
+        } : undefined,
+      };
       if (!gen.reused) {
         recordUsage(`Résumé generation${gen.model ? ` (${gen.model})` : ""}`, {
           ...(gen.usage ?? {}),
@@ -1016,7 +1045,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"${modelNote}${pathNote}`, true);
       return file;
     },
-    [applierName, markPipeline, pushLog, recordUsage, resumesByJobId, runSignal],
+    [applierName, cancelTask, markPipeline, pushLog, recordUsage, resumesByJobId, runSignal, startTask, waitForTask],
   );
 
   /** Start résumé generation for a queued job (deduped per job id). */

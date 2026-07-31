@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { needsIdentitySync } from "./refreshGeneratedResumesIdentity.js";
+import {
+  needsIdentitySync,
+  titlePolicyFingerprintForIdentityRefresh,
+} from "./refreshGeneratedResumesIdentity.js";
 
 test("needsIdentitySync is true when identitySyncedAt is missing", () => {
   assert.equal(needsIdentitySync({}, "2026-07-15T12:00:00.000Z"), true);
@@ -27,4 +30,12 @@ test("needsIdentitySync is false when résumé already matches profile updatedAt
     ),
     false,
   );
+});
+
+test("identity refresh preserves the fingerprint that generated the résumé sections", () => {
+  assert.equal(
+    titlePolicyFingerprintForIdentityRefresh({ titlePolicyFingerprint: "static-title-policy" }),
+    "static-title-policy",
+  );
+  assert.equal(titlePolicyFingerprintForIdentityRefresh({}), null);
 });

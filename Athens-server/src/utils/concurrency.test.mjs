@@ -180,6 +180,24 @@ test('createFairLimiter preserves per-key FIFO under skip-ahead', async () => {
 	assert.deepEqual(order, ['alice-1-start', 'alice-1-end', 'bob', 'alice-2']);
 });
 
+test('createFairLimiter removes cancelled waiters immediately', async () => {
+	const limiter = createFairLimiter({ globalConcurrency: 1, perKeyConcurrency: 1 });
+	const release = defer();
+	const hold = limiter.run('alice', () => release.promise);
+	await delay(5);
+	const controller = new AbortController();
+	const waiting = limiter.run('alice', async () => assert.fail('cancelled waiter started'), {
+		signal: controller.signal,
+	});
+	await delay(5);
+	assert.equal(limiter.pending, 1);
+	controller.abort(Object.assign(new Error('stop'), { name: 'AbortError' }));
+	await assert.rejects(waiting, { name: 'AbortError', message: 'stop' });
+	assert.equal(limiter.pending, 0);
+	release.resolve();
+	await hold;
+});
+
 test('env helpers use documented defaults and positive overrides', () => {
 	const saved = {
 		RESUME_GEN_GLOBAL_CONCURRENCY: process.env.RESUME_GEN_GLOBAL_CONCURRENCY,
@@ -310,11 +328,46 @@ test('createPriorityLimiter serves higher priority first', async () => {
 	assert.deepEqual(order, ['skill-start', 'skill-end', 'agent', 'mail']);
 });
 
+test('createPriorityLimiter ages background work so it cannot starve', async () => {
+	const pool = createPriorityLimiter({ concurrency: 1, agingMs: 5 });
+	const order = [];
+	const releaseFirst = defer();
+	const hold = pool.run(LLM_PRIORITY.agent, async () => {
+		await releaseFirst.promise;
+	});
+	await delay(5);
+	const skill = pool.run(LLM_PRIORITY.skill, async () => order.push('skill'));
+	await delay(20);
+	const newerAgent = pool.run(LLM_PRIORITY.agent, async () => order.push('agent'));
+	releaseFirst.resolve();
+	await Promise.all([hold, skill, newerAgent]);
+	assert.deepEqual(order, ['skill', 'agent']);
+});
+
+test('createPriorityLimiter removes cancelled waiters immediately', async () => {
+	const pool = createPriorityLimiter({ concurrency: 1 });
+	const release = defer();
+	const hold = pool.run(LLM_PRIORITY.agent, () => release.promise);
+	await delay(5);
+	const controller = new AbortController();
+	const waiting = pool.run(LLM_PRIORITY.skill, async () => assert.fail('cancelled waiter started'), {
+		signal: controller.signal,
+	});
+	await delay(5);
+	assert.equal(pool.pending, 1);
+	controller.abort(Object.assign(new Error('stop'), { name: 'AbortError' }));
+	await assert.rejects(waiting, { name: 'AbortError', message: 'stop' });
+	assert.equal(pool.pending, 0);
+	release.resolve();
+	await hold;
+});
+
 test('llmPriorityFromFeature maps feature strings', () => {
 	assert.equal(llmPriorityFromFeature('agent-otp'), 'agent');
 	assert.equal(llmPriorityFromFeature('resume-generate:summary'), 'resume');
 	assert.equal(llmPriorityFromFeature('mail-ai-label'), 'mail');
 	assert.equal(llmPriorityFromFeature('job-skill-extract'), 'skill');
+	assert.equal(llmPriorityFromFeature('job-title-review'), 'skill');
 	assert.equal(llmPriorityFromFeature('unknown-thing'), 'other');
 });
 

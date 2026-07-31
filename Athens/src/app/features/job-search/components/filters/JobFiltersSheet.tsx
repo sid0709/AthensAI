@@ -16,7 +16,6 @@ import {
   JOB_SENIORITIES,
   JOB_WORK_MODES,
 } from "../../../../data/jobs";
-import { JOB_TITLE_SCAN_ROLE_OPTIONS } from "../../../../data/jobTitleRoles";
 import { JobSourceTitles } from "../../../../data/jobs/pub";
 import type { JobSearchFilterState } from "../../../../hooks/useJobSearchFilters";
 import { clearAttributeFilters } from "../../../../hooks/useJobSearchFilters";
@@ -26,8 +25,6 @@ type JobFiltersSheetProps = {
   onOpenChange: (open: boolean) => void;
   filters: JobSearchFilterState;
   onChange: (filters: JobSearchFilterState) => void;
-  /** AI title-role multi-select — beta tier only. */
-  showTitleRoleFilter?: boolean;
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -50,7 +47,6 @@ export function JobFiltersSheet({
   onOpenChange,
   filters,
   onChange,
-  showTitleRoleFilter = false,
 }: JobFiltersSheetProps) {
   const patch = (partial: Partial<JobSearchFilterState>) => onChange({ ...filters, ...partial });
 
@@ -116,19 +112,6 @@ export function JobFiltersSheet({
 
           <Section title="Role attributes">
             <div className="grid grid-cols-1 gap-3">
-              {showTitleRoleFilter ? (
-                <AthensMultiSelect
-                  label="Title role (AI)"
-                  values={filters.titleRoles}
-                  onChange={(titleRoles) => patch({ titleRoles })}
-                  placeholder="All title roles"
-                  options={JOB_TITLE_SCAN_ROLE_OPTIONS.map((o) => ({
-                    value: o.value,
-                    label: o.label,
-                  }))}
-                  hint="From Analyze title — checkbox multi-select"
-                />
-              ) : null}
               <AthensMultiSelect
                 label="Seniority"
                 values={filters.seniority}

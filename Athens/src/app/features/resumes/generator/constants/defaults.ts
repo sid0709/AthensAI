@@ -35,6 +35,19 @@ export const FALLBACK_MODELS: Record<ProviderId, string[]> = {
   deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
 };
 
+const LEGACY_TIERED_EXPERIENCE_PROMPT =
+  "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow server policy: Beta accounts may use concise JD-aligned titles with a plausible career progression; all other accounts keep Profile Settings titles exactly. Return JSON matching the schema.";
+
+function migrateStoredSteps(steps: GenStep[]): GenStep[] {
+  return steps.map((step) =>
+    step.purpose === "experience"
+    && step.kind === "final"
+    && step.prompt.trim() === LEGACY_TIERED_EXPERIENCE_PROMPT
+      ? { ...step, prompt: defaultPromptFor("experience", "final") }
+      : step,
+  );
+}
+
 /** Pick a model that belongs to the selected provider (e.g. reject gpt-* on DeepSeek). */
 export function resolveModelForProvider(provider: ProviderId, savedModel: string | undefined): string {
   const fallbacks = FALLBACK_MODELS[provider];
@@ -54,13 +67,16 @@ export function mergeStoredConfig(parsed: Partial<GeneratorConfig> | null | unde
     provider,
     model: resolveModelForProvider(provider, parsed.model ?? base.model),
     reasoningEffort: parsed.reasoningEffort ?? base.reasoningEffort,
+    dynamicCareerTitles: parsed.dynamicCareerTitles === true,
     templateId: parsed.templateId ?? base.templateId,
     uploadedTemplate: parsed.uploadedTemplate ?? base.uploadedTemplate,
     theme: { ...base.theme, ...(parsed.theme ?? {}) },
     layout: Array.isArray(parsed.layout) && parsed.layout.length ? (parsed.layout as LayoutSection[]) : base.layout,
     systemInstruction: parsed.systemInstruction ?? base.systemInstruction,
     jobDescription: parsed.jobDescription ?? base.jobDescription,
-    steps: Array.isArray(parsed.steps) && parsed.steps.length ? (parsed.steps as GenStep[]) : base.steps,
+    steps: Array.isArray(parsed.steps) && parsed.steps.length
+      ? migrateStoredSteps(parsed.steps as GenStep[])
+      : base.steps,
   });
 }
 
@@ -171,7 +187,7 @@ export function defaultPromptFor(purpose: Purpose, kind: StepKind): string {
     case "skills":
       return "Group the candidate's most relevant skills into labeled categories (e.g. Programming Languages, Frameworks, Databases, Cloud & DevOps) for the target role. Return JSON matching the schema.";
     case "experience":
-      return "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow server policy: Beta accounts may use concise JD-aligned titles with a plausible career progression; all other accounts keep Profile Settings titles exactly. Return JSON matching the schema.";
+      return "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow the saved Dynamic career titles preference: when enabled, use concise JD-aligned titles with a plausible career progression; otherwise keep Profile Settings titles exactly. Return JSON matching the schema.";
   }
 }
 
@@ -226,6 +242,7 @@ export const defaultConfig = (): GeneratorConfig => {
     provider: "openai",
     model: "gpt-5-nano",
     reasoningEffort: "low",
+    dynamicCareerTitles: false,
     templateId: "classic",
     theme,
     layout: SECTION_TYPES.map((t) => defaultSection(t, theme)),

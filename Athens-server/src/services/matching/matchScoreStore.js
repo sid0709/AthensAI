@@ -7,6 +7,7 @@ import {
 } from '../../db/dataStore.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { enqueueMatchScoreTask } from '../cloudTasks.js';
+import { mapPool } from '../../utils/concurrency.js';
 import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
 import { computeCoverageScore } from './coverageScore.js';
 
@@ -87,17 +88,36 @@ export async function bulkWriteScores(ops) {
   return { written: ops.length };
 }
 
-export async function deleteScoresForJobs(jobIds) {
-  if (!jobMatchScoresCollection || !jobIds?.length) return { deleted: 0 };
-  const ids = jobIds
+export async function deleteScoreRowsForJobIds({ collection, jobIds, concurrency = 4 }) {
+  if (!collection || !jobIds?.length) return { deleted: 0 };
+  const normalizedIds = jobIds
     .map((id) => {
       if (id instanceof DocumentId) return id;
       try { return new DocumentId(String(id)); } catch { return null; }
     })
     .filter(Boolean);
+  const ids = [...new Map(normalizedIds.map((id) => [String(id), id])).values()];
   if (!ids.length) return { deleted: 0 };
-  const res = await jobMatchScoresCollection.deleteMany({ jobId: { $in: ids } });
-  return { deleted: res.deletedCount };
+
+  // Firestore accepts at most 30 values in an `in` query. Sending a larger
+  // array makes the compatibility adapter fall back to scanning every score
+  // document, which made review-page deletion disproportionately slow.
+  const batches = [];
+  for (let offset = 0; offset < ids.length; offset += 30) batches.push(ids.slice(offset, offset + 30));
+  const results = await mapPool(
+    batches,
+    Math.max(1, Math.min(8, Number(concurrency) || 4)),
+    (batch) => collection.deleteMany({ jobId: { $in: batch } }),
+  );
+  return { deleted: results.reduce((total, result) => total + Number(result?.deletedCount || 0), 0) };
+}
+
+export async function deleteScoresForJobs(jobIds) {
+  return deleteScoreRowsForJobIds({
+    collection: jobMatchScoresCollection,
+    jobIds,
+    concurrency: Number(process.env.MATCH_SCORE_DELETE_CONCURRENCY) || 4,
+  });
 }
 
 export async function deleteScoresForApplier(applierName) {

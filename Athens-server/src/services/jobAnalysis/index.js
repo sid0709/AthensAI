@@ -3,14 +3,21 @@ import { jobsCollection } from '../../db/dataStore.js';
 import { attachStaticScoreFields } from '../jobListPipeline.js';
 import { indexJobInRedis, jobSkillTokens } from '../matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
-import { enqueueJobAnalysisTask } from '../cloudTasks.js';
 import { isForegroundBusy } from '../runtimeLoad.js';
+import {
+	createBackgroundTask,
+} from '../backgroundTasks/taskStore.js';
+import { BACKGROUND_TASK_TYPES } from '../backgroundTasks/taskTypes.js';
+import {
+	firestoreMutationLimiter,
+	indexMutationLimiter,
+} from '../backgroundTasks/resourceLimits.js';
 
 const TERMINAL = new Set(['analyzed']);
 const WORKER_INTERVAL_MS = Number(process.env.SKILL_JOB_ANALYSIS_INTERVAL_MS || 5000);
 const BATCH_SIZE = Number(process.env.SKILL_JOB_ANALYSIS_BATCH_SIZE || 2);
 
-export async function queueJobAnalysis(jobId, applierName) {
+export async function queueJobAnalysis(jobId, applierName, { requestId, ownerUid, profileId } = {}) {
 	if (!jobsCollection) throw new Error('Database not ready');
 
 	let documentId;
@@ -45,9 +52,26 @@ export async function queueJobAnalysis(jobId, applierName) {
 			},
 		},
 	);
-	await enqueueJobAnalysisTask(String(documentId));
-
-	return { status: 'queued', jobId: String(documentId), queuedAt: now };
+	try {
+		const name = String(applierName || '').trim();
+		if (!name) throw Object.assign(new Error('applierName is required'), { status: 400 });
+		const queued = await createBackgroundTask({
+			requestId: requestId || `job-analysis:${documentId}:${now}`,
+			type: BACKGROUND_TASK_TYPES.JOB_ANALYSIS,
+			profileId: String(profileId || '').trim() || name.toLocaleLowerCase('en-US'),
+			applierName: name,
+			ownerUid,
+			payload: { recordIds: [String(documentId)] },
+			progress: { total: 1 },
+		});
+		return { status: 'queued', jobId: String(documentId), queuedAt: now, taskId: queued.task.id };
+	} catch (error) {
+		await jobsCollection.updateOne(
+			{ _id: documentId, 'skillAnalysis.status': 'queued', 'skillAnalysis.queuedAt': now },
+			{ $set: { 'skillAnalysis.status': 'pending' }, $unset: { 'skillAnalysis.queuedAt': '' } },
+		).catch(() => undefined);
+		throw error;
+	}
 }
 
 export async function getJobAnalysisStatus(jobId) {
@@ -100,7 +124,15 @@ async function claimQueuedJobs(limit = 2) {
 	return claimed;
 }
 
-async function runJobAnalysis(job) {
+function throwIfAborted(signal) {
+	if (!signal?.aborted) return;
+	throw signal.reason instanceof Error
+		? signal.reason
+		: Object.assign(new Error('Job analysis cancelled'), { name: 'AbortError' });
+}
+
+export async function analyzeJobRecord(job, { signal } = {}) {
+	throwIfAborted(signal);
 	const { skills, skillsNormalized } = enrichJobSkillsFromTitle(job);
 	const skillTokens = jobSkillTokens(skills);
 	const applierName = job.skillAnalysis?.applierName || null;
@@ -108,9 +140,11 @@ async function runJobAnalysis(job) {
 	const staticScores = attachStaticScoreFields({ ...job, skills, skillsNormalized });
 	const now = new Date().toISOString();
 
-	await jobsCollection.updateOne(
-		{ _id: job._id },
-		{
+	await firestoreMutationLimiter.run(async () => {
+		throwIfAborted(signal);
+		await jobsCollection.updateOne(
+			{ _id: job._id },
+			{
 			$set: {
 				...staticScores,
 				skills,
@@ -128,10 +162,20 @@ async function runJobAnalysis(job) {
 					error: null,
 				},
 			},
-		},
-	);
+			},
+		);
+	});
 
-	await indexJobInRedis(jobId, skillsNormalized, skillTokens).catch(() => {});
+	throwIfAborted(signal);
+	try {
+		await indexMutationLimiter.run(async () => {
+			throwIfAborted(signal);
+			await indexJobInRedis(jobId, skillsNormalized, skillTokens);
+		});
+	} catch (error) {
+		if (signal?.aborted || error?.name === 'AbortError') throw error;
+	}
+	throwIfAborted(signal);
 
 	return { skillsProcessed: skillsNormalized.length };
 }
@@ -158,7 +202,7 @@ export async function runJobAnalysisBatch(batchSize = 2) {
 
 	for (const job of batch) {
 		try {
-			const result = await runJobAnalysis(job);
+			const result = await analyzeJobRecord(job);
 			processed += 1;
 			console.log(
 				`[job-analysis] analyzed job ${job._id} (${job.title || 'untitled'}) — ${result.skillsProcessed} skill(s)`,

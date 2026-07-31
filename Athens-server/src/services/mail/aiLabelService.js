@@ -10,6 +10,7 @@
  */
 import { createHash } from 'node:crypto';
 import { chatCompletion, resolveDefaultModel } from '../llm/llmService.js';
+import { firestoreMutationLimiter } from '../backgroundTasks/resourceLimits.js';
 import { createLimiter, getMailAiLabelConcurrency, mapPool } from '../../utils/concurrency.js';
 import {
 	addLabelsToMessages,
@@ -33,6 +34,17 @@ const AI_BATCH_SIZE = Math.max(1, Math.min(20, Number(process.env.MAIL_AI_LABEL_
 const AI_BATCH_MAX_CHARS = Math.max(8_000, Number(process.env.MAIL_AI_LABEL_BATCH_MAX_CHARS || 32_000));
 const AI_BATCH_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_AI_CONCURRENCY || 8));
 const GMAIL_WRITE_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_GMAIL_CONCURRENCY || 8));
+
+function throwIfMailAborted(signal) {
+	if (!signal?.aborted) return;
+	throw signal.reason instanceof Error
+		? signal.reason
+		: Object.assign(new Error('Mail AI labeling cancelled'), { name: 'AbortError' });
+}
+
+function isMailAbort(error, signal) {
+	return signal?.aborted || error?.name === 'AbortError';
+}
 
 const CLASSIFY_SYSTEM_PROMPT = [
 	'You classify each email into exactly ONE custom Gmail label from the provided list.',
@@ -187,6 +199,7 @@ export function resolveSnippetOutcomes(content, messages, allowedLabels) {
 }
 
 async function classifyPreparedBatch(messages, allowedLabels, labelDefinitions, profile, context = {}) {
+	throwIfMailAborted(context.signal);
 	const picked = pickProvider(profile);
 	if (!picked) {
 		return {
@@ -214,6 +227,7 @@ async function classifyPreparedBatch(messages, allowedLabels, labelDefinitions, 
 			reasoningEffort: reasoningEffortForMail(picked.provider, picked.model),
 			maxTokens: Math.max(240, messages.length * 60),
 			applierName: context.applierName,
+			signal: context.signal,
 			messages: [
 				{ role: 'system', content: CLASSIFY_SYSTEM_PROMPT },
 				{ role: 'user', content: buildBatchPrompt(messages, allowedLabels, labelDefinitions) },
@@ -241,6 +255,7 @@ async function classifyPreparedBatch(messages, allowedLabels, labelDefinitions, 
 		});
 		return { outcomes, usage };
 	} catch (error) {
+		if (isMailAbort(error, context.signal)) throw error;
 		const message = error?.message || String(error);
 		return {
 			outcomes: messages.map((item) => ({ id: item.id, label: null, error: message })),
@@ -249,6 +264,7 @@ async function classifyPreparedBatch(messages, allowedLabels, labelDefinitions, 
 }
 
 async function classifySnippetBatch(messages, allowedLabels, labelDefinitions, profile, context = {}) {
+	throwIfMailAborted(context.signal);
 	const picked = pickProvider(profile);
 	if (!picked) {
 		return {
@@ -276,6 +292,7 @@ async function classifySnippetBatch(messages, allowedLabels, labelDefinitions, p
 			reasoningEffort: reasoningEffortForMail(picked.provider, picked.model),
 			maxTokens: Math.max(240, messages.length * 55),
 			applierName: context.applierName,
+			signal: context.signal,
 			messages: [
 				{ role: 'system', content: CLASSIFY_SNIPPET_SYSTEM_PROMPT },
 				{ role: 'user', content: buildSnippetBatchPrompt(messages, allowedLabels, labelDefinitions) },
@@ -287,6 +304,7 @@ async function classifySnippetBatch(messages, allowedLabels, labelDefinitions, p
 		const outcomes = resolveSnippetOutcomes(content, messages, allowedLabels);
 		return { outcomes, usage };
 	} catch (error) {
+		if (isMailAbort(error, context.signal)) throw error;
 		const errorMessage = error?.message || String(error);
 		return {
 			outcomes: messages.map((message) => ({
@@ -312,7 +330,8 @@ export async function classifyMailLabel(message, allowedLabels, labelDefinitions
 	return { label: outcome.label, error: outcome.error, usage: result.usage };
 }
 
-async function loadCachedDocuments(applierName, list, inboxMailbox) {
+async function loadCachedDocuments(applierName, list, inboxMailbox, signal) {
+	throwIfMailAborted(signal);
 	const groups = new Map();
 	for (const item of list) {
 		const mailbox = item.mailbox || inboxMailbox;
@@ -322,19 +341,23 @@ async function loadCachedDocuments(applierName, list, inboxMailbox) {
 
 	const documentMap = new Map();
 	await Promise.all([...groups.entries()].map(async ([mailbox, uids]) => {
+		throwIfMailAborted(signal);
 		const docs = await getMessagesByUids(applierName, uids, mailbox);
+		throwIfMailAborted(signal);
 		for (const doc of docs) documentMap.set(itemKey(doc.uid, mailbox), doc);
 	}));
 	return documentMap;
 }
 
 async function prepareMetadataMessage(item, cachedDoc, options) {
-	const { applierName, inboxMailbox, credentials } = options;
+	const { applierName, inboxMailbox, credentials, signal } = options;
+	throwIfMailAborted(signal);
 	const mailbox = item.mailbox || inboxMailbox;
 	let doc = cachedDoc;
 	if (!doc) doc = await getMessage(applierName, item.uid, mailbox);
 	if (!doc) doc = await getMessage(applierName, item.uid, inboxMailbox);
 	if (!doc) {
+		throwIfMailAborted(signal);
 		doc = await fetchEnvelopeForUid(
 			credentials.email,
 			credentials.password,
@@ -343,6 +366,7 @@ async function prepareMetadataMessage(item, cachedDoc, options) {
 			mailbox,
 		);
 	}
+	throwIfMailAborted(signal);
 	if (!doc) return { error: 'Message not found' };
 
 	const resolvedMailbox = doc.mailbox || mailbox;
@@ -404,7 +428,9 @@ async function fetchBoundedTextForMessages(messages, options) {
 		maxChars,
 		cacheField,
 		allowFullFallback = false,
+		signal,
 	} = options;
+	throwIfMailAborted(signal);
 	const missing = messages.filter((message) => !String(message[field] || '').trim());
 	if (!missing.length) return { fetched: 0, failed: [] };
 
@@ -417,6 +443,7 @@ async function fetchBoundedTextForMessages(messages, options) {
 	const cacheUpdates = [];
 	let fetched = 0;
 	await Promise.all([...byMailbox.entries()].map(async ([mailbox, mailboxMessages]) => {
+		throwIfMailAborted(signal);
 		let snippets;
 		try {
 			snippets = await fetchMessageTextSnippets(
@@ -426,7 +453,9 @@ async function fetchBoundedTextForMessages(messages, options) {
 				mailbox,
 				{ maxBytes, maxChars },
 			);
+			throwIfMailAborted(signal);
 		} catch (error) {
+			if (isMailAbort(error, signal)) throw error;
 			const errorMessage = error?.message || String(error);
 			failed.push(...mailboxMessages.map((message) => ({ message, error: errorMessage })));
 			return;
@@ -458,10 +487,12 @@ async function fetchBoundedTextForMessages(messages, options) {
 			failed,
 			Math.min(getMailAiLabelConcurrency(), failed.length),
 			async ({ message }) => {
+				throwIfMailAborted(signal);
 				const result = await ensureMessagePlainText(applierName, message.uid, message.mailbox, {
 					credentials: { ok: true, email, password },
 					existing: message.doc,
 				});
+				throwIfMailAborted(signal);
 				if (!result.ok) return { message, error: result.error || 'Failed to load body text' };
 				message[field] = String(result.bodyText || '').replace(/\u00A0/g, ' ').slice(0, maxChars);
 				if (result.message) message.doc = result.message;
@@ -476,7 +507,8 @@ async function fetchBoundedTextForMessages(messages, options) {
 	}
 
 	if (cacheUpdates.length) {
-		void bulkUpdateMessageFlags(applierName, cacheUpdates).catch((error) => {
+		throwIfMailAborted(signal);
+		void firestoreMutationLimiter.run(() => bulkUpdateMessageFlags(applierName, cacheUpdates)).catch((error) => {
 			console.warn('[mail-ai-label] snippet cache update failed:', error?.message || error);
 		});
 	}
@@ -489,14 +521,18 @@ async function refreshAppliedFlags({
 	password,
 	successfulByMailbox,
 	preparedById,
+	signal,
 }) {
+	throwIfMailAborted(signal);
 	const refreshResults = await mapPool(
 		[...successfulByMailbox.entries()],
 		Math.min(GMAIL_WRITE_CONCURRENCY, Math.max(1, successfulByMailbox.size)),
 		async ([mailbox, uids]) => {
+			throwIfMailAborted(signal);
 			try {
 				return await fetchFlagsForUids(email, password, uids, applierName, mailbox);
 			} catch (error) {
+				if (isMailAbort(error, signal)) throw error;
 				console.warn('[mail-ai-label] Gmail flag refresh failed:', error?.message || error);
 				return [];
 			}
@@ -513,7 +549,7 @@ async function refreshAppliedFlags({
 			? { _id: documentIds.get(itemKey(item.uid, item.mailbox)) }
 			: {}),
 	}));
-	if (refreshed.length) await bulkUpdateMessageFlags(applierName, refreshed);
+	if (refreshed.length) await firestoreMutationLimiter.run(() => bulkUpdateMessageFlags(applierName, refreshed));
 }
 
 /**
@@ -528,7 +564,9 @@ export async function runMailAiLabelBatch({
 	allowedLabels,
 	labelDefinitions = {},
 	onEvent,
+	signal,
 }) {
+	throwIfMailAborted(signal);
 	const startedAt = Date.now();
 	const picked = pickProvider(profile);
 	if (!picked) {
@@ -590,13 +628,16 @@ export async function runMailAiLabelBatch({
 		model: { provider: picked.provider, model: picked.model },
 	});
 
-	const cachedDocs = await loadCachedDocuments(applierName, list, inboxMailbox);
+	const cachedDocs = await loadCachedDocuments(applierName, list, inboxMailbox, signal);
+	throwIfMailAborted(signal);
 	const metadataConcurrency = Math.min(getMailAiLabelConcurrency(), Math.max(1, list.length));
 	const preparedRows = await mapPool(list, metadataConcurrency, async (item) => {
+		throwIfMailAborted(signal);
 		const row = await prepareMetadataMessage(item, cachedDocs.get(item.key), {
 			applierName,
 			inboxMailbox,
 			credentials: { ok: true, email, password },
+			signal,
 		});
 		if (row.error) {
 			finalize(item.key, {
@@ -613,6 +654,7 @@ export async function runMailAiLabelBatch({
 	const preparedById = new Map(prepared.map((message) => [message.id, message]));
 
 	const timedAiRequest = async (work) => {
+		throwIfMailAborted(signal);
 		const requestStartedAt = Date.now();
 		metrics.aiRequests += 1;
 		const batch = await aiLimiter.run(work);
@@ -622,6 +664,7 @@ export async function runMailAiLabelBatch({
 	};
 
 	const applyLabels = async (labeled) => {
+		throwIfMailAborted(signal);
 		if (!labeled.length) return;
 		const groups = new Map();
 		for (const { message, label } of labeled) {
@@ -631,6 +674,7 @@ export async function runMailAiLabelBatch({
 		}
 		metrics.gmailWriteBatches += groups.size;
 		const writes = await Promise.all([...groups.values()].map((group) => writeLimiter.run(async () => {
+			throwIfMailAborted(signal);
 			const writeStartedAt = Date.now();
 			try {
 				await addLabelsToMessages(
@@ -640,9 +684,11 @@ export async function runMailAiLabelBatch({
 					[group.label],
 					group.mailbox,
 				);
-				return { ...group, ok: true };
-			} catch (error) {
-				return { ...group, ok: false, error: error?.message || String(error) };
+				throwIfMailAborted(signal);
+					return { ...group, ok: true };
+				} catch (error) {
+					if (isMailAbort(error, signal)) throw error;
+					return { ...group, ok: false, error: error?.message || String(error) };
 			} finally {
 				metrics.gmailWriteMs += Date.now() - writeStartedAt;
 			}
@@ -674,14 +720,17 @@ export async function runMailAiLabelBatch({
 			}
 		}
 		if (optimisticUpdates.length) {
+			throwIfMailAborted(signal);
 			hadOptimisticUpdates = true;
-			await bulkUpdateMessageFlags(applierName, optimisticUpdates).catch((error) => {
+			await firestoreMutationLimiter.run(() => bulkUpdateMessageFlags(applierName, optimisticUpdates)).catch((error) => {
+				if (isMailAbort(error, signal)) throw error;
 				console.warn('[mail-ai-label] optimistic cache update failed:', error?.message || error);
 			});
 		}
 	};
 
 	const processFullBody = async (fallbackMessages) => {
+		throwIfMailAborted(signal);
 		if (!fallbackMessages.length) return;
 		metrics.fullBodyFallbacks += fallbackMessages.length;
 		emitProgress('loading_body');
@@ -695,6 +744,7 @@ export async function runMailAiLabelBatch({
 			maxBytes: BODY_FETCH_MAX_BYTES,
 			maxChars: BODY_MAX_CHARS,
 			allowFullFallback: true,
+			signal,
 		});
 		metrics.bodyFetchMs += Date.now() - fetchStartedAt;
 		const failedIds = new Set(bodyResult.failed.map(({ message }) => message.id));
@@ -709,13 +759,14 @@ export async function runMailAiLabelBatch({
 		}
 		const ready = fallbackMessages.filter((message) => !failedIds.has(message.id) && message.bodyText);
 		await Promise.all(chunkMessages(ready).map(async (chunk) => {
+			throwIfMailAborted(signal);
 			emitProgress('classifying_body');
 			const batch = await timedAiRequest(() => classifyPreparedBatch(
 				chunk,
 				allowedLabels,
 				labelDefinitions,
 				profile,
-				{ applierName },
+				{ applierName, signal },
 			));
 			const labeled = [];
 			for (const outcome of batch.outcomes) {
@@ -745,18 +796,20 @@ export async function runMailAiLabelBatch({
 	};
 
 	const processSnippetMessages = async (snippetMessages) => {
+		throwIfMailAborted(signal);
 		if (!snippetMessages.length) return;
 		await Promise.all(chunkMessages(snippetMessages.map((message) => ({
 			...message,
 			bodyText: message.snippet,
 		}))).map(async (chunk) => {
+			throwIfMailAborted(signal);
 			emitProgress('classifying_snippet');
 			const batch = await timedAiRequest(() => classifySnippetBatch(
 				chunk,
 				allowedLabels,
 				labelDefinitions,
 				profile,
-				{ applierName },
+				{ applierName, signal },
 			));
 			const labeled = [];
 			const needsBody = [];
@@ -806,6 +859,7 @@ export async function runMailAiLabelBatch({
 			cacheField: 'aiSnippet',
 			maxBytes: SNIPPET_MAX_BYTES,
 			maxChars: SNIPPET_MAX_CHARS,
+			signal,
 		});
 		metrics.snippetFetchMs += Date.now() - fetchStartedAt;
 		// Even an empty snippet is useful input alongside sender and subject. The
@@ -813,6 +867,7 @@ export async function runMailAiLabelBatch({
 		await processSnippetMessages(missingSnippetMessages);
 	})();
 	await Promise.all([cachedWork, fetchedWork]);
+	throwIfMailAborted(signal);
 
 	if (hadOptimisticUpdates) await invalidateMailListCaches(applierName);
 
@@ -821,12 +876,14 @@ export async function runMailAiLabelBatch({
 	// waiting for another IMAP round trip plus another Firestore write was the
 	// source of browser-side HTTP 500s on larger selections.
 	if (successfulByMailbox.size) {
+		throwIfMailAborted(signal);
 		void refreshAppliedFlags({
 			applierName,
 			email,
 			password,
 			successfulByMailbox,
 			preparedById,
+			signal,
 		}).catch((error) => {
 			console.warn('[mail-ai-label] refreshed cache update failed:', error?.message || error);
 		});

@@ -2,6 +2,10 @@ function trimTrailingSlashes(s: string): string {
   return s.replace(/\/+$/, "");
 }
 
+// Vite defines import.meta.env in the browser build. Keep API modules usable in
+// Node-based unit tests as well, where that object is intentionally absent.
+const runtimeEnv = import.meta.env ?? {};
+
 function isLoopbackUrl(raw: string): boolean {
   try {
     const u = new URL(/^https?:\/\//i.test(raw) ? raw : `http://${raw}`);
@@ -29,12 +33,12 @@ function normalizeConfiguredApiBase(raw: string): string {
  * - Dev: loopback URLs are proxied via same-origin `/api` so LAN clients work (see vite.config.ts)
  */
 export function resolveApiBase(): string {
-  const server = import.meta.env.SERVER_API_URL?.trim();
-  const vite = import.meta.env.VITE_API_URL?.trim();
+  const server = runtimeEnv.SERVER_API_URL?.trim();
+  const vite = runtimeEnv.VITE_API_URL?.trim();
   const raw = server || vite;
   if (
-    import.meta.env.DEV &&
-    (!raw || isLoopbackUrl(raw) || import.meta.env.VITE_DEV_RELATIVE_API === "1")
+    runtimeEnv.DEV &&
+    (!raw || isLoopbackUrl(raw) || runtimeEnv.VITE_DEV_RELATIVE_API === "1")
   ) {
     return "/api";
   }
@@ -51,7 +55,7 @@ export function resolveDevServiceUrl(
   fallback: string,
 ): string {
   const configured = envValue?.trim() || fallback;
-  if (import.meta.env.DEV && isLoopbackUrl(configured)) {
+  if (runtimeEnv.DEV && isLoopbackUrl(configured)) {
     return proxyPrefix;
   }
   return trimTrailingSlashes(configured);

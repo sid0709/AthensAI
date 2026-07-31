@@ -1,7 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { Job } from "../../../types";
-
-export function useJobSelection(results: Job[]) {
+export function useJobSelection<T extends { id: string }>(results: T[]) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const anchorIndexRef = useRef<number | null>(null);
 

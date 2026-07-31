@@ -9,11 +9,40 @@ import {
 	persistBidPageAnalysis,
 } from "../services/bidAiArtifactPersist.js";
 
+function bindRequestAbort(req, res) {
+	const controller = new AbortController();
+	const abort = () => {
+		if (!controller.signal.aborted) {
+			controller.abort(Object.assign(new Error("Job analysis request disconnected"), { name: "AbortError" }));
+		}
+	};
+	const close = () => {
+		if (!res.writableEnded) abort();
+	};
+	const cleanup = () => {
+		req.off("aborted", abort);
+		res.off("close", close);
+		res.off("finish", cleanup);
+	};
+	req.once("aborted", abort);
+	res.once("close", close);
+	res.once("finish", cleanup);
+	return { signal: controller.signal, cleanup };
+}
+
+function throwIfAborted(signal) {
+	if (!signal.aborted) return;
+	throw signal.reason instanceof Error
+		? signal.reason
+		: Object.assign(new Error("Job analysis request cancelled"), { name: "AbortError" });
+}
+
 /**
  * POST /api/job-analyze/page
  * body: { pageContext, applierName?, sessionContext?, jobId? }
  */
 export async function postJobAnalyzePage(req, res) {
+	const requestAbort = bindRequestAbort(req, res);
 	try {
 		const pageContext = req.body?.pageContext;
 		const applierName = String(req.body?.applierName ?? "").trim();
@@ -36,7 +65,9 @@ export async function postJobAnalyzePage(req, res) {
 			applierName,
 			sessionContext,
 			jobId,
+			signal: requestAbort.signal,
 		});
+		throwIfAborted(requestAbort.signal);
 		if (jobId && applierName) {
 			await persistBidPageAnalysis({
 				applierName,
@@ -57,12 +88,15 @@ export async function postJobAnalyzePage(req, res) {
 			requestId: requestId || null,
 		});
 	} catch (err) {
+		if (err?.name === "AbortError" || requestAbort.signal.aborted) return;
 		console.error("[job-analyze/page] failed", err);
 		return res.status(400).json({
 			ok: false,
 			success: false,
 			error: err.message || "Page analysis failed.",
 		});
+	} finally {
+		requestAbort.cleanup();
 	}
 }
 
@@ -71,6 +105,7 @@ export async function postJobAnalyzePage(req, res) {
  * body: { pageContext, applierName?, sessionContext?, neededFlags?, jobId? }
  */
 export async function postJobAnalyzeFlags(req, res) {
+	const requestAbort = bindRequestAbort(req, res);
 	try {
 		const pageContext = req.body?.pageContext;
 		const applierName = String(req.body?.applierName ?? "").trim();
@@ -97,7 +132,9 @@ export async function postJobAnalyzeFlags(req, res) {
 			sessionContext,
 			neededFlags,
 			jobId,
+			signal: requestAbort.signal,
 		});
+		throwIfAborted(requestAbort.signal);
 		if (jobId && applierName) {
 			await persistBidFlagAnalysis({
 				applierName,
@@ -118,12 +155,15 @@ export async function postJobAnalyzeFlags(req, res) {
 			requestId: requestId || null,
 		});
 	} catch (err) {
+		if (err?.name === "AbortError" || requestAbort.signal.aborted) return;
 		console.error("[job-analyze/flags] failed", err);
 		return res.status(400).json({
 			ok: false,
 			success: false,
 			error: err.message || "Flag analysis failed.",
 		});
+	} finally {
+		requestAbort.cleanup();
 	}
 }
 
@@ -132,6 +172,7 @@ export async function postJobAnalyzeFlags(req, res) {
  * body: { pageContext, applierName, jobId? }
  */
 export async function postJobRecommendResume(req, res) {
+	const requestAbort = bindRequestAbort(req, res);
 	try {
 		const pageContext = req.body?.pageContext;
 		const applierName = String(req.body?.applierName ?? "").trim();
@@ -149,7 +190,9 @@ export async function postJobRecommendResume(req, res) {
 			pageContext,
 			applierName,
 			jobId,
+			signal: requestAbort.signal,
 		});
+		throwIfAborted(requestAbort.signal);
 
 		if (jobId && applierName) {
 			await persistRecommendResumeResult(applierName, jobId, result, {
@@ -171,11 +214,14 @@ export async function postJobRecommendResume(req, res) {
 			requestId: requestId || null,
 		});
 	} catch (err) {
+		if (err?.name === "AbortError" || requestAbort.signal.aborted) return;
 		console.error("[job-analyze/recommend-resume] failed", err);
 		return res.status(400).json({
 			ok: false,
 			success: false,
 			error: err.message || "Resume recommendation failed.",
 		});
+	} finally {
+		requestAbort.cleanup();
 	}
 }

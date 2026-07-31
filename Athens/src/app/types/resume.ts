@@ -191,6 +191,7 @@ export interface EditorDraft {
   provider: string;
   model: string;
   reasoningEffort: string;
+  dynamicCareerTitles?: boolean;
   systemInstruction: string;
   jobDescription: string;
   refinementSteps: RefinementStep[];

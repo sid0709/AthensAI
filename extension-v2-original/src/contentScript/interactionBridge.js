@@ -10,9 +10,22 @@ export const commonProperties = [
 
 /* global chrome */
 
+function sendRuntimeMessage(message) {
+	try {
+		chrome.runtime.sendMessage(message, () => {
+			// A tab can navigate or reload before the background receives the
+			// command. Reading lastError prevents Chrome from reporting that
+			// expected race as an unchecked extension error.
+			void chrome.runtime.lastError;
+		});
+	} catch {
+		// The extension context was invalidated while the page was reloading.
+	}
+}
+
 export const highlightByPattern = (tag, property, pattern) => {
 	if (!pattern) return;
-	chrome.runtime.sendMessage({
+	sendRuntimeMessage({
 		action: "highlightByPattern",
 		payload: {
 			componentType: tag,
@@ -25,7 +38,7 @@ export const highlightByPattern = (tag, property, pattern) => {
 export const handleHighlight = highlightByPattern;
 
 export const clearHighlights = () => {
-	chrome.runtime.sendMessage({ action: "clearHighlight" });
+	sendRuntimeMessage({ action: "clearHighlight" });
 };
 
 export const handleClear = clearHighlights;
@@ -45,7 +58,7 @@ export const executeAction = (tag, property, pattern, order, action, actionValue
 	if (fetchType) payload.fetchType = fetchType;
 	if (identifier) payload.identifier = identifier;
 
-	chrome.runtime.sendMessage({
+	sendRuntimeMessage({
 		action: "executeAction",
 		payload,
 	});
@@ -59,7 +72,7 @@ export const executeActionsSequence = (actions, runId) => {
 		actions: Array.isArray(actions) ? actions : [],
 	};
 
-	chrome.runtime.sendMessage({
+	sendRuntimeMessage({
 		action: "executeActionsSequence",
 		payload,
 	});
@@ -71,16 +84,15 @@ export const executeActionsParallel = (actions, runId) => {
 		actions: Array.isArray(actions) ? actions : [],
 	};
 
-	chrome.runtime.sendMessage({
+	sendRuntimeMessage({
 		action: "executeActionsParallel",
 		payload,
 	});
 };
 
 export const highlightInteractables = (runId) => {
-	chrome.runtime.sendMessage({
+	sendRuntimeMessage({
 		action: 'highlightInteractables',
 		payload: { runId }
 	});
 };
-
