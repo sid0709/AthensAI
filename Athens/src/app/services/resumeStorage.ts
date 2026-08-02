@@ -1,4 +1,4 @@
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from "idb";
 import {
   BUILTIN_TEMPLATES,
   DEFAULT_IDENTITY,
@@ -59,6 +59,16 @@ function getDb() {
     });
   }
   return dbPromise;
+}
+
+/** Close and remove every browser-local résumé artifact for account deletion. */
+export async function clearResumeStorage(): Promise<void> {
+  if (dbPromise) {
+    const db = await dbPromise.catch(() => null);
+    db?.close();
+  }
+  dbPromise = null;
+  await deleteDB(DB_NAME);
 }
 
 async function ensureSeeded() {

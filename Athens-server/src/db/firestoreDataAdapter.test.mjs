@@ -165,3 +165,16 @@ test("unique reservations preserve conditional unique keys independently of docu
 	assert.equal(new Set(reservations.map((item) => item.id)).size, 2);
 	assert.ok(reservations.every((item) => item.targetId === "legacy-object-id"));
 });
+
+test("account username keys reserve names case-insensitively", () => {
+	const first = firestoreUniqueReservations("account_info", {
+		name: "Oliver",
+		usernameKey: "oliver",
+	}, "account-1");
+	const second = firestoreUniqueReservations("account_info", {
+		name: "OLIVER",
+		usernameKey: "oliver",
+	}, "account-2");
+	const usernameReservation = (rows) => rows.find((row) => row.keys[0] === "usernameKey");
+	assert.equal(usernameReservation(first).id, usernameReservation(second).id);
+});

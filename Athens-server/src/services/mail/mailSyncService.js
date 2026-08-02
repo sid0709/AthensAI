@@ -65,10 +65,12 @@ function pageFromUnlabeledCatalog(catalog, page, pageSize, fromCache) {
 }
 
 export async function invalidateMailListCaches(applierName) {
-	const prefix = `${String(applierName).trim().toLowerCase()}\0`;
+	const identity = String(applierName).trim().toLowerCase();
+	const prefix = `${identity}\0`;
 	for (const key of pageMemoryCache.keys()) {
 		if (key.startsWith(prefix)) pageMemoryCache.delete(key);
 	}
+	folderCountMemoryCache.delete(identity);
 	if (isRedisReady()) {
 		await getRedis().incr(unlabeledRevisionKey(applierName)).catch(() => undefined);
 	}

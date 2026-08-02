@@ -247,9 +247,18 @@ const ScrapComponent = () => {
 
 			const item = jobs[i];
 			const { resultData, jobrightJobId } = mapJobrightItemToResultData(item);
-			assertCompleteJob(resultData);
-
 			setProgress(40 + Math.round(((i + 1) / jobs.length) * 40));
+			try {
+				assertCompleteJob(resultData);
+			} catch (err) {
+				if (!(err instanceof IncompleteJobDataError)) throw err;
+				setStats((s) => ({ ...s, errors: s.errors + 1 }));
+				console.warn('Skipping job with invalid data', {
+					jobrightJobId,
+					issues: err.issues,
+				});
+				continue;
+			}
 
 			try {
 				const res = await api.post('/jobs', resultData);

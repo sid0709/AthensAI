@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { openDB } from "idb";
+import { deleteDB, openDB } from "idb";
 import { toast } from "sonner";
 import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
@@ -138,6 +138,17 @@ function listCacheDb() {
     });
   }
   return listCacheDbPromise;
+}
+
+/** Drop profile-sensitive job-list responses after the owning account is deleted. */
+export async function clearJobListCacheStorage(): Promise<void> {
+  listCache.clear();
+  if (listCacheDbPromise) {
+    const db = await listCacheDbPromise.catch(() => null);
+    db?.close();
+  }
+  listCacheDbPromise = null;
+  await deleteDB(LIST_CACHE_DB);
 }
 
 async function readPersistentListResponse(key: string): Promise<ListCacheEntry | null> {

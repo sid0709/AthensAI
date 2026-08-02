@@ -180,6 +180,21 @@ function mirrorTask(task) {
 	mirrorTimers.set(task.id, timer);
 }
 
+/** Wait until pending Firestore mirrors for the supplied tasks are durable. */
+export async function flushBackgroundTaskMirrors(taskIds = []) {
+	const ids = [...new Set(taskIds.map(clean).filter(Boolean))];
+	for (const id of ids) {
+		const timer = mirrorTimers.get(id);
+		if (!timer) continue;
+		clearTimeout(timer);
+		mirrorTimers.delete(id);
+		const latest = mirrorLatest.get(id);
+		mirrorLatest.delete(id);
+		if (latest) enqueueFirestoreMirror(latest);
+	}
+	await Promise.all(ids.map((id) => mirrorChains.get(id)).filter(Boolean));
+}
+
 async function appendEvent(redis, task, type, data = {}) {
 	const stream = backgroundTaskKeys.profileEvents(task.profileId);
 	const payload = JSON.stringify({

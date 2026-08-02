@@ -5,7 +5,7 @@ import { getFirestoreDb } from "../services/firebase/firebaseAdmin.js";
 import { assertFirestoreDocumentSize } from "../services/firebase/objectStore.js";
 
 const UNIQUE_KEYS = {
-	account_info: ["name"], personal_info: ["name"], vendor_tasks: [["applierName", "jobId"], ["applierName", "applyUrl"]],
+	account_info: [["name"], ["usernameKey"]], personal_info: ["name"], vendor_tasks: [["applierName", "jobId"], ["applierName", "applyUrl"]],
 	mail_messages: ["applierName", "mailbox", "uid"], mail_sync_state: ["applierName"], mail_user_labels: ["applierName"],
 	resume_generator_config: ["applierName"], rules: ["name"],
 	job_match_scores: ["applierName", "jobId"], match_profile_state: ["applierName"],

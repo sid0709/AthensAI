@@ -327,13 +327,13 @@ const ScrapComponent = () => {
 				try {
 					await onClickListItem();
 				} catch (err) {
-					notifyFailure(err, 'Error in scrape loop');
 					if (err instanceof IncompleteJobDataError) {
-						setScrapFlag(false);
+						console.warn('Skipping job with invalid data', err.issues);
 						setProgress(0);
 						handleClear();
-						return;
+						continue;
 					}
+					notifyFailure(err, 'Error in scrape loop');
 				}
 			}
 		};

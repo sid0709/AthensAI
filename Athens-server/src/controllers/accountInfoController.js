@@ -126,7 +126,7 @@ export const addAccountInfo = async (req, res) => {
 			return res.status(400).json({ message: "Name is required" });
 		}
 		// Check if the name already exists to prevent duplicates
-		const existingName = await accountInfoCollection.findOne({ name });
+		const existingName = await findAccountByName(name);
 		if (existingName) {
 			console.log('POST /api/account_info - Name already exists (409):', name);
 			return res.status(409).json({ message: "Name already exists" });
@@ -144,7 +144,8 @@ export const addAccountInfo = async (req, res) => {
 		}
 
 		const result = await insertAccountInfo({ 
-			name, 
+			name,
+			usernameKey: String(name).trim().toLocaleLowerCase("en-US"),
 			password: hashedPassword 
 		});
 
@@ -351,7 +352,8 @@ export const removeAccountInfo = async (req, res) => {
 
 export const signup = async (req, res) => {
 	try {
-		const { name, password } = req.body;
+		const name = String(req.body?.name ?? "").trim();
+		const password = String(req.body?.password ?? "");
 		console.log('POST /api/auth/signup - Attempting to signup:', name);
 
 		if (!name || !password) {
@@ -359,7 +361,7 @@ export const signup = async (req, res) => {
 		}
 
 		// Check if the name already exists
-		const existingUser = await accountInfoCollection.findOne({ name });
+		const existingUser = await findAccountByName(name);
 		if (existingUser) {
 			return res.status(409).json({ success: false, message: "User already exists" });
 		}
@@ -369,6 +371,7 @@ export const signup = async (req, res) => {
 
 		const result = await insertAccountInfo({
 			name,
+			usernameKey: name.toLocaleLowerCase("en-US"),
 			password: hashedPassword,
 		});
 
@@ -386,6 +389,9 @@ export const signup = async (req, res) => {
 		});
 	} catch (error) {
 		console.error('Error in signup:', error);
+		if (Number(error?.code) === 11000 || String(error?.code) === "ALREADY_EXISTS") {
+			return res.status(409).json({ success: false, message: "User already exists" });
+		}
 		res.status(500).json({ success: false, message: error.message });
 	}
 };
