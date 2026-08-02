@@ -10,6 +10,7 @@ Chrome extension for Athens **Bid Ready** apply work: silent **tab video** recor
 - **Analyze** — full page text + all form fields → Athens (`POST /api/job-analyze/page` + `/flags`); no character/field caps (chunked LLM when needed)
 - **Submit / Skip** — stop recording (if active), update Athens Submitted or Skipped; video uploads to Firebase when present
 - **Cross-tab sync** — apply state is job-scoped (survives View résumé / closing the job tab); use **Reopen job** if needed
+- **Mail** — view Inbox, Sent, Drafts, Spam, and Trash using the Gmail address and app password already saved in Athens Profile settings
 
 ## Install (developer mode)
 

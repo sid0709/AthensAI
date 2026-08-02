@@ -226,3 +226,15 @@ export async function shutdownPool() {
     pools.delete(email);
   }
 }
+
+/** Close and forget every pooled connection for one deleted mail account. */
+export async function evictAccountPool(emailRaw) {
+  const email = String(emailRaw || '').trim();
+  if (!email) return 0;
+  const pool = pools.get(email) || [];
+  pools.delete(email);
+  await Promise.all(pool.map(async (entry) => {
+    try { await entry.client.logout(); } catch { /* ignore */ }
+  }));
+  return pool.length;
+}

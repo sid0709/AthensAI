@@ -48,7 +48,7 @@ export function SignUpPage() {
           <h2 className="text-2xl font-bold text-foreground" style={display}>
             Create account
           </h2>
-          <p className="text-sm text-muted-foreground">Create an Athens profile</p>
+          <p className="text-sm text-muted-foreground">No invitation or email required</p>
         </div>
       </div>
 
@@ -60,7 +60,7 @@ export function SignUpPage() {
 
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
-          <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Profile name</label>
+          <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Username</label>
           <input
             autoFocus
             type="text"
@@ -68,6 +68,7 @@ export function SignUpPage() {
             onChange={(e) => setName(e.target.value)}
             className="mt-1.5 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2.5 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
             autoComplete="username"
+            placeholder="Choose a username"
           />
         </div>
         <div>

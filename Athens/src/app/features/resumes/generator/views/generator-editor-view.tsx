@@ -4,6 +4,7 @@ import {
   Briefcase,
   CheckCircle2,
   ChevronDown,
+  Circle,
   Coins,
   Eye,
   FileText,
@@ -260,6 +261,8 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                         <span className="shrink-0">
                           {s.status === "done" ? (
                             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                          ) : s.status === "pending" ? (
+                            <Circle className="w-4 h-4 text-neutral-300 dark:text-white/20" />
                           ) : (
                             <Loader2 className="w-4 h-4 text-sky-500 animate-spin" />
                           )}
@@ -296,7 +299,9 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                   );
                 })}
                 {genProgress.steps.length === 0 && (
-                  <li className="text-xs text-neutral-400 dark:text-white/40 px-1">Starting pipeline…</li>
+                  <li className="text-xs text-neutral-400 dark:text-white/40 px-1">
+                    {genProgress.message || "Starting pipeline…"}
+                  </li>
                 )}
               </ol>
             </div>

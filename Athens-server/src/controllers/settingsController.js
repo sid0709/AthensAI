@@ -3,6 +3,7 @@ import { accountInfoCollection } from "../db/dataStore.js";
 import { updateAccountInfoById } from "../services/accountInfoStore.js";
 import { findAccountForDelete, wipeAccountData } from "../services/deleteAccountService.js";
 import { getFirebaseAuth } from "../services/firebase/firebaseAdmin.js";
+import { clearProfileAccessCache } from "../middleware/firebaseAuth.js";
 
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -172,8 +173,15 @@ export async function deleteAccount(req, res) {
 			return res.status(401).json({ success: false, message: "Password is incorrect" });
 		}
 
-		const summary = await wipeAccountData({ name: user.name, accountId: user._id });
-		if (firebaseIdentity) await getFirebaseAuth().deleteUser(req.auth.uid);
+		const summary = await wipeAccountData({
+			name: user.name,
+			accountId: user._id,
+			uid: firebaseIdentity ? req.auth.uid : null,
+		});
+		if (firebaseIdentity) {
+			clearProfileAccessCache(req.auth.uid);
+			await getFirebaseAuth().deleteUser(req.auth.uid);
+		}
 		console.log("[auth/delete-account] wiped", user.name, summary);
 
 		return res.json({
@@ -183,8 +191,10 @@ export async function deleteAccount(req, res) {
 		});
 	} catch (err) {
 		console.error("POST /api/auth/delete-account error", err);
-		return res.status(500).json({
+		const status = Number.isInteger(err?.status) ? err.status : 500;
+		return res.status(status).json({
 			success: false,
+			code: err?.code,
 			message: err.message || "Failed to delete account",
 		});
 	}

@@ -482,20 +482,57 @@ export function BackgroundTaskProvider({ children }: { children: ReactNode }) {
     if (current && TERMINAL.has(current.status)) return Promise.resolve(current);
     return new Promise<BackgroundTask>((resolve, reject) => {
       const callbacks = waiters.current.get(taskId) || new Set();
-      const done = (task: BackgroundTask) => {
+      let settled = false;
+      let pollTimer: number | null = null;
+      const cleanup = () => {
         signal?.removeEventListener('abort', aborted);
+        if (pollTimer != null) window.clearTimeout(pollTimer);
+        callbacks.delete(done);
+        if (!callbacks.size && waiters.current.get(taskId) === callbacks) waiters.current.delete(taskId);
+      };
+      const done = (task: BackgroundTask) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         resolve(task);
       };
       const aborted = () => {
-        callbacks.delete(done);
+        if (settled) return;
+        settled = true;
+        cleanup();
         reject(new DOMException('Aborted', 'AbortError'));
+      };
+      const schedulePoll = () => {
+        if (settled) return;
+        pollTimer = window.setTimeout(poll, 2_000);
+      };
+      const poll = async () => {
+        if (settled) return;
+        try {
+          const task = await getBackgroundTask(taskId);
+          if (settled) return;
+          mergeTask(task);
+          if (TERMINAL.has(task.status)) {
+            done(task);
+            return;
+          }
+        } catch {
+          // The event stream remains the primary path. A transient polling
+          // failure simply retries, preserving the original wait semantics.
+        }
+        schedulePoll();
       };
       callbacks.add(done);
       waiters.current.set(taskId, callbacks);
       if (signal?.aborted) aborted();
-      else signal?.addEventListener('abort', aborted, { once: true });
+      else {
+        signal?.addEventListener('abort', aborted, { once: true });
+        const latest = tasksRef.current[taskId];
+        if (latest && TERMINAL.has(latest.status)) done(latest);
+        else schedulePoll();
+      }
     });
-  }, []);
+  }, [mergeTask]);
 
   const value = useMemo<BackgroundTaskContextValue>(() => ({
     tasks: Object.values(byId).sort(taskSort),

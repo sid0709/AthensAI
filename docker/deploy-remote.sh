@@ -234,7 +234,7 @@ for required_url in "$AI_BFF_HEALTH_URL" "$AVALON_HEALTH_URL" "$STATUS_URL"; do
 done
 
 echo "Verifying application access to Redis and Qdrant"
-docker exec "$CONTAINER_NAME" node --input-type=module -e '
+docker exec -w /app/Athens-server "$CONTAINER_NAME" node --input-type=module -e '
   import { createClient } from "redis";
   const redis = createClient({ url: process.env.REDIS_URL });
   await redis.connect();

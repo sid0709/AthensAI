@@ -48,7 +48,7 @@ export function getJobValidationIssues(job) {
 export class IncompleteJobDataError extends Error {
 	constructor(issues) {
 		const uniqueIssues = [...new Set(issues)];
-		super(`Scraping stopped. Missing or invalid required job data: ${uniqueIssues.join(', ')}.`);
+		super(`Skipping job. Missing or invalid required job data: ${uniqueIssues.join(', ')}.`);
 		this.name = 'IncompleteJobDataError';
 		this.issues = uniqueIssues;
 	}

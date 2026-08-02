@@ -5,7 +5,10 @@ import { Worker } from 'bullmq';
 import { installTerminalLogger } from '@nextoffer/shared/terminal-log';
 import { accountInfoCollection, initDataStore, closeDataStore } from '../db/dataStore.js';
 import { initRedis, closeRedis, getRedis } from '../db/redis.js';
-import { initQdrantCollections } from '../services/vectorStore/qdrantClient.js';
+import {
+	initJobRankingCollection,
+	initQdrantCollections,
+} from '../services/vectorStore/qdrantClient.js';
 import { loadCanonicalSkillDictionary } from '../services/matching/canonicalSkillDictionary.js';
 import { resolveAgentJobDraftPdf } from '../services/agentResumeGenService.js';
 import { renderIdentityRefreshedGenerationPdf } from '../services/refreshGeneratedResumesIdentity.js';
@@ -320,6 +323,9 @@ async function start() {
 	if (!redisReady) throw new Error('Redis is required by the background-task worker');
 	await initQdrantCollections().catch((error) => {
 		console.warn('[background-task] Qdrant initialization deferred:', error?.message || error);
+	});
+	await initJobRankingCollection().catch((error) => {
+		console.warn('[background-task] Qdrant ranking initialization deferred:', error?.message || error);
 	});
 	await loadCanonicalSkillDictionary().catch((error) => {
 		console.warn('[background-task] canonical skill dictionary warmup failed:', error?.message || error);

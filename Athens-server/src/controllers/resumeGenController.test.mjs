@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildTokenMap, formatCompanyToken } from "./resumeGenController.js";
+import {
+  buildParallelPurposeChains,
+  buildTokenMap,
+  formatCompanyToken,
+} from "./resumeGenController.js";
 import {
   TITLE_POLICY_VERSION,
   appendExperienceTitlePolicy,
@@ -101,6 +105,33 @@ test("buildTokenMap maps company1 and company2 from careers array", () => {
   );
   assert.equal(map.company1_name, undefined);
   assert.equal(map.company1_title, undefined);
+});
+
+test("resume generation parallelizes independent purpose chains without reordering their steps", () => {
+  const chains = buildParallelPurposeChains([
+    { purpose: "experience", kind: "fine-tune", name: "Experience draft" },
+    { purpose: "experience", kind: "final", name: "Experience final" },
+    { purpose: "skills", kind: "fine-tune", name: "Skills draft" },
+    { purpose: "skills", kind: "final", name: "Skills final" },
+    { purpose: "summary", kind: "final", name: "Summary final" },
+  ]);
+  assert.deepEqual(
+    chains?.map((chain) => chain.entries.map(({ index }) => index)),
+    [[1, 2], [3, 4], [5]],
+  );
+});
+
+test("resume generation preserves global order for ambiguous cross-purpose plans", () => {
+  assert.equal(buildParallelPurposeChains([
+    { purpose: "summary", kind: "fine-tune" },
+    { purpose: "skills", kind: "final" },
+    { purpose: "summary", kind: "final" },
+  ]), null);
+  assert.equal(buildParallelPurposeChains([
+    { purpose: "summary", kind: "final" },
+    { purpose: "summary", kind: "fine-tune" },
+    { purpose: "skills", kind: "final" },
+  ]), null);
 });
 
 test("shared title policy keeps Profile titles when the saved preference is disabled", () => {

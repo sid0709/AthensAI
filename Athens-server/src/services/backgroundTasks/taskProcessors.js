@@ -31,6 +31,10 @@ import { createTaskReporter } from './taskReporter.js';
 import { BACKGROUND_TASK_TYPES } from './taskTypes.js';
 import { firestoreMutationLimiter } from './resourceLimits.js';
 import {
+	mergeResumeGenerationSteps,
+	persistResumeSectionBeforeEmit,
+} from './resumeGenerationProgress.js';
+import {
 	renderResumeIdentityPdfInBackgroundLane,
 	renderResumePdfInBackgroundLane,
 } from './pdfLane.js';
@@ -82,6 +86,14 @@ async function loadResumeJob(jobId) {
 
 function redisSafeStep(step) {
 	if (!step || typeof step !== 'object') return null;
+	const plannedSteps = Array.isArray(step.steps)
+		? step.steps.slice(0, 100).map((planned, offset) => ({
+			index: Number.isFinite(Number(planned?.index)) ? Number(planned.index) : offset + 1,
+			name: planned?.name || `Step ${offset + 1}`,
+			purpose: planned?.purpose || null,
+			kind: planned?.kind || null,
+		}))
+		: null;
 	return {
 		phase: step.phase || null,
 		name: step.name || null,
@@ -90,6 +102,7 @@ function redisSafeStep(step) {
 		index: Number.isFinite(Number(step.index)) ? Number(step.index) : null,
 		usage: step.usage || null,
 		cumulative: step.cumulative || null,
+		...(plannedSteps ? { steps: plannedSteps } : {}),
 	};
 }
 
@@ -122,10 +135,15 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 		return { inputId, generationId: input.result.generationId || null, recovered: true };
 	}
 
-	const existing = await resumeGenerationsCollection?.findOne({
-		backgroundTaskInputId: inputId,
-		status: 'completed',
-	});
+	// A queued input cannot already have a saved generation: the worker marks it
+	// running before any model or persistence work. Only retries need recovery.
+	// backgroundTaskInputId is unique and single-field indexed; do not combine it
+	// with status, which would require a composite index and previously triggered
+	// a full completed-generation scan before the first model call.
+	const generationForInput = input.status === 'queued'
+		? null
+		: await resumeGenerationsCollection?.findOne({ backgroundTaskInputId: inputId });
+	const existing = generationForInput?.status === 'completed' ? generationForInput : null;
 	if (existing) {
 		const recoveredResult = resultFromGenerationRecord(existing);
 		await firestoreMutationLimiter.run(() => backgroundTaskInputsCollection.updateOne(
@@ -159,7 +177,23 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 	};
 	let partialWrite = Promise.resolve();
 	let stepRevision = 0;
+	const emitStep = (safeStep, label) => {
+		if (!safeStep) return;
+		onStep?.({
+			step: label || (safeStep.phase === 'queued'
+				? 'Waiting for generation slot…'
+				: safeStep.phase === 'step-start'
+					? `Running: ${safeStep.name || 'Step'}…`
+					: safeStep.name || 'Generating résumé…'),
+			stepEvent: safeStep,
+			stepRevision: ++stepRevision,
+		});
+	};
 	try {
+		if (Array.isArray(body.steps) && body.steps.length) {
+			const safePlan = redisSafeStep({ phase: 'pipeline-ready', steps: body.steps });
+			emitStep(safePlan, 'Preparing résumé generation…');
+		}
 		const prep = await prepareGeneration(body);
 		throwIfAborted(signal);
 		if (!prep.ok) throw Object.assign(new Error(prep.error), { status: prep.status });
@@ -175,40 +209,37 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 				reasoningEffort: body.reasoningEffort,
 				signal,
 			}, (step) => {
-				stepRevision += 1;
 				const safeStep = redisSafeStep(step);
-				onStep?.({
-					step: safeStep?.phase === 'queued'
-						? 'Waiting for generation slot…'
-						: safeStep?.phase === 'step-start'
-							? `Running: ${safeStep.name || 'Step'}…`
-							: safeStep?.name || 'Generating résumé…',
-					stepEvent: safeStep,
-					stepRevision,
-				});
 				if (step?.phase === 'step-done' && step?.kind === 'final' && step?.purpose && step.output != null) {
-					partialWrite = partialWrite.then(() => firestoreMutationLimiter.run(async () => {
-						throwIfAborted(signal);
-						await backgroundTaskInputsCollection.updateOne(
-							{ _id: inputId },
-							{
-								$set: {
-									[`partialSections.${step.purpose}`]: step.output,
-									stepRevision,
-									updatedAt: new Date(),
-								},
+					// A final checkmark is also the UI's signal to fetch this section.
+					// Persist first so that fetch can never race an unfinished write.
+					partialWrite = partialWrite.then(() => firestoreMutationLimiter.run(() => (
+						persistResumeSectionBeforeEmit(
+							async () => {
+								throwIfAborted(signal);
+								await backgroundTaskInputsCollection.updateOne(
+									{ _id: inputId },
+									{
+										$set: {
+											[`partialSections.${step.purpose}`]: step.output,
+											updatedAt: new Date(),
+										},
+									},
+								);
 							},
-						);
-					}));
+							() => emitStep(safeStep, `Completed: ${safeStep?.name || step.purpose}`),
+						)
+					)));
+					return;
 				}
+				emitStep(safeStep);
 			}),
 			{
 				signal,
-				onQueued: () => onStep?.({
-					step: 'Waiting for generation slot…',
-					stepEvent: { phase: 'queued', name: 'Waiting for generation slot' },
-					stepRevision: ++stepRevision,
-				}),
+				onQueued: () => emitStep(
+					redisSafeStep({ phase: 'queued', name: 'Waiting for generation slot' }),
+					'Waiting for generation slot…',
+				),
 			},
 		);
 		throwIfAborted(signal);
@@ -306,7 +337,16 @@ async function runResumeGeneration(task, signal) {
 			let result;
 			if (kind === 'stored-request') {
 				result = await runStoredResumeGeneration(task, itemId, signal, (step) => {
-					items[itemId] = { ...items[itemId], status: 'running', ...step };
+					const generationSteps = mergeResumeGenerationSteps(
+						items[itemId]?.generationSteps,
+						step?.stepEvent,
+					);
+					items[itemId] = {
+						...items[itemId],
+						status: 'running',
+						...step,
+						...(generationSteps.length ? { generationSteps } : {}),
+					};
 					void reporter.item('task-item-progress', {
 						taskId: task.id,
 						itemId,
@@ -369,9 +409,11 @@ async function runResumeGeneration(task, signal) {
 			}
 			throwIfAborted(signal);
 			completed += 1;
+			const generationSteps = items[itemId]?.generationSteps;
 			items[itemId] = {
 				status: 'completed',
 				step: null,
+				...(Array.isArray(generationSteps) ? { generationSteps } : {}),
 				reused: result.reused === true || result.recovered === true,
 				generationId: result.generationId || null,
 				...(kind === 'job' ? {
@@ -389,12 +431,23 @@ async function runResumeGeneration(task, signal) {
 		} catch (error) {
 			if (isAbortError(error, signal)) {
 				cancelled += 1;
-				items[itemId] = { status: 'cancelled', step: null };
+				const generationSteps = items[itemId]?.generationSteps;
+				items[itemId] = {
+					status: 'cancelled',
+					step: null,
+					...(Array.isArray(generationSteps) ? { generationSteps } : {}),
+				};
 				await reporter.item('task-item-cancelled', { taskId: task.id, itemId, item: items[itemId] });
 			} else {
 				failed += 1;
 				if (kind === 'job') failedJobIds.push(itemId);
-				items[itemId] = { status: 'failed', step: null, error: error?.message || String(error) };
+				const generationSteps = items[itemId]?.generationSteps;
+				items[itemId] = {
+					status: 'failed',
+					step: null,
+					error: error?.message || String(error),
+					...(Array.isArray(generationSteps) ? { generationSteps } : {}),
+				};
 				await reporter.item('task-item-failed', { taskId: task.id, itemId, item: items[itemId] });
 			}
 		} finally {

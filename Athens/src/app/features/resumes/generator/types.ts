@@ -227,7 +227,7 @@ export type GenProgressStep = {
   name: string;
   purpose: string;
   kind: string;
-  status: "running" | "done";
+  status: "pending" | "running" | "done";
   usage?: UsageBreakdown;
   output?: unknown; // the model's reply for this step (parsed JSON for finals)
 };
@@ -235,6 +235,7 @@ export type GenProgress = {
   steps: GenProgressStep[];
   cumulative: UsageBreakdown | null;
   done: boolean;
+  message?: string | null;
 };
 
 export type Identity = {

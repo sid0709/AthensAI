@@ -14,9 +14,11 @@ import {
   AlertDialogTitle,
 } from "../../../components/ui/alert-dialog";
 import { changePassword, deleteAccount } from "../../../services/profileApi";
+import { clearResumeStorage } from "../../../services/resumeStorage";
+import { clearJobListCacheStorage } from "../../job-search/hooks/useJobsList";
 
 /** Client keys tied to the signed-in applier — clear on account wipe. */
-function clearApplierLocalData(applierName: string) {
+async function clearApplierLocalData(applierName: string, profileId: unknown) {
   const keysToRemove: string[] = [
     "athens_auth_user",
     "athens_auth_expires_at",
@@ -25,10 +27,15 @@ function clearApplierLocalData(applierName: string) {
     "athens-avalon-session",
     "athens-agent-job-budget-usd",
     "athens-agent-allow-window-focus",
+    "athens-resume-ai-defaults",
+    "athens-job-bookmarks",
   ];
   if (applierName) {
     keysToRemove.push(`resumeGeneratorConfig:${applierName}`);
     keysToRemove.push(`athens-agent-queue-${applierName}`);
+  }
+  if (profileId != null && String(profileId)) {
+    keysToRemove.push(`athens-agent-state:v2:profile:${String(profileId)}`);
   }
   for (const key of keysToRemove) {
     try {
@@ -39,16 +46,22 @@ function clearApplierLocalData(applierName: string) {
   }
   // Sweep any other agent-queue keys for this applier.
   try {
-    const prefix = "athens-agent-queue-";
+    const profileQueuePrefix = profileId == null
+      ? ""
+      : `athens-agent-state:v2:queue:${String(profileId)}:`;
     for (let i = localStorage.length - 1; i >= 0; i -= 1) {
       const key = localStorage.key(i);
-      if (key?.startsWith(prefix) && applierName && key.includes(applierName)) {
+      if (
+        (key?.startsWith("athens-agent-queue-") && applierName && key.includes(applierName)) ||
+        (profileQueuePrefix && key?.startsWith(profileQueuePrefix))
+      ) {
         localStorage.removeItem(key);
       }
     }
   } catch {
     /* ignore */
   }
+  await Promise.allSettled([clearResumeStorage(), clearJobListCacheStorage()]);
 }
 
 export function SecurityTab() {
@@ -119,7 +132,7 @@ export function SecurityTab() {
         toast.error(res.message || "Could not delete account");
         return;
       }
-      clearApplierLocalData(user.name);
+      await clearApplierLocalData(user.name, user._id);
       signout();
       setDeleteOpen(false);
       toast.success("Account deleted");

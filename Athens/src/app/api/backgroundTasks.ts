@@ -1,4 +1,5 @@
 import { API_BASE } from '@/lib/api-base';
+import { retryTransient } from '@/lib/transient-retry';
 
 export type BackgroundTaskType =
   | 'resume_generation'
@@ -152,6 +153,29 @@ export async function getResumeGenerationTaskResult(
     `${API_BASE}/personal/resume-generation-tasks/${encodeURIComponent(inputId)}${query}`,
   );
   return parseJson<ResumeGenerationTaskResult>(response);
+}
+
+export async function getCompletedResumeGenerationTaskResult(
+  inputId: string,
+  applierName?: string,
+  signal?: AbortSignal,
+): Promise<ResumeGenerationTaskResult & { result: Record<string, unknown> }> {
+  return retryTransient(async () => {
+    const stored = await getResumeGenerationTaskResult(inputId, applierName);
+    if (stored.result) {
+      return stored as ResumeGenerationTaskResult & { result: Record<string, unknown> };
+    }
+    const terminalError = stored.status === 'failed' || stored.status === 'cancelled';
+    throw Object.assign(
+      new Error(stored.error || (terminalError
+        ? `Resume generation ${stored.status}`
+        : 'Resume generation result is still being finalized')),
+      { status: terminalError ? 400 : 503 },
+    );
+  }, {
+    signal,
+    delaysMs: [200, 400, 800, 1_600, 3_200, 5_000],
+  });
 }
 
 function parseEventBlock(block: string): BackgroundTaskEvent | null {

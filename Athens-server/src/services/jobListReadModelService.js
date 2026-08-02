@@ -39,6 +39,7 @@ const profileStatuses = new Map();
 const profileAccounts = new Map();
 const profileRankings = new Map();
 const profileRankingBuilds = new Map();
+const deletedProfileNames = new Set();
 
 function formatWarmupDuration(milliseconds) {
   if (milliseconds < 1_000) return `${Math.max(0, Math.round(milliseconds))}ms`;
@@ -388,6 +389,7 @@ function parseRanking(raw, applierName, profileVersion, snapshot) {
 }
 
 async function buildProfileRanking(applierName, profileVersion, snapshot) {
+  if (deletedProfileNames.has(applierName)) return null;
   const context = await loadProfileMatchContext(applierName);
   const proficiencyCache = new Map();
   const rows = snapshot.entries.map((entry) => {
@@ -413,6 +415,7 @@ async function buildProfileRanking(applierName, profileVersion, snapshot) {
     stale: false,
     lastCheckedAt: Date.now(),
   };
+  if (deletedProfileNames.has(applierName)) return null;
   profileRankings.set(applierName, ranking);
   if (isRedisReady()) {
     await getRedis().setEx(
@@ -1027,6 +1030,7 @@ export async function registerJobListProfile({ profileId: profileIdRaw, applierN
   const profileId = text(profileIdRaw);
   const applierName = text(applierNameRaw);
   if (!profileId) return false;
+  if (applierName) deletedProfileNames.delete(applierName);
   if (applierName) profileAccounts.set(applierName, { id: profileId, isBeta: Boolean(isBeta) });
   profileStatuses.set(profileId, {
     profileId,
@@ -1054,6 +1058,25 @@ export async function registerJobListProfile({ profileId: profileIdRaw, applierN
     void getProfileRankingVersion(applierName)
       .then((profileVersion) => startProfileRankingBuild(applierName, profileVersion, catalogSnapshot))
       .catch((error) => console.warn(`[jobs-v2] new profile ranking failed for ${applierName}:`, error?.message || error));
+  }
+  return true;
+}
+
+/** Remove all in-process and Redis read-model state for a deleted profile. */
+export async function unregisterJobListProfile({ profileId: profileIdRaw, applierName: applierNameRaw }) {
+  const profileId = text(profileIdRaw);
+  const applierName = text(applierNameRaw);
+  if (profileId) profileStatuses.delete(profileId);
+  if (applierName) {
+    deletedProfileNames.add(applierName);
+    profileAccounts.delete(applierName);
+    profileRankings.delete(applierName);
+  }
+  if (isRedisReady()) {
+    const keys = [];
+    if (profileId) keys.push(jobStatusBaselineCacheKey(profileId));
+    if (applierName) keys.push(profileContextKey(applierName));
+    if (keys.length) await getRedis().del(keys);
   }
   return true;
 }

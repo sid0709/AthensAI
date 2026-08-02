@@ -8,6 +8,7 @@ import { useApplier } from "@/context/applier-context";
 import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 import {
   enqueueResumeGenerationRequest,
+  getCompletedResumeGenerationTaskResult,
   getResumeGenerationTaskResult,
 } from "@/app/api/backgroundTasks";
 import { buildResumeModel } from "../build-resume-model";
@@ -33,6 +34,7 @@ import {
 } from "@/app/services/resumeApi";
 import type {
   GenProgress,
+  GenProgressStep,
   GeneratedContent,
   GeneratorConfig,
   GenStep,
@@ -63,6 +65,55 @@ function formatCompanyToken(c: { title?: string; company?: string; period?: stri
   else if (period) head = period;
 
   return description && head ? `${head} — ${description}` : head || description;
+}
+
+function mergeGenerationStep(
+  current: GenProgress | null,
+  event: Record<string, unknown>,
+  message?: string | null,
+): GenProgress {
+  const base = current ?? { steps: [], cumulative: null, done: false };
+  const index = Number(event.index);
+  if (!Number.isInteger(index) || index < 1) return { ...base, message: message ?? base.message };
+  const phase = String(event.phase || "");
+  const rawStatus = String(event.status || "");
+  const status: GenProgressStep["status"] | null = phase === "step-done"
+    ? "done"
+    : phase === "step-start"
+      ? "running"
+      : rawStatus === "pending" || rawStatus === "running" || rawStatus === "done"
+        ? rawStatus
+        : null;
+  if (!status) {
+    return { ...base, message: message ?? base.message };
+  }
+  const previous = base.steps.find((step) => step.index === index);
+  const nextStep: GenProgressStep = {
+    index,
+    name: String(event.name || previous?.name || `Step ${index}`),
+    purpose: String(event.purpose || previous?.purpose || ""),
+    kind: String(event.kind || previous?.kind || ""),
+    status: previous?.status === "done" ? "done" : status,
+    ...(event.usage ? { usage: event.usage as UsageBreakdown } : previous?.usage ? { usage: previous.usage } : {}),
+  };
+  const steps = [...base.steps.filter((step) => step.index !== index), nextStep]
+    .sort((left, right) => left.index - right.index);
+  return {
+    ...base,
+    steps,
+    cumulative: (event.cumulative as UsageBreakdown | null) ?? base.cumulative,
+    message: message ?? base.message,
+  };
+}
+
+function plannedGenerationSteps(plan: Array<Pick<GenStep, "name" | "purpose" | "kind">>): GenProgressStep[] {
+  return plan.map((step, offset) => ({
+    index: offset + 1,
+    name: step.name || `Step ${offset + 1}`,
+    purpose: step.purpose,
+    kind: step.kind,
+    status: "pending",
+  }));
 }
 
 export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
@@ -676,6 +727,7 @@ export function useGeneratorPage() {
   const requestPayload = useMemo(
     () => ({
       applierName: applier?.name ?? null,
+      profileId: applier?._id != null ? String(applier._id) : null,
       provider: config.provider,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
@@ -689,7 +741,7 @@ export function useGeneratorPage() {
       jobDescription: config.jobDescription,
       steps: plan,
     }),
-    [applier?.name, config, identity, plan, template],
+    [applier?._id, applier?.name, config, identity, plan, template],
   );
 
 	useEffect(() => {
@@ -700,16 +752,34 @@ export function useGeneratorPage() {
 		if (!inputId) return;
 		const item = task.progress?.items?.[inputId];
 		const active = ["queued", "running", "cancelling"].includes(task.status);
-		if (active) {
-			setGenerating(true);
-			setGenProgress((current) => current || { steps: [], cumulative: null, done: false });
-		}
-
 		const revision = Number(item?.stepRevision ?? 0);
 		const terminal = ["completed", "completed_with_errors", "failed", "cancelled"].includes(task.status);
 		const previousRevision = restoredRevisions.current.get(task.id) ?? -1;
 		const shouldReadPartial = active && revision > previousRevision;
 		const shouldReadTerminal = terminal && !terminalHandled.current.has(task.id);
+		if (active) {
+			setGenerating(true);
+			const message = String(item?.step || (task.status === "queued" ? "Queued for generation…" : "Preparing résumé generation…"));
+			setGenProgress((current) => {
+				let next = current || {
+					steps: plannedGenerationSteps(plan),
+					cumulative: null,
+					done: false,
+				};
+				if (!next.steps.length) next = { ...next, steps: plannedGenerationSteps(plan) };
+				if (Array.isArray(item?.generationSteps)) {
+					for (const persistedStep of item.generationSteps) {
+						if (persistedStep && typeof persistedStep === "object") {
+							next = mergeGenerationStep(next, persistedStep as Record<string, unknown>, message);
+						}
+					}
+				}
+				if (shouldReadPartial && item?.stepEvent && typeof item.stepEvent === "object") {
+					next = mergeGenerationStep(next, item.stepEvent as Record<string, unknown>, message);
+				}
+				return { ...next, done: false, message };
+			});
+		}
 		if (!shouldReadPartial && !shouldReadTerminal) return;
 
 		if (shouldReadTerminal && (task.status === "failed" || task.status === "cancelled")) {
@@ -728,7 +798,25 @@ export function useGeneratorPage() {
 		restorationInFlight.current.add(readKey);
 		if (shouldReadPartial) restoredRevisions.current.set(task.id, revision);
 		if (shouldReadTerminal) terminalHandled.current.add(task.id);
-		void getResumeGenerationTaskResult(inputId, applier.name)
+		const stepEvent = item?.stepEvent && typeof item.stepEvent === "object"
+			? item.stepEvent as Record<string, unknown>
+			: null;
+		const expectedPartialPurpose = shouldReadPartial
+			&& stepEvent?.phase === "step-done"
+			&& stepEvent?.kind === "final"
+			? String(stepEvent.purpose || "")
+			: "";
+		void retryTransient(async () => {
+			const stored = await getResumeGenerationTaskResult(inputId, applier.name);
+			if (
+				expectedPartialPurpose
+				&& !stored.result?.sections
+				&& !Object.prototype.hasOwnProperty.call(stored.partialSections || {}, expectedPartialPurpose)
+			) {
+				throw Object.assign(new Error("Completed résumé section is not readable yet"), { status: 503 });
+			}
+			return stored;
+		})
 			.then((stored) => {
 				const sections = (stored.result?.sections || stored.partialSections || {}) as Record<string, unknown>;
 				if (stored.result?.sections) {
@@ -742,18 +830,22 @@ export function useGeneratorPage() {
 				if (stored.result?.usage) setUsage(stored.result.usage as UsageBreakdown);
 				if (shouldReadTerminal) {
 					setGenerating(false);
-					setGenProgress({
-						steps: [],
-						cumulative: (stored.result?.usage as UsageBreakdown) ?? null,
+					setGenProgress((current) => ({
+						steps: current?.steps ?? [],
+						cumulative: (stored.result?.usage as UsageBreakdown) ?? current?.cumulative ?? null,
 						done: true,
-					});
+						message: null,
+					}));
 				}
 			})
 			.catch(() => {
+				if (shouldReadPartial && restoredRevisions.current.get(task.id) === revision) {
+					restoredRevisions.current.set(task.id, previousRevision);
+				}
 				if (shouldReadTerminal) terminalHandled.current.delete(task.id);
 			})
 			.finally(() => restorationInFlight.current.delete(readKey));
-	}, [applier?.name, editorGenerationTask, notify]);
+	}, [applier?.name, editorGenerationTask, notify, plan]);
 
   // Download a full JSON trace of the generation: config, resolved prompts,
   // per-step model output + token/cost, totals, and the assembled sections.
@@ -832,14 +924,16 @@ export function useGeneratorPage() {
     setGenerating(true);
     setUsage(null);
     setGenerated(null);
-    setGenProgress({ steps: [], cumulative: null, done: false });
+    const checklist = plannedGenerationSteps(plan);
+    setGenProgress({ steps: checklist, cumulative: null, done: false, message: "Submitting generation…" });
     try {
       const queued = await enqueueResumeGenerationRequest(requestPayload);
       adoptTask(queued.task);
       setGenProgress({
-        steps: [],
+        steps: checklist,
         cumulative: null,
         done: false,
+        message: "Queued for generation…",
       });
       const terminal = await waitForTask(queued.task.id);
 			terminalHandled.current.add(queued.task.id);
@@ -847,12 +941,16 @@ export function useGeneratorPage() {
         throw new Error(terminal.error || "Resume generation failed");
       }
       if (terminal.status === "cancelled") throw new Error("Resume generation cancelled");
-      const stored = await getResumeGenerationTaskResult(queued.inputId, applier.name);
-      if (!stored.result) throw new Error(stored.error || "Resume generation did not produce a result");
+      const stored = await getCompletedResumeGenerationTaskResult(queued.inputId, applier.name);
       const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
       setUsage(nextUsage);
       setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
-      setGenProgress({ steps: [], cumulative: nextUsage, done: true });
+      setGenProgress((current) => ({
+        steps: current?.steps ?? [],
+        cumulative: nextUsage,
+        done: true,
+        message: null,
+      }));
       notify({ title: "Resume generated", description: "Result is shown in the live preview.", tone: "success" });
     } catch (error) {
       notify({

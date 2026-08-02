@@ -3344,6 +3344,102 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
       }
 
+      case 'GET_MAIL_CREDENTIALS': {
+        try {
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (!applierName) {
+            sendResponse({ ok: false, error: 'Sign in required.' });
+            break;
+          }
+          const data = await AthensApi.checkMailCredentials(applierName);
+          sendResponse({
+            ok: true,
+            configured: Boolean(data.configured),
+            email: data.email || '',
+            error: data.error || '',
+          });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || String(err) });
+        }
+        break;
+      }
+
+      case 'GET_MAIL_THREADS': {
+        try {
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (!applierName) {
+            sendResponse({ ok: false, error: 'Sign in required.' });
+            break;
+          }
+          const data = await AthensApi.fetchMailThreads(applierName, {
+            folder: message.folder,
+            page: message.page,
+            pageSize: message.pageSize,
+            force: Boolean(message.force),
+          });
+          sendResponse({
+            ok: true,
+            threads: Array.isArray(data.threads) ? data.threads : [],
+            total: Number(data.total) || 0,
+            page: Number(data.page) || 1,
+            pageSize: Number(data.pageSize) || 20,
+            fromCache: Boolean(data.fromCache),
+          });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || String(err) });
+        }
+        break;
+      }
+
+      case 'GET_MAIL_MESSAGE': {
+        try {
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (!applierName) {
+            sendResponse({ ok: false, error: 'Sign in required.' });
+            break;
+          }
+          const data = await AthensApi.fetchMailMessage(
+            applierName,
+            message.uid,
+            message.folder,
+          );
+          sendResponse({ ok: true, thread: data.thread || null });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || String(err) });
+        }
+        break;
+      }
+
+      case 'GET_MAIL_FOLDER_COUNTS': {
+        try {
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (!applierName) {
+            sendResponse({ ok: false, error: 'Sign in required.' });
+            break;
+          }
+          const data = await AthensApi.fetchMailFolderCounts(
+            applierName,
+            Boolean(message.force),
+          );
+          sendResponse({ ok: true, counts: data.counts || {} });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || String(err) });
+        }
+        break;
+      }
+
       case 'MARK_BID_FIXED': {
         try {
           const auth = await MockApi.getAuth();

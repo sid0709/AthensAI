@@ -662,6 +662,234 @@ body {
   color: #b91c1c;
 }
 
+.tab-count.mail-count {
+  background: rgba(15, 118, 110, 0.14);
+  color: #0f766e;
+}
+
+body.mail-page #statusStrip,
+body.mail-page #tabRecordingControl,
+body.mail-page #unassignedClipsView,
+body.mail-page #activeSessionsView,
+body.mail-page #applySessionView,
+body.mail-page #recordingsView,
+body.mail-page #finishFooter,
+body.mail-page .compact-format {
+  display: none !important;
+}
+
+body.mail-page #workspaceView {
+  padding-bottom: 18px;
+}
+
+.mail-section {
+  padding-bottom: 18px;
+}
+
+.mail-section .section-header {
+  align-items: flex-start;
+}
+
+.mail-account {
+  margin: 2px 0 0;
+  color: var(--bm-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.mail-folder-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0 8px;
+  color: var(--bm-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mail-folder-select {
+  min-width: 130px;
+  padding: 7px 28px 7px 9px;
+  border: 1px solid var(--bm-line);
+  border-radius: 9px;
+  background: var(--bm-panel-solid);
+  color: var(--bm-ink);
+  font: inherit;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.mail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mail-item,
+.mail-empty {
+  margin-bottom: 7px;
+  border: 1px solid var(--bm-line);
+  border-radius: var(--bm-radius-md);
+  background: var(--bm-panel-solid);
+  overflow: hidden;
+}
+
+.mail-empty {
+  padding: 16px 12px;
+  color: var(--bm-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.mail-empty.error {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.06);
+}
+
+.mail-row {
+  width: 100%;
+  padding: 10px 11px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mail-row:hover,
+.mail-row:focus-visible {
+  background: rgba(15, 118, 110, 0.07);
+  outline: none;
+}
+
+.mail-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mail-row-top strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mail-item.unread .mail-row-top strong,
+.mail-item.unread .mail-subject {
+  font-weight: 800;
+}
+
+.mail-item.unread {
+  border-left: 3px solid var(--bm-teal);
+}
+
+.mail-row-top time {
+  flex: none;
+  color: var(--bm-muted);
+  font-size: 10px;
+}
+
+.mail-subject,
+.mail-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-subject {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mail-preview {
+  margin-top: 2px;
+  color: var(--bm-muted);
+  font-size: 11px;
+}
+
+.mail-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--bm-muted);
+  font-size: 11px;
+}
+
+.mail-pagination .btn {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.mail-detail {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--bm-line);
+  border-radius: var(--bm-radius-md);
+  background: var(--bm-panel-solid);
+}
+
+.mail-back {
+  margin-bottom: 12px;
+}
+
+.mail-detail h3 {
+  margin: 0 0 8px;
+  font-family: var(--bm-display);
+  font-size: 1rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.mail-detail-from,
+.mail-detail-date {
+  margin: 0 0 3px;
+  color: var(--bm-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.mail-detail-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.mail-label-chip {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.1);
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mail-detail-body {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--bm-line);
+  color: var(--bm-ink);
+  font-family: var(--bm-body);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .section-header-actions {
   display: flex;
   align-items: center;

@@ -201,6 +201,10 @@
           Rejected
           <span id="rejectedCountBadge" class="tab-count hidden">0</span>
         </button>
+        <button type="button" class="workspace-tab" data-tab="mail" role="tab" aria-selected="false">
+          Mail
+          <span id="mailCountBadge" class="tab-count mail-count hidden">0</span>
+        </button>
       </nav>
 
       <section id="queueSection" class="queue-section" data-page="ready">
@@ -224,6 +228,45 @@
           Mark fixed returns the bid to Submitted (no re-record).
         </p>
         <ul id="rejectedList" class="item-list"></ul>
+      </section>
+
+      <section id="mailSection" class="queue-section mail-section hidden" data-page="mail">
+        <div class="section-header">
+          <div>
+            <h2>Mail</h2>
+            <p id="mailAccount" class="mail-account">Gmail mailbox</p>
+          </div>
+          <button id="refreshMailBtn" class="btn-link" type="button">Refresh</button>
+        </div>
+
+        <div id="mailListView">
+          <label class="mail-folder-label" for="mailFolderSelect">
+            Folder
+            <select id="mailFolderSelect" class="mail-folder-select">
+              <option value="inbox">Inbox</option>
+              <option value="sent">Sent</option>
+              <option value="drafts">Drafts</option>
+              <option value="spam">Spam</option>
+              <option value="trash">Trash</option>
+            </select>
+          </label>
+          <p id="mailStatus" class="hint queue-hint" aria-live="polite">Open Mail to load your inbox.</p>
+          <ul id="mailList" class="mail-list"></ul>
+          <div id="mailPagination" class="mail-pagination hidden">
+            <button id="mailPrevBtn" class="btn btn-secondary" type="button">Previous</button>
+            <span id="mailPageLabel">Page 1</span>
+            <button id="mailNextBtn" class="btn btn-secondary" type="button">Next</button>
+          </div>
+        </div>
+
+        <article id="mailDetailView" class="mail-detail hidden">
+          <button id="mailBackBtn" class="btn-link mail-back" type="button">← Back to mail</button>
+          <h3 id="mailDetailSubject">Message</h3>
+          <p id="mailDetailFrom" class="mail-detail-from"></p>
+          <p id="mailDetailDate" class="mail-detail-date"></p>
+          <div id="mailDetailLabels" class="mail-detail-labels"></div>
+          <pre id="mailDetailBody" class="mail-detail-body"></pre>
+        </article>
       </section>
 
       <footer id="finishFooter" class="sticky-footer hidden">

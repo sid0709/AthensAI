@@ -18,3 +18,18 @@ test("an explicitly requested grant wins over another primary grant", () => {
 	const requested = { profileId: "profile-2", profileName: "Owner Two" };
 	assert.equal(firebaseAuthTest.grantFor({ grants: [primary, requested] }, ["Owner Two"]), requested);
 });
+
+test("username and password signup and signin are public auth endpoints", () => {
+	assert.equal(firebaseAuthTest.isPublicPasswordAuthRoute({
+		method: "POST",
+		originalUrl: "/api/auth/signup",
+	}), true);
+	assert.equal(firebaseAuthTest.isPublicPasswordAuthRoute({
+		method: "POST",
+		originalUrl: "/api/auth/signin?source=web",
+	}), true);
+	assert.equal(firebaseAuthTest.isPublicPasswordAuthRoute({
+		method: "POST",
+		originalUrl: "/api/auth/delete-account",
+	}), false);
+});

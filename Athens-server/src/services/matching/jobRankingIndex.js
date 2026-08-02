@@ -281,7 +281,10 @@ export async function indexOneJobRanking(job, options = {}) {
 export async function removeJobsFromRanking(jobIds = []) {
   const ids = jobIds.map(String).filter(Boolean);
   if (!ids.length) return { removed: 0 };
-  await deleteJobRankingPoints(ids, { wait: true }).catch(() => false);
+  const rankingDeleted = await deleteJobRankingPoints(ids, { wait: true });
+  if (!rankingDeleted) {
+    throw new Error('Job ranking index is not ready for deletion');
+  }
   if (isRedisReady()) {
     const members = ids.flatMap((id) => [`market:${id}`, `external:${id}`]);
     await Promise.all([

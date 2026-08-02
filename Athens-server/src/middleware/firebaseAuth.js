@@ -3,6 +3,20 @@ import { getFirebaseAuth, getFirestoreDb } from "../services/firebase/firebaseAd
 const ACCESS_CACHE_MS = 60_000;
 const accessCache = new Map();
 
+// Username/password authentication is intentionally available without a
+// Firebase token. These handlers validate credentials themselves. Every other
+// API route still follows FIREBASE_AUTH_REQUIRED.
+const PUBLIC_PASSWORD_AUTH_ROUTES = new Set([
+	"POST /api/auth/signup",
+	"POST /api/auth/signin",
+	"POST /api/auth/bidder-signin",
+]);
+
+function isPublicPasswordAuthRoute(req) {
+	const pathname = new URL(req.originalUrl || req.url, "http://athens.internal").pathname;
+	return PUBLIC_PASSWORD_AUTH_ROUTES.has(`${req.method} ${pathname}`);
+}
+
 function authRequired() {
 	const raw = String(process.env.FIREBASE_AUTH_REQUIRED ?? "").trim().toLowerCase();
 	if (raw) return !["0", "false", "no", "off"].includes(raw);
@@ -97,6 +111,7 @@ function injectGrantedProfile(req, grant) {
  */
 export async function requireFirebaseAuth(req, res, next) {
 	try {
+		if (isPublicPasswordAuthRoute(req)) return next();
 		const token = bearerToken(req);
 		if (!token) {
 			if (!authRequired()) return next();
@@ -136,4 +151,4 @@ export function clearProfileAccessCache(uid) {
 	else accessCache.clear();
 }
 
-export const firebaseAuthTest = { grantFor, injectGrantedProfile, requestedProfiles };
+export const firebaseAuthTest = { grantFor, injectGrantedProfile, requestedProfiles, isPublicPasswordAuthRoute };

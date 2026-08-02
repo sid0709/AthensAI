@@ -77,6 +77,15 @@ test("Firestore fallback bounds résumé reuse by job identity instead of broad 
 	assert.equal(fallback.clauses[0].field, "generate_parent_job_id");
 });
 
+test("Firestore fallback bounds editor recovery by its unique input id", () => {
+	const plan = buildNativeQueryPlan({
+		backgroundTaskInputId: "input-1",
+		status: "completed",
+	});
+	const fallback = buildFallbackQueryPlan(plan, "resume_generations");
+	assert.equal(fallback.clauses[0].field, "backgroundTaskInputId");
+});
+
 test("Firestore compatibility fallback keeps fields needed by nested local filters", () => {
 	const fields = collectFilterFields({
 		$and: [
@@ -164,4 +173,17 @@ test("unique reservations preserve conditional unique keys independently of docu
 	assert.equal(reservations.length, 2);
 	assert.equal(new Set(reservations.map((item) => item.id)).size, 2);
 	assert.ok(reservations.every((item) => item.targetId === "legacy-object-id"));
+});
+
+test("account username keys reserve names case-insensitively", () => {
+	const first = firestoreUniqueReservations("account_info", {
+		name: "Oliver",
+		usernameKey: "oliver",
+	}, "account-1");
+	const second = firestoreUniqueReservations("account_info", {
+		name: "OLIVER",
+		usernameKey: "oliver",
+	}, "account-2");
+	const usernameReservation = (rows) => rows.find((row) => row.keys[0] === "usernameKey");
+	assert.equal(usernameReservation(first).id, usernameReservation(second).id);
 });
