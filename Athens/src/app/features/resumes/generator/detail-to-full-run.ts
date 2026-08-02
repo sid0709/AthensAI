@@ -25,5 +25,8 @@ export function detailToFullRun(detail: HistoryRunDetail): FullRun {
     analyzed: detail.analyzed,
     analyzedAt: detail.analyzedAt,
     skillAnalysisError: detail.skillAnalysisError ?? null,
+    coverageAnalysis: detail.coverageAnalysis ?? null,
+    coverageContract: detail.coverageContract ?? null,
+    coverageAudit: detail.coverageAudit ?? null,
   };
 }

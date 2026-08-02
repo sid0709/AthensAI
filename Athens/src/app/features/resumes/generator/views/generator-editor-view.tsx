@@ -14,6 +14,7 @@ import {
   Palette,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { Field, Dropdown } from "../adapters/ui";
@@ -49,6 +50,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     identity,
     generated,
     generating,
+    analyzingCoverage,
     genProgress,
     usage,
     validation,
@@ -87,10 +89,21 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     exportResume,
     handleDownloadLog,
     handlePreviewEdit,
+    coverageAnalysis,
+    coverageDecisions,
+    coverageAudit,
+    coverageIsCurrent,
+    unresolvedCoverageSkills,
+    setCoverageDecision,
+    runCoverageAnalysis,
+    configHydrated,
   } = vm;
 
   const [designPanel, setDesignPanel] = useState<DesignPanel | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
+  const exceptionSkills = coverageIsCurrent
+    ? (coverageAnalysis?.skills ?? []).filter((skill) => skill.evidenceStatus === "unverified")
+    : [];
 
   const openDesignPanel = (panel: DesignPanel) => setDesignPanel(panel);
   const closeDesignPanel = () => setDesignPanel(null);
@@ -178,6 +191,29 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
 
         {/* Generation pipeline */}
         <div className="space-y-5 min-w-0">
+          <div className={cardCls}>
+            <SectionTitle icon={Sparkles}>Automated workflow</SectionTitle>
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              {[
+                { label: "Career profile", ready: Boolean(identity), detail: identity ? `${identity.careers.length} roles loaded` : "Waiting for profile" },
+                { label: "Resume config", ready: configHydrated, detail: configHydrated ? "v3 loaded & autosaved" : "Loading saved config" },
+                { label: "JD skill ledger", ready: coverageIsCurrent, detail: coverageIsCurrent ? `${coverageAnalysis?.skills.length ?? 0} skills mapped` : "Runs automatically" },
+                { label: "Coverage audit", ready: coverageAudit?.passed === true, detail: coverageAudit ? `${coverageAudit.coveredCount}/${coverageAudit.requiredCount} placements` : "Runs after generation" },
+              ].map((item) => (
+                <div key={item.label} className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
+                  <div className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-white/75">
+                    {item.ready ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <Circle className="h-3.5 w-3.5 text-neutral-300 dark:text-white/20" />}
+                    {item.label}
+                  </div>
+                  <div className="mt-1 text-neutral-400 dark:text-white/40">{item.detail}</div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
+              Paste a job description and choose Generate. Athens extracts and maps every explicit technical term, asks only about unsupported claims, then generates, repairs, audits, and saves the run.
+            </p>
+          </div>
+
           <div className={cardCls}>
             <SectionTitle icon={Sparkles}>Generation &amp; identity</SectionTitle>
             <p className="text-[11px] text-neutral-400 dark:text-white/40 mb-3">
@@ -379,20 +415,220 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
           </div>
 
           <div className={cardCls}>
-            <SectionTitle icon={FileText}>System instruction</SectionTitle>
-            <JobRefField
-              value={config.systemInstruction}
-              onChange={(v) => setConfig((c) => ({ ...c, systemInstruction: v }))}
-              tokenValues={tokenValues}
-              rows={6}
-              placeholder="System instruction… use {job_description}, {career}, {company1}…"
-            />
+            <SectionTitle
+              icon={ShieldCheck}
+              right={coverageAudit ? (
+                <span className={`text-xs ${coverageAudit.passed ? "text-emerald-500" : "text-rose-500"}`}>
+                  {coverageAudit.passed ? "audit passed" : `${coverageAudit.missing.length} missing`}
+                </span>
+              ) : undefined}
+            >
+              Skill coverage
+            </SectionTitle>
+
+            {!config.coverage.enabled ? (
+              <p className="text-xs text-neutral-500 dark:text-white/50">
+                Deterministic coverage is disabled in Advanced settings.
+              </p>
+            ) : analyzingCoverage ? (
+              <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-xs text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200">
+                <Loader2 className="h-4 w-4 animate-spin" /> Extracting the exhaustive JD skill ledger and checking profile evidence…
+              </div>
+            ) : !coverageIsCurrent ? (
+              <div className="rounded-xl border border-dashed border-neutral-300 p-4 text-center dark:border-white/15">
+                <p className="text-xs text-neutral-500 dark:text-white/50">
+                  Skill extraction starts automatically when you generate. You can also analyze now.
+                </p>
+                <button
+                  type="button"
+                  disabled={!config.jobDescription.trim() || !applier?.name}
+                  onClick={() => void runCoverageAnalysis()}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-1.5 text-xs hover:bg-neutral-100 disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
+                >
+                  <Sparkles className="h-3.5 w-3.5" /> Analyze JD skills
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="rounded-md bg-emerald-500/10 px-2 py-1 text-emerald-600 dark:text-emerald-300">
+                    {coverageAnalysis?.skills.filter((skill) => skill.evidenceStatus === "verified").length ?? 0} profile-verified
+                  </span>
+                  <span className={`rounded-md px-2 py-1 ${unresolvedCoverageSkills.length ? "bg-amber-500/10 text-amber-600 dark:text-amber-300" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"}`}>
+                    {unresolvedCoverageSkills.length ? `${unresolvedCoverageSkills.length} need review` : "all exceptions resolved"}
+                  </span>
+                  <button type="button" onClick={() => void runCoverageAnalysis()} className="ml-auto text-sky-600 hover:underline dark:text-sky-300">
+                    Reanalyze
+                  </button>
+                </div>
+
+                <details className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
+                  <summary className="cursor-pointer text-[11px] font-medium text-neutral-600 dark:text-white/60">
+                    View full placement ledger ({coverageAnalysis?.skills.length ?? 0})
+                  </summary>
+                  <div className="mt-2 space-y-1.5">
+                    {(coverageAnalysis?.skills ?? []).map((skill) => {
+                      const decision = coverageDecisions[skill.id] ?? skill.decision;
+                      const placement = decision === "exclude"
+                        ? "Excluded"
+                        : decision === "familiar"
+                          ? "Skills only"
+                          : decision === "used"
+                            ? skill.requirement >= config.coverage.experienceRequirementThreshold
+                              ? "Skills + Experience"
+                              : "Skills"
+                            : "Needs review";
+                      return (
+                        <div key={skill.id} className="flex items-center gap-2 text-[10.5px]">
+                          <span className="min-w-0 flex-1 truncate font-medium text-neutral-700 dark:text-white/70">{skill.name}</span>
+                          <span className="text-neutral-400 dark:text-white/40">{skill.evidenceStatus === "verified" ? "profile evidence" : decision || "unverified"}</span>
+                          <span className={`rounded px-1.5 py-0.5 ${placement === "Needs review" ? "bg-amber-500/10 text-amber-600 dark:text-amber-300" : placement === "Excluded" ? "bg-neutral-200 text-neutral-500 dark:bg-white/10 dark:text-white/45" : "bg-sky-500/10 text-sky-600 dark:text-sky-300"}`}>{placement}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+
+                {exceptionSkills.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
+                      These terms appear in the JD but not in your saved career descriptions. Confirm only what is truthful.
+                    </p>
+                    {exceptionSkills.map((skill) => (
+                      <div key={skill.id} className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-500/20 dark:bg-amber-500/[0.06]">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-neutral-800 dark:text-white/85">{skill.name}</div>
+                            <div className="mt-0.5 line-clamp-2 text-[10px] text-neutral-500 dark:text-white/45">{skill.sourceText}</div>
+                          </div>
+                          <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] text-neutral-500 dark:bg-white/10 dark:text-white/50">priority {skill.requirement}/5</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {([
+                            ["used", "Used"],
+                            ["familiar", "Familiar only"],
+                            ["exclude", "Not used"],
+                          ] as const).map(([decision, label]) => (
+                            <button
+                              key={decision}
+                              type="button"
+                              onClick={() => setCoverageDecision(skill.id, decision)}
+                              className={`rounded-lg border px-2.5 py-1 text-[11px] transition ${coverageDecisions[skill.id] === decision ? "border-sky-400 bg-sky-500/10 text-sky-700 dark:text-sky-200" : "border-neutral-200 bg-white hover:bg-neutral-50 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {coverageAudit && (
+                  <div className={`rounded-xl border px-3 py-2 text-[11px] ${coverageAudit.passed ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200" : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200"}`}>
+                    {coverageAudit.passed
+                      ? `Validated all ${coverageAudit.requiredCount} required section placements.`
+                      : `Still missing: ${coverageAudit.missing.map((item) => `${item.skill} (${item.section})`).join(", ")}`}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          <div className={cardCls}>
-            <SectionTitle icon={ListChecks} right={validation.length > 0 ? <span className="text-xs text-rose-500">{validation.length} issue(s)</span> : <span className="text-xs text-emerald-500">valid</span>}>
-              Generation steps (run order)
-            </SectionTitle>
+          <details className={cardCls}>
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium tracking-tight">
+              <FileText className="h-4 w-4 text-sky-500" />
+              Advanced instructions &amp; coverage rules
+              <ChevronDown className="ml-auto h-4 w-4 text-neutral-400" />
+            </summary>
+            <div className="mt-4 space-y-4 border-t border-neutral-200 pt-4 dark:border-white/10">
+              <label className="flex items-start gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+                <Checkbox
+                  checked={config.coverage.enabled}
+                  onCheckedChange={(checked) => setConfig((current) => ({
+                    ...current,
+                    coverage: { ...current.coverage, enabled: checked === true },
+                  }))}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block text-xs font-medium">Enforce exhaustive JD skill coverage</span>
+                  <span className="mt-0.5 block text-[11px] text-neutral-500 dark:text-white/50">Extract, verify, repair, and audit exact skill placement automatically.</span>
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Experience priority threshold">
+                  <select
+                    className={inputCls}
+                    value={config.coverage.experienceRequirementThreshold}
+                    onChange={(event) => setConfig((current) => ({
+                      ...current,
+                      coverage: { ...current.coverage, experienceRequirementThreshold: Number(event.target.value) },
+                    }))}
+                  >
+                    {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}/5 and above</option>)}
+                  </select>
+                </Field>
+                <Field label="Targeted repair attempts">
+                  <select
+                    className={inputCls}
+                    value={config.coverage.maxRepairAttempts}
+                    onChange={(event) => setConfig((current) => ({
+                      ...current,
+                      coverage: { ...current.coverage, maxRepairAttempts: Number(event.target.value) },
+                    }))}
+                  >
+                    {[0, 1, 2].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Skill alias rules (JSON)">
+                <textarea
+                  key={JSON.stringify(config.coverage.aliases)}
+                  className={areaCls}
+                  rows={3}
+                  defaultValue={JSON.stringify(config.coverage.aliases, null, 2)}
+                  placeholder={'{\n  "Microsoft Dynamics": ["Dynamics 365"]\n}'}
+                  onBlur={(event) => {
+                    try {
+                      const parsed = JSON.parse(event.target.value || "{}") as Record<string, unknown>;
+                      const aliases = Object.fromEntries(
+                        Object.entries(parsed)
+                          .filter(([, values]) => Array.isArray(values))
+                          .map(([name, values]) => [name, (values as unknown[]).map(String).filter(Boolean)]),
+                      );
+                      event.target.setCustomValidity("");
+                      setConfig((current) => ({ ...current, coverage: { ...current.coverage, aliases } }));
+                    } catch {
+                      event.target.setCustomValidity("Enter a JSON object whose values are arrays of aliases.");
+                      event.target.reportValidity();
+                    }
+                  }}
+                />
+              </Field>
+              <div>
+                <div className="mb-2 text-xs font-medium">System instruction</div>
+                <JobRefField
+                  value={config.systemInstruction}
+                  onChange={(v) => setConfig((c) => ({ ...c, systemInstruction: v }))}
+                  tokenValues={tokenValues}
+                  rows={6}
+                  placeholder="System instruction… use {job_description}, {career}, {company1}…"
+                />
+              </div>
+            </div>
+          </details>
+
+          <details className={cardCls}>
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium tracking-tight">
+              <ListChecks className="h-4 w-4 text-sky-500" />
+              Advanced generation steps
+              <span className={`ml-auto text-xs ${validation.length > 0 ? "text-rose-500" : "text-emerald-500"}`}>
+                {validation.length > 0 ? `${validation.length} issue(s)` : `${steps.length} valid steps`}
+              </span>
+              <ChevronDown className="h-4 w-4 text-neutral-400" />
+            </summary>
+            <div className="mt-4 border-t border-neutral-200 pt-4 dark:border-white/10">
             <div className="flex flex-wrap gap-2 mb-3">
               {PURPOSES.map((p) => (
                 <span
@@ -440,7 +676,8 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                 ))}
               </ul>
             )}
-          </div>
+            </div>
+          </details>
 
           {/* Collapsible generation plan */}
           <div className={cardCls}>

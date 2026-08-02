@@ -71,11 +71,11 @@ function defaultPromptFor(purpose, kind) {
   }
   switch (purpose) {
     case "summary":
-      return "Using the candidate profile and target role, write a 2–3 sentence professional summary. Return JSON matching the schema.";
+      return "Using the candidate profile, target role, and coverage contract, write a concise 2–3 sentence professional summary. Include only claims supported by the profile or confirmed by the candidate. Return JSON matching the schema.";
     case "skills":
-      return "Group the candidate's most relevant skills into labeled categories (e.g. Programming Languages, Frameworks, Databases, Cloud & DevOps) for the target role. Return JSON matching the schema.";
+      return "Build an ATS-friendly skills section from the coverage contract. Include every contract term assigned to Skills using its exact canonical name, grouped into clear categories without adding unsupported technologies. Return JSON matching the schema.";
     case "experience":
-      return "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow the saved Dynamic career titles preference: when enabled, use concise JD-aligned titles with a plausible career progression; otherwise keep Profile Settings titles exactly. Return JSON matching the schema.";
+      return "Write concrete, hands-on work experience tailored to the target role. Place every coverage-contract term assigned to Experience in credible context, but never turn familiar-only or excluded skills into experience claims. Job titles follow the saved Dynamic career titles preference: when enabled, use concise JD-aligned titles supported by each role; otherwise keep Profile Settings titles exactly. Return JSON matching the schema.";
     default:
       return "";
   }
@@ -83,6 +83,7 @@ function defaultPromptFor(purpose, kind) {
 
 const DEFAULT_SYSTEM_INSTRUCTION = `You are an expert resume writer. You will receive a candidate's profile and produce one resume across several steps.
 - The candidate's facts are authoritative; never invent employers, dates, or credentials.
+- Treat the supplied resume coverage contract as mandatory: use exact canonical skill names in their assigned sections and never claim excluded or familiar-only skills as work experience.
 - Final steps return ONLY JSON conforming to the provided schema; fine-tuning steps return the improved draft.
 - Maintain a consistent, professional, ATS-friendly tone across all steps.`;
 
@@ -110,6 +111,7 @@ const finalStep = (purpose) => ({
 export function defaultGeneratorConfig() {
   const theme = defaultTheme();
   return {
+    schemaVersion: 3,
     provider: "openai",
     model: "gpt-5-nano",
     reasoningEffort: "low",
@@ -123,8 +125,13 @@ export function defaultGeneratorConfig() {
       { id: "education", type: "education", title: "Education", titleColor: theme.accent, titleSize: theme.titleSize, bodySize: theme.baseSize },
     ],
     systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
-    jobDescription: "",
     steps: PURPOSES.map((p) => finalStep(p)),
+    coverage: {
+      enabled: true,
+      experienceRequirementThreshold: 4,
+      maxRepairAttempts: 1,
+      aliases: {},
+    },
   };
 }
 

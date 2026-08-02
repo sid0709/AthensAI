@@ -1,6 +1,8 @@
 import type { CareerEntry, EducationEntry, Identity } from "../types";
 
 export const storageKey = (applierName: string | null | undefined) => `resumeGeneratorConfig:${applierName ?? "default"}`;
+export const applicationDraftStorageKey = (applierName: string | null | undefined) =>
+  `resumeGeneratorApplicationDraft:${applierName ?? "default"}`;
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";

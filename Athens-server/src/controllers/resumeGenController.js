@@ -20,6 +20,13 @@ import {
 } from "../services/llm/llmService.js";
 import { loadDecryptedAutoBidProfile } from "../services/autoBidProfileSecrets.js";
 import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.js";
+import { migrateGeneratorConfig } from "../services/resumeGeneratorConfigSchema.js";
+import {
+  analyzeResumeCoverage as analyzeResumeCoverageLedger,
+  auditResumeCoverage,
+  normalizeResumeCoverageContract,
+  resumeCoveragePrompt,
+} from "../services/resumeCoverageService.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import {
   createBackgroundTask,
@@ -70,6 +77,7 @@ function persistedGenerationRequest(body, applierName) {
     systemInstruction: body.systemInstruction ?? null,
     jobDescription: body.jobDescription ?? null,
     steps: Array.isArray(body.steps) ? body.steps : [],
+    coverage: body.coverage && typeof body.coverage === "object" ? body.coverage : null,
   };
 }
 
@@ -369,8 +377,50 @@ export async function prepareGeneration(body) {
   // preference available to every tier and are enabled only by an explicit boolean.
   const isBeta = isBetaTier(accountTier);
   const dynamicCareerTitles = body.dynamicCareerTitles === true;
+  const coverageContract = normalizeResumeCoverageContract(body.coverage);
+  if (coverageContract?.unresolved?.length) {
+    return {
+      ok: false,
+      status: 409,
+      error: `Review ${coverageContract.unresolved.length} unresolved resume skill${coverageContract.unresolved.length === 1 ? "" : "s"} before generation.`,
+    };
+  }
 
-  return { ok: true, providerId, model, steps, apiKey, isBeta, dynamicCareerTitles };
+  return { ok: true, providerId, model, steps, apiKey, isBeta, dynamicCareerTitles, coverageContract };
+}
+
+/** POST /personal/resume-generator/analyze — build the exception-only skill ledger. */
+export async function analyzeResumeCoverage(req, res) {
+  try {
+    const body = req.body || {};
+    const applierName = cleanString(body.applierName);
+    const jobDescription = cleanString(body.jobDescription);
+    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
+    if (!jobDescription) return res.status(400).json({ success: false, error: "jobDescription is required" });
+    const profile = await findProfile(applierName);
+    const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
+    if (!apiKey || !model) {
+      return res.status(400).json({
+        success: false,
+        error: "Configure an AI API key and default model in Settings → Profile before analyzing a job description.",
+      });
+    }
+    const identity = body.identity && typeof body.identity === "object" ? body.identity : profile ?? {};
+    const result = await analyzeResumeCoverageLedger({
+      providerId,
+      apiKey,
+      model,
+      applierName,
+      jobDescription,
+      identity,
+      aliases: body.coverage?.aliases,
+    });
+    return res.json({ success: true, provider: providerId, model, ...result });
+  } catch (error) {
+    const status = Number.isInteger(error?.status) ? error.status : 500;
+    console.warn(`POST /api/personal/resume-generator/analyze failed (${status}): ${error.message}`);
+    return res.status(status).json({ success: false, error: error.message });
+  }
 }
 
 /**
@@ -419,6 +469,7 @@ export async function runGeneration({
   applierName,
   jobDescription,
   jobSkills,
+  coverageContract,
   reasoningEffort,
   isBeta = false,
   dynamicCareerTitles = false,
@@ -436,7 +487,12 @@ export async function runGeneration({
   //   {job_skills}                               → skills pre-fetched for a structured job
   //   {career}                                   → all roles, one per line
   //   {companyN} (N = 1,2,…) → natural-sentence summary of the Nth career
-  const tokenMap = buildTokenMap(identity, jobDescription, jobSkills);
+  const contractSkills = coverageContract?.skills?.map((skill) => skill.name).filter(Boolean) ?? [];
+  const tokenMap = buildTokenMap(
+    identity,
+    jobDescription,
+    Array.isArray(jobSkills) && jobSkills.length ? jobSkills : contractSkills,
+  );
   const applyTokens = (text) =>
     String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {
       const key = match.slice(1, -1).toLowerCase();
@@ -449,6 +505,8 @@ export async function runGeneration({
     { role: "system", content: applyTokens(systemInstruction || "You are an expert resume writer.") },
     { role: "user", content: buildContextBlock(identity) },
   ];
+  const contractPrompt = resumeCoveragePrompt(coverageContract);
+  if (contractPrompt) prefixMessages.push({ role: "user", content: contractPrompt });
   const sections = {};
   const perStep = [];
   let usage = EMPTY_USAGE();
@@ -533,12 +591,90 @@ export async function runGeneration({
   }
 
   // Safety net if Experience was produced outside the final-step branch shape.
-  const reconciled = applyTitlePolicyToSections(sections, identity, dynamicTitles);
-	throwIfAborted();
+  Object.assign(sections, applyTitlePolicyToSections(sections, identity, dynamicTitles));
+
+  // Deterministic coverage is deliberately outside the writing prompts. If a
+  // required term is absent, rewrite only the affected section and re-audit;
+  // never rerun the whole resume pipeline.
+  let coverageAudit = auditResumeCoverage(sections, coverageContract);
+  const maxRepairAttempts = coverageContract?.maxRepairAttempts ?? 0;
+  let repairIndex = steps.length;
+  for (let attempt = 1; !coverageAudit.passed && attempt <= maxRepairAttempts; attempt += 1) {
+    const missingSections = [...new Set(coverageAudit.missing.map((item) => item.section))];
+    for (const purpose of ["skills", "experience"]) {
+      if (!missingSections.includes(purpose)) continue;
+      throwIfAborted();
+      const missing = coverageAudit.missing
+        .filter((item) => item.section === purpose)
+        .map((item) => item.skill);
+      const finalDefinition = [...steps].reverse().find(
+        (step) => step?.kind === "final" && step?.purpose === purpose,
+      );
+      const index = ++repairIndex;
+      const name = `Coverage repair: ${purpose}`;
+      if (onStep) onStep({
+        phase: "step-start",
+        index,
+        total: steps.length + missingSections.length,
+        name,
+        purpose,
+        kind: "coverage-repair",
+      });
+      let prompt = `The generated ${purpose} section failed deterministic keyword coverage.\n\nMissing exact canonical terms: ${missing.join(", ")}\n\nCurrent ${purpose} JSON:\n${JSON.stringify(sections[purpose] ?? {}, null, 2)}\n\nRewrite ONLY this section. Preserve correct existing content, employer names, dates, and factual boundaries. Add each missing term naturally in the placement required by the coverage contract. Return only the corrected JSON object.`;
+      if (finalDefinition?.schema) {
+        prompt += `\n\nReturn JSON conforming to this schema:\n${JSON.stringify(finalDefinition.schema)}`;
+      }
+      const repair = await chatCompletion({
+        provider: providerId,
+        apiKey,
+        model,
+        messages: [...prefixMessages, { role: "user", content: prompt }],
+        jsonMode: true,
+        cacheKey: `resume-${applierName || "anon"}`,
+        reasoningEffort,
+        feature: `resume-coverage-repair:${purpose}`,
+        applierName,
+        signal,
+      });
+      throwIfAborted();
+      let output = sections[purpose];
+      let repairError = null;
+      try {
+        output = parseJsonLoose(repair.content);
+        if (purpose === "experience") {
+          output = applyTitlePolicyToSections(
+            { experience: output },
+            identity,
+            dynamicTitles,
+          ).experience;
+        }
+        sections[purpose] = output;
+      } catch (error) {
+        repairError = error?.message || "Coverage repair returned invalid JSON.";
+      }
+      usage = addUsage(usage, repair.usage);
+      const entry = {
+        index,
+        name,
+        purpose,
+        kind: "coverage-repair",
+        usage: repair.usage,
+        output,
+        ...(repairError ? { error: repairError } : {}),
+        cumulative: usage,
+      };
+      perStep.push(entry);
+      if (onStep) onStep({ phase: "step-done", ...entry });
+    }
+    coverageAudit = auditResumeCoverage(sections, coverageContract);
+  }
+  throwIfAborted();
   return {
-    sections: reconciled,
+    sections,
     perStep,
     usage,
+    coverageContract: coverageContract ?? null,
+    coverageAudit,
     isBeta: Boolean(isBeta),
     dynamicCareerTitles: dynamicTitles,
   };
@@ -583,6 +719,9 @@ export async function finalizeGenerationRun({ prep, body, result, startedAt, sig
     config: configSnapshot(body),
     identity: body.identity ?? null,
     jobDescription: cleanString(body.jobDescription) || null,
+    coverageAnalysis: body.coverage?.analysis ?? null,
+    coverageContract: result.coverageContract ?? null,
+    coverageAudit: result.coverageAudit ?? null,
     sections: result.sections,
     perStep: result.perStep,
     usage: result.usage,
@@ -631,6 +770,8 @@ export async function finalizeGenerationRun({ prep, body, result, startedAt, sig
     techStack,
     skillAnalysisError,
     generationId,
+    coverageContract: result.coverageContract ?? null,
+    coverageAudit: result.coverageAudit ?? null,
     isBeta,
     dynamicCareerTitles,
     titlePolicyFingerprint,
@@ -663,8 +804,9 @@ function configSnapshot(body) {
     theme: body.theme ?? null,
     layout: body.layout ?? null,
     systemInstruction: body.systemInstruction ?? null,
-    jobDescription: body.jobDescription ?? null,
     steps: body.steps ?? null,
+    coverage: body.coverage?.settings ?? null,
+    schemaVersion: 3,
   };
 }
 
@@ -804,14 +946,39 @@ export async function getGeneratorConfig(req, res) {
     if (!applierName || !resumeGeneratorConfigCollection) return res.json({ success: true, config: null });
     const resolved = await loadGeneratorConfigRecord(applierName);
     const doc = resolved?.record ?? null;
+    const migration = doc?.config ? migrateGeneratorConfig(doc.config) : null;
+    if (migration?.migrated) {
+      const legacyConfigBackup = doc?.legacyConfigBackup ?? {
+        sourceVersion: migration.sourceVersion,
+        config: doc.config,
+        migratedAt: new Date(),
+      };
+      await resumeGeneratorConfigCollection.updateOne(
+        { applierName },
+        {
+          $set: {
+            applierName,
+            config: migration.config,
+            schemaVersion: 3,
+            legacyConfigBackup,
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+    }
     const updatedAt = doc?.updatedAt?.toDate instanceof Function
       ? doc.updatedAt.toDate().toISOString()
       : doc?.updatedAt ?? null;
     return res.json({
       success: true,
-      config: doc?.config ?? null,
+      config: migration?.config ?? null,
       updatedAt,
       source: resolved?.source ?? null,
+      migration: migration?.migrated
+        ? { from: migration.sourceVersion, to: 3 }
+        : null,
+      legacyJobDescription: migration?.legacyJobDescription ?? null,
     });
   } catch (err) {
     console.warn("GET /api/personal/resume-generator/config error:", err.message);
@@ -826,13 +993,22 @@ export async function saveGeneratorConfig(req, res) {
     const applierName = cleanString(body.applierName);
     if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
     if (!resumeGeneratorConfigCollection) return res.status(503).json({ success: false, error: "DB not ready" });
-    const config = body.config && typeof body.config === "object" ? body.config : {};
+    const migration = migrateGeneratorConfig(
+      body.config && typeof body.config === "object" ? body.config : {},
+    );
     await resumeGeneratorConfigCollection.updateOne(
       { applierName },
-      { $set: { applierName, config, updatedAt: new Date() } },
+      {
+        $set: {
+          applierName,
+          config: migration.config,
+          schemaVersion: 3,
+          updatedAt: new Date(),
+        },
+      },
       { upsert: true },
     );
-    return res.json({ success: true });
+    return res.json({ success: true, schemaVersion: 3 });
   } catch (err) {
     console.error("PUT /api/personal/resume-generator/config error", err);
     return res.status(500).json({ success: false, error: err.message });
@@ -880,6 +1056,8 @@ const LIST_PROJECTION = {
   "config.layout": 0,
   "sections.skills": 0,
   "sections.experience": 0,
+  coverageAnalysis: 0,
+  coverageContract: 0,
 };
 
 /** Build compatibility filter for resume generation history (search + filters). */

@@ -1,4 +1,12 @@
-import type { GeneratedContent, Identity, LayoutSection, ResumeTheme, UsageBreakdown } from "../types";
+import type {
+  GeneratedContent,
+  Identity,
+  LayoutSection,
+  ResumeCoverageAnalysis,
+  ResumeCoverageAudit,
+  ResumeTheme,
+  UsageBreakdown,
+} from "../types";
 
 export type RunSummary = {
   _id: unknown;
@@ -13,6 +21,7 @@ export type RunSummary = {
   config?: { templateId?: string };
   sections?: Record<string, unknown>;
   error?: string;
+  coverageAudit?: ResumeCoverageAudit | null;
 };
 
 export type FullRun = RunSummary & {
@@ -24,6 +33,8 @@ export type FullRun = RunSummary & {
   analyzed?: boolean;
   analyzedAt?: string;
   skillAnalysisError?: string | null;
+  coverageAnalysis?: ResumeCoverageAnalysis | null;
+  coverageContract?: Record<string, unknown> | null;
 };
 
 export type HistoryFacets = {

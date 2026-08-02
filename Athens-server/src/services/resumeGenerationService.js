@@ -9,6 +9,7 @@ import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
 import { findAccountByApplierName } from "./mail/credentials.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
 import { getProvider, PROVIDERS } from "./llm/llmService.js";
+import { migrateGeneratorConfig } from "./resumeGeneratorConfigSchema.js";
 
 const cleanString = (v) => String(v ?? "").trim();
 
@@ -57,7 +58,9 @@ function configUpdatedAt(configRecord) {
 export function isDefaultGeneratorPipeline(config) {
   if (!config || typeof config !== "object") return true;
   const base = defaultGeneratorConfig();
+  const normalized = migrateGeneratorConfig(config).config;
   if ((config.dynamicCareerTitles === true) !== base.dynamicCareerTitles) return false;
+  if (JSON.stringify(normalized.coverage) !== JSON.stringify(base.coverage)) return false;
   if (cleanString(config.systemInstruction) !== cleanString(base.systemInstruction)) return false;
   if (!Array.isArray(config.steps) || config.steps.length !== base.steps.length) return false;
   return base.steps.every((defaultStep) => {
@@ -176,22 +179,21 @@ export function resolveResumeModel(provider, savedModel) {
 /** Merge a partial saved Firestore config onto defaults with validated provider/model. */
 export function mergeStoredConfig(saved) {
   const base = defaultGeneratorConfig();
-  if (!saved || typeof saved !== "object") return base;
-  const provider = normalizeProvider(saved.provider);
+  const canonical = migrateGeneratorConfig(saved).config;
+  const provider = normalizeProvider(canonical.provider);
   return {
     ...base,
-    ...saved,
+    ...canonical,
     provider,
-    model: resolveResumeModel(provider, saved.model ?? base.model),
-    reasoningEffort: saved.reasoningEffort ?? base.reasoningEffort,
-    dynamicCareerTitles: saved.dynamicCareerTitles === true,
-    templateId: saved.templateId ?? base.templateId,
-    theme: { ...base.theme, ...(saved.theme ?? {}) },
-    layout: Array.isArray(saved.layout) && saved.layout.length ? saved.layout : base.layout,
-    systemInstruction: saved.systemInstruction ?? base.systemInstruction,
-    jobDescription: saved.jobDescription ?? base.jobDescription,
-    steps: Array.isArray(saved.steps) && saved.steps.length
-      ? migrateStoredSteps(saved.steps)
+    model: resolveResumeModel(provider, canonical.model ?? base.model),
+    reasoningEffort: canonical.reasoningEffort ?? base.reasoningEffort,
+    dynamicCareerTitles: canonical.dynamicCareerTitles === true,
+    templateId: canonical.templateId ?? base.templateId,
+    theme: { ...base.theme, ...(canonical.theme ?? {}) },
+    layout: Array.isArray(canonical.layout) && canonical.layout.length ? canonical.layout : base.layout,
+    systemInstruction: canonical.systemInstruction ?? base.systemInstruction,
+    steps: Array.isArray(canonical.steps) && canonical.steps.length
+      ? migrateStoredSteps(canonical.steps)
       : base.steps,
   };
 }

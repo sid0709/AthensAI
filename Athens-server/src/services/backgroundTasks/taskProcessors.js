@@ -210,7 +210,12 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 				signal,
 			}, (step) => {
 				const safeStep = redisSafeStep(step);
-				if (step?.phase === 'step-done' && step?.kind === 'final' && step?.purpose && step.output != null) {
+				if (
+					step?.phase === 'step-done'
+					&& (step?.kind === 'final' || step?.kind === 'coverage-repair')
+					&& step?.purpose
+					&& step.output != null
+				) {
 					// A final checkmark is also the UI's signal to fetch this section.
 					// Persist first so that fetch can never race an unfinished write.
 					partialWrite = partialWrite.then(() => firestoreMutationLimiter.run(() => (
@@ -253,6 +258,8 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 			skillProfile: finalized.skillProfile,
 			techStack: finalized.techStack,
 			skillAnalysisError: finalized.skillAnalysisError,
+			coverageContract: finalized.coverageContract,
+			coverageAudit: finalized.coverageAudit,
 			generationId: finalized.generationId ? String(finalized.generationId) : null,
 			isBeta: finalized.isBeta,
 			dynamicCareerTitles: finalized.dynamicCareerTitles,

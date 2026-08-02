@@ -46,6 +46,9 @@ export function applyHistoryRun(
       layout: Array.isArray(rc.layout) && (rc.layout as LayoutSection[]).length ? (rc.layout as LayoutSection[]) : c.layout,
       systemInstruction: typeof rc.systemInstruction === "string" ? rc.systemInstruction : c.systemInstruction,
       jobDescription: typeof rc.jobDescription === "string" ? rc.jobDescription : c.jobDescription,
+      coverage: rc.coverage && typeof rc.coverage === "object"
+        ? { ...c.coverage, ...(rc.coverage as Partial<GeneratorConfig["coverage"]>) }
+        : c.coverage,
       ...(steps ? { steps } : {}),
     }),
   );

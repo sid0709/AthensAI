@@ -1,6 +1,7 @@
 import type { DropdownOption } from "../adapters/ui";
 import {
   PURPOSES,
+  RESUME_GENERATOR_CONFIG_VERSION,
   SECTION_LABEL,
   SECTION_TYPES,
   type GeneratorConfig,
@@ -10,6 +11,7 @@ import {
   type Purpose,
   type ReasoningEffort,
   type ResumeTheme,
+  type ResumeCoverageSettings,
   type SectionType,
   type StepKind,
 } from "../types";
@@ -58,26 +60,102 @@ export function resolveModelForProvider(provider: ProviderId, savedModel: string
   return model;
 }
 
-/** Merge a partial saved config (localStorage or Firestore) onto defaults. */
-export function mergeStoredConfig(parsed: Partial<GeneratorConfig> | null | undefined): GeneratorConfig {
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function normalizeCoverageSettings(value: unknown): ResumeCoverageSettings {
+  const raw = record(value);
+  const threshold = Math.min(5, Math.max(1, Math.round(Number(raw.experienceRequirementThreshold) || 4)));
+  const attempts = Math.min(2, Math.max(0, Math.round(Number(raw.maxRepairAttempts) || 0)));
+  const aliases: Record<string, string[]> = {};
+  for (const [name, values] of Object.entries(record(raw.aliases))) {
+    if (!Array.isArray(values)) continue;
+    const cleaned = [...new Set(values.map(String).map((item) => item.trim()).filter(Boolean))].slice(0, 20);
+    if (cleaned.length) aliases[name] = cleaned;
+  }
+  return {
+    enabled: raw.enabled !== false,
+    experienceRequirementThreshold: threshold,
+    maxRepairAttempts: raw.maxRepairAttempts == null ? 1 : attempts,
+    aliases,
+  };
+}
+
+function migrateLegacyTheme(value: unknown, base: ResumeTheme): ResumeTheme {
+  const raw = record(value);
+  return {
+    ...base,
+    font: typeof raw.font === "string" && raw.font ? raw.font : base.font,
+    baseSize: Number(raw.baseSize ?? raw.bodySizePt) || base.baseSize,
+    nameSize: Number(raw.nameSize ?? raw.nameSizePt) || base.nameSize,
+    titleSize: Number(raw.titleSize) || base.titleSize,
+    accent: String(raw.accent ?? raw.accentColor ?? base.accent),
+    text: String(raw.text ?? raw.textColor ?? base.text),
+    headerAlign: raw.headerAlign === "left" ? "left" : "center",
+    paper: raw.paper === "a4" || raw.paperSize === "a4" ? "a4" : "letter",
+    margin: Number(raw.margin ?? raw.marginIn) || base.margin,
+  };
+}
+
+function migrateLegacyLayout(raw: Record<string, unknown>, theme: ResumeTheme, base: LayoutSection[]): LayoutSection[] {
+  if (Array.isArray(raw.layout) && raw.layout.length) return raw.layout as LayoutSection[];
+  if (!Array.isArray(raw.sections) || !raw.sections.length) return base;
+  return raw.sections
+    .map(record)
+    .sort((left, right) => Number(left.order ?? 0) - Number(right.order ?? 0))
+    .map((section, index) => {
+      const type = String(section.type ?? section.id ?? "") as SectionType;
+      if (!SECTION_TYPES.includes(type)) return null;
+      return {
+        id: String(section.id ?? `${type}-${index}`),
+        type,
+        title: String(section.title ?? SECTION_LABEL[type]),
+        titleColor: String(section.titleColor ?? section.color ?? theme.accent),
+        titleSize: Number(section.titleSize ?? section.titleSizePt) || theme.titleSize,
+        bodySize: Number(section.bodySize ?? section.bodySizePt) || theme.baseSize,
+      } satisfies LayoutSection;
+    })
+    .filter((section): section is LayoutSection => section != null);
+}
+
+/** Merge legacy v1/v2 or canonical v3 persistence onto runtime defaults. */
+export function mergeStoredConfig(parsed: unknown): GeneratorConfig {
   const base = defaultConfig();
-  if (!parsed || typeof parsed !== "object") return base;
-  const provider: ProviderId = parsed.provider === "deepseek" ? "deepseek" : "openai";
+  const envelope = record(parsed);
+  const raw = envelope.settings || envelope.presentation
+    ? { ...record(envelope.settings), ...record(envelope.presentation) }
+    : envelope;
+  const provider: ProviderId = raw.provider === "deepseek" ? "deepseek" : "openai";
+  const theme = migrateLegacyTheme(raw.theme, base.theme);
+  const savedSteps = Array.isArray(raw.steps)
+    ? raw.steps
+    : Array.isArray(raw.refinementSteps)
+      ? raw.refinementSteps
+      : [];
   return ensurePurposes({
+    schemaVersion: RESUME_GENERATOR_CONFIG_VERSION,
     provider,
-    model: resolveModelForProvider(provider, parsed.model ?? base.model),
-    reasoningEffort: parsed.reasoningEffort ?? base.reasoningEffort,
-    dynamicCareerTitles: parsed.dynamicCareerTitles === true,
-    templateId: parsed.templateId ?? base.templateId,
-    uploadedTemplate: parsed.uploadedTemplate ?? base.uploadedTemplate,
-    theme: { ...base.theme, ...(parsed.theme ?? {}) },
-    layout: Array.isArray(parsed.layout) && parsed.layout.length ? (parsed.layout as LayoutSection[]) : base.layout,
-    systemInstruction: parsed.systemInstruction ?? base.systemInstruction,
-    jobDescription: parsed.jobDescription ?? base.jobDescription,
-    steps: Array.isArray(parsed.steps) && parsed.steps.length
-      ? migrateStoredSteps(parsed.steps as GenStep[])
+    model: resolveModelForProvider(provider, typeof raw.model === "string" ? raw.model : base.model),
+    reasoningEffort: typeof raw.reasoningEffort === "string" ? raw.reasoningEffort as ReasoningEffort : base.reasoningEffort,
+    dynamicCareerTitles: raw.dynamicCareerTitles === true,
+    templateId: typeof raw.templateId === "string" ? raw.templateId : base.templateId,
+    uploadedTemplate: record(raw.uploadedTemplate).id ? raw.uploadedTemplate as GeneratorConfig["uploadedTemplate"] : undefined,
+    theme,
+    layout: migrateLegacyLayout(raw, theme, base.layout),
+    systemInstruction: typeof raw.systemInstruction === "string" ? raw.systemInstruction : base.systemInstruction,
+    jobDescription: typeof raw.jobDescription === "string" ? raw.jobDescription : "",
+    steps: savedSteps.length
+      ? migrateStoredSteps(savedSteps as GenStep[])
       : base.steps,
+    coverage: normalizeCoverageSettings(raw.coverage),
   });
+}
+
+/** The reusable v3 config intentionally excludes transient ApplicationRun data. */
+export function serializeStoredConfig(config: GeneratorConfig) {
+  const { jobDescription: _jobDescription, ...stored } = config;
+  return { ...stored, schemaVersion: RESUME_GENERATOR_CONFIG_VERSION };
 }
 
 const SERIF_FONTS = new Set(["Georgia", "Times New Roman", "Garamond", "Cambria", "Source Serif 4", "Merriweather", "Lora", "PT Serif"]);
@@ -183,16 +261,17 @@ export function defaultPromptFor(purpose: Purpose, kind: StepKind): string {
   }
   switch (purpose) {
     case "summary":
-      return "Using the candidate profile and target role, write a 2–3 sentence professional summary. Return JSON matching the schema.";
+      return "Using the candidate profile, target role, and coverage contract, write a concise 2–3 sentence professional summary. Include only claims supported by the profile or confirmed by the candidate. Return JSON matching the schema.";
     case "skills":
-      return "Group the candidate's most relevant skills into labeled categories (e.g. Programming Languages, Frameworks, Databases, Cloud & DevOps) for the target role. Return JSON matching the schema.";
+      return "Build an ATS-friendly skills section from the coverage contract. Include every contract term assigned to Skills using its exact canonical name, grouped into clear categories without adding unsupported technologies. Return JSON matching the schema.";
     case "experience":
-      return "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow the saved Dynamic career titles preference: when enabled, use concise JD-aligned titles with a plausible career progression; otherwise keep Profile Settings titles exactly. Return JSON matching the schema.";
+      return "Write concrete, hands-on work experience tailored to the target role. Place every coverage-contract term assigned to Experience in credible context, but never turn familiar-only or excluded skills into experience claims. Job titles follow the saved Dynamic career titles preference: when enabled, use concise JD-aligned titles supported by each role; otherwise keep Profile Settings titles exactly. Return JSON matching the schema.";
   }
 }
 
 export const DEFAULT_SYSTEM_INSTRUCTION = `You are an expert resume writer. You will receive a candidate's profile and produce one resume across several steps.
 - The candidate's facts are authoritative; never invent employers, dates, or credentials.
+- Treat the supplied resume coverage contract as mandatory: use exact canonical skill names in their assigned sections and never claim excluded or familiar-only skills as work experience.
 - Final steps return ONLY JSON conforming to the provided schema; fine-tuning steps return the improved draft.
 - Maintain a consistent, professional, ATS-friendly tone across all steps.`;
 
@@ -239,6 +318,7 @@ const defaultSection = (type: SectionType, theme: ResumeTheme): LayoutSection =>
 export const defaultConfig = (): GeneratorConfig => {
   const theme = defaultTheme();
   return {
+    schemaVersion: RESUME_GENERATOR_CONFIG_VERSION,
     provider: "openai",
     model: "gpt-5-nano",
     reasoningEffort: "low",
@@ -249,6 +329,12 @@ export const defaultConfig = (): GeneratorConfig => {
     systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
     jobDescription: "",
     steps: PURPOSES.map((p) => finalStep(p)),
+    coverage: {
+      enabled: true,
+      experienceRequirementThreshold: 4,
+      maxRepairAttempts: 1,
+      aliases: {},
+    },
   };
 };
 

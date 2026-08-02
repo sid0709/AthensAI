@@ -103,7 +103,61 @@ export type ProviderId = "openai" | "deepseek";
 // OpenAI reasoning models accept reasoning_effort. "default" = don't send it.
 export type ReasoningEffort = "default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+export const RESUME_GENERATOR_CONFIG_VERSION = 3 as const;
+
+export type CoverageDecision = "used" | "familiar" | "exclude";
+
+export type ResumeCoverageSettings = {
+  enabled: boolean;
+  experienceRequirementThreshold: number;
+  maxRepairAttempts: number;
+  aliases: Record<string, string[]>;
+};
+
+export type ResumeCoverageEvidence = {
+  company: string;
+  title: string;
+  excerpt: string;
+};
+
+export type ResumeCoverageSkill = {
+  id: string;
+  name: string;
+  aliases: string[];
+  category: string;
+  requirement: number;
+  sourceText: string;
+  evidenceStatus: "verified" | "unverified";
+  evidence: ResumeCoverageEvidence[];
+  decision: CoverageDecision | null;
+};
+
+export type ResumeCoverageAnalysis = {
+  schemaVersion: 1;
+  fingerprint: string;
+  jobDescriptionHash: string;
+  skills: ResumeCoverageSkill[];
+  unresolvedCount: number;
+};
+
+export type ResumeCoverageAuditSection = {
+  required: string[];
+  found: string[];
+  missing: string[];
+  passed: boolean;
+};
+
+export type ResumeCoverageAudit = {
+  schemaVersion: 1;
+  passed: boolean;
+  requiredCount: number;
+  coveredCount: number;
+  sections: Partial<Record<"skills" | "experience", ResumeCoverageAuditSection>>;
+  missing: { skillId: string; skill: string; section: "skills" | "experience" }[];
+};
+
 export type GeneratorConfig = {
+  schemaVersion: typeof RESUME_GENERATOR_CONFIG_VERSION;
   provider: ProviderId;
   model: string;
   reasoningEffort: ReasoningEffort;
@@ -114,8 +168,10 @@ export type GeneratorConfig = {
   theme: ResumeTheme;
   layout: LayoutSection[];
   systemInstruction: string;
+  /** Transient ApplicationRun input; omitted from the persisted reusable config. */
   jobDescription: string;
   steps: GenStep[];
+  coverage: ResumeCoverageSettings;
 };
 
 export type TemplateSlot = {

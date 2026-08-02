@@ -18,13 +18,14 @@ import {
   defaultPromptFor,
   FALLBACK_MODELS,
   mergeStoredConfig,
+  serializeStoredConfig,
   resolveModelForProvider,
   uid,
   fontStack,
 } from "../constants/defaults";
 import { JOB_DESC_TOKEN } from "../constants/tokens";
 import { mergeGeneratedSection, normalizeGenerated } from "../utils/content";
-import { identityFromProfile, isValidJson, storageKey } from "../utils/identity";
+import { applicationDraftStorageKey, identityFromProfile, isValidJson, storageKey } from "../utils/identity";
 import {
   deleteResumeTemplate,
   fetchResumeTemplates,
@@ -42,6 +43,9 @@ import type {
   LayoutSection,
   PreviewEdit,
   Purpose,
+  CoverageDecision,
+  ResumeCoverageAnalysis,
+  ResumeCoverageAudit,
   ResumeTheme,
   StepKind,
   UploadedTemplateManifest,
@@ -65,6 +69,16 @@ function formatCompanyToken(c: { title?: string; company?: string; period?: stri
   else if (period) head = period;
 
   return description && head ? `${head} — ${description}` : head || description;
+}
+
+function apiErrorMessage(error: unknown, fallback: string) {
+  const data = error && typeof error === "object" ? (error as { data?: unknown }).data : null;
+  const message = data && typeof data === "object" ? (data as { error?: unknown }).error : null;
+  return typeof message === "string" && message.trim()
+    ? message
+    : error instanceof Error && error.message !== "Request failed"
+      ? error.message
+      : fallback;
 }
 
 function mergeGenerationStep(
@@ -119,7 +133,7 @@ function plannedGenerationSteps(plan: Array<Pick<GenStep, "name" | "purpose" | "
 export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
 
 export function useGeneratorPage() {
-  const { get, put } = useApi(API_BASE);
+  const { get, post, put } = useApi(API_BASE);
   const { applier } = useApplier();
   const { tasks: backgroundTasks, adoptTask, cancelTask, waitForTask } = useBackgroundTasks();
   const { notify } = useNotify();
@@ -135,6 +149,11 @@ export function useGeneratorPage() {
   const [usage, setUsage] = useState<UsageBreakdown | null>(null);
   const [genProgress, setGenProgress] = useState<GenProgress | null>(null);
   const [generated, setGenerated] = useState<GeneratedContent | null>(null);
+  const [coverageAnalysis, setCoverageAnalysis] = useState<ResumeCoverageAnalysis | null>(null);
+  const [coverageAnalysisJd, setCoverageAnalysisJd] = useState("");
+  const [coverageDecisions, setCoverageDecisions] = useState<Record<string, CoverageDecision>>({});
+  const [coverageAudit, setCoverageAudit] = useState<ResumeCoverageAudit | null>(null);
+  const [analyzingCoverage, setAnalyzingCoverage] = useState(false);
   const [view, setView] = useState<"editor" | "history">("editor");
   const [editorPanel, setEditorPanel] = useState<"document" | "pipeline">("document");
   const [previewStep, setPreviewStep] = useState<number | null>(null);
@@ -171,7 +190,7 @@ export function useGeneratorPage() {
   const [configHydratedFor, setConfigHydratedFor] = useState<string | null>(null);
   const configSaveRef = useRef<{
     inFlight: boolean;
-    queued: { applierName: string; config: GeneratorConfig; key: string } | null;
+    queued: { applierName: string; config: ReturnType<typeof serializeStoredConfig>; key: string } | null;
     lastSavedKey: string | null;
   }>({ inFlight: false, queued: null, lastSavedKey: null });
 
@@ -205,17 +224,18 @@ export function useGeneratorPage() {
   // keeps a quick navigation away from the Editor from cancelling the change.
   const setDynamicCareerTitles = useCallback((enabled: boolean) => {
     const next = { ...config, dynamicCareerTitles: enabled };
+    const stored = serializeStoredConfig(next);
     setConfig(next);
     try {
-      localStorage.setItem(storageKey(applier?.name), JSON.stringify(next));
+      localStorage.setItem(storageKey(applier?.name), JSON.stringify(stored));
     } catch {
       /* storage unavailable */
     }
 
     const applierName = applier?.name;
     if (!applierName || configHydratedFor !== configOwnerKey) return;
-    const key = `${applierName}\u0000${JSON.stringify(next)}`;
-    configSaveRef.current.queued = { applierName, config: next, key };
+    const key = `${applierName}\u0000${JSON.stringify(stored)}`;
+    configSaveRef.current.queued = { applierName, config: stored, key };
     void flushConfigSave();
   }, [applier?.name, config, configHydratedFor, configOwnerKey, flushConfigSave]);
 
@@ -473,6 +493,7 @@ export function useGeneratorPage() {
     setConfigHydratedFor(null);
     configSaveRef.current.queued = null;
     configSaveRef.current.lastSavedKey = null;
+    setCoverageAudit(null);
 
     let cancelled = false;
     let next = defaultConfig();
@@ -482,6 +503,31 @@ export function useGeneratorPage() {
     } catch {
       next = defaultConfig();
     }
+    let draftJobDescription = next.jobDescription;
+    try {
+      const draftRaw = localStorage.getItem(applicationDraftStorageKey(applier?.name));
+      if (draftRaw) {
+        const draft = JSON.parse(draftRaw) as {
+          jobDescription?: unknown;
+          coverageAnalysis?: ResumeCoverageAnalysis | null;
+          coverageAnalysisJd?: unknown;
+          coverageDecisions?: Record<string, CoverageDecision>;
+        };
+        if (typeof draft.jobDescription === "string") draftJobDescription = draft.jobDescription;
+        setCoverageAnalysis(draft.coverageAnalysis?.schemaVersion === 1 ? draft.coverageAnalysis : null);
+        setCoverageAnalysisJd(typeof draft.coverageAnalysisJd === "string" ? draft.coverageAnalysisJd : "");
+        setCoverageDecisions(draft.coverageDecisions && typeof draft.coverageDecisions === "object" ? draft.coverageDecisions : {});
+      } else {
+        setCoverageAnalysis(null);
+        setCoverageAnalysisJd("");
+        setCoverageDecisions({});
+      }
+    } catch {
+      setCoverageAnalysis(null);
+      setCoverageAnalysisJd("");
+      setCoverageDecisions({});
+    }
+    next = { ...next, jobDescription: draftJobDescription };
     if (!cancelled) setConfig(next);
 
     const applierName = applier?.name;
@@ -499,14 +545,22 @@ export function useGeneratorPage() {
     void retryTransient(
       () => get(
         `/personal/resume-generator/config?applierName=${encodeURIComponent(applierName)}`,
-      ) as Promise<{ success?: boolean; config?: Partial<GeneratorConfig> | null }>,
+      ) as Promise<{
+        success?: boolean;
+        config?: unknown;
+        legacyJobDescription?: string | null;
+      }>,
     )
       .then((raw) => {
-        const dbConfig = (raw as { success?: boolean; config?: Partial<GeneratorConfig> | null })?.config;
+        const dbConfig = raw?.config;
         if (raw?.success === false) throw new Error("Could not load the saved Resume Generator configuration.");
         if (cancelled || externalLoadRef.current || !dbConfig || typeof dbConfig !== "object") return;
-        const restored = mergeStoredConfig(dbConfig);
-        configSaveRef.current.lastSavedKey = `${applierName}\u0000${JSON.stringify(restored)}`;
+        const restored = {
+          ...mergeStoredConfig(dbConfig),
+          jobDescription: draftJobDescription || raw.legacyJobDescription || "",
+        };
+        const stored = serializeStoredConfig(restored);
+        configSaveRef.current.lastSavedKey = `${applierName}\u0000${JSON.stringify(stored)}`;
         setConfig(restored);
       })
       .then(finishHydration)
@@ -530,22 +584,49 @@ export function useGeneratorPage() {
   // transactions that blocks jobs and status requests.
   useEffect(() => {
     if (configHydratedFor !== configOwnerKey) return;
+    const stored = serializeStoredConfig(config);
     try {
-      localStorage.setItem(storageKey(applier?.name), JSON.stringify(config));
+      localStorage.setItem(storageKey(applier?.name), JSON.stringify(stored));
     } catch {
       /* storage unavailable */
     }
     const applierName = applier?.name;
     if (!applierName) return;
-    const serialized = JSON.stringify(config);
+    const serialized = JSON.stringify(stored);
     const key = `${applierName}\u0000${serialized}`;
     if (key === configSaveRef.current.lastSavedKey) return;
     const t = setTimeout(() => {
-      configSaveRef.current.queued = { applierName, config, key };
+      configSaveRef.current.queued = { applierName, config: stored, key };
       void flushConfigSave();
     }, 800);
     return () => clearTimeout(t);
   }, [config, applier?.name, configHydratedFor, configOwnerKey, flushConfigSave]);
+
+  // The in-progress JD and exception decisions are ApplicationRun draft data,
+  // not reusable ResumeConfig data. Keep them locally so navigation/reload is
+  // lossless without polluting the canonical server config.
+  useEffect(() => {
+    if (configHydratedFor !== configOwnerKey) return;
+    try {
+      localStorage.setItem(applicationDraftStorageKey(applier?.name), JSON.stringify({
+        schemaVersion: 1,
+        jobDescription: config.jobDescription,
+        coverageAnalysis,
+        coverageAnalysisJd,
+        coverageDecisions,
+      }));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [
+    applier?.name,
+    config.jobDescription,
+    configHydratedFor,
+    configOwnerKey,
+    coverageAnalysis,
+    coverageAnalysisJd,
+    coverageDecisions,
+  ]);
 
   const loadIdentity = useCallback(async () => {
     const applierName = applier?.name;
@@ -577,6 +658,62 @@ export function useGeneratorPage() {
   useEffect(() => {
     void loadIdentity();
   }, [loadIdentity]);
+
+  const coverageIsCurrent = Boolean(
+    coverageAnalysis
+    && coverageAnalysisJd === config.jobDescription
+    && config.jobDescription.trim(),
+  );
+  const unresolvedCoverageSkills = useMemo(
+    () => coverageIsCurrent
+      ? (coverageAnalysis?.skills ?? []).filter((skill) => !(coverageDecisions[skill.id] ?? skill.decision))
+      : [],
+    [coverageAnalysis, coverageDecisions, coverageIsCurrent],
+  );
+
+  const setCoverageDecision = useCallback((skillId: string, decision: CoverageDecision) => {
+    setCoverageDecisions((current) => ({ ...current, [skillId]: decision }));
+    setCoverageAudit(null);
+  }, []);
+
+  const runCoverageAnalysis = useCallback(async (): Promise<ResumeCoverageAnalysis | null> => {
+    const applierName = applier?.name;
+    const jobDescription = config.jobDescription.trim();
+    if (!applierName || !jobDescription) return null;
+    setAnalyzingCoverage(true);
+    setCoverageAudit(null);
+    try {
+      const response = await post("/personal/resume-generator/analyze", {
+        applierName,
+        jobDescription,
+        identity,
+        coverage: config.coverage,
+      }) as {
+        success?: boolean;
+        analysis?: ResumeCoverageAnalysis;
+      };
+      if (!response?.analysis) throw new Error("Skill analysis returned no ledger.");
+      const analysis = response.analysis;
+      const automaticDecisions = Object.fromEntries(
+        analysis.skills
+          .filter((skill) => skill.decision)
+          .map((skill) => [skill.id, skill.decision as CoverageDecision]),
+      );
+      setCoverageAnalysis(analysis);
+      setCoverageAnalysisJd(config.jobDescription);
+      setCoverageDecisions(automaticDecisions);
+      return analysis;
+    } catch (error) {
+      notify({
+        title: "Skill analysis failed",
+        description: apiErrorMessage(error, "Could not extract the job description's skill ledger."),
+        tone: "error",
+      });
+      return null;
+    } finally {
+      setAnalyzingCoverage(false);
+    }
+  }, [applier?.name, config.coverage, config.jobDescription, identity, notify, post]);
 
   // Pull the provider's live model list (needs the applier's API key in profile).
   const loadModels = useCallback(
@@ -740,8 +877,21 @@ export function useGeneratorPage() {
       systemInstruction: config.systemInstruction,
       jobDescription: config.jobDescription,
       steps: plan,
+      coverage: config.coverage.enabled && coverageIsCurrent && coverageAnalysis
+        ? { analysis: coverageAnalysis, decisions: coverageDecisions, settings: config.coverage }
+        : null,
     }),
-    [applier?._id, applier?.name, config, identity, plan, template],
+    [
+      applier?._id,
+      applier?.name,
+      config,
+      coverageAnalysis,
+      coverageDecisions,
+      coverageIsCurrent,
+      identity,
+      plan,
+      template,
+    ],
   );
 
 	useEffect(() => {
@@ -803,7 +953,7 @@ export function useGeneratorPage() {
 			: null;
 		const expectedPartialPurpose = shouldReadPartial
 			&& stepEvent?.phase === "step-done"
-			&& stepEvent?.kind === "final"
+				&& (stepEvent?.kind === "final" || stepEvent?.kind === "coverage-repair")
 			? String(stepEvent.purpose || "")
 			: "";
 		void retryTransient(async () => {
@@ -828,6 +978,9 @@ export function useGeneratorPage() {
 					));
 				}
 				if (stored.result?.usage) setUsage(stored.result.usage as UsageBreakdown);
+				if (stored.result?.coverageAudit) {
+					setCoverageAudit(stored.result.coverageAudit as ResumeCoverageAudit);
+				}
 				if (shouldReadTerminal) {
 					setGenerating(false);
 					setGenProgress((current) => ({
@@ -880,6 +1033,9 @@ export function useGeneratorPage() {
         };
       }),
       totalUsage: usage,
+      coverageAnalysis,
+      coverageDecisions,
+      coverageAudit,
       sections: generated,
     };
     const blob = new Blob([JSON.stringify(log, null, 2)], { type: "application/json" });
@@ -910,24 +1066,90 @@ export function useGeneratorPage() {
   const applyRun = useCallback((run: FullRun, opts?: { switchView?: boolean }) => {
     externalLoadRef.current = true;
     applyHistoryRun(run, setConfig, setGenerated, setUsage, opts?.switchView === false ? undefined : setView);
+    const analysis = run.coverageAnalysis ?? null;
+    const contractSkills = Array.isArray(run.coverageContract?.skills)
+      ? run.coverageContract.skills as Array<{ id?: unknown; decision?: unknown }>
+      : [];
+    const contractDecisions = Object.fromEntries(
+      [
+        ...contractSkills
+          .filter((skill) => typeof skill.id === "string" && ["used", "familiar"].includes(String(skill.decision)))
+          .map((skill) => [String(skill.id), String(skill.decision) as CoverageDecision] as const),
+        ...(Array.isArray(run.coverageContract?.excluded)
+          ? (run.coverageContract.excluded as Array<{ id?: unknown }>).filter((skill) => typeof skill.id === "string")
+            .map((skill) => [String(skill.id), "exclude" as CoverageDecision] as const)
+          : []),
+      ],
+    );
+    setCoverageAnalysis(analysis);
+    setCoverageAnalysisJd(analysis ? String(run.jobDescription ?? "") : "");
+    setCoverageDecisions(analysis
+      ? {
+        ...Object.fromEntries(
+            analysis.skills
+              .filter((skill) => skill.decision)
+              .map((skill) => [skill.id, skill.decision as CoverageDecision]),
+          ),
+          ...contractDecisions,
+        }
+      : {});
+    setCoverageAudit(run.coverageAudit ?? null);
   }, []);
 
   const handleGenerate = async () => {
     if (!applier?.name) {
       notify({ title: "Select an applier", description: "Choose your account in the sidebar.", tone: "warning" });
-      return;
+      return false;
+    }
+    if (!config.jobDescription.trim()) {
+      notify({ title: "Add a job description", description: "Paste the target role before generating.", tone: "warning" });
+      return false;
+    }
+    if (!identity) {
+      notify({ title: "Profile not loaded", description: "Load your saved career profile before generating.", tone: "warning" });
+      return false;
     }
     if (validation.length > 0) {
       notify({ title: "Fix step configuration", description: validation[0], tone: "error" });
-      return;
+      return false;
+    }
+
+    let generationPayload = requestPayload;
+    if (config.coverage.enabled) {
+      const analysis = coverageIsCurrent && coverageAnalysis
+        ? coverageAnalysis
+        : await runCoverageAnalysis();
+      if (!analysis) return false;
+      const decisions: Record<string, CoverageDecision> = {
+        ...Object.fromEntries(
+          analysis.skills
+            .filter((skill) => skill.decision)
+            .map((skill) => [skill.id, skill.decision as CoverageDecision]),
+        ),
+        ...(coverageIsCurrent ? coverageDecisions : {}),
+      };
+      const unresolved = analysis.skills.filter((skill) => !decisions[skill.id]);
+      if (unresolved.length) {
+        notify({
+          title: "Confirm unverified skills",
+          description: `${unresolved.length} JD skill${unresolved.length === 1 ? " needs" : "s need"} a quick Used, Familiar, or Not used decision.`,
+          tone: "warning",
+        });
+        return false;
+      }
+      generationPayload = {
+        ...requestPayload,
+        coverage: { analysis, decisions, settings: config.coverage },
+      };
     }
     setGenerating(true);
     setUsage(null);
     setGenerated(null);
+    setCoverageAudit(null);
     const checklist = plannedGenerationSteps(plan);
     setGenProgress({ steps: checklist, cumulative: null, done: false, message: "Submitting generation…" });
     try {
-      const queued = await enqueueResumeGenerationRequest(requestPayload);
+      const queued = await enqueueResumeGenerationRequest(generationPayload);
       adoptTask(queued.task);
       setGenProgress({
         steps: checklist,
@@ -945,6 +1167,7 @@ export function useGeneratorPage() {
       const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
       setUsage(nextUsage);
       setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
+      setCoverageAudit((stored.result.coverageAudit as ResumeCoverageAudit | undefined) ?? null);
       setGenProgress((current) => ({
         steps: current?.steps ?? [],
         cumulative: nextUsage,
@@ -952,12 +1175,14 @@ export function useGeneratorPage() {
         message: null,
       }));
       notify({ title: "Resume generated", description: "Result is shown in the live preview.", tone: "success" });
+      return true;
     } catch (error) {
       notify({
         title: "Generation failed",
         description: error instanceof Error ? error.message : "Generation failed — see backend logs.",
         tone: "error",
       });
+      return false;
     } finally {
       setGenerating(false);
     }
@@ -997,6 +1222,16 @@ export function useGeneratorPage() {
     genProgress,
     generated,
     setGenerated,
+    coverageAnalysis,
+    coverageAnalysisJd,
+    coverageDecisions,
+    coverageAudit,
+    coverageIsCurrent,
+    unresolvedCoverageSkills,
+    analyzingCoverage,
+    setCoverageDecision,
+    runCoverageAnalysis,
+    configHydrated: configHydratedFor === configOwnerKey,
     view,
     setView,
     editorPanel,
