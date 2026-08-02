@@ -67,10 +67,70 @@ async function testBidderSignInRequiresCredentials() {
   });
 }
 
+async function testMailApiUsesProfileCredentials() {
+  const requests = [];
+  await withFetch(async (url, options) => {
+    requests.push({ url, options });
+    if (url.includes('/mail/credentials')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, configured: true, email: 'bidder@gmail.com' }),
+      };
+    }
+    if (url.includes('/mail/messages/42')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, thread: { id: '42', subj: 'Interview' } }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        threads: [{ id: '42', subj: 'Interview' }],
+        total: 1,
+        page: 2,
+        pageSize: 20,
+      }),
+    };
+  }, async () => {
+    const credentials = await AthensApi.checkMailCredentials('  Oliver Baltay  ');
+    assert.strictEqual(credentials.configured, true);
+
+    const list = await AthensApi.fetchMailThreads('Oliver Baltay', {
+      folder: 'sent',
+      page: 2,
+      pageSize: 20,
+      force: true,
+    });
+    assert.strictEqual(list.threads[0].id, '42');
+
+    const message = await AthensApi.fetchMailMessage('Oliver Baltay', 42, 'sent');
+    assert.strictEqual(message.thread.subj, 'Interview');
+  });
+
+  assert.strictEqual(
+    requests[0].url,
+    'http://127.0.0.1:8979/api/mail/credentials?applierName=Oliver%20Baltay',
+  );
+  assert.strictEqual(
+    requests[1].url,
+    'http://127.0.0.1:8979/api/mail/threads?applierName=Oliver+Baltay&folder=sent&page=2&pageSize=20&force=true',
+  );
+  assert.strictEqual(
+    requests[2].url,
+    'http://127.0.0.1:8979/api/mail/messages/42?applierName=Oliver+Baltay&folder=sent',
+  );
+}
+
 async function run() {
   await testBidderSignInSuccess();
   await testBidderSignInPreservesServerError();
   await testBidderSignInRequiresCredentials();
+  await testMailApiUsesProfileCredentials();
   console.log('athens-api.test.js: all passed');
 }
 

@@ -77,6 +77,15 @@ test("Firestore fallback bounds résumé reuse by job identity instead of broad 
 	assert.equal(fallback.clauses[0].field, "generate_parent_job_id");
 });
 
+test("Firestore fallback bounds editor recovery by its unique input id", () => {
+	const plan = buildNativeQueryPlan({
+		backgroundTaskInputId: "input-1",
+		status: "completed",
+	});
+	const fallback = buildFallbackQueryPlan(plan, "resume_generations");
+	assert.equal(fallback.clauses[0].field, "backgroundTaskInputId");
+});
+
 test("Firestore compatibility fallback keeps fields needed by nested local filters", () => {
 	const fields = collectFilterFields({
 		$and: [

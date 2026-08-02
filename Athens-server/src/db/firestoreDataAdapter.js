@@ -115,7 +115,7 @@ function selectBoundingClause(clauses = []) {
 	const score = (clause) => {
 		if (clause.field === "sourceCatalog") return -100;
 		if (/fingerprint$/i.test(clause.field)) return 130;
-		if (/(job.?id|generation.?id|request.?id)$/i.test(clause.field)) return 120;
+		if (/(job.?id|generation.?id|request.?id|input.?id)$/i.test(clause.field)) return 120;
 		if (/(profile.?id|applier.?name|owner.?name|uid)$/i.test(clause.field)) return 100;
 		if (/status$/i.test(clause.field)) return 60;
 		if (typeof clause.value === "boolean") return -10;
@@ -1024,29 +1024,44 @@ class FirestoreCollection {
 		return { acknowledged: true, deletedCount };
 	}
 	/**
-	 * Delete known document ids without reading them first. This is intended for
-	 * an explicit user deletion where the ids came from the current job list.
-	 * Job catalogs share the physical `jobs` collection, so the document id is
-	 * authoritative and no profile or catalog lookup is needed.
+	 * Delete known document ids after verifying that the physical records exist.
+	 * This is intended for explicit user deletion from the current job list.
+	 * Job catalogs share the physical `jobs` collection, so catalog ownership is
+	 * checked before deleting each record.
 	 */
 	async deleteDocumentsByIds(ids) {
 		const uniqueIds = [...new Set(ids.map((id) => String(comparable(id))).filter(Boolean))];
 		if (!uniqueIds.length) return { acknowledged: true, deletedCount: 0 };
 		const outboxIds = [];
-		// Each job adds one delete and one search-outbox write.
-		for (let offset = 0; offset < uniqueIds.length; offset += 200) {
-			const chunk = uniqueIds.slice(offset, offset + 200);
+		let deletedCount = 0;
+		// Read first so missing or wrong-catalog ids are not reported as deleted,
+		// and so the same uniqueness reservations as deleteMany can be removed.
+		for (let offset = 0; offset < uniqueIds.length; offset += 100) {
+			const chunk = uniqueIds.slice(offset, offset + 100);
+			const refs = chunk.map((id) => this.ref.doc(id));
+			const snapshots = await this.db.firestore.getAll(...refs);
 			const batch = this.db.firestore.batch();
-			for (const id of chunk) {
-				batch.delete(this.ref.doc(id));
-				const outboxId = this._outbox(batch, id, "delete");
+			let writes = 0;
+			for (let index = 0; index < snapshots.length; index += 1) {
+				const snapshot = snapshots[index];
+				if (!snapshot.exists) continue;
+				const doc = decodeDoc(snapshot.id, snapshot.data());
+				if (this.sourceCatalog && doc.sourceCatalog !== this.sourceCatalog) continue;
+				batch.delete(refs[index]);
+				writes += 1;
+				deletedCount += 1;
+				for (const reservation of firestoreUniqueReservations(this.collectionName, doc, snapshot.id)) {
+					batch.delete(this.db.firestore.collection("unique_reservations").doc(reservation.id));
+					writes += 1;
+				}
+				const outboxId = this._outbox(batch, snapshot.id, "delete");
 				if (outboxId) outboxIds.push(outboxId);
 			}
-			await batch.commit();
+			if (writes) await batch.commit();
 		}
 		this._invalidateCaches();
 		for (const outboxId of outboxIds) this._kickOutbox(outboxId);
-		return { acknowledged: true, deletedCount: uniqueIds.length };
+		return { acknowledged: true, deletedCount };
 	}
 	async countDocuments(filter = {}) {
 		if (filter?._id && !isPlain(filter._id)) return (await this._read(filter)).length;

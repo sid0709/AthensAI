@@ -345,7 +345,10 @@ export async function prepareGeneration(body) {
 
   // Provider + model always come from the profile's default (Settings → Profile),
   // never from the request — there is no per-generation model picker anymore.
-  const profile = await findProfile(body.applierName);
+  const [profile, accountTier] = await Promise.all([
+    findProfile(body.applierName),
+    resolveAccountTier(body.applierName),
+  ]);
   const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
     return { ok: false, status: 400, error: `No ${getProvider(providerId).label} API key configured. Add it and set a default model in Settings → Profile.` };
@@ -364,30 +367,48 @@ export async function prepareGeneration(body) {
 
   // Tier remains server-resolved metadata. Dynamic titles are a saved generator
   // preference available to every tier and are enabled only by an explicit boolean.
-  const isBeta = isBetaTier(await resolveAccountTier(body.applierName));
+  const isBeta = isBetaTier(accountTier);
   const dynamicCareerTitles = body.dynamicCareerTitles === true;
 
   return { ok: true, providerId, model, steps, apiKey, isBeta, dynamicCareerTitles };
 }
 
 /**
- * Runs the resume pipeline as one continuous, cached conversation. The system
- * instruction + profile form a stable prefix (kept in the prompt cache via
- * cacheKey), each step appends a turn, and final steps return JSON for a section.
- * `onStep` is invoked after every step for live progress streaming.
+ * Build independent, contiguous section chains that may run concurrently.
+ * Steps inside one section retain their conversation and order. Ambiguous plans
+ * (unknown purposes, a purpose that reappears later, or steps after its final)
+ * return null so the caller preserves the original global sequence.
  */
-/** True when every step is an independent final with a distinct purpose (default pipeline). */
-function canParallelizeFinals(steps) {
-  if (!Array.isArray(steps) || steps.length < 2) return false;
-  const purposes = new Set();
-  for (const step of steps) {
-    if (step?.kind !== "final" || !PURPOSES.has(step.purpose)) return false;
-    if (purposes.has(step.purpose)) return false;
-    purposes.add(step.purpose);
+export function buildParallelPurposeChains(steps) {
+  if (!Array.isArray(steps) || steps.length < 2) return null;
+  const chains = [];
+  const seen = new Set();
+  for (let i = 0; i < steps.length; i += 1) {
+    const step = steps[i] || {};
+    if (!PURPOSES.has(step.purpose)) return null;
+    let chain = chains.at(-1);
+    if (!chain || chain.purpose !== step.purpose) {
+      if (seen.has(step.purpose)) return null;
+      seen.add(step.purpose);
+      chain = { purpose: step.purpose, entries: [] };
+      chains.push(chain);
+    }
+    chain.entries.push({ step, index: i + 1 });
   }
-  return true;
+  if (chains.length < 2) return null;
+  for (const chain of chains) {
+    const finals = chain.entries.filter(({ step }) => step.kind === "final");
+    if (finals.length !== 1 || chain.entries.at(-1)?.step?.kind !== "final") return null;
+  }
+  return chains;
 }
 
+/**
+ * Runs the resume pipeline as cached per-section conversations. Independent
+ * section chains run concurrently; fine-tunes within a section remain ordered.
+ * Plans whose dependency shape is ambiguous retain the original global order.
+ * `onStep` is invoked after every step for live progress streaming.
+ */
 export async function runGeneration({
   providerId,
   apiKey,
@@ -431,80 +452,16 @@ export async function runGeneration({
   const sections = {};
   const perStep = [];
   let usage = EMPTY_USAGE();
+  let streamedUsage = EMPTY_USAGE();
 
-  const runOneFinal = async (step, index, total) => {
-	throwIfAborted();
-    const name = step.name || `Step ${index}`;
-    if (onStep) onStep({ phase: "step-start", index, total, name, purpose: step.purpose, kind: step.kind });
-
-    let userContent = applyTokens(step.prompt || "");
-    if (step.purpose === "experience") {
-      userContent = appendExperienceTitlePolicy(userContent, {
-        dynamicCareerTitles: dynamicTitles,
-        jobDescription,
-        careers,
-      });
-    }
-    if (step.schema) {
-      userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
-    }
-
-    const messages = [...prefixMessages, { role: "user", content: userContent }];
-    const { content, usage: stepUsage } = await chatCompletion({
-      provider: providerId,
-      apiKey,
-      model,
-      messages,
-      jsonMode: true,
-      cacheKey: `resume-${applierName || "anon"}`,
-      reasoningEffort,
-      feature: `resume-generate:${step.purpose || step.kind || "step"}`,
-      applierName,
-      signal,
-    });
-		throwIfAborted();
-
-    let output;
-    try {
-      output = parseJsonLoose(content);
-      if (step.purpose === "experience") {
-        output = applyTitlePolicyToSections(
-          { experience: output },
-          identity,
-          dynamicTitles,
-        ).experience;
-      }
-    } catch (err) {
-      if (Number.isInteger(err?.status)) throw err;
-      const e = new Error(`${step.purpose} final step returned invalid JSON.`);
-      e.status = 502;
-      throw e;
-    }
-
-    const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output };
-    if (onStep) onStep({ phase: "step-done", ...entry });
-    return entry;
-  };
-
-  if (canParallelizeFinals(steps)) {
-    // Default pipeline: independent finals share only the system+identity prefix.
-    // Run them concurrently so per-résumé wall time ≈ one LLM round-trip.
-    const entries = await Promise.all(
-      steps.map((step, i) => runOneFinal(step || {}, i + 1, steps.length)),
-    );
-    for (const entry of entries) {
-      if (PURPOSES.has(entry.purpose)) sections[entry.purpose] = entry.output;
-      usage = addUsage(usage, entry.usage);
-      perStep.push({ ...entry, cumulative: usage });
-    }
-  } else {
-    // Fine-tune / dependent pipelines keep a growing multi-turn conversation.
+  const runChain = async (entries) => {
     const messages = [...prefixMessages];
-    for (let i = 0; i < steps.length; i += 1) {
-		throwIfAborted();
-      const step = steps[i] || {};
+    const completed = [];
+    for (const { step, index } of entries) {
+      throwIfAborted();
       const isFinal = step.kind === "final";
-      if (onStep) onStep({ phase: "step-start", index: i + 1, total: steps.length, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind });
+      const name = step.name || `Step ${index}`;
+      if (onStep) onStep({ phase: "step-start", index, total: steps.length, name, purpose: step.purpose, kind: step.kind });
 
       let userContent = applyTokens(step.prompt || "");
       if (isFinal && step.purpose === "experience") {
@@ -531,9 +488,8 @@ export async function runGeneration({
         applierName,
         signal,
       });
-		throwIfAborted();
+      throwIfAborted();
       messages.push({ role: "assistant", content });
-      usage = addUsage(usage, stepUsage);
 
       let output = content;
       if (isFinal) {
@@ -546,7 +502,6 @@ export async function runGeneration({
               dynamicTitles,
             ).experience;
           }
-          if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
         } catch (err) {
           if (Number.isInteger(err?.status)) throw err;
           const e = new Error(`${step.purpose} final step returned invalid JSON.`);
@@ -554,10 +509,27 @@ export async function runGeneration({
           throw e;
         }
       }
-      const entry = { index: i + 1, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind, usage: stepUsage, output };
-      perStep.push(entry);
-      if (onStep) onStep({ phase: "step-done", ...entry, cumulative: usage });
+      const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output };
+      completed.push(entry);
+      streamedUsage = addUsage(streamedUsage, stepUsage);
+      if (onStep) onStep({ phase: "step-done", ...entry, cumulative: streamedUsage });
     }
+    return completed;
+  };
+
+  const parallelChains = buildParallelPurposeChains(steps);
+  const plannedChains = parallelChains || [{
+    purpose: null,
+    entries: steps.map((step, i) => ({ step: step || {}, index: i + 1 })),
+  }];
+  const completedChains = parallelChains
+    ? await Promise.all(plannedChains.map((chain) => runChain(chain.entries)))
+    : [await runChain(plannedChains[0].entries)];
+  const entries = completedChains.flat().sort((left, right) => left.index - right.index);
+  for (const entry of entries) {
+    if (entry.kind === "final" && PURPOSES.has(entry.purpose)) sections[entry.purpose] = entry.output;
+    usage = addUsage(usage, entry.usage);
+    perStep.push({ ...entry, cumulative: usage });
   }
 
   // Safety net if Experience was produced outside the final-step branch shape.
@@ -761,7 +733,10 @@ export async function generateResumeStream(req, res) {
       }
       if (TERMINAL_TASK_STATUSES.has(task.status)) {
         if (task.status === "completed" || task.status === "completed_with_errors") {
-          const input = await backgroundTaskInputsCollection.findOne({ _id: queued.inputId });
+          const input = await backgroundTaskInputsCollection.findOne(
+            { _id: queued.inputId },
+            { bypassCache: true },
+          );
           if (input?.status === "completed" && input.result) {
             send("done", input.result);
           } else {
@@ -792,7 +767,13 @@ export async function generateResumeStream(req, res) {
 export async function getResumeGenerationTaskResult(req, res) {
   try {
     if (!backgroundTaskInputsCollection) return res.status(503).json({ success: false, error: "Database not ready" });
-    const input = await backgroundTaskInputsCollection.findOne({ _id: cleanString(req.params.inputId) });
+    // The API and background worker are separate processes. Partial reads must
+    // not retain the API process's five-minute cache after the worker writes a
+    // section or terminal result.
+    const input = await backgroundTaskInputsCollection.findOne(
+      { _id: cleanString(req.params.inputId) },
+      { bypassCache: true },
+    );
     if (!input) return res.status(404).json({ success: false, error: "Resume generation input not found" });
     const uid = cleanString(req.auth?.uid);
     const applierName = cleanString(req.authProfile?.profileName || req.authProfile?.applierName || req.query?.applierName);

@@ -4,6 +4,7 @@ import { useApplier } from "@/context/applier-context";
 import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 import {
   enqueueResumeGenerationRequest,
+  getCompletedResumeGenerationTaskResult,
   getResumeGenerationTaskResult,
 } from "@/app/api/backgroundTasks";
 import { createDefaultEditorDraft } from "../../../data/resumes/seedDocument";
@@ -297,6 +298,7 @@ export function useResumeEditor() {
 
     const payload = {
       applierName: applier.name,
+      profileId: applier._id != null ? String(applier._id) : null,
       provider: draft.provider,
       model: draft.model,
       reasoningEffort: draft.reasoningEffort === "default" ? undefined : draft.reasoningEffort,
@@ -326,8 +328,7 @@ export function useResumeEditor() {
       }
       if (terminal.status === "cancelled") throw new Error("Generation cancelled");
 			terminalHandled.current.add(queued.task.id);
-      const stored = await getResumeGenerationTaskResult(queued.inputId, applier.name);
-      if (!stored.result) throw new Error(stored.error || "Generation did not produce a result");
+      const stored = await getCompletedResumeGenerationTaskResult(queued.inputId, applier.name);
       const sections = (stored.result.sections as Record<string, unknown>) || {};
       if (stored.result.usage) setUsage(stored.result.usage as { totalTokens?: number; cost?: number });
       setGeneratedSections({ summary: true, skills: true, experience: true });
@@ -341,7 +342,7 @@ export function useResumeEditor() {
       setGenerating(false);
       setGenerateStep(null);
     }
-  }, [adoptTask, draft, applier?.name, generatorIdentity, persist, waitForTask]);
+  }, [adoptTask, draft, applier?._id, applier?.name, generatorIdentity, persist, waitForTask]);
 
   const exportResume = useCallback(
     async (format: "pdf" | "docx") => {

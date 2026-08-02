@@ -543,6 +543,50 @@ const AthensApi = (() => {
     return { blob, fileName, mimeType: 'application/pdf' };
   }
 
+  async function checkMailCredentials(applierName) {
+    const name = String(applierName || '').trim();
+    if (!name) throw new Error('Athens applier name is required.');
+    return fetchJson(`/mail/credentials?applierName=${encodeURIComponent(name)}`, {
+      timeoutMs: QUEUE_TIMEOUT_MS,
+    });
+  }
+
+  async function fetchMailThreads(applierName, options = {}) {
+    const name = String(applierName || '').trim();
+    if (!name) throw new Error('Athens applier name is required.');
+    const params = new URLSearchParams({
+      applierName: name,
+      folder: String(options.folder || 'inbox'),
+      page: String(Math.max(1, Number(options.page) || 1)),
+      pageSize: String(Math.min(50, Math.max(1, Number(options.pageSize) || 20))),
+    });
+    if (options.force) params.set('force', 'true');
+    return fetchJson(`/mail/threads?${params}`, {
+      timeoutMs: options.force ? 30000 : QUEUE_TIMEOUT_MS,
+    });
+  }
+
+  async function fetchMailMessage(applierName, uid, folder = 'inbox') {
+    const name = String(applierName || '').trim();
+    const messageUid = String(uid || '').trim();
+    if (!name) throw new Error('Athens applier name is required.');
+    if (!messageUid) throw new Error('Mail message id is required.');
+    const params = new URLSearchParams({ applierName: name, folder: String(folder || 'inbox') });
+    return fetchJson(`/mail/messages/${encodeURIComponent(messageUid)}?${params}`, {
+      timeoutMs: 30000,
+    });
+  }
+
+  async function fetchMailFolderCounts(applierName, force = false) {
+    const name = String(applierName || '').trim();
+    if (!name) throw new Error('Athens applier name is required.');
+    const params = new URLSearchParams({ applierName: name });
+    if (force) params.set('force', 'true');
+    return fetchJson(`/mail/folder-counts?${params}`, {
+      timeoutMs: force ? 30000 : QUEUE_TIMEOUT_MS,
+    });
+  }
+
   async function blobToBase64(blob) {
     const buffer = await blob.arrayBuffer();
     const bytes = new Uint8Array(buffer);
@@ -580,6 +624,10 @@ const AthensApi = (() => {
     checkGeneratedResumes,
     getResumePdfUrl,
     fetchResumePdf,
+    checkMailCredentials,
+    fetchMailThreads,
+    fetchMailMessage,
+    fetchMailFolderCounts,
     blobToBase64,
     mapTaskToJob,
   };

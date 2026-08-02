@@ -26,6 +26,25 @@ const rejectedHint = document.getElementById('rejectedHint');
 const refreshRejectedBtn = document.getElementById('refreshRejectedBtn');
 const rejectedCountBadge = document.getElementById('rejectedCountBadge');
 const workspaceTabs = document.getElementById('workspaceTabs');
+const mailSection = document.getElementById('mailSection');
+const mailListView = document.getElementById('mailListView');
+const mailDetailView = document.getElementById('mailDetailView');
+const mailList = document.getElementById('mailList');
+const mailStatus = document.getElementById('mailStatus');
+const mailAccount = document.getElementById('mailAccount');
+const mailFolderSelect = document.getElementById('mailFolderSelect');
+const refreshMailBtn = document.getElementById('refreshMailBtn');
+const mailCountBadge = document.getElementById('mailCountBadge');
+const mailPagination = document.getElementById('mailPagination');
+const mailPrevBtn = document.getElementById('mailPrevBtn');
+const mailNextBtn = document.getElementById('mailNextBtn');
+const mailPageLabel = document.getElementById('mailPageLabel');
+const mailBackBtn = document.getElementById('mailBackBtn');
+const mailDetailSubject = document.getElementById('mailDetailSubject');
+const mailDetailFrom = document.getElementById('mailDetailFrom');
+const mailDetailDate = document.getElementById('mailDetailDate');
+const mailDetailLabels = document.getElementById('mailDetailLabels');
+const mailDetailBody = document.getElementById('mailDetailBody');
 const applySessionView = document.getElementById('applySessionView');
 const applyJobCompany = document.getElementById('applyJobCompany');
 const applyJobTitle = document.getElementById('applyJobTitle');
@@ -111,6 +130,15 @@ let queueLoading = false;
 let workspacePage = 'ready';
 let rejectedJobs = [];
 let rejectedLoading = false;
+let mailThreads = [];
+let mailFolder = 'inbox';
+let mailPage = 1;
+let mailPageSize = 20;
+let mailTotal = 0;
+let mailLoading = false;
+let mailConfigured = null;
+let mailLoaded = false;
+let mailLoadToken = 0;
 
 async function sendMessage(message) {
   return chrome.runtime.sendMessage(message);
@@ -1445,10 +1473,225 @@ function launchApplyForJob(job, pool, button, { reopen = false } = {}) {
   });
 }
 
+function setMailStatus(message, isError = false) {
+  if (!mailStatus) return;
+  mailStatus.textContent = message;
+  mailStatus.classList.toggle('error', isError);
+}
+
+function formatMailDate(value, fallback = '') {
+  const date = new Date(value || '');
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function mailHtmlToText(value) {
+  if (!value) return '';
+  try {
+    const doc = new DOMParser().parseFromString(String(value), 'text/html');
+    doc.querySelectorAll('script, style, template').forEach((node) => node.remove());
+    return doc.body?.textContent?.replace(/\n{3,}/g, '\n\n').trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function renderMailList() {
+  if (!mailList) return;
+  mailList.innerHTML = '';
+
+  if (mailLoading) {
+    setMailStatus('Loading mail…');
+    const li = document.createElement('li');
+    li.className = 'mail-empty';
+    li.textContent = 'Loading Gmail mailbox…';
+    mailList.appendChild(li);
+  } else if (mailConfigured === false) {
+    setMailStatus('Gmail is not configured for this profile.', true);
+    const li = document.createElement('li');
+    li.className = 'mail-empty';
+    li.textContent = 'Add your Gmail address and app password in Athens → Settings → Profile.';
+    mailList.appendChild(li);
+  } else if (!mailThreads.length) {
+    setMailStatus(`No messages in ${mailFolderSelect?.selectedOptions?.[0]?.text || 'this folder'}.`);
+    const li = document.createElement('li');
+    li.className = 'mail-empty';
+    li.textContent = 'No messages found.';
+    mailList.appendChild(li);
+  } else {
+    const start = (mailPage - 1) * mailPageSize + 1;
+    const end = Math.min(mailTotal, start + mailThreads.length - 1);
+    setMailStatus(`${start}–${end} of ${mailTotal} messages · read-only view`);
+    for (const thread of mailThreads) {
+      const li = document.createElement('li');
+      li.className = `mail-item${thread.unread ? ' unread' : ''}`;
+      li.innerHTML = `
+        <button type="button" class="mail-row" data-mail-uid="${escapeHtml(thread.uid || thread.id)}">
+          <span class="mail-row-top">
+            <strong>${escapeHtml(thread.from || thread.fromEmail || 'Unknown sender')}</strong>
+            <time>${escapeHtml(thread.time || formatMailDate(thread.date))}</time>
+          </span>
+          <span class="mail-subject">${escapeHtml(thread.subj || '(No subject)')}</span>
+          <span class="mail-preview">${escapeHtml(thread.prev || thread.body || 'No preview')}</span>
+        </button>
+      `;
+      mailList.appendChild(li);
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(mailTotal / mailPageSize));
+  mailPagination?.classList.toggle('hidden', mailConfigured === false || mailTotal <= mailPageSize);
+  if (mailPageLabel) mailPageLabel.textContent = `Page ${mailPage} of ${totalPages}`;
+  if (mailPrevBtn) mailPrevBtn.disabled = mailLoading || mailPage <= 1;
+  if (mailNextBtn) mailNextBtn.disabled = mailLoading || mailPage >= totalPages;
+
+  mailList.querySelectorAll('[data-mail-uid]').forEach((button) => {
+    button.addEventListener('click', () => openMailMessage(button.dataset.mailUid));
+  });
+}
+
+async function loadMailCounts(force = false) {
+  try {
+    const response = await sendMessage({ type: 'GET_MAIL_FOLDER_COUNTS', force });
+    if (!response?.ok) return;
+    const unread = Math.max(0, Number(response.counts?.inbox?.unread) || 0);
+    if (mailCountBadge) {
+      mailCountBadge.textContent = unread > 99 ? '99+' : String(unread);
+      mailCountBadge.classList.toggle('hidden', unread === 0);
+    }
+  } catch {
+    // Mail remains usable even if folder counts are temporarily unavailable.
+  }
+}
+
+async function loadMailbox({ force = false } = {}) {
+  const token = ++mailLoadToken;
+  mailLoading = true;
+  mailListView?.classList.remove('hidden');
+  mailDetailView?.classList.add('hidden');
+  renderMailList();
+  if (refreshMailBtn) {
+    refreshMailBtn.disabled = true;
+    refreshMailBtn.textContent = force ? 'Refreshing…' : 'Loading…';
+  }
+
+  try {
+    if (mailConfigured == null || force) {
+      const credentials = await sendMessage({ type: 'GET_MAIL_CREDENTIALS' });
+      if (token !== mailLoadToken) return;
+      if (!credentials?.ok) throw new Error(credentials?.error || 'Could not check Gmail settings.');
+      mailConfigured = Boolean(credentials.configured);
+      if (mailAccount) {
+        mailAccount.textContent = mailConfigured && credentials.email
+          ? credentials.email
+          : 'Gmail mailbox';
+      }
+      if (!mailConfigured) {
+        mailThreads = [];
+        mailTotal = 0;
+        mailLoaded = true;
+        return;
+      }
+    }
+
+    const response = await sendMessage({
+      type: 'GET_MAIL_THREADS',
+      folder: mailFolder,
+      page: mailPage,
+      pageSize: mailPageSize,
+      force,
+    });
+    if (token !== mailLoadToken) return;
+    if (!response?.ok) throw new Error(response?.error || 'Could not load mail.');
+    mailThreads = Array.isArray(response.threads) ? response.threads : [];
+    mailTotal = Math.max(0, Number(response.total) || 0);
+    mailPage = Math.max(1, Number(response.page) || mailPage);
+    mailPageSize = Math.max(1, Number(response.pageSize) || mailPageSize);
+    mailLoaded = true;
+    void loadMailCounts(force);
+  } catch (err) {
+    if (token !== mailLoadToken) return;
+    mailThreads = [];
+    mailTotal = 0;
+    setMailStatus(err.message || 'Could not load mail.', true);
+    const li = document.createElement('li');
+    li.className = 'mail-empty error';
+    li.textContent = err.message || 'Could not load mail.';
+    mailList?.replaceChildren(li);
+  } finally {
+    if (token !== mailLoadToken) return;
+    mailLoading = false;
+    if (refreshMailBtn) {
+      refreshMailBtn.disabled = false;
+      refreshMailBtn.textContent = 'Refresh';
+    }
+    if (!mailStatus?.classList.contains('error')) renderMailList();
+  }
+}
+
+async function openMailMessage(uid) {
+  const threadId = String(uid || '').trim();
+  if (!threadId || !mailDetailView) return;
+  mailListView?.classList.add('hidden');
+  mailDetailView.classList.remove('hidden');
+  if (mailDetailSubject) mailDetailSubject.textContent = 'Loading message…';
+  if (mailDetailFrom) mailDetailFrom.textContent = '';
+  if (mailDetailDate) mailDetailDate.textContent = '';
+  if (mailDetailLabels) mailDetailLabels.replaceChildren();
+  if (mailDetailBody) mailDetailBody.textContent = 'Loading…';
+
+  try {
+    const response = await sendMessage({
+      type: 'GET_MAIL_MESSAGE',
+      uid: threadId,
+      folder: mailFolder,
+    });
+    if (!response?.ok || !response.thread) {
+      throw new Error(response?.error || 'Could not open this message.');
+    }
+    const thread = response.thread;
+    if (mailDetailSubject) mailDetailSubject.textContent = thread.subj || '(No subject)';
+    if (mailDetailFrom) {
+      const address = thread.fromEmail ? ` <${thread.fromEmail}>` : '';
+      mailDetailFrom.textContent = `From: ${thread.from || 'Unknown sender'}${address}`;
+    }
+    if (mailDetailDate) {
+      mailDetailDate.textContent = formatMailDate(thread.date, thread.time || '');
+    }
+    if (mailDetailLabels) {
+      mailDetailLabels.replaceChildren();
+      for (const label of Array.isArray(thread.labels) ? thread.labels : []) {
+        const chip = document.createElement('span');
+        chip.className = 'mail-label-chip';
+        chip.textContent = label;
+        mailDetailLabels.appendChild(chip);
+      }
+    }
+    if (mailDetailBody) {
+      mailDetailBody.textContent =
+        String(thread.body || '').trim() ||
+        mailHtmlToText(thread.bodyHtml) ||
+        thread.prev ||
+        '(This message has no text body.)';
+    }
+  } catch (err) {
+    if (mailDetailSubject) mailDetailSubject.textContent = 'Could not open message';
+    if (mailDetailBody) mailDetailBody.textContent = err.message || 'Could not open this message.';
+  }
+}
+
 function setWorkspacePage(page) {
-  workspacePage = page === 'rejected' ? 'rejected' : 'ready';
+  workspacePage = ['ready', 'rejected', 'mail'].includes(page) ? page : 'ready';
   queueSection?.classList.toggle('hidden', workspacePage !== 'ready');
   rejectedSection?.classList.toggle('hidden', workspacePage !== 'rejected');
+  mailSection?.classList.toggle('hidden', workspacePage !== 'mail');
+  document.body.classList.toggle('mail-page', workspacePage === 'mail');
   workspaceTabs?.querySelectorAll('.workspace-tab').forEach((btn) => {
     const active = btn.dataset.tab === workspacePage;
     btn.classList.toggle('active', active);
@@ -1456,6 +1699,8 @@ function setWorkspacePage(page) {
   });
   if (workspacePage === 'rejected') {
     loadRejected().catch(() => {});
+  } else if (workspacePage === 'mail' && !mailLoaded) {
+    loadMailbox().catch(() => {});
   }
 }
 
@@ -1844,6 +2089,34 @@ refreshRejectedBtn?.addEventListener('click', () => {
   loadRejected().catch(() => {});
 });
 
+refreshMailBtn?.addEventListener('click', () => {
+  loadMailbox({ force: true }).catch(() => {});
+});
+
+mailFolderSelect?.addEventListener('change', () => {
+  mailFolder = mailFolderSelect.value || 'inbox';
+  mailPage = 1;
+  loadMailbox().catch(() => {});
+});
+
+mailPrevBtn?.addEventListener('click', () => {
+  if (mailLoading || mailPage <= 1) return;
+  mailPage -= 1;
+  loadMailbox().catch(() => {});
+});
+
+mailNextBtn?.addEventListener('click', () => {
+  const totalPages = Math.max(1, Math.ceil(mailTotal / mailPageSize));
+  if (mailLoading || mailPage >= totalPages) return;
+  mailPage += 1;
+  loadMailbox().catch(() => {});
+});
+
+mailBackBtn?.addEventListener('click', () => {
+  mailDetailView?.classList.add('hidden');
+  mailListView?.classList.remove('hidden');
+});
+
 downloadResumesZipBtn?.addEventListener('click', async () => {
   downloadResumesZipBtn.disabled = true;
   const prev = downloadResumesZipBtn.textContent;
@@ -1925,6 +2198,12 @@ signOutBtn.addEventListener('click', async () => {
   dashboardState = { auth: null, pools: [] };
   persistedAnalysis = null;
   activeJobId = null;
+  mailThreads = [];
+  mailTotal = 0;
+  mailConfigured = null;
+  mailLoaded = false;
+  mailLoadToken += 1;
+  setWorkspacePage('ready');
   renderDashboard();
 });
 

@@ -165,9 +165,11 @@ export async function removeJobRecords(ids, { signal } = {}) {
 		await firestoreMutationLimiter.run(() => patchTitleReviewReadModel({ deletedIds: normalized }));
 		invalidateLiveProjectedStatusCount();
 		jobCountCache.clear();
+		// The job list is sourced from the ranking index. Do not mark deletion as
+		// successful while those points still exist, or a refresh resurrects them.
+		await indexMutationLimiter.run(() => removeJobsFromRanking(normalized));
 		await Promise.allSettled([
 			indexMutationLimiter.run(() => deleteScoresForJobs(normalized)),
-			indexMutationLimiter.run(() => removeJobsFromRanking(normalized)),
 		]);
 	});
 	throwIfRemovalAborted(signal);
