@@ -595,9 +595,15 @@ export async function runGeneration({
   // Safety net if Experience was produced outside the final-step branch shape.
   Object.assign(sections, applyTitlePolicyToSections(sections, identity, dynamicTitles));
 
-  // Deterministic coverage is deliberately outside the writing prompts. If a
-  // required placement is absent/malformed or a forbidden claim appears,
-  // rewrite only the affected section and re-audit; never rerun the pipeline.
+  // Deterministic quality validation runs only after every AI-authored section
+  // is assembled. If a required placement is absent/malformed or a forbidden
+  // claim appears, rewrite only the affected section and re-audit.
+  if (onStep) onStep({
+    phase: "quality-start",
+    name: "Resume quality audit",
+    purpose: "quality",
+    kind: "quality-audit",
+  });
   let coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
   const maxRepairAttempts = coverageContract?.maxRepairAttempts ?? 1;
   let repairIndex = steps.length;
@@ -620,7 +626,7 @@ export async function runGeneration({
         (step) => step?.kind === "final" && step?.purpose === purpose,
       );
       const index = ++repairIndex;
-      const name = `Coverage repair: ${purpose}`;
+      const name = `Resume quality repair: ${purpose}`;
       if (onStep) onStep({
         phase: "step-start",
         index,
@@ -691,8 +697,20 @@ export async function runGeneration({
     const error = new Error(`Resume quality gate failed: ${remaining || "required coverage is incomplete"}.`);
     error.status = 502;
     error.coverageAudit = coverageAudit;
+    if (onStep) onStep({
+      phase: "quality-failed",
+      name: "Resume quality failed",
+      purpose: "quality",
+      kind: "quality-audit",
+    });
     throw error;
   }
+  if (onStep) onStep({
+    phase: "quality-done",
+    name: "Resume quality passed",
+    purpose: "quality",
+    kind: "quality-audit",
+  });
   throwIfAborted();
   return {
     sections,

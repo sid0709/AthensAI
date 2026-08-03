@@ -116,6 +116,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     coverageAnalysis,
     coverageDecisions,
     coverageAudit,
+    qualityStatus,
     coverageIsCurrent,
     setCoverageDecision,
     runCoverageAnalysis,
@@ -224,20 +225,40 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
             <SectionTitle icon={Sparkles}>Automated workflow</SectionTitle>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               {[
-                { label: "Career profile", ready: Boolean(identity), detail: identity ? `${identity.careers.length} roles loaded` : "Waiting for profile" },
-                { label: "Resume config", ready: configHydrated, detail: configHydrated ? "v3 loaded & autosaved" : "Loading saved config" },
-                { label: "JD skill ledger", ready: coverageIsCurrent, detail: coverageIsCurrent ? `${coverageAnalysis?.skills.length ?? 0} skills mapped` : "Runs automatically" },
+                { label: "Career profile", ready: Boolean(identity), running: false, detail: identity ? `${identity.careers.length} roles loaded` : "Waiting for profile" },
+                { label: "Resume config", ready: configHydrated, running: false, detail: configHydrated ? "v3 loaded & autosaved" : "Loading saved config" },
+                {
+                  label: "JD skill ledger",
+                  ready: coverageIsCurrent,
+                  running: analyzingCoverage,
+                  detail: analyzingCoverage
+                    ? "Analyzing before generation…"
+                    : coverageIsCurrent
+                      ? `${coverageAnalysis?.skills.length ?? 0} skills mapped`
+                      : "Runs automatically before generation",
+                },
                 {
                   label: "Resume quality",
-                  ready: coverageAudit?.passed === true,
-                  detail: coverageAudit
-                    ? `${coverageAudit.coveredCount}/${coverageAudit.requiredCount} skill placements · ${coverageAudit.completeRoleCount ?? 0}/${coverageAudit.requiredRoleCount ?? identity?.careers.length ?? 0} roles`
-                    : "Runs after generation",
+                  ready: qualityStatus === "passed" || coverageAudit?.passed === true,
+                  running: qualityStatus === "running",
+                  detail: qualityStatus === "running"
+                    ? "Auditing content and repairing issues…"
+                    : coverageAudit
+                      ? `${coverageAudit.coveredCount}/${coverageAudit.requiredCount} skill placements · ${coverageAudit.completeRoleCount ?? 0}/${coverageAudit.requiredRoleCount ?? identity?.careers.length ?? 0} roles`
+                      : qualityStatus === "pending"
+                        ? "Waiting for AI content…"
+                        : qualityStatus === "failed"
+                          ? "Quality gate did not pass"
+                          : "Runs automatically after AI content",
                 },
               ].map((item) => (
                 <div key={item.label} className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
                   <div className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-white/75">
-                    {item.ready ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <Circle className="h-3.5 w-3.5 text-neutral-300 dark:text-white/20" />}
+                    {item.running
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-500" />
+                      : item.ready
+                        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                        : <Circle className="h-3.5 w-3.5 text-neutral-300 dark:text-white/20" />}
                     {item.label}
                   </div>
                   <div className="mt-1 text-neutral-400 dark:text-white/40">{item.detail}</div>
@@ -245,7 +266,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               ))}
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
-              Paste a job description and choose Generate. Athens extracts and maps every explicit technical term, asks only about unsupported claims, then generates, repairs, audits, and saves the run.
+              Paste a job description and choose Generate. Athens analyzes missing or stale skill coverage, generates the content, audits it, repairs only flagged sections, and saves only after quality passes.
             </p>
           </div>
 

@@ -116,6 +116,8 @@ function resultFromGenerationRecord(record) {
 		skillProfile: record.skillProfile || [],
 		techStack: record.techStack || null,
 		skillAnalysisError: record.skillAnalysisError || null,
+		coverageContract: record.coverageContract || null,
+		coverageAudit: record.coverageAudit || null,
 		generationId: String(record._id),
 		isBeta: record.isBeta === true,
 		dynamicCareerTitles: record.dynamicCareerTitles === true,
@@ -177,14 +179,32 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 	};
 	let partialWrite = Promise.resolve();
 	let stepRevision = 0;
-	const emitStep = (safeStep, label) => {
+	const emitStep = (safeStep, label = null) => {
 		if (!safeStep) return;
+		let progressLabel = label;
+		if (!progressLabel) {
+			switch (safeStep.phase) {
+				case 'queued':
+					progressLabel = 'Waiting for generation slot…';
+					break;
+				case 'quality-start':
+					progressLabel = 'Auditing résumé quality…';
+					break;
+				case 'quality-done':
+					progressLabel = 'Résumé quality passed — saving…';
+					break;
+				case 'quality-failed':
+					progressLabel = 'Résumé quality failed';
+					break;
+				case 'step-start':
+					progressLabel = `Running: ${safeStep.name || 'Step'}…`;
+					break;
+				default:
+					progressLabel = safeStep.name || 'Generating résumé…';
+			}
+		}
 		onStep?.({
-			step: label || (safeStep.phase === 'queued'
-				? 'Waiting for generation slot…'
-				: safeStep.phase === 'step-start'
-					? `Running: ${safeStep.name || 'Step'}…`
-					: safeStep.name || 'Generating résumé…'),
+			step: progressLabel,
 			stepEvent: safeStep,
 			stepRevision: ++stepRevision,
 		});

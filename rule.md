@@ -24,6 +24,7 @@ Read this file before changing this repository. Treat these rules as acceptance 
 
 ## 3. Quality is enforced, not merely requested
 
+- Generate is one automatic workflow: analyze Skill Coverage when it is missing or stale, generate all sections, run deterministic résumé-quality validation after AI content arrives, repair targeted issues, and report success only after the final audit passes.
 - Prompts guide generation; deterministic validators enforce exact coverage and formatting after generation.
 - Resume validation must check career completeness as well as each required skill's section, exact canonical spelling, and bold Markdown form.
 - Repair only the missing or invalid placements and preserve already-good content.

@@ -131,6 +131,8 @@ function plannedGenerationSteps(plan: Array<Pick<GenStep, "name" | "purpose" | "
   }));
 }
 
+type ResumeQualityStatus = "idle" | "pending" | "running" | "passed" | "failed";
+
 export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
 
 export function useGeneratorPage() {
@@ -154,6 +156,7 @@ export function useGeneratorPage() {
   const [coverageAnalysisJd, setCoverageAnalysisJd] = useState("");
   const [coverageDecisions, setCoverageDecisions] = useState<Record<string, CoverageDecision>>({});
   const [coverageAudit, setCoverageAudit] = useState<ResumeCoverageAudit | null>(null);
+  const [qualityStatus, setQualityStatus] = useState<ResumeQualityStatus>("idle");
   const [analyzingCoverage, setAnalyzingCoverage] = useState(false);
   const [view, setView] = useState<"editor" | "history">("editor");
   const [editorPanel, setEditorPanel] = useState<"document" | "pipeline">("document");
@@ -519,6 +522,7 @@ export function useGeneratorPage() {
     setCoverageAnalysisJd("");
     setCoverageDecisions({});
     setCoverageAudit(null);
+    setQualityStatus("idle");
 
     let cancelled = false;
     let next = defaultConfig();
@@ -650,6 +654,7 @@ export function useGeneratorPage() {
   const setCoverageDecision = useCallback((skillId: string, decision: CoverageDecision) => {
     setCoverageDecisions((current) => ({ ...current, [skillId]: decision }));
     setCoverageAudit(null);
+    setQualityStatus("idle");
   }, []);
 
   const runCoverageAnalysis = useCallback(async (): Promise<ResumeCoverageAnalysis | null> => {
@@ -658,6 +663,7 @@ export function useGeneratorPage() {
     if (!applierName || !jobDescription) return null;
     setAnalyzingCoverage(true);
     setCoverageAudit(null);
+    setQualityStatus("idle");
     try {
       const response = await post("/personal/resume-generator/analyze", {
         applierName,
@@ -879,6 +885,13 @@ export function useGeneratorPage() {
 		const active = ["queued", "running", "cancelling"].includes(task.status);
 		const revision = Number(item?.stepRevision ?? 0);
 		const terminal = ["completed", "completed_with_errors", "failed", "cancelled"].includes(task.status);
+		const stepEvent = item?.stepEvent && typeof item.stepEvent === "object"
+			? item.stepEvent as Record<string, unknown>
+			: null;
+		const workflowPhase = String(stepEvent?.phase || "");
+		if (workflowPhase === "quality-start") setQualityStatus("running");
+		if (workflowPhase === "quality-done") setQualityStatus("passed");
+		if (workflowPhase === "quality-failed") setQualityStatus("failed");
 		const previousRevision = restoredRevisions.current.get(task.id) ?? -1;
 		const shouldReadPartial = active && revision > previousRevision;
 		const shouldReadTerminal = terminal && !terminalHandled.current.has(task.id);
@@ -910,6 +923,7 @@ export function useGeneratorPage() {
 		if (shouldReadTerminal && ["failed", "completed_with_errors", "cancelled"].includes(task.status)) {
 			terminalHandled.current.add(task.id);
 			setGenerating(false);
+			setQualityStatus("failed");
 			notify({
 				title: task.status === "cancelled" ? "Generation cancelled" : "Generation failed",
 				description: task.error || "The background generation did not complete.",
@@ -923,9 +937,6 @@ export function useGeneratorPage() {
 		restorationInFlight.current.add(readKey);
 		if (shouldReadPartial) restoredRevisions.current.set(task.id, revision);
 		if (shouldReadTerminal) terminalHandled.current.add(task.id);
-		const stepEvent = item?.stepEvent && typeof item.stepEvent === "object"
-			? item.stepEvent as Record<string, unknown>
-			: null;
 		const expectedPartialPurpose = shouldReadPartial
 			&& stepEvent?.phase === "step-done"
 				&& (stepEvent?.kind === "final" || stepEvent?.kind === "coverage-repair")
@@ -954,7 +965,9 @@ export function useGeneratorPage() {
 				}
 				if (stored.result?.usage) setUsage(stored.result.usage as UsageBreakdown);
 				if (stored.result?.coverageAudit) {
-					setCoverageAudit(stored.result.coverageAudit as ResumeCoverageAudit);
+					const audit = stored.result.coverageAudit as ResumeCoverageAudit;
+					setCoverageAudit(audit);
+					setQualityStatus(audit.passed ? "passed" : "failed");
 				}
 				if (shouldReadTerminal) {
 					setGenerating(false);
@@ -1065,6 +1078,7 @@ export function useGeneratorPage() {
         }
       : {});
     setCoverageAudit(run.coverageAudit ?? null);
+    setQualityStatus(run.coverageAudit?.passed ? "passed" : run.coverageAudit ? "failed" : "idle");
   }, [config.coverage.experienceRequirementThreshold]);
 
   const handleGenerate = async () => {
@@ -1113,6 +1127,7 @@ export function useGeneratorPage() {
     setUsage(null);
     setGenerated(null);
     setCoverageAudit(null);
+    setQualityStatus("pending");
     const checklist = plannedGenerationSteps(plan);
     setGenProgress({ steps: checklist, cumulative: null, done: false, message: "Submitting generation…" });
     try {
@@ -1133,20 +1148,26 @@ export function useGeneratorPage() {
       if (terminal.status === "cancelled") throw new Error("Resume generation cancelled");
       const stored = await getCompletedResumeGenerationTaskResult(queued.inputId, applier.name);
       const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
+      const finalAudit = (stored.result.coverageAudit as ResumeCoverageAudit | undefined) ?? null;
+      if (!finalAudit?.passed) {
+        throw new Error("Resume quality audit did not return a passing result.");
+      }
       setUsage(nextUsage);
       setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
-      setCoverageAudit((stored.result.coverageAudit as ResumeCoverageAudit | undefined) ?? null);
+      setCoverageAudit(finalAudit);
+      setQualityStatus("passed");
       setGenProgress((current) => ({
         steps: current?.steps ?? [],
         cumulative: nextUsage,
         done: true,
         message: null,
       }));
-      notify({ title: "Resume generated", description: "Result is shown in the live preview.", tone: "success" });
+      notify({ title: "Resume generated", description: "Skill coverage and résumé quality both passed.", tone: "success" });
       return true;
     } catch (error) {
       setGenerated(null);
       setUsage(null);
+      setQualityStatus("failed");
       notify({
         title: "Generation failed",
         description: error instanceof Error ? error.message : "Generation failed — see backend logs.",
@@ -1196,6 +1217,7 @@ export function useGeneratorPage() {
     coverageAnalysisJd,
     coverageDecisions,
     coverageAudit,
+    qualityStatus,
     coverageIsCurrent,
     analyzingCoverage,
     setCoverageDecision,
