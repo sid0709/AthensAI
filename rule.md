@@ -41,6 +41,5 @@ Read this file before changing this repository. Treat these rules as acceptance 
 ## 5. Change discipline
 
 - Preserve unrelated user changes in the working tree.
-- Add or update focused tests for every behavior change and run the narrowest relevant suite plus a build or broader check when the risk warrants it.
 - Prefer small, composable functions and concise prompts. Additional model steps require a distinct quality purpose; step count alone is not quality.
 - Keep frontend and backend defaults synchronized when both define the same product behavior.

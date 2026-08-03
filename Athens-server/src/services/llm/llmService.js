@@ -490,6 +490,22 @@ export async function verifyKey({ provider, apiKey, model: requestedModel }) {
   const p = getProvider(provider);
   if (!apiKey) return { ok: false, status: 400, message: `No ${p.label} API key provided.` };
   try {
+    // OpenAI's model catalog validates the key and the selected model without
+    // spending output tokens. A one-token chat probe is not valid for GPT
+    // reasoning models because reasoning itself can consume that allowance.
+    if (p.id === 'openai') {
+      const catalog = await listOpenAiModels(apiKey);
+      const requested = String(requestedModel || '').trim();
+      if (requested && !catalog.some((entry) => entry.id === requested)) {
+        return {
+          ok: false,
+          status: 400,
+          message: `${requested} is not available to this OpenAI API key.`,
+        };
+      }
+      return { ok: true, status: 200, message: `${p.label} key is valid.` };
+    }
+
     const model = isModelCompatibleWithProvider(p.id, requestedModel)
       ? String(requestedModel).trim()
       : Array.isArray(p.models) ? p.models[0] : 'gpt-4o-mini';
@@ -519,7 +535,7 @@ export async function verifyKey({ provider, apiKey, model: requestedModel }) {
       message: data?.error?.message || data?.error || `${p.label} rejected the key.`,
     };
   } catch (err) {
-    return { ok: false, status: 0, message: `Could not reach AI gateway: ${err.message}` };
+    return { ok: false, status: 0, message: `Could not validate ${p.label} key: ${err.message}` };
   }
 }
 

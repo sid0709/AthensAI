@@ -5,6 +5,11 @@ export const STANDARD_PRICING = [
   { prefix: 'deepseek-v4-flash', input: 0.14, cachedInput: 0.0028, output: 0.28 },
   { prefix: 'deepseek-reasoner', input: 0.55, cachedInput: 0.14, output: 2.19 },
   { prefix: 'deepseek-chat', input: 0.27, cachedInput: 0.07, output: 1.1 },
+  { prefix: 'gpt-5.6-terra', input: 2, cachedInput: 0.2, output: 12 },
+  { prefix: 'gpt-5.6-luna', input: 0.2, cachedInput: 0.02, output: 1.2 },
+  { prefix: 'gpt-5.6-sol', input: 5, cachedInput: 0.5, output: 30 },
+  // OpenAI documents the bare gpt-5.6 alias as routing to GPT-5.6 Sol.
+  { prefix: 'gpt-5.6', input: 5, cachedInput: 0.5, output: 30 },
   { prefix: 'gpt-5.5-pro', input: 30, cachedInput: null, output: 180 },
   { prefix: 'gpt-5.5', input: 5, cachedInput: 0.5, output: 30 },
   { prefix: 'gpt-5.4-pro', input: 30, cachedInput: null, output: 180 },

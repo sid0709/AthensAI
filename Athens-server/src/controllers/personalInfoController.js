@@ -10,8 +10,8 @@ import {
 import { toCanonical } from "../services/skillNormalize.js";
 import { emptyResumeCatalog, validateResumeCatalog } from "../services/resumeCatalogService.js";
 import {
-	decryptProfileApiKeys,
 	decryptProfileApiKeysForClient,
+	decryptSelectedProfileSecrets,
 	encryptProfileApiKeys,
 	preserveUnavailableProfileSecrets,
 } from "../services/autoBidProfileSecrets.js";
@@ -471,8 +471,9 @@ export async function setDefaultModel(req, res) {
 			: await findAccountByApplierName(name);
 		if (!acc) return res.status(404).json({ success: false, error: `No account named "${name}".` });
 
-		const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
-		const apiKey = String(profile?.[getProvider(provider).keyField] || "").trim();
+		const keyField = getProvider(provider).keyField;
+		const profile = await decryptSelectedProfileSecrets(acc.autoBidProfile || {}, [keyField]);
+		const apiKey = String(profile?.[keyField] || "").trim();
 		if (!apiKey) {
 			return res.json({ success: false, valid: false, error: `No ${getProvider(provider).label} API key saved. Add it and save your profile first.` });
 		}

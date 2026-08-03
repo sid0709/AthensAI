@@ -113,7 +113,12 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
 
   const profile = applier?.autoBidProfile as Record<string, unknown> | undefined;
   const defaultModel = resolveProfileDefaultModel(profile);
-  const hasLlmKey = Boolean(profile?.openaiApiKey || profile?.deepseekApiKey);
+  const hasLlmKey = Boolean(
+    profile?.openaiApiKey ||
+    profile?.deepseekApiKey ||
+    profile?.openaiApiKeyConfigured ||
+    profile?.deepseekApiKeyConfigured,
+  );
   const allFilteredSelected =
     selectableFiltered.length > 0 && selectableFiltered.every((r) => selectedIds.has(r.id));
   const someFilteredSelected = selectableFiltered.some((r) => selectedIds.has(r.id));

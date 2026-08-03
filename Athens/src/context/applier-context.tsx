@@ -18,6 +18,8 @@ export type ApplierAccount = {
   tier?: string | null;
   permission?: string | null;
   autoBidProfile?: {
+    openaiApiKeyConfigured?: boolean;
+    deepseekApiKeyConfigured?: boolean;
     deepseekApiKey?: string;
     [key: string]: unknown;
   };

@@ -73,6 +73,9 @@ async function sanitizeAccount(doc, { includeSecrets = false } = {}) {
 	if (includeSecrets) return safe;
 	if (safe.autoBidProfile && typeof safe.autoBidProfile === "object") {
 		safe.autoBidProfile = { ...safe.autoBidProfile };
+		for (const field of ["openaiApiKey", "deepseekApiKey"]) {
+			safe.autoBidProfile[`${field}Configured`] = Boolean(safe.autoBidProfile[field]);
+		}
 		for (const field of ["openaiApiKey", "deepseekApiKey", "gmailPassword", "gmailAppPassword", "defaultPassword"]) delete safe.autoBidProfile[field];
 	}
 	return safe;
@@ -109,8 +112,11 @@ export const getAccountInfoByName = async (req, res) => {
 			return res.status(404).json({ success: false, message: "Account not found" });
 		}
 		if (!canAccessAccount(req, doc)) return res.status(403).json({ success: false, message: "Profile access denied" });
-		const includeSecrets = !req.auth || tokenIsAdmin(req) || String(req.auth?.role || "").toLowerCase() === "owner";
-		res.status(200).json({ success: true, data: await sanitizeAccount(doc, { includeSecrets }) });
+		// App bootstrap only needs account identity and non-secret profile fields.
+		// Decrypting KMS-backed credentials here can hold the entire UI at
+		// "Loading…" when KMS is slow or unavailable on a deployment. Settings
+		// retrieves credentials through the dedicated profile endpoint instead.
+		res.status(200).json({ success: true, data: await sanitizeAccount(doc) });
 	} catch (error) {
 		console.error("Error in getAccountInfoByName:", error);
 		res.status(500).json({ success: false, message: error.message });
