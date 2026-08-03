@@ -1,95 +1,95 @@
-import { Sparkles, Target, TrendingUp } from "lucide-react";
-import { AppLogo } from "../../../components/shared/AppLogo";
+import { useRef, useState } from "react";
+import { ArrowDown, VolumeX } from "lucide-react";
 import { display } from "../../../lib/utils";
+import { AuthSceneCanvas } from "./AuthSceneCanvas";
+import { nextAuthScene } from "./authScene";
 
-const FEATURES = [
+const SCENES = [
   {
-    icon: Target,
-    title: "Smart job matching",
-    body: "Rank roles by skill fit, salary, freshness, and competition — all from your live Firestore pipeline.",
+    code: "SIGNAL / 01",
+    title: "Turn your career into signal.",
+    body: "Athens reads the market around you—connecting your experience, live roles, and the skills that move both.",
+    metric: "LIVE ROLE GRAPH",
+    value: "01,248",
   },
   {
-    icon: Sparkles,
-    title: "AI skill graph",
-    body: "Analyze postings on demand. DeepSeek enrichment grows your Neo4j knowledge graph job by job.",
+    code: "MATCH / 02",
+    title: "See the right path before you move.",
+    body: "Every opportunity is ranked against your real profile, with the gaps and strongest connections made visible.",
+    metric: "MATCH VECTORS",
+    value: "∞ / LIVE",
   },
   {
-    icon: TrendingUp,
-    title: "One command center",
-    body: "Resumes, applications, interview prep, and analytics — unified under your signed-in profile.",
+    code: "MOMENTUM / 03",
+    title: "Move from insight to offer.",
+    body: "Build precise résumés, run applications, and learn from every response in one intelligent command center.",
+    metric: "CAREER SYSTEM",
+    value: "ONLINE",
   },
 ];
 
 export function AuthHeroPanel() {
+  const [scene, setScene] = useState(0);
+  const lastWheelAt = useRef(0);
+  const activeScene = SCENES[scene];
+
+  const onWheel = (event: React.WheelEvent<HTMLElement>) => {
+    if (Math.abs(event.deltaY) < 18 || Date.now() - lastWheelAt.current < 520) return;
+    lastWheelAt.current = Date.now();
+    setScene((current) => nextAuthScene(current, event.deltaY, SCENES.length));
+  };
+
   return (
-    <div className="relative hidden min-h-0 overflow-hidden bg-[#0d0b18] text-white lg:block">
-      <div
-        className="absolute inset-0 opacity-90"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 60% at 20% 40%, rgba(108,92,231,0.45) 0%, transparent 55%), radial-gradient(ellipse 50% 40% at 80% 80%, rgba(45,212,191,0.2) 0%, transparent 50%), linear-gradient(145deg, #0d0b18 0%, #1a1530 50%, #0f172a 100%)",
-        }}
-      />
+    <section className="auth-hero" onWheel={onWheel} aria-label="AthensAI career intelligence preview">
+      <AuthSceneCanvas scene={scene} />
+      <div className="auth-hero-grain" aria-hidden="true" />
+      <div className="auth-hero-grid" aria-hidden="true" />
 
-      <svg
-        className="absolute inset-0 w-full h-full opacity-[0.12]"
-        aria-hidden
-        preserveAspectRatio="xMidYMid slice"
-        viewBox="0 0 1200 900"
-      >
-        <defs>
-          <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-            <path d="M 48 0 L 0 0 0 48" fill="none" stroke="white" strokeWidth="0.5" />
-          </pattern>
-        </defs>
-        <rect width="1200" height="900" fill="url(#grid)" />
-        <circle cx="920" cy="180" r="120" fill="none" stroke="#8b78f0" strokeWidth="1.5" strokeDasharray="8 6" />
-        <circle cx="920" cy="180" r="80" fill="none" stroke="#2dd4bf" strokeWidth="1" opacity="0.6" />
-        <path
-          d="M 180 620 Q 400 420 620 520 T 980 380"
-          fill="none"
-          stroke="#6c5ce7"
-          strokeWidth="2"
-          opacity="0.5"
-        />
-        <g opacity="0.35">
-          <rect x="140" y="200" width="200" height="130" rx="16" fill="#6c5ce7" />
-          <rect x="380" y="280" width="180" height="110" rx="14" fill="#2dd4bf" />
-          <rect x="560" y="160" width="220" height="140" rx="18" fill="#8b78f0" />
-        </g>
-      </svg>
-
-      <div className="relative z-10 flex h-full min-h-0 w-full max-w-3xl flex-col justify-between overflow-y-auto p-12 xl:p-16">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full bg-white/10 border border-white/10 px-3 py-1.5 text-xs font-semibold mb-8">
-            <AppLogo size={20} className="rounded-md" />
-            AthensAI · Career command center
-          </div>
-          <h1 className="text-4xl xl:text-5xl font-bold leading-[1.1] tracking-tight mb-4" style={display}>
-            Land your next role with AI that knows your skills.
-          </h1>
-          <p className="text-lg text-white/65 max-w-xl leading-relaxed">
-            Sign in to connect your profile, DeepSeek API key, and job pipeline. Every analyze action runs under
-            your account.
-          </p>
+      <header className="auth-world-header">
+        <div className="auth-wordmark" style={display}>
+          ATHENS<span>AI</span>
         </div>
+        <div className="auth-coordinate" aria-hidden="true">
+          NODE 37.9838° N<br />23.7275° E
+        </div>
+      </header>
 
-        <ul className="space-y-5 mt-10">
-          {FEATURES.map(({ icon: Icon, title, body }) => (
-            <li key={title} className="flex gap-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center">
-                <Icon className="w-5 h-5 text-violet-300" />
-              </div>
-              <div>
-                <p className="font-bold text-white/95">{title}</p>
-                <p className="text-sm text-white/55 mt-0.5 leading-relaxed">{body}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-
-        <p className="text-xs text-white/35 mt-12">Your AI API key is loaded from account_info after sign-in.</p>
+      <div className="auth-scene-readout" aria-live="polite">
+        <p className="auth-kicker">////// {activeScene.code}</p>
+        <h1 key={`title-${scene}`} style={display}>
+          {activeScene.title}
+        </h1>
+        <p key={`body-${scene}`} className="auth-scene-body">
+          {activeScene.body}
+        </p>
       </div>
-    </div>
+
+      <div className="auth-orbit-metric" aria-hidden="true">
+        <span>{activeScene.metric}</span>
+        <strong>{activeScene.value}</strong>
+      </div>
+
+      <footer className="auth-world-footer">
+        <div className="auth-scroll-hint">
+          <ArrowDown size={14} />
+          <span>Scroll to explore</span>
+        </div>
+        <div className="auth-scene-dots" aria-label="Preview scenes">
+          {SCENES.map((item, index) => (
+            <button
+              key={item.code}
+              type="button"
+              className={index === scene ? "is-active" : ""}
+              onClick={() => setScene(index)}
+              aria-label={`Show scene ${index + 1}: ${item.title}`}
+              aria-current={index === scene ? "step" : undefined}
+            />
+          ))}
+        </div>
+        <div className="auth-sound-label" aria-hidden="true">
+          <VolumeX size={14} /> Sound off
+        </div>
+      </footer>
+    </section>
   );
 }

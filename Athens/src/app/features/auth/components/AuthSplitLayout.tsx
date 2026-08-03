@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { AuthHeroPanel } from "./AuthHeroPanel";
+import "./auth.css";
 
 type AuthSplitLayoutProps = {
   children: ReactNode;
@@ -7,11 +8,18 @@ type AuthSplitLayoutProps = {
 
 export function AuthSplitLayout({ children }: AuthSplitLayoutProps) {
   return (
-    <div className="grid h-svh w-full overflow-hidden bg-background lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+    <div className="auth-shell">
       <AuthHeroPanel />
-      <div className="flex min-h-0 flex-col justify-center overflow-y-auto border-l border-border/60 bg-card px-6 py-10 sm:px-10 xl:px-14">
-        <div className="mx-auto w-full max-w-sm">{children}</div>
-      </div>
+      <main className="auth-console-shell">
+        <div className="auth-console">
+          <span className="auth-console-corner auth-console-corner-tl" aria-hidden="true" />
+          <span className="auth-console-corner auth-console-corner-tr" aria-hidden="true" />
+          <span className="auth-console-corner auth-console-corner-bl" aria-hidden="true" />
+          <span className="auth-console-corner auth-console-corner-br" aria-hidden="true" />
+          <div className="auth-console-content">{children}</div>
+          <p className="auth-console-footnote">ENCRYPTED SESSION · ATHENS NETWORK</p>
+        </div>
+      </main>
     </div>
   );
 }
