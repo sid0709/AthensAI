@@ -4,11 +4,14 @@ import { isExtensionV2Job } from '../config/jobMarketSchema.js';
 import {
 	classifyJobMarketIngest,
 	duplicateJobResult,
+	isWithinDuplicateDateWindow,
 	isExtensionV2OriginalPayload,
 	normalizeExtensionV2OriginalJob,
+	requiresClientDuplicateWindow,
 	resolveJobPostedAt,
 	stampJobMarketIngestVersion,
 	validateExtensionV2OriginalJob,
+	validateClientDuplicateWindowDays,
 } from './jobMarketIngest.js';
 
 function originalPayload(overrides = {}) {
@@ -90,6 +93,35 @@ test('original validation requires title, company, and an HTTP(S) application UR
 		const result = validateExtensionV2OriginalJob(normalizeExtensionV2OriginalJob(payload));
 		assert.deepEqual(result, { valid: false, error });
 	}
+});
+
+test('extension jobs require a client-controlled duplicate window', () => {
+	const payload = { tags: [], applicants: {} };
+	const ingest = classifyJobMarketIngest(payload);
+	assert.equal(requiresClientDuplicateWindow(payload, ingest), true);
+	assert.deepEqual(validateClientDuplicateWindowDays(undefined, { required: true }), {
+		valid: false,
+		days: null,
+		error: 'duplicateWindowDays is required for extension jobs',
+	});
+	assert.deepEqual(validateClientDuplicateWindowDays(14, { required: true }), {
+		valid: true,
+		days: 14,
+		error: null,
+	});
+	assert.equal(validateClientDuplicateWindowDays(14.5, { required: true }).valid, false);
+});
+
+test('URL duplicate dates honor the client-provided 14-day window', () => {
+	const existing = new Date('2026-01-01T00:00:00.000Z');
+	assert.equal(
+		isWithinDuplicateDateWindow(existing, new Date('2026-01-15T00:00:00.000Z'), 14),
+		true,
+	);
+	assert.equal(
+		isWithinDuplicateDateWindow(existing, new Date('2026-01-15T00:00:00.001Z'), 14),
+		false,
+	);
 });
 
 test('relative posting-time variants resolve from a deterministic clock', () => {

@@ -87,11 +87,22 @@ export function selectExistingJobIdentityDuplicates(jobs = []) {
 	return { keepers, duplicates };
 }
 
-export function isWithinJobIdentityWindow(existingAcceptedAt, incomingAcceptedAt = new Date()) {
+function duplicateLookbackMs(lookbackDays) {
+	const days = Number.isInteger(lookbackDays) && lookbackDays > 0
+		? lookbackDays
+		: JOB_IDENTITY_LOOKBACK_DAYS;
+	return days * 24 * 60 * 60 * 1000;
+}
+
+export function isWithinJobIdentityWindow(
+	existingAcceptedAt,
+	incomingAcceptedAt = new Date(),
+	lookbackDays = JOB_IDENTITY_LOOKBACK_DAYS,
+) {
 	const existing = toValidDate(existingAcceptedAt);
 	const incoming = toValidDate(incomingAcceptedAt);
 	if (!existing || !incoming) return true;
-	return existing.getTime() >= incoming.getTime() - JOB_IDENTITY_LOOKBACK_MS;
+	return existing.getTime() >= incoming.getTime() - duplicateLookbackMs(lookbackDays);
 }
 
 function duplicateResult(identity, existing = null) {
@@ -107,7 +118,7 @@ function duplicateResult(identity, existing = null) {
 /** Read-only form used by dry-run migrations. */
 export async function findRecentJobIdentityDuplicate(
 	registryCollection,
-	{ companyName, title, acceptedAt = new Date() } = {},
+	{ companyName, title, acceptedAt = new Date(), lookbackDays = JOB_IDENTITY_LOOKBACK_DAYS } = {},
 ) {
 	const identity = buildJobIdentity(companyName, title);
 	if (!registryCollection || !identity) return null;
@@ -115,20 +126,26 @@ export async function findRecentJobIdentityDuplicate(
 		{ _id: identity.key },
 		{ projection: { acceptedAt: 1, jobId: 1 }, bypassCache: true },
 	);
-	return existing && isWithinJobIdentityWindow(existing.acceptedAt, acceptedAt)
+	return existing && isWithinJobIdentityWindow(existing.acceptedAt, acceptedAt, lookbackDays)
 		? duplicateResult(identity, existing)
 		: null;
 }
 
 /**
- * Atomically reserve one company/title identity for its rolling 30-day window.
+ * Atomically reserve one company/title identity for its configured rolling window.
  * The conditional upsert is implemented by the Firestore compatibility
  * adapter: a recent document either produces a duplicate-key conflict or a
  * zero-row update, while an expired/missing document is claimed by one caller.
  */
 export async function claimJobIdentity(
 	registryCollection,
-	{ companyName, title, acceptedAt = new Date(), source = "unknown" } = {},
+	{
+		companyName,
+		title,
+		acceptedAt = new Date(),
+		source = "unknown",
+		lookbackDays = JOB_IDENTITY_LOOKBACK_DAYS,
+	} = {},
 ) {
 	const identity = buildJobIdentity(companyName, title);
 	if (!registryCollection || !identity) {
@@ -137,7 +154,7 @@ export async function claimJobIdentity(
 
 	const accepted = toValidDate(acceptedAt) || new Date();
 	const acceptedAtIso = accepted.toISOString();
-	const cutoffIso = new Date(accepted.getTime() - JOB_IDENTITY_LOOKBACK_MS).toISOString();
+	const cutoffIso = new Date(accepted.getTime() - duplicateLookbackMs(lookbackDays)).toISOString();
 	const previous = await registryCollection.findOne(
 		{ _id: identity.key },
 		{
@@ -145,7 +162,7 @@ export async function claimJobIdentity(
 			bypassCache: true,
 		},
 	);
-	if (previous && isWithinJobIdentityWindow(previous.acceptedAt, accepted)) {
+	if (previous && isWithinJobIdentityWindow(previous.acceptedAt, accepted, lookbackDays)) {
 		const claimExpired = previous.pending &&
 			previous.claimToken &&
 			toValidDate(previous.claimExpiresAt)?.getTime() <= Date.now();
@@ -156,7 +173,13 @@ export async function claimJobIdentity(
 				pending: true,
 			});
 			if (removed?.deletedCount) {
-				return claimJobIdentity(registryCollection, { companyName, title, acceptedAt, source });
+				return claimJobIdentity(registryCollection, {
+					companyName,
+					title,
+					acceptedAt,
+					source,
+					lookbackDays,
+				});
 			}
 		}
 		return duplicateResult(identity, previous);

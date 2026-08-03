@@ -10,6 +10,7 @@ import {
 const completeJob = {
 	applyLink: 'https://example.com/apply',
 	id: 123,
+	duplicateWindowDays: 14,
 	postedAgo: '2 hours ago',
 	title: 'Software Engineer',
 	tags: ['20 applicants'],

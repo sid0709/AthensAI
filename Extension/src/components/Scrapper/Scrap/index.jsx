@@ -20,7 +20,7 @@ import {
 import PropTypes from 'prop-types';
 import { useRuntime } from '../../../api/runtimeContext';
 import useApi from '../../../api/useApi';
-import { API_URL } from '../../../config/env';
+import { API_URL, DUPLICATE_WINDOW_DAYS } from '../../../config/env';
 import useNotification from '../../../api/useNotification';
 import {
 	assertCompleteJob,
@@ -31,11 +31,18 @@ import {
 import {
 	classifyJobSaveResult,
 	createScrapeRunStats,
+	formatElapsedTime,
 	getSkippedScrapeCount,
 	incrementScrapeRunStats,
 	SCRAPE_OUTCOMES,
 } from '../../../api/scrapeRunStats';
-import { handleClear, handleAction, handleHighlight } from '../../../contentScript/interactionBridge';
+import {
+	clearRememberedPageTab,
+	handleClear,
+	handleAction,
+	handleHighlight,
+	rememberActivePageTab,
+} from '../../../contentScript/interactionBridge';
 import { athensCardSx, athensSectionLabelSx } from '../../../theme/athensTheme';
 
 function CircularProgressWithLabel(props) {
@@ -154,7 +161,7 @@ ValidationChecklist.propTypes = {
 	})).isRequired,
 };
 
-function RunSummary({ stats }) {
+function RunSummary({ elapsedMs, stats, targetTab }) {
 	const skipped = getSkippedScrapeCount(stats);
 	const totals = [
 		{ label: 'Registered', value: stats.registered, color: 'success.main' },
@@ -164,9 +171,14 @@ function RunSummary({ stats }) {
 
 	return (
 		<Stack spacing={1.25} sx={{ width: '100%' }}>
-			<Typography variant="caption" sx={{ color: 'text.primary', fontWeight: 700 }}>
-				Run results
-			</Typography>
+			<Stack direction="row" alignItems="center" justifyContent="space-between">
+				<Typography variant="caption" sx={{ color: 'text.primary', fontWeight: 700 }}>
+					Run results
+				</Typography>
+				<Typography variant="caption" sx={{ color: 'primary.light', fontWeight: 700 }}>
+					{formatElapsedTime(elapsedMs)}
+				</Typography>
+			</Stack>
 			<Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 0.75 }}>
 				{totals.map(({ label, value, color }) => (
 					<Box
@@ -191,11 +203,22 @@ function RunSummary({ stats }) {
 			<Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'center' }}>
 				Duplicates {stats.duplicate} · Validation {stats.validation} · Blocked {stats.blocked}
 			</Typography>
+			{targetTab && (
+				<Typography
+					variant="caption"
+					noWrap
+					title={targetTab.url}
+					sx={{ color: 'text.secondary', textAlign: 'center' }}
+				>
+					Target tab #{targetTab.id}: {targetTab.title || new URL(targetTab.url).hostname}
+				</Typography>
+			)}
 		</Stack>
 	);
 }
 
 RunSummary.propTypes = {
+	elapsedMs: PropTypes.number.isRequired,
 	stats: PropTypes.shape({
 		registered: PropTypes.number.isRequired,
 		duplicate: PropTypes.number.isRequired,
@@ -203,6 +226,11 @@ RunSummary.propTypes = {
 		blocked: PropTypes.number.isRequired,
 		failed: PropTypes.number.isRequired,
 	}).isRequired,
+	targetTab: PropTypes.shape({
+		id: PropTypes.number.isRequired,
+		title: PropTypes.string.isRequired,
+		url: PropTypes.string.isRequired,
+	}),
 };
 
 const ScrapComponent = () => {
@@ -212,14 +240,18 @@ const ScrapComponent = () => {
 	const [scrapFlag, setScrapFlag] = useState(false);
 	const [validationChecks, setValidationChecks] = useState(pendingValidationChecklist);
 	const [runStats, setRunStats] = useState(createScrapeRunStats);
+	const [elapsedMs, setElapsedMs] = useState(0);
+	const [starting, setStarting] = useState(false);
+	const [targetTab, setTargetTab] = useState(null);
 
 	const { addListener, removeListener } = useRuntime();
 	const api = useApi(API_URL);
 	const notification = useNotification();
 	const pendingResolvers = useRef(new Map());
+	const runStartedAt = useRef(null);
 
 	const notifyFailure = useCallback((err, fallback) => {
-		notification.fail(err, { key: 'scrap-failure' });
+		notification.fail(err, { key: 'scrap-failure', autoHideDuration: 2200 });
 		if (fallback) console.error(fallback, err);
 	}, [notification]);
 
@@ -249,6 +281,14 @@ const ScrapComponent = () => {
 		addListener(listener);
 		return () => removeListener(listener);
 	}, [addListener, removeListener]);
+
+	useEffect(() => {
+		if (!scrapFlag || !runStartedAt.current) return undefined;
+		const updateElapsed = () => setElapsedMs(Date.now() - runStartedAt.current);
+		updateElapsed();
+		const interval = window.setInterval(updateElapsed, 1000);
+		return () => window.clearInterval(interval);
+	}, [scrapFlag]);
 
 	async function onClickListItem() {
 		setValidationChecks(pendingValidationChecklist());
@@ -469,6 +509,7 @@ const ScrapComponent = () => {
 		const resultData = {
 			applyLink: ApplyLink || "",
 			id: Date.now(),
+			duplicateWindowDays: DUPLICATE_WINDOW_DAYS,
 			postedAgo: PublishTime || "",
 			tags: parsedTags,
 			company: {
@@ -493,13 +534,22 @@ const ScrapComponent = () => {
 			const outcome = classifyJobSaveResult(saveResult);
 			if (outcome === SCRAPE_OUTCOMES.REGISTERED) {
 				recordOutcome(outcome);
-				notification.success('Job registered successfully');
+				notification.success('Job registered successfully', {
+					key: 'scrap-outcome',
+					autoHideDuration: 1200,
+				});
 			} else if (outcome === SCRAPE_OUTCOMES.DUPLICATE) {
 				recordOutcome(outcome);
-				notification.info(saveResult.reason || 'Duplicate job skipped');
+				notification.info(saveResult.reason || 'Duplicate job skipped', {
+					key: 'scrap-outcome',
+					autoHideDuration: 1200,
+				});
 			} else if (outcome === SCRAPE_OUTCOMES.BLOCKED) {
 				recordOutcome(outcome);
-				notification.warning(saveResult.reason || 'Job skipped by a blocking rule');
+				notification.warning(saveResult.reason || 'Job skipped by a blocking rule', {
+					key: 'scrap-outcome',
+					autoHideDuration: 1500,
+				});
 			} else {
 				throw new Error(saveResult?.reason || saveResult?.error || 'Backend did not register the job');
 			}
@@ -543,18 +593,44 @@ const ScrapComponent = () => {
 		};
 	}, [scrapFlag, notifyFailure, recordOutcome]);
 
-	const onScrapStart = () => {
+	const onScrapStart = async () => {
 		if (!api.baseUrl) {
 			notifyFailure(new Error('API base URL is not configured'));
 			return;
 		}
-		setRunStats(createScrapeRunStats());
-		setValidationChecks(pendingValidationChecklist());
-		setProgress(0);
-		setScrapFlag(true);
+		if (!DUPLICATE_WINDOW_DAYS) {
+			notifyFailure(new Error(
+				'VITE_DUPLICATE_WINDOW_DAYS must be a whole number from 1 to 365 in Extension/.env.',
+			));
+			return;
+		}
+		setStarting(true);
+		try {
+			const rememberedTab = await rememberActivePageTab();
+			if (!rememberedTab) {
+				throw new Error('Focus the job scraping website, then click Start again.');
+			}
+			setTargetTab(rememberedTab);
+			setRunStats(createScrapeRunStats());
+			setValidationChecks(pendingValidationChecklist());
+			setProgress(0);
+			setElapsedMs(0);
+			runStartedAt.current = Date.now();
+			setScrapFlag(true);
+		} catch (error) {
+			clearRememberedPageTab();
+			notifyFailure(error, 'Unable to remember the scraping tab');
+		} finally {
+			setStarting(false);
+		}
 	};
 
 	const onScrapStop = () => {
+		if (runStartedAt.current) {
+			setElapsedMs(Date.now() - runStartedAt.current);
+			runStartedAt.current = null;
+		}
+		clearRememberedPageTab();
 		setScrapFlag(false);
 		setProgress(0);
 		setValidationChecks(pendingValidationChecklist());
@@ -587,7 +663,7 @@ const ScrapComponent = () => {
 					<CircularProgressWithLabel size={72} value={progress} thickness={4} />
 					<ValidationChecklist checks={validationChecks} />
 					<Divider flexItem />
-					<RunSummary stats={runStats} />
+					<RunSummary elapsedMs={elapsedMs} stats={runStats} targetTab={targetTab} />
 				</Stack>
 
 				<Stack direction="row" spacing={1.5}>
@@ -604,11 +680,11 @@ const ScrapComponent = () => {
 					<Button
 						variant="contained"
 						onClick={onScrapStart}
-						disabled={scrapFlag}
+						disabled={scrapFlag || starting}
 						startIcon={<PlayArrow />}
 						fullWidth
 					>
-						Start
+						{starting ? 'Remembering…' : 'Start'}
 					</Button>
 				</Stack>
 			</Stack>

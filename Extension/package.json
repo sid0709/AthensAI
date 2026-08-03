@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite",
 		"build": "vite build",
-		"test": "node --test vite.config.test.mjs src/api/jobValidation.test.mjs src/api/scrapeRunStats.test.mjs src/contentScript/contentScriptLifecycle.test.mjs",
+		"test": "node --test vite.config.test.mjs src/api/jobValidation.test.mjs src/api/scrapeRunStats.test.mjs src/config/duplicateWindow.test.mjs src/contentScript/contentScriptLifecycle.test.mjs src/contentScript/interactionBridge.test.mjs",
 		"lint": "eslint .",
 		"preview": "vite preview"
 	},

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
 	classifyJobSaveResult,
 	createScrapeRunStats,
+	formatElapsedTime,
 	getSkippedScrapeCount,
 	incrementScrapeRunStats,
 	SCRAPE_OUTCOMES,
@@ -45,4 +46,10 @@ test('tracks registered, skipped reasons, and failures for one run', () => {
 		failed: 1,
 	});
 	assert.equal(getSkippedScrapeCount(stats), 3);
+});
+
+test('formats elapsed run time as a stable clock', () => {
+	assert.equal(formatElapsedTime(0), '00:00');
+	assert.equal(formatElapsedTime(65_900), '01:05');
+	assert.equal(formatElapsedTime(3_723_000), '01:02:03');
 });

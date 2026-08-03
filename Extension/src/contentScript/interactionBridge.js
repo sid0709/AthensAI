@@ -10,10 +10,48 @@ export const commonProperties = [
 
 /* global chrome */
 
-async function resolveActivePageTabId() {
+let rememberedPageTab = null;
+
+export function isEligiblePageTab(tab) {
+	return Number.isInteger(tab?.id) && /^https?:/i.test(tab.url || '');
+}
+
+export function rememberPageTab(tab) {
+	if (!isEligiblePageTab(tab)) {
+		rememberedPageTab = null;
+		return null;
+	}
+	rememberedPageTab = {
+		id: tab.id,
+		url: tab.url,
+		title: typeof tab.title === 'string' ? tab.title : '',
+	};
+	return { ...rememberedPageTab };
+}
+
+export function getRememberedPageTab() {
+	return rememberedPageTab ? { ...rememberedPageTab } : null;
+}
+
+export function clearRememberedPageTab() {
+	rememberedPageTab = null;
+}
+
+export async function rememberActivePageTab() {
 	try {
 		const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-		if (tab?.id && /^https?:/i.test(tab.url || '')) return tab.id;
+		return rememberPageTab(tab);
+	} catch {
+		clearRememberedPageTab();
+		return null;
+	}
+}
+
+async function resolveActivePageTabId() {
+	if (rememberedPageTab) return rememberedPageTab.id;
+	try {
+		const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+		if (isEligiblePageTab(tab)) return tab.id;
 	} catch {
 		// Background will fall back to its own tab resolution.
 	}
@@ -100,4 +138,3 @@ export const highlightInteractables = (runId) => {
 		payload: { runId }
 	});
 };
-

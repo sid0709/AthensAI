@@ -24,9 +24,12 @@ import {
 import {
 	classifyJobMarketIngest,
 	duplicateJobResult,
+	isWithinDuplicateDateWindow,
 	normalizeExtensionV2OriginalJob,
+	requiresClientDuplicateWindow,
 	resolveJobPostedAt,
 	stampJobMarketIngestVersion,
+	validateClientDuplicateWindowDays,
 	validateExtensionV2OriginalJob,
 } from '../services/jobMarketIngest.js';
 import { JobSourceTitles } from '../config/jobSources.js';
@@ -63,6 +66,7 @@ import { findDuplicateByUrl } from '../services/jobDuplicateLookup.js';
 import {
 	claimJobIdentity,
 	finalizeJobIdentityClaim,
+	JOB_IDENTITY_LOOKBACK_DAYS,
 	releaseJobIdentityClaim,
 } from '../services/jobIdentityDedupe.js';
 import { applyCompanyIdentity, resolveCompanyIdentity } from '../services/companyIdentity.js';
@@ -102,8 +106,6 @@ import {
 } from '../services/backgroundTasks/resourceLimits.js';
 import { runWithoutBackgroundTaskContext } from '../services/backgroundTasks/taskContext.js';
 
-const DUPLICATE_LOOKBACK_DAYS = 30;
-const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
 const JOB_COUNT_CACHE_MS = Number(process.env.JOB_COUNT_CACHE_MS || 5 * 60 * 1000);
 const jobCountCache = new Map();
 
@@ -275,15 +277,10 @@ const extractJobTimestamp = (jobDoc) => {
 	return toValidDate(jobDoc?.postedAt) || toValidDate(jobDoc?._createdAt) || toValidDate(jobDoc?.createdAt);
 };
 
-/** True when existing job is within the 30-day duplicate window of the incoming postedAt. */
-const isWithinDuplicateWindow = (existingJob, newPostedAt) => {
+/** True when an existing URL falls within the request's duplicate window. */
+const isWithinDuplicateWindow = (existingJob, newPostedAt, lookbackDays) => {
 	const existingTimestamp = extractJobTimestamp(existingJob);
-	const newJobTimestamp = toValidDate(newPostedAt);
-	return (
-		!existingTimestamp ||
-		!newJobTimestamp ||
-		newJobTimestamp.getTime() - existingTimestamp.getTime() < LOOKBACK_WINDOW_MS
-	);
+	return isWithinDuplicateDateWindow(existingTimestamp, newPostedAt, lookbackDays);
 };
 
 export async function createJob(req, res) {
@@ -308,6 +305,19 @@ export async function createJob(req, res) {
 				});
 			}
 		}
+		const duplicateWindow = validateClientDuplicateWindowDays(job.duplicateWindowDays, {
+			required: requiresClientDuplicateWindow(job, ingest),
+		});
+		if (!duplicateWindow.valid) {
+			return res.status(422).json({
+				success: false,
+				created: false,
+				code: 'INVALID_DUPLICATE_WINDOW',
+				error: duplicateWindow.error,
+				reason: duplicateWindow.error,
+			});
+		}
+		const duplicateWindowDays = duplicateWindow.days ?? JOB_IDENTITY_LOOKBACK_DAYS;
 
 		// Requirement 2: if title is empty(""), not create.
 		const title = typeof job.title === 'string' ? job.title.trim() : '';
@@ -343,10 +353,10 @@ export async function createJob(req, res) {
 		];
 		if (urlCandidates.length) {
 			const existingByUrl = await findDuplicateByUrl(jobsCollection, urlCandidates, duplicateScope);
-			if (existingByUrl && isWithinDuplicateWindow(existingByUrl, postedAt)) {
+			if (existingByUrl && isWithinDuplicateWindow(existingByUrl, postedAt, duplicateWindowDays)) {
 				return res.status(200).json(duplicateJobResult({
 					existingId: existingByUrl._id,
-					reason: 'Job with this URL has been posted within the last 30 days',
+					reason: `Job with this URL has been posted within the last ${duplicateWindowDays} days`,
 				}));
 			}
 		}
@@ -358,11 +368,12 @@ export async function createJob(req, res) {
 			title,
 			acceptedAt: now,
 			source: identitySource,
+			lookbackDays: duplicateWindowDays,
 		});
 		if (identityClaim.duplicate) {
 			return res.status(200).json(duplicateJobResult({
 				existingId: identityClaim.existingJobId ? String(identityClaim.existingJobId) : '',
-				reason: 'Duplicate job with this company and title was added within the last 30 days',
+				reason: `Duplicate job with this company and title was added within the last ${duplicateWindowDays} days`,
 			}));
 		}
 

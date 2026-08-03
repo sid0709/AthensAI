@@ -25,6 +25,7 @@ export function isExtensionV2Job(job) {
 export const SCRAPER_ONLY_JOB_FIELDS = [
 	'tags',
 	'applicants',
+	'duplicateWindowDays',
 	'skillAnalysis',
 	'scoreSalary',
 	'scoreApplicant',

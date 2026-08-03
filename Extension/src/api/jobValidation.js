@@ -1,3 +1,5 @@
+import { parseDuplicateWindowDays } from '../config/duplicateWindow.js';
+
 function hasText(value) {
 	return typeof value === 'string' && value.trim().length > 0;
 }
@@ -29,6 +31,7 @@ const JOB_VALIDATION_RULES = [
 	{ id: 'companyLogo', label: 'Logo', issue: 'Company logo', validate: (job) => isRecord(job.company) && isHttpUrl(job.company.logo) },
 	{ id: 'companyTags', label: 'Company tags', issue: 'Company tags', validate: (job) => isRecord(job.company) && Array.isArray(job.company.tags) },
 	{ id: 'id', label: 'Job ID', issue: 'Job ID', visible: false, validate: (job) => typeof job.id === 'number' && Number.isFinite(job.id) },
+	{ id: 'duplicateWindowDays', label: 'Duplicate window', issue: 'Duplicate window', visible: false, validate: (job) => parseDuplicateWindowDays(job.duplicateWindowDays) === job.duplicateWindowDays },
 ];
 
 function evaluateJobValidationRules(job, completedRuleIds = null) {

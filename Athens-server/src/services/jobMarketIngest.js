@@ -15,6 +15,9 @@ const ORIGINAL_REQUIRED_FIELDS = [
 	'companyLink',
 ];
 
+export const MIN_CLIENT_DUPLICATE_WINDOW_DAYS = 1;
+export const MAX_CLIENT_DUPLICATE_WINDOW_DAYS = 365;
+
 const RELATIVE_UNIT_MS = {
 	second: 1000,
 	minute: 60 * 1000,
@@ -135,6 +138,42 @@ export function classifyJobMarketIngest(payload, clientHeader = '') {
 		fromExtensionV2: false,
 		client,
 	};
+}
+
+export function requiresClientDuplicateWindow(payload, ingest) {
+	return Boolean(
+		ingest?.fromExtensionV2 ||
+		hasOwn(payload || {}, 'tags') ||
+		hasOwn(payload || {}, 'applicants'),
+	);
+}
+
+export function validateClientDuplicateWindowDays(value, { required = false } = {}) {
+	if (value === undefined || value === null || value === '') {
+		return required
+			? { valid: false, days: null, error: 'duplicateWindowDays is required for extension jobs' }
+			: { valid: true, days: null, error: null };
+	}
+	if (
+		typeof value !== 'number' ||
+		!Number.isInteger(value) ||
+		value < MIN_CLIENT_DUPLICATE_WINDOW_DAYS ||
+		value > MAX_CLIENT_DUPLICATE_WINDOW_DAYS
+	) {
+		return {
+			valid: false,
+			days: null,
+			error: 'duplicateWindowDays must be a whole number from 1 to 365',
+		};
+	}
+	return { valid: true, days: value, error: null };
+}
+
+export function isWithinDuplicateDateWindow(existingValue, incomingValue, lookbackDays) {
+	const existing = validDate(existingValue);
+	const incoming = validDate(incomingValue);
+	if (!existing || !incoming) return true;
+	return existing.getTime() >= incoming.getTime() - lookbackDays * 24 * 60 * 60 * 1000;
 }
 
 /** Apply the trusted market provenance stamp selected by the ingest classifier. */
