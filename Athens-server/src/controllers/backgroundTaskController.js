@@ -1,4 +1,4 @@
-import { getRedis, isRedisReady } from '../db/redis.js';
+import { duplicateRedisClient, isRedisConnectionError, isRedisReady } from '../db/redis.js';
 import { backgroundTaskKeys } from '../services/backgroundTasks/redisKeys.js';
 import { normalizeBackgroundTaskPayload } from '../services/backgroundTasks/taskPayload.js';
 import {
@@ -47,11 +47,12 @@ function canAccessTask(req, task) {
 }
 
 function errorResponse(res, error) {
-	const status = Number.isInteger(error?.status) ? error.status : 500;
+	const redisUnavailable = isRedisConnectionError(error);
+	const status = Number.isInteger(error?.status) ? error.status : redisUnavailable ? 503 : 500;
 	return res.status(status).json({
 		success: false,
-		error: error?.message || 'Background task request failed',
-		code: error?.code,
+		error: redisUnavailable ? 'Background task service is temporarily unavailable' : error?.message || 'Background task request failed',
+		code: error?.code || (redisUnavailable ? 'BACKGROUND_TASK_REDIS_UNAVAILABLE' : undefined),
 		...(error?.betaRequired ? { betaRequired: true } : {}),
 		...(error?.health ? { health: error.health } : {}),
 	});
@@ -190,7 +191,7 @@ export async function streamTaskEvents(req, res) {
 	});
 	res.flushHeaders?.();
 
-	const reader = getRedis().duplicate();
+	const reader = duplicateRedisClient('background-task event stream');
 	let closed = false;
 	const close = () => {
 		if (closed) return;

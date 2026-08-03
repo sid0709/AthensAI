@@ -10,7 +10,7 @@ import {
 	backendPorts,
 	backendServices,
 	getDevSummary,
-	startService,
+	startSupervisedService,
 	uiService,
 	waitForBackends,
 } from './lib/dev-runtime.mjs';
@@ -137,15 +137,12 @@ function DevDashboard() {
 	useEffect(() => {
 		const onLine = (entry) => pushLog(entry);
 		const onExit = (name, code) => {
-			if (code && code !== 0) {
-				pushLog({ service: 'dev', line: `[dev] ${name} exited with code ${code}`, at: Date.now() });
-				setPortStatus((s) => ({ ...s, [name]: 'failed' }));
-				shutdown(code);
-			}
+			pushLog({ service: 'dev', line: `[dev] ${name} exited with code ${code ?? 'unknown'}; restarting independently`, at: Date.now() });
+			setPortStatus((s) => ({ ...s, [name]: 'starting' }));
 		};
 
 		for (const svc of backendServices) {
-			childrenRef.current.push(startService(svc, onLine, onExit));
+			childrenRef.current.push(startSupervisedService(svc, onLine, onExit));
 		}
 
 		(async () => {
@@ -173,7 +170,7 @@ function DevDashboard() {
 				});
 			}
 
-			childrenRef.current.push(startService(uiService, onLine, onExit));
+			childrenRef.current.push(startSupervisedService(uiService, onLine, onExit));
 			setPhase('running');
 			pushLog({ service: 'dev', line: 'NextOffer is running — see Endpoints below', at: Date.now() });
 		})();

@@ -2,6 +2,21 @@ import { createClient } from 'redis';
 
 let client = null;
 let ready = false;
+const guardedClients = new WeakSet();
+
+/** Every node-redis client, including duplicates, must consume error events. */
+export function attachRedisErrorHandler(
+  redisClient,
+  { label = 'client', onError, logger = console.error } = {},
+) {
+  if (!redisClient?.on || guardedClients.has(redisClient)) return redisClient;
+  guardedClients.add(redisClient);
+  redisClient.on('error', (error) => {
+    onError?.(error);
+    logger(`[redis] ${label} error:`, error?.message || error);
+  });
+  return redisClient;
+}
 
 export function isRedisReady() {
   return ready && client?.isOpen;
@@ -10,6 +25,20 @@ export function isRedisReady() {
 export function getRedis() {
   if (!client) throw new Error('Redis not initialized');
   return client;
+}
+
+/** Duplicate the shared client without creating an unhandled EventEmitter path. */
+export function duplicateRedisClient(label = 'duplicate') {
+  return attachRedisErrorHandler(getRedis().duplicate(), { label });
+}
+
+export function isRedisConnectionError(error) {
+  return /redis|socket closed|econnrefused|econnreset|connection (?:is )?closed/i.test(
+    String(error?.message || error || ''),
+  ) || [
+    'SocketClosedUnexpectedlyError',
+    'ConnectionTimeoutError',
+  ].includes(String(error?.name || ''));
 }
 
 export function shouldInitializeRedis({ force = false } = {}) {
@@ -28,21 +57,35 @@ export async function initRedis({ force = false } = {}) {
     return true;
   }
   let connecting = true;
+  let connectedOnce = false;
   try {
     const maxReconnectAttempts = Math.max(0, Number(process.env.REDIS_CONNECT_RETRIES || 2));
     client = createClient({
       url,
       socket: {
         connectTimeout: Math.max(250, Number(process.env.REDIS_CONNECT_TIMEOUT_MS || 1000)),
-        reconnectStrategy: (retries) => (
-          retries >= maxReconnectAttempts ? false : Math.min(100 * (2 ** retries), 500)
-        ),
+        // Fail fast only during initial startup. Once Redis has connected, keep
+        // retrying indefinitely so a Docker/Redis restart degrades the service
+        // temporarily instead of requiring every Node process to be restarted.
+        reconnectStrategy: (retries) => {
+          if (!connectedOnce && retries >= maxReconnectAttempts) return false;
+          return Math.min(100 * (2 ** Math.min(retries, 4)), 2_000);
+        },
       },
     });
-    client.on('error', (err) => {
-      if (!connecting) console.error('[redis] error:', err.message);
-      ready = false;
+    attachRedisErrorHandler(client, {
+      label: 'primary',
+      onError: () => { ready = false; },
+      logger: (...args) => {
+        if (!connecting) console.error(...args);
+      },
     });
+    client.on('ready', () => {
+      connectedOnce = true;
+      ready = true;
+    });
+    client.on('reconnecting', () => { ready = false; });
+    client.on('end', () => { ready = false; });
     await client.connect();
     connecting = false;
     ready = true;

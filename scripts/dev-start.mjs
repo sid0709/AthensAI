@@ -26,7 +26,7 @@ if (process.stdout.isTTY && process.env.DEV_TUI === '1') {
 	const {
 		backendServices,
 		getDevSummary,
-		startService,
+		startSupervisedService,
 		uiService,
 		waitForBackends,
 	} = await import('./lib/dev-runtime.mjs');
@@ -45,14 +45,11 @@ if (process.stdout.isTTY && process.env.DEV_TUI === '1') {
 
 	const onLine = ({ line }) => writeRaw(line);
 	const onExit = (name, code) => {
-		if (code && code !== 0) {
-			console.error(`[dev] ${name} exited with code ${code}`);
-			shutdown(code);
-		}
+		console.error(`[dev] ${name} exited with code ${code ?? 'unknown'}; healthy services remain running`);
 	};
 
 	for (const svc of backendServices) {
-		children.push(startService(svc, onLine, onExit));
+		children.push(startSupervisedService(svc, onLine, onExit));
 	}
 
 	const waitResult = await waitForBackends();
@@ -62,7 +59,7 @@ if (process.stdout.isTTY && process.env.DEV_TUI === '1') {
 		console.warn(`[dev] timed out waiting for backends (${waitResult.pending.join(', ')}) — starting UI anyway`);
 	}
 
-	children.push(startService(uiService, onLine, onExit));
+	children.push(startSupervisedService(uiService, onLine, onExit));
 
 	const summary = getDevSummary();
 	console.log('');

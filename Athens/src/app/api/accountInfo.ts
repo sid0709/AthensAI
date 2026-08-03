@@ -3,7 +3,6 @@ import { API_BASE } from "@/lib/api-base";
 export type AccountApiKeyInfo = {
   provider: "openai" | "deepseek";
   configured: boolean;
-  value: string | null;
 };
 
 export type RegisteredAccount = {
@@ -21,13 +20,11 @@ function extractKeys(profile: Record<string, unknown> | undefined): AccountApiKe
   return [
     {
       provider: "openai",
-      configured: Boolean(openai),
-      value: openai || null,
+      configured: profile?.openaiApiKeyConfigured === true || Boolean(openai),
     },
     {
       provider: "deepseek",
-      configured: Boolean(deepseek),
-      value: deepseek || null,
+      configured: profile?.deepseekApiKeyConfigured === true || Boolean(deepseek),
     },
   ];
 }
