@@ -3,7 +3,7 @@ import { retryTransient } from "@/lib/transient-retry";
 
 export type SkillExtractSession = {
   running: boolean;
-  status: "idle" | "running" | "stopping" | "completed" | "cancelled" | "failed";
+  status: "idle" | "queued" | "running" | "stopping" | "completed" | "cancelled" | "failed";
   sessionId?: string;
   pending?: number | null;
   pendingKnown?: boolean;
@@ -14,10 +14,11 @@ export type SkillExtractSession = {
   retried?: number;
   cancelled?: number;
   remaining?: number | null;
-  phase?: "starting" | "recovering" | "claiming" | "extracting" | "stopping" | "completed" | "cancelled";
+  phase?: "queued" | "starting" | "recovering" | "claiming" | "extracting" | "stopping" | "completed" | "cancelled";
   inflight?: number;
   lastProgressAt?: string | null;
   lastJob?: { id: string; title: string; skills?: number } | null;
+  queuedAt?: string;
   startedAt?: string;
   finishedAt?: string | null;
   error?: string | null;

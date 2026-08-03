@@ -3,6 +3,8 @@ export type SignalPoint = {
   longitude: number;
   size: number;
   pulse: number;
+  scatterX: number;
+  scatterY: number;
 };
 
 const POINT_COUNT = 62;
@@ -19,6 +21,8 @@ export function createSignalPoints(): SignalPoint[] {
     longitude: random() * Math.PI * 2,
     size: 0.75 + random() * 1.55,
     pulse: random() * Math.PI * 2,
+    scatterX: random() * 2 - 1,
+    scatterY: random() * 2 - 1,
   }));
 }
 

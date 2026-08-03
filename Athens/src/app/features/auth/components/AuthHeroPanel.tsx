@@ -1,47 +1,30 @@
 import { useRef, useState } from "react";
-import { ArrowDown, VolumeX } from "lucide-react";
+import { ArrowDown, Volume2, VolumeX } from "lucide-react";
 import { display } from "../../../lib/utils";
-import { AuthSceneCanvas } from "./AuthSceneCanvas";
 import { nextAuthScene } from "./authScene";
-
-const SCENES = [
-  {
-    code: "SIGNAL / 01",
-    title: "Turn your career into signal.",
-    body: "Athens reads the market around you—connecting your experience, live roles, and the skills that move both.",
-    metric: "LIVE ROLE GRAPH",
-    value: "01,248",
-  },
-  {
-    code: "MATCH / 02",
-    title: "See the right path before you move.",
-    body: "Every opportunity is ranked against your real profile, with the gaps and strongest connections made visible.",
-    metric: "MATCH VECTORS",
-    value: "∞ / LIVE",
-  },
-  {
-    code: "MOMENTUM / 03",
-    title: "Move from insight to offer.",
-    body: "Build precise résumés, run applications, and learn from every response in one intelligent command center.",
-    metric: "CAREER SYSTEM",
-    value: "ONLINE",
-  },
-];
+import { useAuthExperience } from "../experience/AuthExperienceContext";
+import { AUTH_NARRATIVE_SCENES } from "./authNarrative";
 
 export function AuthHeroPanel() {
-  const [scene, setScene] = useState(0);
+  const experience = useAuthExperience();
+  const [scene, setLocalScene] = useState(experience.scene);
   const lastWheelAt = useRef(0);
-  const activeScene = SCENES[scene];
+  const activeScene = AUTH_NARRATIVE_SCENES[scene];
+
+  const setScene = (nextScene: number) => {
+    setLocalScene(nextScene);
+    experience.setScene(nextScene);
+  };
 
   const onWheel = (event: React.WheelEvent<HTMLElement>) => {
     if (Math.abs(event.deltaY) < 18 || Date.now() - lastWheelAt.current < 520) return;
     lastWheelAt.current = Date.now();
-    setScene((current) => nextAuthScene(current, event.deltaY, SCENES.length));
+    experience.registerInteraction();
+    setScene(nextAuthScene(scene, event.deltaY, AUTH_NARRATIVE_SCENES.length));
   };
 
   return (
-    <section className="auth-hero" onWheel={onWheel} aria-label="AthensAI career intelligence preview">
-      <AuthSceneCanvas scene={scene} />
+    <section className="auth-hero" onWheel={onWheel} aria-label="AthensAI career galaxy journey">
       <div className="auth-hero-grain" aria-hidden="true" />
       <div className="auth-hero-grid" aria-hidden="true" />
 
@@ -72,23 +55,33 @@ export function AuthHeroPanel() {
       <footer className="auth-world-footer">
         <div className="auth-scroll-hint">
           <ArrowDown size={14} />
-          <span>Scroll to explore</span>
+          <span>Scroll the galaxy</span>
         </div>
-        <div className="auth-scene-dots" aria-label="Preview scenes">
-          {SCENES.map((item, index) => (
+        <div className="auth-scene-dots" aria-label="Galaxy chapters">
+          {AUTH_NARRATIVE_SCENES.map((item, index) => (
             <button
               key={item.code}
               type="button"
-              className={index === scene ? "is-active" : ""}
-              onClick={() => setScene(index)}
+              className={index === scene ? "is-active" : index < scene ? "is-passed" : ""}
+              onClick={() => {
+                experience.registerInteraction();
+                setScene(index);
+              }}
               aria-label={`Show scene ${index + 1}: ${item.title}`}
               aria-current={index === scene ? "step" : undefined}
             />
           ))}
         </div>
-        <div className="auth-sound-label" aria-hidden="true">
-          <VolumeX size={14} /> Sound off
-        </div>
+        <button
+          type="button"
+          className="auth-sound-label"
+          onClick={experience.toggleSound}
+          data-auth-silent-action
+          aria-pressed={experience.soundEnabled}
+        >
+          {experience.soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+          Sound {experience.soundEnabled ? "on" : "off"}
+        </button>
       </footer>
     </section>
   );

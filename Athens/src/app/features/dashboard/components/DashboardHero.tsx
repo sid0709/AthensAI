@@ -1,14 +1,18 @@
 import React from "react";
 import { Sparkles, Mail, Video, Send } from "lucide-react";
 import { display } from "../../../lib/utils";
+import { useAuth } from "@/context/auth-context";
+import { dashboardAccountName, dashboardGreeting } from "../dashboardIdentity";
 
 type DashboardHeroProps = {
   onNavigate?: (view: string) => void;
 };
 
 export function DashboardHero({ onNavigate }: DashboardHeroProps) {
-  const today = new Date(2026, 5, 18);
-  const greeting = today.getHours() < 12 ? "Good morning" : today.getHours() < 17 ? "Good afternoon" : "Good evening";
+  const { user } = useAuth();
+  const today = new Date();
+  const greeting = dashboardGreeting(today);
+  const accountName = dashboardAccountName(user?.name);
 
   return (
     <div className="bg-gradient-to-br from-primary/10 via-card to-violet-500/5 border border-border rounded-2xl p-6 shadow-sm">
@@ -16,9 +20,9 @@ export function DashboardHero({ onNavigate }: DashboardHeroProps) {
         <div>
           <p className="text-sm text-muted-foreground font-semibold">{today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</p>
           <h2 className="text-2xl font-bold text-foreground mt-1" style={display}>
-            {greeting}, Jordan
+            {greeting}, {accountName}
           </h2>
-          <p className="text-sm text-muted-foreground mt-1">Your AI career command center — 2 interviews today, 13 active applications.</p>
+          <p className="text-sm text-muted-foreground mt-1">Your AI career command center is ready.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button type="button" onClick={() => onNavigate?.("job-board")} className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10">
