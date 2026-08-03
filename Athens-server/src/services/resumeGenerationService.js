@@ -244,6 +244,7 @@ export function buildGenerationRequestFromSavedConfig({
     jobDescription: jd,
     identity: identity ?? identityFromProfile({}),
     steps: stepsToPlan(steps),
+    coverage: { settings: config.coverage },
     generateParentJobId: generateParentJobId ? cleanString(generateParentJobId) : undefined,
   };
 }

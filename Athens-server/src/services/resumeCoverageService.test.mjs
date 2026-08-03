@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   auditResumeCoverage,
+  buildAutomaticResumeCoveragePayload,
   buildResumeCoverageContract,
   extractParentheticalCoverageCandidates,
   isNamedResumeCoverageSkill,
@@ -148,6 +149,33 @@ test("coverage contract separates used, familiar-only, and excluded terms", () =
   assert.deepEqual(contract.skills.find((skill) => skill.name === "REST").placements, ["skills", "experience"]);
   assert.deepEqual(contract.skills.find((skill) => skill.name === "SOAP").placements, ["skills"]);
   assert.deepEqual(contract.excluded.map((skill) => skill.name), ["NetSuite"]);
+});
+
+test("structured runs apply the same automatic coverage decisions as the Editor", () => {
+  const analysis = {
+    fingerprint: "analysis-structured",
+    skills: [
+      { id: "verified", name: "Node.js", requirement: 2, evidenceStatus: "verified", decision: null },
+      { id: "required", name: "PostgreSQL", requirement: 5, evidenceStatus: "unverified", decision: null },
+      { id: "optional", name: "Redis", requirement: 2, evidenceStatus: "unverified", decision: null },
+    ],
+  };
+  const payload = buildAutomaticResumeCoveragePayload(analysis, {
+    enabled: true,
+    experienceRequirementThreshold: 4,
+    maxRepairAttempts: 2,
+  });
+
+  assert.deepEqual(payload.decisions, {
+    verified: "used",
+    required: "used",
+    optional: "familiar",
+  });
+  const contract = buildResumeCoverageContract(payload.analysis, payload.decisions, payload.settings);
+  assert.deepEqual(contract.skills.find((skill) => skill.id === "verified").placements, ["skills"]);
+  assert.deepEqual(contract.skills.find((skill) => skill.id === "required").placements, ["skills", "experience"]);
+  assert.deepEqual(contract.skills.find((skill) => skill.id === "optional").placements, ["skills"]);
+  assert.equal(contract.maxRepairAttempts, 2);
 });
 
 test("deterministic audit reports section-specific gaps", () => {

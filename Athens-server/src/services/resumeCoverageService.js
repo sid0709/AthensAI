@@ -403,6 +403,30 @@ export function buildResumeCoverageContract(analysis, decisions = {}, rawSetting
   };
 }
 
+/**
+ * Build the same automatic decisions the Resume Editor applies after analysis.
+ * Structured Job Search / Agent runs have no intermediate review screen, so the
+ * analysis defaults are the run-scoped decisions unless a future caller supplies
+ * explicit overrides.
+ */
+export function buildAutomaticResumeCoveragePayload(analysis, rawSettings = {}) {
+  if (!analysis || !Array.isArray(analysis.skills)) return null;
+  const settings = normalizeCoverageSettings(rawSettings);
+  if (!settings.enabled) return null;
+  const decisions = Object.fromEntries(analysis.skills.map((skill) => {
+    const supplied = cleanString(skill?.decision);
+    const decision = DECISIONS.has(supplied)
+      ? supplied
+      : skill?.evidenceStatus === "verified"
+        ? "used"
+        : Number(skill?.requirement) >= settings.experienceRequirementThreshold
+          ? "used"
+          : "familiar";
+    return [cleanString(skill?.id), decision];
+  }).filter(([id]) => id));
+  return { analysis, decisions, settings };
+}
+
 export function normalizeResumeCoverageContract(raw) {
   if (!raw || typeof raw !== "object") return null;
   if (raw.analysis) return buildResumeCoverageContract(raw.analysis, raw.decisions, raw.settings);

@@ -4,6 +4,7 @@ import {
   buildParallelPurposeChains,
   buildTokenMap,
   formatCompanyToken,
+  resolveResumePromptSkills,
 } from "./resumeGenController.js";
 import {
   TITLE_POLICY_VERSION,
@@ -105,6 +106,21 @@ test("buildTokenMap maps company1 and company2 from careers array", () => {
   );
   assert.equal(map.company1_name, undefined);
   assert.equal(map.company1_title, undefined);
+});
+
+test("coverage contract is authoritative for structured-job prompt skill scope", () => {
+  const skills = resolveResumePromptSkills(
+    ["Node.js", "Excluded Tool", "Unreviewed Tool"],
+    {
+      skills: [
+        { name: "Node.js", decision: "used" },
+        { name: "Redis", decision: "familiar" },
+      ],
+      excluded: [{ name: "Excluded Tool" }],
+    },
+  );
+  assert.deepEqual(skills, ["Node.js", "Redis"]);
+  assert.deepEqual(resolveResumePromptSkills(["Node.js"], null), ["Node.js"]);
 });
 
 test("resume generation parallelizes independent purpose chains without reordering their steps", () => {
@@ -209,6 +225,6 @@ test("generation persistence fingerprint tracks the saved preference instead of 
     config: body,
   });
   assert.notEqual(staticFp, dynamicFp);
-  assert.equal(TITLE_POLICY_VERSION, 3);
+  assert.equal(TITLE_POLICY_VERSION, 4);
   assert.equal(staticFp.length, 40);
 });

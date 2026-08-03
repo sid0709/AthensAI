@@ -179,7 +179,26 @@ test("title policy fingerprint changes with the saved preference, JD, careers, a
   assert.notEqual(a, b);
   assert.notEqual(a, c);
   assert.notEqual(a, d);
-  assert.equal(TITLE_POLICY_VERSION, 3);
+  const coverageChanged = computeTitlePolicyFingerprint({
+    ...base,
+    config: {
+      ...base.config,
+      coverage: { settings: { enabled: true, experienceRequirementThreshold: 5 } },
+    },
+  });
+  const skillsPromptChanged = computeTitlePolicyFingerprint({
+    ...base,
+    config: {
+      ...base.config,
+      steps: [
+        ...base.config.steps,
+        { purpose: "skills", kind: "final", prompt: "changed skills prompt" },
+      ],
+    },
+  });
+  assert.notEqual(a, coverageChanged);
+  assert.notEqual(a, skillsPromptChanged);
+  assert.equal(TITLE_POLICY_VERSION, 4);
 });
 
 test("agent PDF render fingerprint includes title policy fingerprint", () => {
