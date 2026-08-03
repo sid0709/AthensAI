@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+	decryptSelectedProfileSecrets,
 	decryptProfileApiKeysForClient,
 	preserveUnavailableProfileSecrets,
 } from './autoBidProfileSecrets.js';
@@ -41,4 +42,27 @@ test('saving a redacted profile preserves unavailable ciphertext', () => {
 		).gmailAppPassword,
 		'replacement',
 	);
+});
+
+test('selected secret decryption redacts unrelated KMS secrets', async () => {
+	const previous = process.env.KMS_KEY_NAME;
+	delete process.env.KMS_KEY_NAME;
+	try {
+		const profile = await decryptSelectedProfileSecrets(
+			{
+				fullName: 'Test User',
+				openaiApiKey: 'plain-api-key',
+				gmailAppPassword: 'kms:v1:not-real-ciphertext',
+				defaultPassword: 'kms:v1:not-real-ciphertext',
+			},
+			['openaiApiKey', 'deepseekApiKey'],
+		);
+		assert.equal(profile.fullName, 'Test User');
+		assert.equal(profile.openaiApiKey, 'plain-api-key');
+		assert.equal(profile.gmailAppPassword, '');
+		assert.equal(profile.defaultPassword, '');
+	} finally {
+		if (previous === undefined) delete process.env.KMS_KEY_NAME;
+		else process.env.KMS_KEY_NAME = previous;
+	}
 });

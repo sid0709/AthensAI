@@ -1,14 +1,67 @@
 import { collectTextCandidates, matchesSubmitKeyword, containsConfirmationKeyword } from './submitDetector';
+import {
+	CONTENT_SCRIPT_INJECTED_ATTRIBUTE,
+	sendRuntimeMessageSafely,
+} from './contentScriptLifecycle';
 
 /* global chrome */
 
 const BUTTON_SELECTOR = 'button, a, input[type="submit"], input[type="button"], input[type="image"], [role="button"]';
 const KEY_TRIGGER_SET = new Set(['Enter', ' ']);
 const hookedElements = new WeakSet();
+const hookedElementCleanups = new Set();
 const activeDetections = new WeakMap();
+const runningDetections = new Set();
 const MIN_DOM_DELTA = 0.2; // 20%
 const MONITOR_WINDOW_MS = 15000;
 let buttonReportScheduled = false;
+let buttonReportFrame = null;
+let buttonObserver = null;
+let bootListener = null;
+let monitorStopped = false;
+
+function stopJobBidMonitor() {
+	if (monitorStopped) return;
+	monitorStopped = true;
+	buttonReportScheduled = false;
+
+	if (buttonReportFrame !== null) {
+		window.cancelAnimationFrame(buttonReportFrame);
+		buttonReportFrame = null;
+	}
+	buttonObserver?.disconnect();
+	buttonObserver = null;
+	if (bootListener) {
+		document.removeEventListener('DOMContentLoaded', bootListener);
+		bootListener = null;
+	}
+	document.removeEventListener('submit', handleFormSubmit, true);
+	for (const cleanup of hookedElementCleanups) cleanup();
+	hookedElementCleanups.clear();
+	for (const detection of [...runningDetections]) detection.stop();
+
+	try {
+		document.documentElement?.removeAttribute(CONTENT_SCRIPT_INJECTED_ATTRIBUTE);
+		window.contentScriptInjected = false;
+		window.__jobBidMonitorInitialized = false;
+	} catch {
+		// DOM cleanup is best-effort after the extension context is gone.
+	}
+}
+
+function sendMonitorMessage(message, failureLabel) {
+	let runtime = null;
+	try {
+		runtime = typeof chrome === 'undefined' ? null : chrome.runtime;
+	} catch {
+		stopJobBidMonitor();
+		return false;
+	}
+	return sendRuntimeMessageSafely(runtime, message, {
+		onInvalidated: stopJobBidMonitor,
+		onError: (error) => console.error(failureLabel, error),
+	});
+}
 
 function getPrimaryLabel(element) {
 	const candidates = collectTextCandidates(element);
@@ -32,6 +85,7 @@ function getBodyTextLength() {
 }
 
 function scanElementAndChildren(root) {
+	if (monitorStopped) return;
 	if (!(root instanceof Element)) return;
 	if (root.matches?.(BUTTON_SELECTOR)) {
 		hookElement(root);
@@ -43,7 +97,7 @@ function scanElementAndChildren(root) {
 }
 
 function hookElement(element) {
-	if (!element || hookedElements.has(element)) return;
+	if (monitorStopped || !element || hookedElements.has(element)) return;
 	if (!matchesSubmitKeyword(element)) return;
 
 	const handleClick = () => startDetection(element);
@@ -57,33 +111,30 @@ function hookElement(element) {
 	element.dataset.jobBidHooked = 'true';
 	element.addEventListener('click', handleClick, true);
 	element.addEventListener('keydown', handleKeyDown, true);
+	hookedElementCleanups.add(() => {
+		element.removeEventListener('click', handleClick, true);
+		element.removeEventListener('keydown', handleKeyDown, true);
+		delete element.dataset.jobBidHooked;
+	});
 	scheduleButtonReport();
 }
 
 function reportJobBid(payload) {
-	try {
-		chrome?.runtime?.sendMessage?.({
-			action: 'jobBidApplied',
-			payload
-		});
-	} catch (e) {
-		console.error('Failed to send jobBidApplied message', e);
-	}
+	sendMonitorMessage({ action: 'jobBidApplied', payload }, 'Failed to send jobBidApplied message');
 }
 
 function sendJobBidStatus(status) {
-	try {
-		chrome?.runtime?.sendMessage?.({
+	sendMonitorMessage(
+		{
 			action: 'jobBidStatus',
 			payload: {
 				...status,
 				jobUrl: status?.jobUrl || window.location.href,
 				timestamp: status?.timestamp || Date.now()
 			}
-		});
-	} catch (e) {
-		console.error('Failed to send jobBidStatus', e);
-	}
+		},
+		'Failed to send jobBidStatus',
+	);
 }
 
 function summarizeButton(element) {
@@ -100,6 +151,7 @@ function collectTargetButtons(root = document) {
 }
 
 function reportCurrentButtons() {
+	if (monitorStopped) return;
 	const matches = collectTargetButtons(document);
 	if (matches.length === 0) {
 		sendJobBidStatus({
@@ -116,10 +168,12 @@ function reportCurrentButtons() {
 }
 
 function scheduleButtonReport() {
-	if (buttonReportScheduled) return;
+	if (monitorStopped || buttonReportScheduled) return;
 	buttonReportScheduled = true;
-	requestAnimationFrame(() => {
+	buttonReportFrame = requestAnimationFrame(() => {
+		buttonReportFrame = null;
 		buttonReportScheduled = false;
+		if (monitorStopped) return;
 		reportCurrentButtons();
 	});
 }
@@ -135,6 +189,7 @@ function createDetection(element) {
 	let timeoutId = null;
 	let handleUnload = null;
 	let finished = false;
+	let controller = null;
 
 	const cleanup = () => {
 		if (observer) observer.disconnect();
@@ -157,6 +212,7 @@ function createDetection(element) {
 		finished = true;
 		cleanup();
 		activeDetections.delete(element);
+		runningDetections.delete(controller);
 		const currentUrl = window.location.href;
 
 		if (reason === 'timeout' || reason === 'cancelled') {
@@ -216,9 +272,9 @@ function createDetection(element) {
 		}
 	};
 
-	return {
+	controller = {
 		start() {
-			if (!document?.body) return;
+			if (monitorStopped || !document?.body) return;
 			try {
 				observer = new MutationObserver(monitorDom);
 				observer.observe(document.body, { childList: true, subtree: true, characterData: true });
@@ -234,12 +290,20 @@ function createDetection(element) {
 		},
 		cancel() {
 			finalize('cancelled');
+		},
+		stop() {
+			if (finished) return;
+			finished = true;
+			cleanup();
+			activeDetections.delete(element);
+			runningDetections.delete(controller);
 		}
 	};
+	return controller;
 }
 
 function startDetection(element) {
-	if (!element || !document?.body) return;
+	if (monitorStopped || !element || !document?.body) return;
 	const existing = activeDetections.get(element);
 	if (existing) return;
 	sendJobBidStatus({
@@ -249,12 +313,14 @@ function startDetection(element) {
 	});
 	const detection = createDetection(element);
 	activeDetections.set(element, detection);
+	runningDetections.add(detection);
 	detection.start();
 }
 
 function observeNewButtons() {
-	if (!document?.body) return;
+	if (monitorStopped || !document?.body) return;
 	const observer = new MutationObserver((mutations) => {
+		if (monitorStopped) return;
 		for (const mutation of mutations) {
 			if (!mutation.addedNodes?.length) continue;
 			mutation.addedNodes.forEach((node) => {
@@ -267,12 +333,14 @@ function observeNewButtons() {
 	});
 	try {
 		observer.observe(document.body, { childList: true, subtree: true });
+		buttonObserver = observer;
 	} catch (e) {
 		console.error('jobBidMonitor: failed to observe for new buttons', e);
 	}
 }
 
 function handleFormSubmit(event) {
+	if (monitorStopped) return;
 	const submitter = event.submitter;
 	if (submitter && matchesSubmitKeyword(submitter)) {
 		startDetection(submitter);
@@ -286,9 +354,12 @@ function handleFormSubmit(event) {
 
 export function initJobBidMonitor() {
 	if (window.__jobBidMonitorInitialized) return;
+	monitorStopped = false;
 	window.__jobBidMonitorInitialized = true;
 
 	const boot = () => {
+		bootListener = null;
+		if (monitorStopped) return;
 		try {
 			scanElementAndChildren(document.body || document.documentElement);
 			observeNewButtons();
@@ -300,6 +371,7 @@ export function initJobBidMonitor() {
 	};
 
 	if (document.readyState === 'loading') {
+		bootListener = boot;
 		document.addEventListener('DOMContentLoaded', boot, { once: true });
 	} else {
 		boot();

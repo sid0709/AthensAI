@@ -1,16 +1,16 @@
 import { messageHandler } from './messageHandler';
 import { initJobBidMonitor } from './jobBidMonitor';
+import { CONTENT_SCRIPT_INJECTED_ATTRIBUTE } from './contentScriptLifecycle';
 
 /* global chrome */
 
 // Guard against duplicate injections (e.g., manifest `content_scripts` + `chrome.scripting.executeScript` fallback).
 // Using a DOM attribute makes this robust even if Chrome runs the script in a fresh isolated world context.
-const INJECT_FLAG_ATTR = 'data-autolancer-content-script-injected';
 const guardRoot = document?.documentElement;
 
-if (!guardRoot?.hasAttribute(INJECT_FLAG_ATTR)) {
+if (!guardRoot?.hasAttribute(CONTENT_SCRIPT_INJECTED_ATTRIBUTE)) {
 	try {
-		guardRoot?.setAttribute(INJECT_FLAG_ATTR, 'true');
+		guardRoot?.setAttribute(CONTENT_SCRIPT_INJECTED_ATTRIBUTE, 'true');
 	} catch {
 		// Best-effort only; still proceed with the previous window-based guard.
 	}

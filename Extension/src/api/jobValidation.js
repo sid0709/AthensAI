@@ -16,33 +16,62 @@ function isHttpUrl(value) {
 	}
 }
 
+const JOB_VALIDATION_RULES = [
+	{ id: 'title', label: 'Job title', issue: 'Job title', validate: (job) => hasText(job.title) },
+	{ id: 'postedAgo', label: 'Posted date', issue: 'Posted date', validate: (job) => hasText(job.postedAgo) },
+	{ id: 'tags', label: 'Job tags', issue: 'Job tags', validate: (job) => Array.isArray(job.tags) },
+	{ id: 'skills', label: 'Skills', issue: 'Skills', validate: (job) => Array.isArray(job.skills) },
+	{ id: 'description', label: 'Description', issue: 'Job description', validate: (job) => hasText(job.description) },
+	{ id: 'details', label: 'Job details', issue: 'Job details', validate: (job) => isRecord(job.details) },
+	{ id: 'applyLink', label: 'Apply link', issue: 'Application link', validate: (job) => isHttpUrl(job.applyLink) },
+	{ id: 'companyLink', label: 'Website', issue: 'Company link', validate: (job) => isHttpUrl(job.companyLink) },
+	{ id: 'companyName', label: 'Company', issue: 'Company name', validate: (job) => isRecord(job.company) && hasText(job.company.name) },
+	{ id: 'companyLogo', label: 'Logo', issue: 'Company logo', validate: (job) => isRecord(job.company) && isHttpUrl(job.company.logo) },
+	{ id: 'companyTags', label: 'Company tags', issue: 'Company tags', validate: (job) => isRecord(job.company) && Array.isArray(job.company.tags) },
+	{ id: 'id', label: 'Job ID', issue: 'Job ID', visible: false, validate: (job) => typeof job.id === 'number' && Number.isFinite(job.id) },
+];
+
+function evaluateJobValidationRules(job, completedRuleIds = null) {
+	const completed = completedRuleIds === null ? null : new Set(completedRuleIds);
+
+	return JOB_VALIDATION_RULES.map((rule) => ({
+		id: rule.id,
+		label: rule.label,
+		issue: rule.issue,
+		visible: rule.visible !== false,
+		status: completed !== null && !completed.has(rule.id)
+			? 'pending'
+			: rule.validate(job) ? 'valid' : 'invalid',
+	}));
+}
+
+/** Return user-facing validation states for the scraper checklist. */
+export function getJobValidationChecklist(job = {}, completedRuleIds = null) {
+	const candidate = isRecord(job) ? job : {};
+	return evaluateJobValidationRules(candidate, completedRuleIds).filter((result) => result.visible);
+}
+
+/** Merge only newly completed rules, preserving every earlier checklist result. */
+export function mergeJobValidationChecklist(current, partialJob, completedRuleIds) {
+	const completed = new Set(completedRuleIds);
+	const updates = new Map(
+		getJobValidationChecklist(partialJob, completedRuleIds)
+			.filter((result) => completed.has(result.id))
+			.map((result) => [result.id, result]),
+	);
+	return current.map((result) => updates.get(result.id) || result);
+}
+
 /**
  * Validate the complete job payload before it can leave the extension.
  * Arrays and metadata objects may legitimately be empty, but they must exist
  * with the expected shape. Core scraped content must be non-empty.
  */
 export function getJobValidationIssues(job) {
-	const issues = [];
-
 	if (!isRecord(job)) return ['Job data'];
-	if (!isHttpUrl(job.applyLink)) issues.push('Application link');
-	if (typeof job.id !== 'number' || !Number.isFinite(job.id)) issues.push('Job ID');
-	if (!hasText(job.postedAgo)) issues.push('Posted date');
-	if (!hasText(job.title)) issues.push('Job title');
-	if (!hasText(job.description)) issues.push('Job description');
-	if (!isHttpUrl(job.companyLink)) issues.push('Company link');
-	if (!isRecord(job.details)) issues.push('Job details');
-	if (!Array.isArray(job.skills)) issues.push('Skills');
-
-	if (!isRecord(job.company)) {
-		issues.push('Company');
-	} else {
-		if (!hasText(job.company.name)) issues.push('Company name');
-		if (!isHttpUrl(job.company.logo)) issues.push('Company logo');
-		if (!Array.isArray(job.company.tags)) issues.push('Company tags');
-	}
-
-	return issues;
+	return evaluateJobValidationRules(job)
+		.filter((result) => result.status === 'invalid')
+		.map((result) => result.issue);
 }
 
 export class IncompleteJobDataError extends Error {

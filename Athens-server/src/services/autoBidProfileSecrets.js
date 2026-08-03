@@ -52,6 +52,17 @@ export async function decryptProfileApiKeys(profile) {
 	return out;
 }
 
+export async function decryptSelectedProfileSecrets(profile, selectedFields) {
+	if (!profile || typeof profile !== 'object') return profile;
+	const selected = new Set(Array.isArray(selectedFields) ? selectedFields : []);
+	const out = { ...profile };
+	for (const field of FIELDS) {
+		if (typeof out[field] !== 'string' || !out[field]) continue;
+		out[field] = selected.has(field) ? await decryptValue(out[field]) : '';
+	}
+	return out;
+}
+
 function isUnavailableKmsError(error) {
 	return error?.code === 7 || /KMS_KEY_NAME is required|cloudkms\.cryptoKeyVersions\.useToDecrypt|PERMISSION_DENIED/i.test(
 		String(error?.message || error || ''),
@@ -109,11 +120,23 @@ export async function decryptAccountDoc(doc) {
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-export async function loadDecryptedAutoBidProfile(applierNameRaw, projection = { autoBidProfile: 1 }) {
+async function findAutoBidProfile(applierNameRaw, projection) {
 	const name = String(applierNameRaw ?? '').trim();
 	if (!name || !accountInfoCollection) return null;
 	let acc = await accountInfoCollection.findOne({ name }, { projection });
 	if (!acc) acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${escapeRegExp(name)}$`, 'i') } }, { projection });
-	if (!acc?.autoBidProfile) return acc?.autoBidProfile || null;
-	return decryptProfileApiKeys(acc.autoBidProfile);
+	return acc?.autoBidProfile || null;
+}
+
+export async function loadDecryptedAutoBidProfile(applierNameRaw, projection = { autoBidProfile: 1 }) {
+	const profile = await findAutoBidProfile(applierNameRaw, projection);
+	return profile ? decryptProfileApiKeys(profile) : profile;
+}
+
+/** Load the reusable profile while decrypting only credentials needed by LLM flows. */
+export async function loadLlmAutoBidProfile(applierNameRaw, projection = { autoBidProfile: 1 }) {
+	const profile = await findAutoBidProfile(applierNameRaw, projection);
+	return profile
+		? decryptSelectedProfileSecrets(profile, ['openaiApiKey', 'deepseekApiKey'])
+		: profile;
 }

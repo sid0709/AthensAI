@@ -10,13 +10,31 @@ import {
 	Box,
 } from '@mui/material';
 
-import { PlayArrow, Stop } from '@mui/icons-material';
+import {
+	CheckCircleRounded,
+	ErrorRounded,
+	PlayArrow,
+	RadioButtonUncheckedRounded,
+	Stop,
+} from '@mui/icons-material';
 import PropTypes from 'prop-types';
 import { useRuntime } from '../../../api/runtimeContext';
 import useApi from '../../../api/useApi';
 import { API_URL } from '../../../config/env';
 import useNotification from '../../../api/useNotification';
-import { assertCompleteJob, IncompleteJobDataError } from '../../../api/jobValidation';
+import {
+	assertCompleteJob,
+	getJobValidationChecklist,
+	IncompleteJobDataError,
+	mergeJobValidationChecklist,
+} from '../../../api/jobValidation';
+import {
+	classifyJobSaveResult,
+	createScrapeRunStats,
+	getSkippedScrapeCount,
+	incrementScrapeRunStats,
+	SCRAPE_OUTCOMES,
+} from '../../../api/scrapeRunStats';
 import { handleClear, handleAction, handleHighlight } from '../../../contentScript/interactionBridge';
 import { athensCardSx, athensSectionLabelSx } from '../../../theme/athensTheme';
 
@@ -52,11 +70,148 @@ CircularProgressWithLabel.propTypes = {
 	value: PropTypes.number.isRequired,
 };
 
+const pendingValidationChecklist = () => getJobValidationChecklist({}, []);
+
+function ValidationChecklist({ checks }) {
+	const validCount = checks.filter(({ status }) => status === 'valid').length;
+	const invalidCount = checks.filter(({ status }) => status === 'invalid').length;
+
+	return (
+		<Stack spacing={1.25} sx={{ width: '100%' }}>
+			<Stack direction="row" alignItems="center" justifyContent="space-between">
+				<Typography variant="caption" sx={{ color: 'text.primary', fontWeight: 700 }}>
+					Field validation
+				</Typography>
+				<Typography
+					variant="caption"
+					sx={{ color: invalidCount ? 'error.main' : 'text.secondary', fontWeight: 600 }}
+				>
+					{invalidCount ? `${invalidCount} missing` : `${validCount}/${checks.length} valid`}
+				</Typography>
+			</Stack>
+
+			<Box
+				sx={{
+					display: 'grid',
+					gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+					gap: 0.75,
+				}}
+			>
+				{checks.map((check, index) => {
+					const isValid = check.status === 'valid';
+					const isInvalid = check.status === 'invalid';
+					const Icon = isValid
+						? CheckCircleRounded
+						: isInvalid ? ErrorRounded : RadioButtonUncheckedRounded;
+
+					return (
+						<Stack
+							key={check.id}
+							direction="row"
+							alignItems="center"
+							spacing={0.75}
+							sx={{
+								minWidth: 0,
+								gridColumn: checks.length % 2 === 1 && index === checks.length - 1
+									? '1 / -1'
+									: 'auto',
+								px: 1,
+								py: 0.75,
+								borderRadius: 1.5,
+								bgcolor: 'rgba(255, 255, 255, 0.025)',
+							}}
+						>
+							<Icon
+								sx={{
+									fontSize: 16,
+									flexShrink: 0,
+									color: isValid
+										? 'success.main'
+										: isInvalid ? 'error.main' : 'text.secondary',
+								}}
+							/>
+							<Typography
+								variant="caption"
+								noWrap
+								title={`${check.label}: ${check.status}`}
+								sx={{ color: isInvalid ? 'error.main' : 'text.secondary', fontWeight: 600 }}
+							>
+								{check.label}
+							</Typography>
+						</Stack>
+					);
+				})}
+			</Box>
+		</Stack>
+	);
+}
+
+ValidationChecklist.propTypes = {
+	checks: PropTypes.arrayOf(PropTypes.shape({
+		id: PropTypes.string.isRequired,
+		label: PropTypes.string.isRequired,
+		status: PropTypes.oneOf(['pending', 'valid', 'invalid']).isRequired,
+	})).isRequired,
+};
+
+function RunSummary({ stats }) {
+	const skipped = getSkippedScrapeCount(stats);
+	const totals = [
+		{ label: 'Registered', value: stats.registered, color: 'success.main' },
+		{ label: 'Skipped', value: skipped, color: 'warning.main' },
+		{ label: 'Failed', value: stats.failed, color: 'error.main' },
+	];
+
+	return (
+		<Stack spacing={1.25} sx={{ width: '100%' }}>
+			<Typography variant="caption" sx={{ color: 'text.primary', fontWeight: 700 }}>
+				Run results
+			</Typography>
+			<Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 0.75 }}>
+				{totals.map(({ label, value, color }) => (
+					<Box
+						key={label}
+						sx={{
+							px: 0.75,
+							py: 1,
+							textAlign: 'center',
+							borderRadius: 1.5,
+							bgcolor: 'rgba(255, 255, 255, 0.025)',
+						}}
+					>
+						<Typography sx={{ color, fontSize: '1rem', fontWeight: 800, lineHeight: 1.1 }}>
+							{value}
+						</Typography>
+						<Typography sx={{ color: 'text.secondary', fontSize: '0.625rem', fontWeight: 700 }}>
+							{label}
+						</Typography>
+					</Box>
+				))}
+			</Box>
+			<Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'center' }}>
+				Duplicates {stats.duplicate} · Validation {stats.validation} · Blocked {stats.blocked}
+			</Typography>
+		</Stack>
+	);
+}
+
+RunSummary.propTypes = {
+	stats: PropTypes.shape({
+		registered: PropTypes.number.isRequired,
+		duplicate: PropTypes.number.isRequired,
+		validation: PropTypes.number.isRequired,
+		blocked: PropTypes.number.isRequired,
+		failed: PropTypes.number.isRequired,
+	}).isRequired,
+};
+
 const ScrapComponent = () => {
 	const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 	const [progress, setProgress] = useState(0);
 	const [scrapFlag, setScrapFlag] = useState(false);
+	const [validationChecks, setValidationChecks] = useState(pendingValidationChecklist);
+	const [runStats, setRunStats] = useState(createScrapeRunStats);
 
 	const { addListener, removeListener } = useRuntime();
 	const api = useApi(API_URL);
@@ -67,6 +222,16 @@ const ScrapComponent = () => {
 		notification.fail(err, { key: 'scrap-failure' });
 		if (fallback) console.error(fallback, err);
 	}, [notification]);
+
+	const completeValidation = useCallback((ruleIds, partialJob) => {
+		setValidationChecks((current) => (
+			mergeJobValidationChecklist(current, partialJob, ruleIds)
+		));
+	}, []);
+
+	const recordOutcome = useCallback((outcome) => {
+		setRunStats((current) => incrementScrapeRunStats(current, outcome));
+	}, []);
 
 	useEffect(() => {
 		const listener = (message) => {
@@ -86,6 +251,7 @@ const ScrapComponent = () => {
 	}, [addListener, removeListener]);
 
 	async function onClickListItem() {
+		setValidationChecks(pendingValidationChecklist());
 		handleClear();
 		handleHighlight("div", "class", "?index_job-card-main-flip1-?");
 		handleAction("div", "class", "?index_job-card-main-flip1-?", 0, "click", "");
@@ -107,6 +273,7 @@ const ScrapComponent = () => {
 		handleAction("img", "class", "?index_company-logo-img__?", 0, "fetch", null, "src", id);
 		const CompanyLogoComponent = await promise_logo;
 		const CompanyLogo = CompanyLogoComponent?.success ? (new DOMParser().parseFromString(CompanyLogoComponent.data, 'text/html')).querySelector('img')?.src : null;
+		completeValidation(['companyLogo'], { company: { logo: CompanyLogo || '' } });
 		handleClear();
 		setProgress(12);
 		await delay(100);
@@ -119,6 +286,7 @@ const ScrapComponent = () => {
 		const LinkComponent = await promise_applyLink;
 
 		const ApplyLink = LinkComponent?.success ? (new DOMParser().parseFromString(LinkComponent.data, 'text/html')).querySelector('a')?.href : null;
+		completeValidation(['applyLink'], { applyLink: ApplyLink || '' });
 		setProgress(15);
 		await delay(100);
 		handleClear();
@@ -128,6 +296,10 @@ const ScrapComponent = () => {
 		const promise_jobTag = new Promise((resolve) => pendingResolvers.current.set(id, resolve));
 		handleAction("div", "class", "?index_jobTag__?", 0, "fetch", null, "text", id);
 		const ApplicantsNumber = await promise_jobTag;
+		const parsedTags = ApplicantsNumber?.success
+			? ApplicantsNumber.data.split('\n').map((tag) => tag.trim()).filter(Boolean)
+			: [];
+		completeValidation(['tags'], { tags: parsedTags });
 		setProgress(20);
 		await delay(100);
 		handleClear();
@@ -147,6 +319,10 @@ const ScrapComponent = () => {
 			CompanyName = spans[0]?.innerText || null;
 			PublishTime = spans[1]?.innerText.replace(' · ', '') || null;
 		}
+		completeValidation(
+			['companyName', 'postedAgo'],
+			{ company: { name: CompanyName || '' }, postedAgo: PublishTime || '' },
+		);
 
 		setProgress(25);
 		await delay(100);
@@ -157,6 +333,7 @@ const ScrapComponent = () => {
 		const promise_jobTitle = new Promise((resolve) => pendingResolvers.current.set(id, resolve));
 		handleAction("h1", "class", "?index_job-title__?", 0, "fetch", null, "text", id);
 		const JobTitle = await promise_jobTitle;
+		completeValidation(['title'], { title: JobTitle?.success ? JobTitle.data : '' });
 		setProgress(30);
 		await delay(100);
 		handleClear();
@@ -178,6 +355,7 @@ const ScrapComponent = () => {
 				return acc;
 			}, {});
 		})();
+		completeValidation(['details'], { details: MetaTags });
 		setProgress(35);
 		await delay(100);
 		handleClear();
@@ -197,6 +375,7 @@ const ScrapComponent = () => {
 		handleAction("div", "class", "?index_companyTags?", 0, "fetch", null, "content", id);
 		const CompanyTagsComponent = await promise_companyTags;
 		const CompanyTags = CompanyTagsComponent?.success ? Array.from((new DOMParser().parseFromString(CompanyTagsComponent.data, 'text/html')).querySelectorAll('span.ant-tag')).map(span => span.innerText) : [];
+		completeValidation(['companyTags'], { company: { tags: CompanyTags } });
 		setProgress(45);
 		await delay(100);
 		handleClear();
@@ -224,6 +403,12 @@ const ScrapComponent = () => {
 		const promise_sectionContent3 = new Promise((resolve) => pendingResolvers.current.set(id, resolve));
 		handleAction("section", "class", "?index_sectionContent__?", 4, "fetch", null, "text", id);
 		const Benefits = await promise_sectionContent3;
+		const Description = [
+			Responsibilities?.success ? Responsibilities.data : '',
+			Qualification?.success ? Qualification.data : '',
+			Benefits?.success ? Benefits.data : '',
+		].filter(Boolean).join('\n\n');
+		completeValidation(['description'], { description: Description });
 		setProgress(60);
 		await delay(100);
 		handleClear();
@@ -234,6 +419,7 @@ const ScrapComponent = () => {
 		handleAction("div", "class", "?index_skill-matching-tags-area__?", 0, "fetch", null, "text", id);
 		const SkillMatching = await promise_skill_matching;
 		const Skills = SkillMatching?.success ? SkillMatching.data.split('\n').map(s => s.trim()).filter(Boolean) : [];
+		completeValidation(['skills'], { skills: Skills });
 		setProgress(65);
 		handleClear();
 		await delay(250);
@@ -249,6 +435,7 @@ const ScrapComponent = () => {
 		const CompanyLinkUrl = CompanyLink?.success
 			? (new DOMParser().parseFromString(CompanyLink.data, 'text/html')).querySelector('a')?.href || ""
 			: "";
+		completeValidation(['companyLink'], { companyLink: CompanyLinkUrl });
 		setProgress(75);
 		handleClear();
 		await delay(250);
@@ -279,12 +466,6 @@ const ScrapComponent = () => {
 			}
 		}
 
-		const parseApplicantsTags = (data) => {
-			return data.split('\n').map(tag => tag.trim()).filter(tag => tag);
-		};
-
-		const parsedTags = ApplicantsNumber?.success ? parseApplicantsTags(ApplicantsNumber.data) : [];
-
 		const resultData = {
 			applyLink: ApplyLink || "",
 			id: Date.now(),
@@ -298,17 +479,30 @@ const ScrapComponent = () => {
 			title: JobTitle?.success ? JobTitle.data : "",
 			details: MetaTags || {},
 			applicants: ApplicantsNumber?.success ? { count: parseInt(ApplicantsNumber.data.match(/\d+/)?.[0] || "0", 10), text: ApplicantsNumber.data } : { count: 0, text: "" },
-			description: [Responsibilities?.success ? Responsibilities.data : "", Qualification?.success ? Qualification.data : "", Benefits?.success ? Benefits.data : ""].filter(s => s).join("\n\n"),
+			description: Description,
 			skills: Skills || [],
 			companyLink: CompanyLinkUrl,
 		};
 
 		console.log('Scraped job data:', resultData);
+		setValidationChecks(getJobValidationChecklist(resultData));
 		assertCompleteJob(resultData);
 
 		try {
-			await api.post('/jobs', resultData);
-			notification.success('Job saved to backend');
+			const saveResult = await api.post('/jobs', resultData);
+			const outcome = classifyJobSaveResult(saveResult);
+			if (outcome === SCRAPE_OUTCOMES.REGISTERED) {
+				recordOutcome(outcome);
+				notification.success('Job registered successfully');
+			} else if (outcome === SCRAPE_OUTCOMES.DUPLICATE) {
+				recordOutcome(outcome);
+				notification.info(saveResult.reason || 'Duplicate job skipped');
+			} else if (outcome === SCRAPE_OUTCOMES.BLOCKED) {
+				recordOutcome(outcome);
+				notification.warning(saveResult.reason || 'Job skipped by a blocking rule');
+			} else {
+				throw new Error(saveResult?.reason || saveResult?.error || 'Backend did not register the job');
+			}
 		} catch (err) {
 			notifyFailure(err, 'Failed to save job');
 			throw err;
@@ -328,11 +522,13 @@ const ScrapComponent = () => {
 					await onClickListItem();
 				} catch (err) {
 					if (err instanceof IncompleteJobDataError) {
+						recordOutcome(SCRAPE_OUTCOMES.VALIDATION);
 						console.warn('Skipping job with invalid data', err.issues);
 						setProgress(0);
 						handleClear();
 						continue;
 					}
+					recordOutcome(SCRAPE_OUTCOMES.FAILED);
 					notifyFailure(err, 'Error in scrape loop');
 				}
 			}
@@ -345,19 +541,23 @@ const ScrapComponent = () => {
 		return () => {
 			active = false;
 		};
-	}, [scrapFlag, notifyFailure]);
+	}, [scrapFlag, notifyFailure, recordOutcome]);
 
 	const onScrapStart = () => {
 		if (!api.baseUrl) {
 			notifyFailure(new Error('API base URL is not configured'));
 			return;
 		}
+		setRunStats(createScrapeRunStats());
+		setValidationChecks(pendingValidationChecklist());
+		setProgress(0);
 		setScrapFlag(true);
 	};
 
 	const onScrapStop = () => {
 		setScrapFlag(false);
 		setProgress(0);
+		setValidationChecks(pendingValidationChecklist());
 	};
 
 	return (
@@ -374,12 +574,10 @@ const ScrapComponent = () => {
 				<Divider />
 
 				<Stack
-					direction="row"
 					spacing={2}
-					justifyContent="center"
 					alignItems="center"
 					sx={{
-						py: 2.5,
+						p: 2,
 						borderRadius: 3,
 						bgcolor: 'secondary.main',
 						border: '1px solid',
@@ -387,6 +585,9 @@ const ScrapComponent = () => {
 					}}
 				>
 					<CircularProgressWithLabel size={72} value={progress} thickness={4} />
+					<ValidationChecklist checks={validationChecks} />
+					<Divider flexItem />
+					<RunSummary stats={runStats} />
 				</Stack>
 
 				<Stack direction="row" spacing={1.5}>

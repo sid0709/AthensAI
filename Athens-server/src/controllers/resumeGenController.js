@@ -18,7 +18,10 @@ import {
   EMPTY_USAGE,
   resolveDefaultModel,
 } from "../services/llm/llmService.js";
-import { loadDecryptedAutoBidProfile } from "../services/autoBidProfileSecrets.js";
+import {
+  loadDecryptedAutoBidProfile,
+  loadLlmAutoBidProfile,
+} from "../services/autoBidProfileSecrets.js";
 import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.js";
 import { migrateGeneratorConfig } from "../services/resumeGeneratorConfigSchema.js";
 import {
@@ -217,7 +220,7 @@ function throwIfAborted(signal) {
 
 /** Resolve an applier's autoBidProfile (exact, then case-insensitive). */
 async function findProfile(applierNameRaw) {
-  return loadDecryptedAutoBidProfile(applierNameRaw);
+  return loadLlmAutoBidProfile(applierNameRaw);
 }
 
 function apiKeyFor(profile, providerId) {
