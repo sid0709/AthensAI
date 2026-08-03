@@ -149,8 +149,8 @@ export function StepCard({
         <span className="text-[11px] leading-snug text-neutral-500 dark:text-white/60">
           <span className="font-medium text-neutral-700 dark:text-white/80">Skip for structured jobs</span> — don't
           run this step for Job Search / Agent runs, where the job already carries fetched skills. Reference them in a
-          later prompt via <code className="text-sky-600 dark:text-sky-300">{"{job_skills}"}</code>. Free-text
-          generation on this page always runs the step.
+          later prompt via <code className="text-sky-600 dark:text-sky-300">{"{job_skills}"}</code>. In this Editor,
+          that token resolves from the current Skill Coverage. Free-text generation on this page always runs the step.
         </span>
       </label>
 

@@ -560,6 +560,7 @@ const AthensApi = (() => {
       page: String(Math.max(1, Number(options.page) || 1)),
       pageSize: String(Math.min(50, Math.max(1, Number(options.pageSize) || 20))),
     });
+    if (options.label) params.set('label', String(options.label));
     if (options.force) params.set('force', 'true');
     return fetchJson(`/mail/threads?${params}`, {
       timeoutMs: options.force ? 30000 : QUEUE_TIMEOUT_MS,
@@ -574,16 +575,6 @@ const AthensApi = (() => {
     const params = new URLSearchParams({ applierName: name, folder: String(folder || 'inbox') });
     return fetchJson(`/mail/messages/${encodeURIComponent(messageUid)}?${params}`, {
       timeoutMs: 30000,
-    });
-  }
-
-  async function fetchMailFolderCounts(applierName, force = false) {
-    const name = String(applierName || '').trim();
-    if (!name) throw new Error('Athens applier name is required.');
-    const params = new URLSearchParams({ applierName: name });
-    if (force) params.set('force', 'true');
-    return fetchJson(`/mail/folder-counts?${params}`, {
-      timeoutMs: force ? 30000 : QUEUE_TIMEOUT_MS,
     });
   }
 
@@ -627,7 +618,6 @@ const AthensApi = (() => {
     checkMailCredentials,
     fetchMailThreads,
     fetchMailMessage,
-    fetchMailFolderCounts,
     blobToBase64,
     mapTaskToJob,
   };

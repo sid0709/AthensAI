@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 
 /** Bump when prompting, validation, or reconciliation rules change. */
-export const TITLE_POLICY_VERSION = 2;
+export const TITLE_POLICY_VERSION = 3;
 
 const cleanString = (v) => String(v ?? "").trim();
 
@@ -63,7 +63,8 @@ export function buildExperienceTitleGuidance({ dynamicCareerTitles, jobDescripti
 TITLE POLICY (mandatory — dynamic career titles disabled):
 - Keep each experience job title EXACTLY as given in the candidate profile / Profile Settings.
 - Do not rename, rephrase, shorten, expand, or tailor titles to the job description.
-- You may rewrite bullets only; company names and dates stay as given.`;
+- You may rewrite bullets only; company names and dates stay as given.
+- Return every profile role in order with at least one substantive bullet grounded in that role's profile description.`;
   }
 
   const jd = cleanString(jobDescription) || "(no job description provided)";
@@ -86,6 +87,7 @@ ${sequence}
 
 Rules for job titles:
 - Return exactly one experience object per role above, in the same order.
+- Give every role at least one substantive bullet grounded in that role's own profile description.
 - Propose one concise, conventional résumé title per role (e.g. "Senior Backend Engineer").
 - Align specialization to that role's responsibilities and the target JD when supported by the experience.
 - You may infer seniority freely, but the overall sequence must remain humanly plausible chronologically.
@@ -106,6 +108,14 @@ function experienceListFromSection(section) {
   return [];
 }
 
+function identityKey(value) {
+  return cleanString(value)
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
 /**
  * Reconcile model Experience JSON against Profile careers.
  * - Always preserve career count/order, company, and dates from Profile Settings.
@@ -116,9 +126,37 @@ function experienceListFromSection(section) {
 export function reconcileExperienceTitles(section, identity, dynamicCareerTitles) {
   const careers = sourceCareers(identity);
   const modelList = experienceListFromSection(section);
+  const unusedModelRows = new Set(modelList.map((_, index) => index));
+  const sourceCompanyKeys = new Set(careers.map((career) => identityKey(career?.company)).filter(Boolean));
+  const hasAnyCompanyMatch = modelList.some((row) => sourceCompanyKeys.has(identityKey(row?.company)));
+
+  const takeModelRow = (career, careerIndex) => {
+    const companyKey = identityKey(career?.company);
+    const periodKey = identityKey(career?.period);
+    const companyMatches = [...unusedModelRows].filter((index) => (
+      companyKey && identityKey(modelList[index]?.company) === companyKey
+    ));
+    if (companyMatches.length) {
+      const periodMatch = companyMatches.find((index) => (
+        periodKey && identityKey(modelList[index]?.period) === periodKey
+      ));
+      const index = periodMatch ?? companyMatches[0];
+      unusedModelRows.delete(index);
+      return modelList[index];
+    }
+
+    const positional = modelList[careerIndex];
+    if (!unusedModelRows.has(careerIndex)) return {};
+    const positionalCompany = identityKey(positional?.company);
+    // When at least one model company is trustworthy, an explicitly different
+    // company means this career was omitted; do not shift another role's bullets.
+    if (positionalCompany && hasAnyCompanyMatch) return {};
+    unusedModelRows.delete(careerIndex);
+    return positional && typeof positional === "object" ? positional : {};
+  };
 
   const experiences = careers.map((career, i) => {
-    const model = modelList[i] && typeof modelList[i] === "object" ? modelList[i] : {};
+    const model = takeModelRow(career, i);
     const sourceTitle = cleanString(career?.title);
     let title = sourceTitle;
     if (dynamicCareerTitles) {

@@ -19,6 +19,13 @@ import {
 } from "lucide-react";
 import { Field, Dropdown } from "../adapters/ui";
 import { Checkbox } from "@/app/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
 import { DesignModal } from "../components/design-modal";
 import { SectionLayoutPanel, TemplatePanel, ThemePanel } from "../components/document-design-panels";
 import { PreviewToolbar, type DesignPanel } from "../components/preview-toolbar";
@@ -32,10 +39,27 @@ import { JOB_DESC_TOKEN } from "../constants/tokens";
 import { FALLBACK_MODELS, PROVIDER_OPTIONS, REASONING_OPTIONS } from "../constants/defaults";
 import { areaCls, cardCls, inputCls } from "../styles";
 import { fmtCost, fmtTokens, stepOutputText } from "../utils/format";
+import { defaultCoverageDecision } from "../utils/coverage";
+import { resolvePromptTokens } from "../utils/prompt-tokens";
 import { usageTokenLabels } from "../../../agents/lib/runUsage";
 import type { GeneratorPageVm } from "../hooks/use-generator-page";
-import type { ProviderId, Purpose, ReasoningEffort } from "../types";
+import type { CoverageDecision, ProviderId, Purpose, ReasoningEffort } from "../types";
 import { PURPOSES, SECTION_LABEL } from "../types";
+
+const COVERAGE_CHIP: Record<CoverageDecision, { label: string; className: string }> = {
+  used: {
+    label: "Used",
+    className: "border-sky-300 bg-sky-100 text-sky-700 hover:bg-sky-200 dark:border-sky-400/30 dark:bg-sky-500/15 dark:text-sky-200 dark:hover:bg-sky-500/25",
+  },
+  familiar: {
+    label: "Familiar only",
+    className: "border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:border-emerald-400/30 dark:bg-emerald-500/15 dark:text-emerald-200 dark:hover:bg-emerald-500/25",
+  },
+  exclude: {
+    label: "Not used",
+    className: "border-rose-300 bg-rose-100 text-rose-700 hover:bg-rose-200 dark:border-rose-400/30 dark:bg-rose-500/15 dark:text-rose-200 dark:hover:bg-rose-500/25",
+  },
+};
 
 export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
   const {
@@ -93,7 +117,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     coverageDecisions,
     coverageAudit,
     coverageIsCurrent,
-    unresolvedCoverageSkills,
     setCoverageDecision,
     runCoverageAnalysis,
     configHydrated,
@@ -101,10 +124,16 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
 
   const [designPanel, setDesignPanel] = useState<DesignPanel | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
-  const exceptionSkills = coverageIsCurrent
-    ? (coverageAnalysis?.skills ?? []).filter((skill) => skill.evidenceStatus === "unverified")
-    : [];
-
+  const resolvedSystemInstruction = resolvePromptTokens(config.systemInstruction, tokenValues);
+  const resolvedPlan = plan.map((step) => ({
+    ...step,
+    prompt: resolvePromptTokens(step.prompt, tokenValues),
+  }));
+  const resolvedRequestPayload = {
+    ...requestPayload,
+    systemInstruction: resolvedSystemInstruction,
+    steps: resolvedPlan,
+  };
   const openDesignPanel = (panel: DesignPanel) => setDesignPanel(panel);
   const closeDesignPanel = () => setDesignPanel(null);
 
@@ -198,7 +227,13 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                 { label: "Career profile", ready: Boolean(identity), detail: identity ? `${identity.careers.length} roles loaded` : "Waiting for profile" },
                 { label: "Resume config", ready: configHydrated, detail: configHydrated ? "v3 loaded & autosaved" : "Loading saved config" },
                 { label: "JD skill ledger", ready: coverageIsCurrent, detail: coverageIsCurrent ? `${coverageAnalysis?.skills.length ?? 0} skills mapped` : "Runs automatically" },
-                { label: "Coverage audit", ready: coverageAudit?.passed === true, detail: coverageAudit ? `${coverageAudit.coveredCount}/${coverageAudit.requiredCount} placements` : "Runs after generation" },
+                {
+                  label: "Resume quality",
+                  ready: coverageAudit?.passed === true,
+                  detail: coverageAudit
+                    ? `${coverageAudit.coveredCount}/${coverageAudit.requiredCount} skill placements · ${coverageAudit.completeRoleCount ?? 0}/${coverageAudit.requiredRoleCount ?? identity?.careers.length ?? 0} roles`
+                    : "Runs after generation",
+                },
               ].map((item) => (
                 <div key={item.label} className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
                   <div className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-white/75">
@@ -419,7 +454,9 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               icon={ShieldCheck}
               right={coverageAudit ? (
                 <span className={`text-xs ${coverageAudit.passed ? "text-emerald-500" : "text-rose-500"}`}>
-                  {coverageAudit.passed ? "audit passed" : `${coverageAudit.missing.length} missing`}
+                  {coverageAudit.passed
+                    ? "audit passed"
+                    : `${coverageAudit.missing.length + (coverageAudit.violations?.length ?? 0) + (coverageAudit.careerIssues?.length ?? 0)} issues`}
                 </span>
               ) : undefined}
             >
@@ -432,7 +469,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               </p>
             ) : analyzingCoverage ? (
               <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-xs text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200">
-                <Loader2 className="h-4 w-4 animate-spin" /> Extracting the exhaustive JD skill ledger and checking profile evidence…
+                <Loader2 className="h-4 w-4 animate-spin" /> Extracting named JD skills and checking profile evidence…
               </div>
             ) : !coverageIsCurrent ? (
               <div className="rounded-xl border border-dashed border-neutral-300 p-4 text-center dark:border-white/15">
@@ -449,86 +486,58 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                 </button>
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="rounded-md bg-emerald-500/10 px-2 py-1 text-emerald-600 dark:text-emerald-300">
-                    {coverageAnalysis?.skills.filter((skill) => skill.evidenceStatus === "verified").length ?? 0} profile-verified
-                  </span>
-                  <span className={`rounded-md px-2 py-1 ${unresolvedCoverageSkills.length ? "bg-amber-500/10 text-amber-600 dark:text-amber-300" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"}`}>
-                    {unresolvedCoverageSkills.length ? `${unresolvedCoverageSkills.length} need review` : "all exceptions resolved"}
-                  </span>
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-neutral-500 dark:text-white/45">
+                  <span>Priority {config.coverage.experienceRequirementThreshold}+ defaults to Used; lower priorities to Familiar. Click a chip to change it.</span>
                   <button type="button" onClick={() => void runCoverageAnalysis()} className="ml-auto text-sky-600 hover:underline dark:text-sky-300">
                     Reanalyze
                   </button>
                 </div>
 
-                <details className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
-                  <summary className="cursor-pointer text-[11px] font-medium text-neutral-600 dark:text-white/60">
-                    View full placement ledger ({coverageAnalysis?.skills.length ?? 0})
-                  </summary>
-                  <div className="mt-2 space-y-1.5">
-                    {(coverageAnalysis?.skills ?? []).map((skill) => {
-                      const decision = coverageDecisions[skill.id] ?? skill.decision;
-                      const placement = decision === "exclude"
-                        ? "Excluded"
-                        : decision === "familiar"
-                          ? "Skills only"
-                          : decision === "used"
-                            ? skill.requirement >= config.coverage.experienceRequirementThreshold
-                              ? "Skills + Experience"
-                              : "Skills"
-                            : "Needs review";
-                      return (
-                        <div key={skill.id} className="flex items-center gap-2 text-[10.5px]">
-                          <span className="min-w-0 flex-1 truncate font-medium text-neutral-700 dark:text-white/70">{skill.name}</span>
-                          <span className="text-neutral-400 dark:text-white/40">{skill.evidenceStatus === "verified" ? "profile evidence" : decision || "unverified"}</span>
-                          <span className={`rounded px-1.5 py-0.5 ${placement === "Needs review" ? "bg-amber-500/10 text-amber-600 dark:text-amber-300" : placement === "Excluded" ? "bg-neutral-200 text-neutral-500 dark:bg-white/10 dark:text-white/45" : "bg-sky-500/10 text-sky-600 dark:text-sky-300"}`}>{placement}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </details>
-
-                {exceptionSkills.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
-                      These terms appear in the JD but not in your saved career descriptions. Confirm only what is truthful.
-                    </p>
-                    {exceptionSkills.map((skill) => (
-                      <div key={skill.id} className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-500/20 dark:bg-amber-500/[0.06]">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-xs font-semibold text-neutral-800 dark:text-white/85">{skill.name}</div>
-                            <div className="mt-0.5 line-clamp-2 text-[10px] text-neutral-500 dark:text-white/45">{skill.sourceText}</div>
-                          </div>
-                          <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] text-neutral-500 dark:bg-white/10 dark:text-white/50">priority {skill.requirement}/5</span>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {([
-                            ["used", "Used"],
-                            ["familiar", "Familiar only"],
-                            ["exclude", "Not used"],
-                          ] as const).map(([decision, label]) => (
-                            <button
-                              key={decision}
-                              type="button"
-                              onClick={() => setCoverageDecision(skill.id, decision)}
-                              className={`rounded-lg border px-2.5 py-1 text-[11px] transition ${coverageDecisions[skill.id] === decision ? "border-sky-400 bg-sky-500/10 text-sky-700 dark:text-sky-200" : "border-neutral-200 bg-white hover:bg-neutral-50 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"}`}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div className="flex flex-wrap gap-1.5">
+                  {(coverageAnalysis?.skills ?? []).map((skill) => {
+                    const decision = coverageDecisions[skill.id]
+                      ?? defaultCoverageDecision(skill, config.coverage.experienceRequirementThreshold);
+                    const chip = COVERAGE_CHIP[decision];
+                    return (
+                      <DropdownMenu key={skill.id}>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10.5px] font-medium transition ${chip.className}`}
+                            aria-label={`${skill.name}: ${chip.label}. Click to choose a status.`}
+                            title={`${skill.name} — ${chip.label} — priority ${skill.requirement}/5. ${skill.sourceText}`}
+                          >
+                            {skill.name}
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="min-w-36">
+                          <DropdownMenuRadioGroup
+                            value={decision}
+                            onValueChange={(value) => setCoverageDecision(skill.id, value as CoverageDecision)}
+                          >
+                            {(Object.entries(COVERAGE_CHIP) as Array<[CoverageDecision, (typeof COVERAGE_CHIP)[CoverageDecision]]>)
+                              .map(([value, option]) => (
+                                <DropdownMenuRadioItem key={value} value={value}>
+                                  {option.label}
+                                </DropdownMenuRadioItem>
+                              ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    );
+                  })}
+                </div>
 
                 {coverageAudit && (
                   <div className={`rounded-xl border px-3 py-2 text-[11px] ${coverageAudit.passed ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200" : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200"}`}>
                     {coverageAudit.passed
-                      ? `Validated all ${coverageAudit.requiredCount} required section placements.`
-                      : `Still missing: ${coverageAudit.missing.map((item) => `${item.skill} (${item.section})`).join(", ")}`}
+                      ? `Validated all ${coverageAudit.requiredCount} required skill placements and ${coverageAudit.completeRoleCount ?? 0} career roles.`
+                      : `Still unresolved: ${[
+                          ...coverageAudit.missing.map((item) => `missing ${item.skill} (${item.section})`),
+                          ...(coverageAudit.violations ?? []).map((item) => `forbidden ${item.skill} (${item.section})`),
+                          ...(coverageAudit.careerIssues ?? []).map((item) => `no substantive bullets for ${item.company || item.title || `role #${item.index + 1}`}`),
+                        ].join(", ")}`}
                   </div>
                 )}
               </div>
@@ -557,7 +566,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                 </span>
               </label>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Experience priority threshold">
+                <Field label="Used + experience priority threshold">
                   <select
                     className={inputCls}
                     value={config.coverage.experienceRequirementThreshold}
@@ -708,15 +717,15 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               <div className="mt-4 pt-4 border-t border-neutral-200 dark:border-white/10">
                 {planJson ? (
                   <pre className="max-h-96 overflow-auto rounded-xl bg-neutral-950 text-neutral-100 text-xs p-4 leading-relaxed">
-                    {JSON.stringify(requestPayload, null, 2)}
+                    {JSON.stringify(resolvedRequestPayload, null, 2)}
                   </pre>
                 ) : (
                   <ol className="space-y-2.5">
                     <li className="rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-white/[0.03] p-3">
                       <div className="text-[10px] uppercase tracking-wider text-neutral-400 dark:text-white/40 mb-1">System instruction</div>
-                      <div className="text-xs text-neutral-600 dark:text-white/60 line-clamp-3 whitespace-pre-wrap">{config.systemInstruction}</div>
+                      <div className="max-h-40 overflow-auto text-xs text-neutral-600 dark:text-white/60 whitespace-pre-wrap">{resolvedSystemInstruction}</div>
                     </li>
-                    {plan.map((s) => (
+                    {resolvedPlan.map((s) => (
                       <li key={s.index} className="rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-white/[0.03] p-3">
                         <div className="flex items-center gap-2 mb-1.5">
                           <span className="grid place-items-center w-5 h-5 rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-300 text-[10px] font-medium tabular-nums">{s.index}</span>
@@ -726,7 +735,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                             {s.kind === "final" ? "final · schema" : "fine-tune"}
                           </span>
                         </div>
-                        <div className="text-[11px] text-neutral-600 dark:text-white/60 whitespace-pre-wrap">{s.prompt}</div>
+                        <div className="max-h-64 overflow-auto text-[11px] text-neutral-600 dark:text-white/60 whitespace-pre-wrap">{s.prompt}</div>
                         {"schema" in s && (
                           <details className="mt-1.5">
                             <summary className="text-[10px] text-neutral-400 dark:text-white/40 cursor-pointer">output schema</summary>

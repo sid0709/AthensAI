@@ -32,7 +32,6 @@ const mailDetailView = document.getElementById('mailDetailView');
 const mailList = document.getElementById('mailList');
 const mailStatus = document.getElementById('mailStatus');
 const mailAccount = document.getElementById('mailAccount');
-const mailFolderSelect = document.getElementById('mailFolderSelect');
 const refreshMailBtn = document.getElementById('refreshMailBtn');
 const mailCountBadge = document.getElementById('mailCountBadge');
 const mailPagination = document.getElementById('mailPagination');
@@ -44,6 +43,7 @@ const mailDetailSubject = document.getElementById('mailDetailSubject');
 const mailDetailFrom = document.getElementById('mailDetailFrom');
 const mailDetailDate = document.getElementById('mailDetailDate');
 const mailDetailLabels = document.getElementById('mailDetailLabels');
+const mailDetailFrame = document.getElementById('mailDetailFrame');
 const mailDetailBody = document.getElementById('mailDetailBody');
 const applySessionView = document.getElementById('applySessionView');
 const applyJobCompany = document.getElementById('applyJobCompany');
@@ -131,7 +131,6 @@ let workspacePage = 'ready';
 let rejectedJobs = [];
 let rejectedLoading = false;
 let mailThreads = [];
-let mailFolder = 'inbox';
 let mailPage = 1;
 let mailPageSize = 20;
 let mailTotal = 0;
@@ -1502,6 +1501,71 @@ function mailHtmlToText(value) {
   }
 }
 
+function sanitizeMailHtml(value) {
+  if (!value) return '';
+  try {
+    const doc = new DOMParser().parseFromString(String(value), 'text/html');
+    doc
+      .querySelectorAll('script, iframe, object, embed, form, input, button, textarea, select, meta, base, link')
+      .forEach((node) => node.remove());
+    doc.querySelectorAll('*').forEach((node) => {
+      for (const attribute of [...node.attributes]) {
+        const name = attribute.name.toLowerCase();
+        const content = attribute.value.trim();
+        if (name.startsWith('on') || name === 'srcdoc') {
+          node.removeAttribute(attribute.name);
+        } else if (
+          ['href', 'src', 'xlink:href', 'action', 'formaction'].includes(name) &&
+          /^(?:javascript|vbscript):/i.test(content)
+        ) {
+          node.removeAttribute(attribute.name);
+        }
+      }
+      if (node.tagName === 'A') {
+        node.setAttribute('target', '_blank');
+        node.setAttribute('rel', 'noopener noreferrer');
+      }
+      if (node.tagName === 'IMG') {
+        node.setAttribute('loading', 'lazy');
+        node.setAttribute('referrerpolicy', 'no-referrer');
+      }
+    });
+    const embeddedStyles = [...doc.head.querySelectorAll('style')]
+      .map((node) => node.outerHTML)
+      .join('');
+    return `${embeddedStyles}${doc.body?.innerHTML || ''}`;
+  } catch {
+    return '';
+  }
+}
+
+function renderMailHtml(value) {
+  const safeHtml = sanitizeMailHtml(value);
+  if (!safeHtml || !mailDetailFrame) return false;
+  mailDetailFrame.srcdoc = `<!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; font-src https: data:;">
+        <style>
+          :root { color-scheme: light; }
+          * { box-sizing: border-box; }
+          html, body { width: 100%; min-width: 0; margin: 0; padding: 0; }
+          body { padding: 14px; background: #fff; color: #1f2937; font: 14px/1.55 Arial, Helvetica, sans-serif; overflow-wrap: anywhere; }
+          img { max-width: 100% !important; height: auto !important; }
+          table { max-width: 100% !important; }
+          pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+          a { color: #0f766e; }
+        </style>
+      </head>
+      <body>${safeHtml}</body>
+    </html>`;
+  mailDetailFrame.classList.remove('hidden');
+  mailDetailBody?.classList.add('hidden');
+  return true;
+}
+
 function renderMailList() {
   if (!mailList) return;
   mailList.innerHTML = '';
@@ -1519,10 +1583,10 @@ function renderMailList() {
     li.textContent = 'Add your Gmail address and app password in Athens → Settings → Profile.';
     mailList.appendChild(li);
   } else if (!mailThreads.length) {
-    setMailStatus(`No messages in ${mailFolderSelect?.selectedOptions?.[0]?.text || 'this folder'}.`);
+    setMailStatus('No messages with the Notify/Unnecessary label.');
     const li = document.createElement('li');
     li.className = 'mail-empty';
-    li.textContent = 'No messages found.';
+    li.textContent = 'No Gmail messages are labeled Notify/Unnecessary.';
     mailList.appendChild(li);
   } else {
     const start = (mailPage - 1) * mailPageSize + 1;
@@ -1554,20 +1618,6 @@ function renderMailList() {
   mailList.querySelectorAll('[data-mail-uid]').forEach((button) => {
     button.addEventListener('click', () => openMailMessage(button.dataset.mailUid));
   });
-}
-
-async function loadMailCounts(force = false) {
-  try {
-    const response = await sendMessage({ type: 'GET_MAIL_FOLDER_COUNTS', force });
-    if (!response?.ok) return;
-    const unread = Math.max(0, Number(response.counts?.inbox?.unread) || 0);
-    if (mailCountBadge) {
-      mailCountBadge.textContent = unread > 99 ? '99+' : String(unread);
-      mailCountBadge.classList.toggle('hidden', unread === 0);
-    }
-  } catch {
-    // Mail remains usable even if folder counts are temporarily unavailable.
-  }
 }
 
 async function loadMailbox({ force = false } = {}) {
@@ -1602,7 +1652,6 @@ async function loadMailbox({ force = false } = {}) {
 
     const response = await sendMessage({
       type: 'GET_MAIL_THREADS',
-      folder: mailFolder,
       page: mailPage,
       pageSize: mailPageSize,
       force,
@@ -1614,7 +1663,10 @@ async function loadMailbox({ force = false } = {}) {
     mailPage = Math.max(1, Number(response.page) || mailPage);
     mailPageSize = Math.max(1, Number(response.pageSize) || mailPageSize);
     mailLoaded = true;
-    void loadMailCounts(force);
+    if (mailCountBadge) {
+      mailCountBadge.textContent = mailTotal > 99 ? '99+' : String(mailTotal);
+      mailCountBadge.classList.toggle('hidden', mailTotal === 0);
+    }
   } catch (err) {
     if (token !== mailLoadToken) return;
     mailThreads = [];
@@ -1644,13 +1696,20 @@ async function openMailMessage(uid) {
   if (mailDetailFrom) mailDetailFrom.textContent = '';
   if (mailDetailDate) mailDetailDate.textContent = '';
   if (mailDetailLabels) mailDetailLabels.replaceChildren();
-  if (mailDetailBody) mailDetailBody.textContent = 'Loading…';
+  if (mailDetailFrame) {
+    mailDetailFrame.classList.add('hidden');
+    mailDetailFrame.removeAttribute('srcdoc');
+  }
+  if (mailDetailBody) {
+    mailDetailBody.classList.remove('hidden');
+    mailDetailBody.textContent = 'Loading…';
+  }
 
   try {
     const response = await sendMessage({
       type: 'GET_MAIL_MESSAGE',
       uid: threadId,
-      folder: mailFolder,
+      folder: 'inbox',
     });
     if (!response?.ok || !response.thread) {
       throw new Error(response?.error || 'Could not open this message.');
@@ -1673,7 +1732,8 @@ async function openMailMessage(uid) {
         mailDetailLabels.appendChild(chip);
       }
     }
-    if (mailDetailBody) {
+    if (!renderMailHtml(thread.bodyHtml) && mailDetailBody) {
+      mailDetailBody.classList.remove('hidden');
       mailDetailBody.textContent =
         String(thread.body || '').trim() ||
         mailHtmlToText(thread.bodyHtml) ||
@@ -1682,7 +1742,10 @@ async function openMailMessage(uid) {
     }
   } catch (err) {
     if (mailDetailSubject) mailDetailSubject.textContent = 'Could not open message';
-    if (mailDetailBody) mailDetailBody.textContent = err.message || 'Could not open this message.';
+    if (mailDetailBody) {
+      mailDetailBody.classList.remove('hidden');
+      mailDetailBody.textContent = err.message || 'Could not open this message.';
+    }
   }
 }
 
@@ -2091,12 +2154,6 @@ refreshRejectedBtn?.addEventListener('click', () => {
 
 refreshMailBtn?.addEventListener('click', () => {
   loadMailbox({ force: true }).catch(() => {});
-});
-
-mailFolderSelect?.addEventListener('change', () => {
-  mailFolder = mailFolderSelect.value || 'inbox';
-  mailPage = 1;
-  loadMailbox().catch(() => {});
 });
 
 mailPrevBtn?.addEventListener('click', () => {

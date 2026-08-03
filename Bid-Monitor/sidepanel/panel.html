@@ -240,16 +240,10 @@
         </div>
 
         <div id="mailListView">
-          <label class="mail-folder-label" for="mailFolderSelect">
-            Folder
-            <select id="mailFolderSelect" class="mail-folder-select">
-              <option value="inbox">Inbox</option>
-              <option value="sent">Sent</option>
-              <option value="drafts">Drafts</option>
-              <option value="spam">Spam</option>
-              <option value="trash">Trash</option>
-            </select>
-          </label>
+          <div class="mail-scope">
+            <span class="mail-scope-label">Gmail label</span>
+            <span class="mail-label-chip">Notify/Unnecessary</span>
+          </div>
           <p id="mailStatus" class="hint queue-hint" aria-live="polite">Open Mail to load your inbox.</p>
           <ul id="mailList" class="mail-list"></ul>
           <div id="mailPagination" class="mail-pagination hidden">
@@ -265,7 +259,14 @@
           <p id="mailDetailFrom" class="mail-detail-from"></p>
           <p id="mailDetailDate" class="mail-detail-date"></p>
           <div id="mailDetailLabels" class="mail-detail-labels"></div>
-          <pre id="mailDetailBody" class="mail-detail-body"></pre>
+          <iframe
+            id="mailDetailFrame"
+            class="mail-detail-frame hidden"
+            title="Email content"
+            sandbox="allow-popups allow-popups-to-escape-sandbox"
+            referrerpolicy="no-referrer"
+          ></iframe>
+          <pre id="mailDetailBody" class="mail-detail-body hidden"></pre>
         </article>
       </section>
 

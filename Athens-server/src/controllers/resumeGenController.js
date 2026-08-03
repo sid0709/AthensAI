@@ -26,6 +26,7 @@ import {
   auditResumeCoverage,
   normalizeResumeCoverageContract,
   resumeCoveragePrompt,
+  resumeCoverageRepairPrompt,
 } from "../services/resumeCoverageService.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import {
@@ -389,7 +390,7 @@ export async function prepareGeneration(body) {
   return { ok: true, providerId, model, steps, apiKey, isBeta, dynamicCareerTitles, coverageContract };
 }
 
-/** POST /personal/resume-generator/analyze — build the exception-only skill ledger. */
+/** POST /personal/resume-generator/analyze — build the named-skill coverage ledger. */
 export async function analyzeResumeCoverage(req, res) {
   try {
     const body = req.body || {};
@@ -414,6 +415,7 @@ export async function analyzeResumeCoverage(req, res) {
       jobDescription,
       identity,
       aliases: body.coverage?.aliases,
+      experienceRequirementThreshold: body.coverage?.experienceRequirementThreshold,
     });
     return res.json({ success: true, provider: providerId, model, ...result });
   } catch (error) {
@@ -594,17 +596,24 @@ export async function runGeneration({
   Object.assign(sections, applyTitlePolicyToSections(sections, identity, dynamicTitles));
 
   // Deterministic coverage is deliberately outside the writing prompts. If a
-  // required term is absent, rewrite only the affected section and re-audit;
-  // never rerun the whole resume pipeline.
-  let coverageAudit = auditResumeCoverage(sections, coverageContract);
-  const maxRepairAttempts = coverageContract?.maxRepairAttempts ?? 0;
+  // required placement is absent/malformed or a forbidden claim appears,
+  // rewrite only the affected section and re-audit; never rerun the pipeline.
+  let coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
+  const maxRepairAttempts = coverageContract?.maxRepairAttempts ?? 1;
   let repairIndex = steps.length;
   for (let attempt = 1; !coverageAudit.passed && attempt <= maxRepairAttempts; attempt += 1) {
-    const missingSections = [...new Set(coverageAudit.missing.map((item) => item.section))];
+    const affectedSections = [...new Set([
+      ...coverageAudit.missing.map((item) => item.section),
+      ...(coverageAudit.violations || []).map((item) => item.section),
+      ...((coverageAudit.careerIssues || []).length ? ["experience"] : []),
+    ])];
     for (const purpose of ["skills", "experience"]) {
-      if (!missingSections.includes(purpose)) continue;
+      if (!affectedSections.includes(purpose)) continue;
       throwIfAborted();
       const missing = coverageAudit.missing
+        .filter((item) => item.section === purpose)
+        .map((item) => item.skill);
+      const remove = (coverageAudit.violations || [])
         .filter((item) => item.section === purpose)
         .map((item) => item.skill);
       const finalDefinition = [...steps].reverse().find(
@@ -615,15 +624,19 @@ export async function runGeneration({
       if (onStep) onStep({
         phase: "step-start",
         index,
-        total: steps.length + missingSections.length,
+        total: steps.length + affectedSections.length,
         name,
         purpose,
         kind: "coverage-repair",
       });
-      let prompt = `The generated ${purpose} section failed deterministic keyword coverage.\n\nMissing exact canonical terms: ${missing.join(", ")}\n\nCurrent ${purpose} JSON:\n${JSON.stringify(sections[purpose] ?? {}, null, 2)}\n\nRewrite ONLY this section. Preserve correct existing content, employer names, dates, and factual boundaries. Add each missing term naturally in the placement required by the coverage contract. Return only the corrected JSON object.`;
-      if (finalDefinition?.schema) {
-        prompt += `\n\nReturn JSON conforming to this schema:\n${JSON.stringify(finalDefinition.schema)}`;
-      }
+      const prompt = resumeCoverageRepairPrompt({
+        purpose,
+        missing,
+        remove,
+        incompleteRoles: purpose === "experience" ? coverageAudit.careerIssues : [],
+        currentSection: sections[purpose],
+        schema: finalDefinition?.schema,
+      });
       const repair = await chatCompletion({
         provider: providerId,
         apiKey,
@@ -666,7 +679,19 @@ export async function runGeneration({
       perStep.push(entry);
       if (onStep) onStep({ phase: "step-done", ...entry });
     }
-    coverageAudit = auditResumeCoverage(sections, coverageContract);
+    coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
+  }
+  if (!coverageAudit.passed) {
+    const remaining = [
+      ...coverageAudit.missing.map((item) => `missing ${item.skill} (${item.section})`),
+      ...(coverageAudit.violations || []).map((item) => `forbidden ${item.skill} (${item.section})`),
+      ...(coverageAudit.careerIssues || []).map((item) => `incomplete role #${item.index + 1} ${item.company || item.title}`),
+    ]
+      .join(", ");
+    const error = new Error(`Resume quality gate failed: ${remaining || "required coverage is incomplete"}.`);
+    error.status = 502;
+    error.coverageAudit = coverageAudit;
+    throw error;
   }
   throwIfAborted();
   return {

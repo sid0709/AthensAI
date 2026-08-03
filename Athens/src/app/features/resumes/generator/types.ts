@@ -133,7 +133,7 @@ export type ResumeCoverageSkill = {
 };
 
 export type ResumeCoverageAnalysis = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   fingerprint: string;
   jobDescriptionHash: string;
   skills: ResumeCoverageSkill[];
@@ -144,6 +144,8 @@ export type ResumeCoverageAuditSection = {
   required: string[];
   found: string[];
   missing: string[];
+  forbidden?: string[];
+  incompleteRoles?: string[];
   passed: boolean;
 };
 
@@ -154,6 +156,22 @@ export type ResumeCoverageAudit = {
   coveredCount: number;
   sections: Partial<Record<"skills" | "experience", ResumeCoverageAuditSection>>;
   missing: { skillId: string; skill: string; section: "skills" | "experience" }[];
+  violations?: {
+    skillId: string;
+    skill: string;
+    section: "skills" | "experience";
+    reason: "excluded" | "familiar-only";
+  }[];
+  requiredRoleCount?: number;
+  completeRoleCount?: number;
+  careerIssues?: {
+    index: number;
+    company: string;
+    title: string;
+    period: string;
+    description: string;
+    reason: "missing-role" | "no-substantive-bullets";
+  }[];
 };
 
 export type GeneratorConfig = {

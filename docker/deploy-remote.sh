@@ -149,9 +149,9 @@ docker run -d \
   --restart unless-stopped \
   "${network_args[@]}" \
   --add-host=host.docker.internal:host-gateway \
-  -p 9030:80 \
-  -p 8979:8979 \
-  -p 3920:3920 \
+  -p 127.0.0.1:9030:80 \
+  -p 127.0.0.1:8979:8979 \
+  -p 127.0.0.1:3920:3920 \
   -v nextoffer-puppeteer:/data/puppeteer \
   "${volume_args[@]}" \
   -e "API_KEYS_ENCRYPTION_KEY=${API_KEYS_ENCRYPTION_KEY}" \

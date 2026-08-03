@@ -42,13 +42,14 @@ function defaultSchemaFor(purpose) {
           properties: {
             experiences: {
               type: "array",
+              minItems: 1,
               items: {
                 type: "object",
                 properties: {
                   company: { type: "string" },
                   title: { type: "string" },
                   period: { type: "string" },
-                  bullets: { type: "array", items: { type: "string" } },
+                  bullets: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
                 },
                 required: ["company", "title", "bullets"],
               },
@@ -67,25 +68,41 @@ function defaultSchemaFor(purpose) {
 
 function defaultPromptFor(purpose, kind) {
   if (kind === "fine-tune") {
-    return `Refine the ${SECTION_LABEL[purpose].toLowerCase()} draft: tighten wording, remove fluff, and align it to the target role. Return the improved draft.`;
+    if (purpose === "experience") {
+      return `TARGET SKILLS FROM SKILL COVERAGE:
+{job_skills}
+
+Create an internal placement plan for Work Experience; do not write final résumé bullets. For every coverage-contract term assigned to Experience, choose the most credible career entry, a concrete workflow, its technical function, and its practical purpose. State any term that cannot be placed truthfully. Distribute terms across appropriate roles and avoid repeating the same workflow. Return only the placement plan.`;
+    }
+    return `Refine the ${SECTION_LABEL[purpose].toLowerCase()} draft for clarity, relevance, and factual restraint. Preserve every exact bold placement required by the coverage contract and do not add unsupported claims. Return only the improved draft.`;
   }
   switch (purpose) {
     case "summary":
-      return "Using the candidate profile, target role, and coverage contract, write a concise 2–3 sentence professional summary. Include only claims supported by the profile or confirmed by the candidate. Return JSON matching the schema.";
+      return "Write a concise 2–3 sentence professional summary tailored to the target role. Synthesize only facts supported by the career profile and confirmed coverage contract; do not turn familiar-only terms into hands-on claims or stuff the summary with keywords. Return only JSON matching the schema.";
     case "skills":
-      return "Build an ATS-friendly skills section from the coverage contract. Include every contract term assigned to Skills using its exact canonical name, grouped into clear categories without adding unsupported technologies. Return JSON matching the schema.";
+      return `TARGET SKILLS FROM SKILL COVERAGE:
+{job_skills}
+
+Build a concise ATS-friendly Skills section from the coverage contract. Include every term assigned to Skills exactly once, using its exact canonical spelling wrapped as **Canonical Skill Name**. Group items into clear categories, omit excluded terms, and add no unsupported technologies. Return only JSON matching the schema.`;
     case "experience":
-      return "Write concrete, hands-on work experience tailored to the target role. Place every coverage-contract term assigned to Experience in credible context, but never turn familiar-only or excluded skills into experience claims. Job titles follow the saved Dynamic career titles preference: when enabled, use concise JD-aligned titles supported by each role; otherwise keep Profile Settings titles exactly. Return JSON matching the schema.";
+      return `TARGET SKILLS FROM SKILL COVERAGE:
+{job_skills}
+
+Write the final Work Experience section using the candidate profile, any preceding placement plan, and the coverage contract. Preserve employers, dates, chronology, and the supplied career-title policy; job titles follow the saved Dynamic career titles preference. Use varied, concise bullets that describe a concrete task or workflow, how a confirmed skill served a technical function, and the practical purpose. Include every term assigned to Experience with its exact canonical spelling and bold its first meaningful occurrence as **Canonical Skill Name**. Prefer one or two target skills per bullet. Never place familiar-only or excluded terms in Experience, create keyword-list bullets, or invent technologies, projects, metrics, ownership, or achievements. Return only JSON matching the schema.`;
     default:
       return "";
   }
 }
 
-const DEFAULT_SYSTEM_INSTRUCTION = `You are an expert resume writer. You will receive a candidate's profile and produce one resume across several steps.
-- The candidate's facts are authoritative; never invent employers, dates, or credentials.
-- Treat the supplied resume coverage contract as mandatory: use exact canonical skill names in their assigned sections and never claim excluded or familiar-only skills as work experience.
-- Final steps return ONLY JSON conforming to the provided schema; fine-tuning steps return the improved draft.
-- Maintain a consistent, professional, ATS-friendly tone across all steps.`;
+const DEFAULT_SYSTEM_INSTRUCTION = `You are a senior résumé writer and ATS optimization specialist.
+- The candidate profile is authoritative for employers, dates, titles, education, career history, responsibilities, and achievements. Never invent facts.
+- The supplied Skill Coverage contract is mandatory and authoritative for canonical names, decisions, and placements.
+- Used terms may appear only in their assigned sections. Familiar-only terms may appear in Skills but never as hands-on Experience. Excluded terms must be omitted.
+- Every required placement must use the exact canonical spelling and bold its first meaningful occurrence exactly as **Canonical Skill Name**.
+- In Experience, integrate each required term into credible work that connects a concrete task or workflow, the skill's technical function, and a practical purpose. Prefer one or two target terms per bullet; never create keyword-list bullets.
+- Do not infer related technologies, products, projects, metrics, ownership, internal names, or achievements.
+- Final steps return only JSON conforming to the supplied schema. Planning steps return only the requested planning output.
+- Maintain a concise, natural, professional, ATS-friendly voice across the résumé.`;
 
 const defaultTheme = () => ({
   font: "Georgia",

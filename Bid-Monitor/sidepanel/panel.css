@@ -697,30 +697,23 @@ body.mail-page #workspaceView {
   overflow-wrap: anywhere;
 }
 
-.mail-folder-label {
+.mail-scope {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   margin: 10px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--bm-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bm-teal-glow) 35%, var(--bm-panel-solid));
+}
+
+.mail-scope-label {
   color: var(--bm-muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-.mail-folder-select {
-  min-width: 130px;
-  padding: 7px 28px 7px 9px;
-  border: 1px solid var(--bm-line);
-  border-radius: 9px;
-  background: var(--bm-panel-solid);
-  color: var(--bm-ink);
-  font: inherit;
-  font-size: 12px;
-  text-transform: none;
-  letter-spacing: normal;
 }
 
 .mail-list {
@@ -888,6 +881,18 @@ body.mail-page #workspaceView {
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.mail-detail-frame {
+  display: block;
+  width: 100%;
+  height: min(68vh, 720px);
+  min-height: 420px;
+  margin-top: 14px;
+  border: 1px solid var(--bm-line);
+  border-radius: 10px;
+  background: #fff;
+  color-scheme: light;
 }
 
 .section-header-actions {

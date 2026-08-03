@@ -25,6 +25,7 @@ import {
 } from "../constants/defaults";
 import { JOB_DESC_TOKEN } from "../constants/tokens";
 import { mergeGeneratedSection, normalizeGenerated } from "../utils/content";
+import { defaultCoverageDecision, defaultCoverageDecisions } from "../utils/coverage";
 import { applicationDraftStorageKey, identityFromProfile, isValidJson, storageKey } from "../utils/identity";
 import {
   deleteResumeTemplate,
@@ -172,18 +173,20 @@ export function useGeneratorPage() {
   // would overwrite the just-loaded run. Reset on a genuine applier change so
   // normal config restore still works after switching accounts.
   const externalLoadRef = useRef(false);
-	const restoredRevisions = useRef(new Map<string, number>());
-	const terminalHandled = useRef(new Set<string>());
-	const restorationInFlight = useRef(new Set<string>());
-	const editorGenerationTask = backgroundTasks
-		.filter((candidate) => candidate.type === "resume_generation"
-			&& candidate.progress?.operation === "editor_generation")
-		.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0] || null;
-	const activeEditorGenerationTask = editorGenerationTask
-		&& ["queued", "running", "cancelling"].includes(editorGenerationTask.status)
-		? editorGenerationTask
-		: null;
-	const stopping = activeEditorGenerationTask?.status === "cancelling";
+  const restoredRevisions = useRef(new Map<string, number>());
+  const terminalHandled = useRef(new Set<string>());
+  const restorationInFlight = useRef(new Set<string>());
+  const sessionGenerationTaskIds = useRef(new Set<string>());
+  const editorGenerationTask = backgroundTasks
+    .filter((candidate) => candidate.type === "resume_generation"
+      && candidate.progress?.operation === "editor_generation"
+      && sessionGenerationTaskIds.current.has(candidate.id))
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0] || null;
+  const activeEditorGenerationTask = editorGenerationTask
+    && ["queued", "running", "cancelling"].includes(editorGenerationTask.status)
+    ? editorGenerationTask
+    : null;
+  const stopping = activeEditorGenerationTask?.status === "cancelling";
   // Track which applier owns the hydrated config. A boolean can remain true for
   // one render after an applier switch and persist the previous user's config.
   const configOwnerKey = applier?.name ?? "default";
@@ -239,16 +242,27 @@ export function useGeneratorPage() {
     void flushConfigSave();
   }, [applier?.name, config, configHydratedFor, configOwnerKey, flushConfigSave]);
 
-  // Reference tokens a prompt can use, resolved from the JD + profile careers.
+  // Reference tokens a prompt can use, resolved from the JD, current Skill
+  // Coverage, and profile careers. Mirrors backend substitution exactly:
+  // structured Job Search / Agent runs supply fetched skills; free-text Editor
+  // runs fall back to the current coverage contract.
   // Mirrors the backend substitution in resumeGenController so the chip previews
   // match what generation will actually inject. {companyN} are 1-based by role.
   const tokenValues: Record<string, string> = (() => {
     const careers = identity?.careers ?? [];
+    const coverageSkills = coverageAnalysis
+      && coverageAnalysisJd === config.jobDescription
+      && config.jobDescription.trim()
+      ? coverageAnalysis.skills
+        .filter((skill) => (
+          coverageDecisions[skill.id]
+          ?? defaultCoverageDecision(skill, config.coverage.experienceRequirementThreshold)
+        ) !== "exclude")
+        .map((skill) => skill.name)
+      : [];
     const map: Record<string, string> = {
       job_description: config.jobDescription || "",
-      // Populated from the job doc for structured (Job Search / Agent) runs; empty
-      // here on the free-text Resume Generator page.
-      job_skills: "",
+      job_skills: coverageSkills.join(", "),
       career: careers
         .map((c) => {
           const parts = [c.title, c.company, c.period].filter(Boolean);
@@ -490,9 +504,20 @@ export function useGeneratorPage() {
   // Restore saved config: localStorage first, then Firestore (authoritative).
   useEffect(() => {
     externalLoadRef.current = false;
+    sessionGenerationTaskIds.current.clear();
+    restoredRevisions.current.clear();
+    terminalHandled.current.clear();
+    restorationInFlight.current.clear();
     setConfigHydratedFor(null);
     configSaveRef.current.queued = null;
     configSaveRef.current.lastSavedKey = null;
+    setGenerated(null);
+    setUsage(null);
+    setGenProgress(null);
+    setGenerating(false);
+    setCoverageAnalysis(null);
+    setCoverageAnalysisJd("");
+    setCoverageDecisions({});
     setCoverageAudit(null);
 
     let cancelled = false;
@@ -503,31 +528,15 @@ export function useGeneratorPage() {
     } catch {
       next = defaultConfig();
     }
-    let draftJobDescription = next.jobDescription;
+    // Application-run data is intentionally ephemeral. Clear the legacy local
+    // draft so a refresh starts with only Profile and ResumeConfig, as defined
+    // by the repository state-boundary rule.
     try {
-      const draftRaw = localStorage.getItem(applicationDraftStorageKey(applier?.name));
-      if (draftRaw) {
-        const draft = JSON.parse(draftRaw) as {
-          jobDescription?: unknown;
-          coverageAnalysis?: ResumeCoverageAnalysis | null;
-          coverageAnalysisJd?: unknown;
-          coverageDecisions?: Record<string, CoverageDecision>;
-        };
-        if (typeof draft.jobDescription === "string") draftJobDescription = draft.jobDescription;
-        setCoverageAnalysis(draft.coverageAnalysis?.schemaVersion === 1 ? draft.coverageAnalysis : null);
-        setCoverageAnalysisJd(typeof draft.coverageAnalysisJd === "string" ? draft.coverageAnalysisJd : "");
-        setCoverageDecisions(draft.coverageDecisions && typeof draft.coverageDecisions === "object" ? draft.coverageDecisions : {});
-      } else {
-        setCoverageAnalysis(null);
-        setCoverageAnalysisJd("");
-        setCoverageDecisions({});
-      }
+      localStorage.removeItem(applicationDraftStorageKey(applier?.name));
     } catch {
-      setCoverageAnalysis(null);
-      setCoverageAnalysisJd("");
-      setCoverageDecisions({});
+      /* storage unavailable */
     }
-    next = { ...next, jobDescription: draftJobDescription };
+    next = { ...next, jobDescription: "" };
     if (!cancelled) setConfig(next);
 
     const applierName = applier?.name;
@@ -557,7 +566,7 @@ export function useGeneratorPage() {
         if (cancelled || externalLoadRef.current || !dbConfig || typeof dbConfig !== "object") return;
         const restored = {
           ...mergeStoredConfig(dbConfig),
-          jobDescription: draftJobDescription || raw.legacyJobDescription || "",
+          jobDescription: "",
         };
         const stored = serializeStoredConfig(restored);
         configSaveRef.current.lastSavedKey = `${applierName}\u0000${JSON.stringify(stored)}`;
@@ -602,32 +611,6 @@ export function useGeneratorPage() {
     return () => clearTimeout(t);
   }, [config, applier?.name, configHydratedFor, configOwnerKey, flushConfigSave]);
 
-  // The in-progress JD and exception decisions are ApplicationRun draft data,
-  // not reusable ResumeConfig data. Keep them locally so navigation/reload is
-  // lossless without polluting the canonical server config.
-  useEffect(() => {
-    if (configHydratedFor !== configOwnerKey) return;
-    try {
-      localStorage.setItem(applicationDraftStorageKey(applier?.name), JSON.stringify({
-        schemaVersion: 1,
-        jobDescription: config.jobDescription,
-        coverageAnalysis,
-        coverageAnalysisJd,
-        coverageDecisions,
-      }));
-    } catch {
-      /* storage unavailable */
-    }
-  }, [
-    applier?.name,
-    config.jobDescription,
-    configHydratedFor,
-    configOwnerKey,
-    coverageAnalysis,
-    coverageAnalysisJd,
-    coverageDecisions,
-  ]);
-
   const loadIdentity = useCallback(async () => {
     const applierName = applier?.name;
     if (!applierName) {
@@ -664,13 +647,6 @@ export function useGeneratorPage() {
     && coverageAnalysisJd === config.jobDescription
     && config.jobDescription.trim(),
   );
-  const unresolvedCoverageSkills = useMemo(
-    () => coverageIsCurrent
-      ? (coverageAnalysis?.skills ?? []).filter((skill) => !(coverageDecisions[skill.id] ?? skill.decision))
-      : [],
-    [coverageAnalysis, coverageDecisions, coverageIsCurrent],
-  );
-
   const setCoverageDecision = useCallback((skillId: string, decision: CoverageDecision) => {
     setCoverageDecisions((current) => ({ ...current, [skillId]: decision }));
     setCoverageAudit(null);
@@ -694,10 +670,9 @@ export function useGeneratorPage() {
       };
       if (!response?.analysis) throw new Error("Skill analysis returned no ledger.");
       const analysis = response.analysis;
-      const automaticDecisions = Object.fromEntries(
-        analysis.skills
-          .filter((skill) => skill.decision)
-          .map((skill) => [skill.id, skill.decision as CoverageDecision]),
+      const automaticDecisions = defaultCoverageDecisions(
+        analysis,
+        config.coverage.experienceRequirementThreshold,
       );
       setCoverageAnalysis(analysis);
       setCoverageAnalysisJd(config.jobDescription);
@@ -932,7 +907,7 @@ export function useGeneratorPage() {
 		}
 		if (!shouldReadPartial && !shouldReadTerminal) return;
 
-		if (shouldReadTerminal && (task.status === "failed" || task.status === "cancelled")) {
+		if (shouldReadTerminal && ["failed", "completed_with_errors", "cancelled"].includes(task.status)) {
 			terminalHandled.current.add(task.id);
 			setGenerating(false);
 			notify({
@@ -1085,16 +1060,12 @@ export function useGeneratorPage() {
     setCoverageAnalysisJd(analysis ? String(run.jobDescription ?? "") : "");
     setCoverageDecisions(analysis
       ? {
-        ...Object.fromEntries(
-            analysis.skills
-              .filter((skill) => skill.decision)
-              .map((skill) => [skill.id, skill.decision as CoverageDecision]),
-          ),
+          ...defaultCoverageDecisions(analysis, config.coverage.experienceRequirementThreshold),
           ...contractDecisions,
         }
       : {});
     setCoverageAudit(run.coverageAudit ?? null);
-  }, []);
+  }, [config.coverage.experienceRequirementThreshold]);
 
   const handleGenerate = async () => {
     if (!applier?.name) {
@@ -1121,11 +1092,7 @@ export function useGeneratorPage() {
         : await runCoverageAnalysis();
       if (!analysis) return false;
       const decisions: Record<string, CoverageDecision> = {
-        ...Object.fromEntries(
-          analysis.skills
-            .filter((skill) => skill.decision)
-            .map((skill) => [skill.id, skill.decision as CoverageDecision]),
-        ),
+        ...defaultCoverageDecisions(analysis, config.coverage.experienceRequirementThreshold),
         ...(coverageIsCurrent ? coverageDecisions : {}),
       };
       const unresolved = analysis.skills.filter((skill) => !decisions[skill.id]);
@@ -1150,6 +1117,7 @@ export function useGeneratorPage() {
     setGenProgress({ steps: checklist, cumulative: null, done: false, message: "Submitting generation…" });
     try {
       const queued = await enqueueResumeGenerationRequest(generationPayload);
+      sessionGenerationTaskIds.current.add(queued.task.id);
       adoptTask(queued.task);
       setGenProgress({
         steps: checklist,
@@ -1158,7 +1126,7 @@ export function useGeneratorPage() {
         message: "Queued for generation…",
       });
       const terminal = await waitForTask(queued.task.id);
-			terminalHandled.current.add(queued.task.id);
+      terminalHandled.current.add(queued.task.id);
       if (terminal.status === "failed" || terminal.status === "completed_with_errors") {
         throw new Error(terminal.error || "Resume generation failed");
       }
@@ -1177,6 +1145,8 @@ export function useGeneratorPage() {
       notify({ title: "Resume generated", description: "Result is shown in the live preview.", tone: "success" });
       return true;
     } catch (error) {
+      setGenerated(null);
+      setUsage(null);
       notify({
         title: "Generation failed",
         description: error instanceof Error ? error.message : "Generation failed — see backend logs.",
@@ -1227,7 +1197,6 @@ export function useGeneratorPage() {
     coverageDecisions,
     coverageAudit,
     coverageIsCurrent,
-    unresolvedCoverageSkills,
     analyzingCoverage,
     setCoverageDecision,
     runCoverageAnalysis,
