@@ -145,6 +145,25 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 
 /** Default chat timeout — generous so long completions are never cut off mid-stream. */
 const DEFAULT_CHAT_TIMEOUT_MS = Number.parseInt(String(process.env.LLM_TIMEOUT_MS || ''), 10) || 600_000;
+export const DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS = Math.max(
+  1_024,
+  Number.parseInt(String(process.env.DEEPSEEK_MAX_OUTPUT_TOKENS || ''), 10) || 8_192,
+);
+
+/** DeepSeek otherwise runs to its provider ceiling when a caller omits maxTokens. */
+export function resolveChatMaxTokens(provider, requestedMaxTokens) {
+  if (Number.isFinite(requestedMaxTokens) && requestedMaxTokens > 0) {
+    return Math.floor(requestedMaxTokens);
+  }
+  return provider === 'deepseek' ? DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS : undefined;
+}
+
+export function isRequestTimeoutError(error) {
+  return error?.name === 'TimeoutError'
+    || error?.cause?.name === 'TimeoutError'
+    || error?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT'
+    || error?.cause?.code === 'UND_ERR_BODY_TIMEOUT';
+}
 
 /**
  * Fail-fast only when ai-bff is genuinely DOWN (connection errors).
@@ -206,6 +225,15 @@ async function fetchRetry(url, init, {
     } catch (err) {
       // A caller-requested abort is terminal — never retry through a Stop.
       if (signal?.aborted) throw err;
+      // Retrying a full request timeout used to turn one 10-minute ceiling into
+      // nearly 50 minutes, which looked like an unlimited generation loop.
+      if (isRequestTimeoutError(err)) {
+        const timeoutError = new Error(`AI request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+        timeoutError.name = 'TimeoutError';
+        timeoutError.status = 504;
+        timeoutError.cause = err;
+        throw timeoutError;
+      }
       breakerFailure();
       if (attempt >= retries) throw err;
 			incrementCounter('athens_llm_retries_total', { reason: 'network' });
@@ -249,6 +277,7 @@ export async function chatCompletion({
     throw new Error(`No API key configured for ${p.label}. Add it under Settings → Profile.`);
   }
 
+  const effectiveMaxTokens = resolveChatMaxTokens(p.id, maxTokens);
   const body = {
     model,
     messages,
@@ -263,9 +292,9 @@ export async function chatCompletion({
   if (p.id === 'openai' && isReasoningModel(model) && reasoningEffort && reasoningEffort !== 'default') {
     body.reasoning_effort = reasoningEffort;
   }
-  if (Number.isFinite(maxTokens) && maxTokens > 0) {
-    if (p.id === 'openai' && isReasoningModel(model)) body.max_completion_tokens = Math.floor(maxTokens);
-    else body.max_tokens = Math.floor(maxTokens);
+  if (Number.isFinite(effectiveMaxTokens) && effectiveMaxTokens > 0) {
+    if (p.id === 'openai' && isReasoningModel(model)) body.max_completion_tokens = effectiveMaxTokens;
+    else body.max_tokens = effectiveMaxTokens;
   }
 
   const promptChars = messages.reduce((sum, m) => sum + String(m?.content || '').length, 0);
@@ -285,6 +314,7 @@ export async function chatCompletion({
       messageCount: messages.length,
       promptChars,
       jsonMode: jsonMode || undefined,
+      maxTokens: effectiveMaxTokens,
       priority: priorityKey,
     });
   }
@@ -368,6 +398,24 @@ export async function chatCompletion({
       }
       const billedModel = data?.model ?? model;
       const usage = summarizeUsage(data?.usage, billedModel);
+      const finishReason = data?.choices?.[0]?.finish_reason ?? null;
+      if (jsonMode && finishReason === 'length') {
+        const err = new Error(
+          `${p.label} reached the ${effectiveMaxTokens ?? 'configured'}-token output limit before returning complete JSON.`,
+        );
+        err.status = 502;
+        err.provider = p.id;
+        err.code = 'LLM_JSON_OUTPUT_LIMIT';
+        log.error('llm', 'json output truncated', {
+          requestId: reqId,
+          feature,
+          provider: p.id,
+          requestedModel: model,
+          outputTokens: usage.outputTokens,
+          maxTokens: effectiveMaxTokens,
+        });
+        throw err;
+      }
       if (process.env.LLM_LOG !== 'off') {
         log.llm({
           msg: 'chat completed',
@@ -394,6 +442,7 @@ export async function chatCompletion({
         provider: data?.provider || p.id,
         requestedModel: data?.requestedModel || model,
         billedModel,
+        finishReason,
       };
     },
     {

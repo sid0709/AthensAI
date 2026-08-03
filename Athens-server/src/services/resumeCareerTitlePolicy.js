@@ -4,8 +4,8 @@
  */
 import { createHash } from "node:crypto";
 
-/** Bump when prompting, validation, or reconciliation rules change. */
-export const TITLE_POLICY_VERSION = 3;
+/** Bump when prompting, validation, reconciliation, or reuse rules change. */
+export const TITLE_POLICY_VERSION = 4;
 
 const cleanString = (v) => String(v ?? "").trim();
 
@@ -196,18 +196,22 @@ export function applyTitlePolicyToSections(sections, identity, dynamicCareerTitl
   };
 }
 
-/** Slice of generator config that can affect titles / Experience output. */
+/** Slice of generator config that can affect generated section content. */
 export function titlePolicyConfigSlice(config) {
   const c = config && typeof config === "object" ? config : {};
   const steps = Array.isArray(c.steps) ? c.steps : [];
   return {
+    provider: c.provider ?? null,
+    model: c.model ?? null,
+    reasoningEffort: c.reasoningEffort ?? null,
     systemInstruction: c.systemInstruction ?? null,
-    experienceSteps: steps
-      .filter((s) => s?.purpose === "experience")
-      .map((s) => ({
+    steps: steps.map((s) => ({
+        purpose: s?.purpose ?? null,
         kind: s?.kind ?? null,
         prompt: s?.prompt ?? null,
+        schema: s?.schema ?? null,
       })),
+    coverage: c.coverage?.settings ?? c.coverage ?? null,
   };
 }
 

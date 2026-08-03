@@ -297,8 +297,9 @@ export function formatCompanyToken(c) {
 // Resolve the reference tokens a prompt may use into concrete strings, derived
 // from the candidate profile + JD. `{career}` is a newline-joined summary of all
 // roles; `{companyN}` is a natural-sentence summary of the Nth career (N is
-// 1-based, by order stored on the profile). `{job_skills}` are the skills
-// already extracted for a structured catalog job — empty for free-text generation.
+// 1-based, by order stored on the profile). `{job_skills}` receives the current
+// coverage contract scope, falling back to extracted structured-job skills only
+// when coverage is disabled or unavailable.
 export function buildTokenMap(identity, jobDescription, jobSkills) {
   const careers = Array.isArray(identity?.careers) ? identity.careers : [];
   const field = (v) => cleanString(v);
@@ -319,6 +320,14 @@ export function buildTokenMap(identity, jobDescription, jobSkills) {
     map[`company${i + 1}`] = formatCompanyToken(c);
   });
   return map;
+}
+
+export function resolveResumePromptSkills(jobSkills, coverageContract) {
+  const contractSkills = Array.isArray(coverageContract?.skills)
+    ? coverageContract.skills.map((skill) => cleanString(skill?.name)).filter(Boolean)
+    : [];
+  if (contractSkills.length) return contractSkills;
+  return Array.isArray(jobSkills) ? jobSkills.map(cleanString).filter(Boolean) : [];
 }
 
 function buildContextBlock(identity) {
@@ -489,11 +498,10 @@ export async function runGeneration({
   //   {job_skills}                               → skills pre-fetched for a structured job
   //   {career}                                   → all roles, one per line
   //   {companyN} (N = 1,2,…) → natural-sentence summary of the Nth career
-  const contractSkills = coverageContract?.skills?.map((skill) => skill.name).filter(Boolean) ?? [];
   const tokenMap = buildTokenMap(
     identity,
     jobDescription,
-    Array.isArray(jobSkills) && jobSkills.length ? jobSkills : contractSkills,
+    resolveResumePromptSkills(jobSkills, coverageContract),
   );
   const applyTokens = (text) =>
     String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {

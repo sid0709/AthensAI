@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchesTitlePolicyFingerprint } from "./agentResumeGenService.js";
+import {
+  hasReusableCoverage,
+  matchesTitlePolicyFingerprint,
+} from "./agentResumeGenService.js";
 import {
   computeTitlePolicyFingerprint,
 } from "./resumeCareerTitlePolicy.js";
@@ -28,6 +31,23 @@ test("matchesTitlePolicyFingerprint allows any doc when expected fingerprint omi
   assert.equal(matchesTitlePolicyFingerprint({}, null), true);
   assert.equal(matchesTitlePolicyFingerprint({}, ""), true);
   assert.equal(matchesTitlePolicyFingerprint({ titlePolicyFingerprint: "old" }, undefined), true);
+});
+
+test("coverage-enabled Job Search runs reuse only a passing audited generation", () => {
+  assert.equal(hasReusableCoverage({}, false), true);
+  assert.equal(hasReusableCoverage({}, true), false);
+  assert.equal(hasReusableCoverage({
+    generation: {
+      coverageContract: { skills: [] },
+      coverageAudit: { passed: false },
+    },
+  }, true), false);
+  assert.equal(hasReusableCoverage({
+    generation: {
+      coverageContract: { skills: [{ name: "Node.js" }] },
+      coverageAudit: { passed: true },
+    },
+  }, true), true);
 });
 
 test("title-policy fingerprint change invalidates agent draft PDF cache", async () => {

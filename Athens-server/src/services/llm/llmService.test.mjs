@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { summarizeUsage } from "./llmService.js";
+import {
+  DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS,
+  isRequestTimeoutError,
+  resolveChatMaxTokens,
+  summarizeUsage,
+} from "./llmService.js";
 
 test("summarizeUsage matches codex pricing for DeepSeek cache hit/miss", () => {
   const raw = {
@@ -31,4 +36,17 @@ test("summarizeUsage OpenAI cached input still works", () => {
   assert.equal(u.inputTokens, 600);
   assert.equal(u.cachedTokens, 400);
   assert.ok(u.priced);
+});
+
+test("DeepSeek chat calls receive a bounded default output budget", () => {
+  assert.ok(DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS >= 1024);
+  assert.equal(resolveChatMaxTokens("deepseek"), DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS);
+  assert.equal(resolveChatMaxTokens("deepseek", 4000), 4000);
+  assert.equal(resolveChatMaxTokens("openai"), undefined);
+});
+
+test("request timeouts are terminal rather than retryable network errors", () => {
+  assert.equal(isRequestTimeoutError({ name: "TimeoutError" }), true);
+  assert.equal(isRequestTimeoutError({ cause: { code: "UND_ERR_HEADERS_TIMEOUT" } }), true);
+  assert.equal(isRequestTimeoutError({ name: "TypeError", cause: { code: "ECONNRESET" } }), false);
 });

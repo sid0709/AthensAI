@@ -28,6 +28,10 @@ import {
 } from "./resumeCareerTitlePolicy.js";
 import { firestoreMutationLimiter } from "./backgroundTasks/resourceLimits.js";
 import { runWithoutBackgroundTaskContext } from "./backgroundTasks/taskContext.js";
+import {
+  analyzeResumeCoverage,
+  buildAutomaticResumeCoveragePayload,
+} from "./resumeCoverageService.js";
 
 /** Render sections to PDF or read a still-valid on-disk draft (Node fs). */
 async function pdfPayloadForAgent(
@@ -266,6 +270,7 @@ function configSnapshot(body) {
     systemInstruction: body.systemInstruction ?? null,
     jobDescription: body.jobDescription ?? null,
     steps: body.steps ?? null,
+    coverage: body.coverage?.settings ?? null,
   };
 }
 
@@ -295,6 +300,15 @@ export function matchesTitlePolicyFingerprint(doc, expectedFingerprint) {
   const stored = cleanString(doc?.titlePolicyFingerprint);
   // Missing fingerprint ⇒ pre-policy record — always regenerate.
   return Boolean(stored) && stored === expectedFingerprint;
+}
+
+/** A coverage-enabled structured run may reuse only a fully audited generation. */
+export function hasReusableCoverage(existing, coverageEnabled) {
+  if (!coverageEnabled) return true;
+  return Boolean(
+    existing?.generation?.coverageContract
+    && existing.generation.coverageAudit?.passed === true,
+  );
 }
 
 /** Find a completed generation or library resume linked to this job id. */
@@ -751,13 +765,17 @@ export async function ensureAgentJobResume({
 
   // Resolve the saved preference before reuse so toggling dynamic titles
   // invalidates stale generated résumés and draft PDFs.
-  const prep = await prepareGeneration(body);
+  let prep = await prepareGeneration(body);
 	throwIfAborted();
   if (!prep.ok) {
     const err = new Error(prep.error);
     err.status = prep.status;
     throw err;
   }
+  // prepareGeneration resolves the authoritative profile default. Keep the
+  // persisted config and reuse fingerprint aligned with the model actually run.
+  body.provider = prep.providerId;
+  body.model = prep.model;
 
   const titlePolicyFingerprint = computeTitlePolicyFingerprint({
     dynamicCareerTitles: prep.dynamicCareerTitles,
@@ -773,7 +791,8 @@ export async function ensureAgentJobResume({
   const existing = forceRegenerate
     ? null
     : await findExistingAgentJobResume(name, parentId, titlePolicyFingerprint);
-  if (existing?.resume) {
+  const coverageEnabled = body.coverage?.settings?.enabled !== false;
+  if (existing?.resume && hasReusableCoverage(existing, coverageEnabled)) {
     if (existing.recoveredJobLink) {
       try {
 				await firestoreMutationLimiter.run(() => resumeGenerationsCollection?.updateOne(
@@ -805,6 +824,8 @@ export async function ensureAgentJobResume({
       usage,
       model: usage.model,
       provider: existing.generation?.provider ?? savedConfig.provider ?? null,
+      coverageContract: existing.generation?.coverageContract ?? null,
+      coverageAudit: existing.generation?.coverageAudit ?? null,
       titlePolicyFingerprint,
     };
     if (deferPdf) return base;
@@ -818,6 +839,45 @@ export async function ensureAgentJobResume({
       signal,
     );
     return { ...base, ...pdf };
+  }
+
+  if (coverageEnabled) {
+    if (onStep) onStep({
+      phase: "coverage-start",
+      name: "Analyzing Skill Coverage",
+      purpose: "coverage",
+      kind: "coverage-analysis",
+    });
+    const analyzed = await analyzeResumeCoverage({
+      providerId: prep.providerId,
+      apiKey: prep.apiKey,
+      model: prep.model,
+      applierName: name,
+      jobDescription: jd,
+      identity,
+      aliases: body.coverage?.settings?.aliases,
+      experienceRequirementThreshold: body.coverage?.settings?.experienceRequirementThreshold,
+      signal,
+    });
+    throwIfAborted();
+    body.coverage = buildAutomaticResumeCoveragePayload(
+      analyzed.analysis,
+      body.coverage?.settings,
+    );
+    prep = await prepareGeneration(body);
+    throwIfAborted();
+    if (!prep.ok) {
+      const err = new Error(prep.error);
+      err.status = prep.status;
+      throw err;
+    }
+    if (onStep) onStep({
+      phase: "coverage-done",
+      name: "Skill Coverage ready",
+      purpose: "coverage",
+      kind: "coverage-analysis",
+      usage: analyzed.usage,
+    });
   }
 
   console.info(
@@ -864,6 +924,9 @@ export async function ensureAgentJobResume({
           config: configSnapshot(body),
           identity,
           jobDescription: jd,
+          coverageAnalysis: body.coverage?.analysis ?? null,
+          coverageContract: result.coverageContract ?? null,
+          coverageAudit: result.coverageAudit ?? null,
           sections: result.sections,
           perStep: result.perStep,
           usage: result.usage,
@@ -933,6 +996,8 @@ export async function ensureAgentJobResume({
     usage,
     model: prep.model,
     provider: prep.providerId,
+    coverageContract: generated.result.coverageContract ?? null,
+    coverageAudit: generated.result.coverageAudit ?? null,
     titlePolicyFingerprint,
   };
 

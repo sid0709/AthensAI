@@ -107,5 +107,6 @@ test("saved dynamic career titles propagate to Agent and Job Search generation r
   });
 
   assert.equal(body.dynamicCareerTitles, true);
+  assert.deepEqual(body.coverage, { settings: savedConfig.coverage });
   assert.equal(isDefaultGeneratorPipeline(savedConfig), false);
 });
