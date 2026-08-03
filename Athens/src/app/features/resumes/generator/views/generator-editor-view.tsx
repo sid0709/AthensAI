@@ -117,6 +117,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     coverageDecisions,
     coverageAudit,
     qualityStatus,
+    generationError,
     coverageIsCurrent,
     setCoverageDecision,
     runCoverageAnalysis,
@@ -241,6 +242,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                   label: "Resume quality",
                   ready: qualityStatus === "passed" || coverageAudit?.passed === true,
                   running: qualityStatus === "running",
+                  failed: qualityStatus === "failed",
                   detail: qualityStatus === "running"
                     ? "Auditing content and repairing issues…"
                     : coverageAudit
@@ -256,6 +258,8 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                   <div className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-white/75">
                     {item.running
                       ? <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-500" />
+                      : item.failed
+                        ? <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
                       : item.ready
                         ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
                         : <Circle className="h-3.5 w-3.5 text-neutral-300 dark:text-white/20" />}
@@ -341,8 +345,14 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                   ) : undefined
                 }
               >
-                {genProgress.done ? "Generation complete" : "Generating…"}
+                {qualityStatus === "failed" ? "Generation failed quality check" : genProgress.done ? "Generation complete" : "Generating…"}
               </SectionTitle>
+              {generationError && (
+                <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{generationError} The latest generated draft remains visible in the preview for review.</span>
+                </div>
+              )}
               <ol className="space-y-1.5">
                 {genProgress.steps.map((s) => {
                   const open = previewStep === s.index;

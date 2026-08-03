@@ -1,31 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useApplier } from "@/context/applier-context";
-import { fetchApplyRuns, type ApplyRunSummary } from "../../../api/avalonLog";
 import {
-  fetchAppliedJobDocs,
   fetchDailyApplications,
-  fetchJobApplicationFrequency,
   fetchJobSourceSummary,
-  fetchJobStatusCounts,
   type DailyApplicationRow,
-  type FrequencyDayRow,
   type JobSourceSummaryRow,
 } from "../../../api/reports";
-import { normalizeId } from "../../../lib/job-adapters";
 import type { DateRange } from "../../../hooks/useAnalyticsFilters";
 import { rangeToIsoDates } from "../lib/dateRange";
 import {
-  computeAgentStatusPie,
-  computeAvgResponseDays,
-  computeCohort,
   computeFunnel,
-  computeHeatmap,
-  computeMatchScatter,
-  computeRolePie,
   computeSourceRows,
-  computeStageOverTime,
   computeTrend,
-  computeVelocitySeries,
   sumAppliedInRange,
   sumSourceTotals,
   type AgentStatusSlice,
@@ -48,6 +34,7 @@ export interface JobAnalytics {
   interviewRate: number;
   avgResponseDays: number | null;
   posted: number;
+  postingSources: number;
   agentRuns: number;
   trendData: TrendPoint[];
   rolePie: RoleSlice[];
@@ -70,6 +57,7 @@ const EMPTY: JobAnalytics = {
   interviewRate: 0,
   avgResponseDays: null,
   posted: 0,
+  postingSources: 0,
   agentRuns: 0,
   trendData: [],
   rolePie: [],
@@ -87,15 +75,10 @@ const EMPTY: JobAnalytics = {
 export function useJobAnalytics(range: DateRange): JobAnalytics {
   const { applier, applierReady } = useApplier();
   const applierName = applier?.name;
-  const applierId = applier?._id != null ? normalizeId(applier._id) : null;
 
   const [loading, setLoading] = useState(true);
   const [daily, setDaily] = useState<DailyApplicationRow[]>([]);
   const [sourceSummary, setSourceSummary] = useState<JobSourceSummaryRow[]>([]);
-  const [frequency, setFrequency] = useState<FrequencyDayRow[]>([]);
-  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
-  const [jobDocs, setJobDocs] = useState<Record<string, unknown>[]>([]);
-  const [runs, setRuns] = useState<ApplyRunSummary[]>([]);
 
   const { startDate, endDate } = useMemo(() => rangeToIsoDates(range), [range]);
 
@@ -106,21 +89,13 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
     (async () => {
       setLoading(true);
       try {
-        const [dailyRows, summaryRows, freqRows, counts, docs, applyRuns] = await Promise.all([
+        const [dailyRows, summaryRows] = await Promise.all([
           fetchDailyApplications(applierName, startDate, endDate),
           fetchJobSourceSummary(applierName, startDate, endDate),
-          fetchJobApplicationFrequency(applierName, startDate, endDate),
-          fetchJobStatusCounts(applierName),
-          fetchAppliedJobDocs(applierName),
-          fetchApplyRuns(applierName, 200),
         ]);
         if (cancelled) return;
         setDaily(dailyRows);
         setSourceSummary(summaryRows);
-        setFrequency(freqRows);
-        setStatusCounts(counts);
-        setJobDocs(docs);
-        setRuns(applyRuns);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -145,35 +120,33 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
       applications,
       responseRate,
       interviewRate,
-      avgResponseDays: computeAvgResponseDays(jobDocs, applierId, startDate, endDate),
-      posted: statusCounts.posted ?? totals.postings,
-      agentRuns: runs.filter((r) => {
-        const t = new Date(r.startedAt).getTime();
-        return t >= new Date(startDate).getTime() && t <= new Date(endDate).getTime();
-      }).length,
-      trendData: computeTrend(daily, jobDocs, applierId, startDate, endDate),
-      rolePie: computeRolePie(jobDocs, applierId, startDate, endDate),
-      heatmapData: computeHeatmap(frequency, runs, startDate, endDate),
+      avgResponseDays: null,
+      posted: totals.postings,
+      postingSources: sourceSummary.filter((row) => row.postings > 0).length,
+      agentRuns: 0,
+      trendData: computeTrend(daily, [], null, startDate, endDate),
+      rolePie: [],
+      heatmapData: [],
       sourceData: computeSourceRows(sourceSummary),
-      funnel: computeFunnel(statusCounts),
-      stageOverTime: computeStageOverTime(daily, jobDocs, applierId, startDate, endDate),
-      velocitySeries: computeVelocitySeries(jobDocs, applierId, startDate, endDate),
-      cohortData: computeCohort(daily, jobDocs, applierId, startDate, endDate),
-      agentStatusPie: computeAgentStatusPie(runs, startDate, endDate),
-      matchScatter: computeMatchScatter(jobDocs, applierId, startDate, endDate),
+      funnel: computeFunnel({
+        posted: totals.postings,
+        applied: totals.applied,
+        scheduled: totals.scheduled,
+        declined: sourceSummary.reduce((sum, row) => sum + row.declined, 0),
+      }),
+      stageOverTime: [],
+      velocitySeries: [],
+      cohortData: [],
+      agentStatusPie: [],
+      matchScatter: [],
       pipelineBySource: sourceSummary.filter((r) => r.applied > 0 || r.postings > 0),
     };
   }, [
     applierReady,
-    applierId,
     daily,
     endDate,
-    frequency,
-    jobDocs,
     loading,
-    runs,
     sourceSummary,
     startDate,
-    statusCounts,
   ]);
 }

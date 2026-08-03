@@ -638,6 +638,7 @@ export async function runGeneration({
     const affectedSections = [...new Set([
       ...coverageAudit.missing.map((item) => item.section),
       ...(coverageAudit.violations || []).map((item) => item.section),
+      ...(coverageAudit.skillIssues || []).map((item) => item.section),
       ...((coverageAudit.careerIssues || []).length ? ["experience"] : []),
     ])];
     for (const purpose of ["skills", "experience"]) {
@@ -666,6 +667,7 @@ export async function runGeneration({
         purpose,
         missing,
         remove,
+        skillIssues: purpose === "skills" ? coverageAudit.skillIssues : [],
         incompleteRoles: purpose === "experience" ? coverageAudit.careerIssues : [],
         currentSection: sections[purpose],
         schema: finalDefinition?.schema,
@@ -718,6 +720,7 @@ export async function runGeneration({
     const remaining = [
       ...coverageAudit.missing.map((item) => `missing ${item.skill} (${item.section})`),
       ...(coverageAudit.violations || []).map((item) => `forbidden ${item.skill} (${item.section})`),
+      ...(coverageAudit.skillIssues || []).map((item) => `${item.reason}${item.skill ? ` ${item.skill}` : ""} (${item.section})`),
       ...(coverageAudit.careerIssues || []).map((item) => `incomplete role #${item.index + 1} ${item.company || item.title}`),
     ]
       .join(", ");

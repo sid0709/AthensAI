@@ -459,6 +459,33 @@ function skillItemTexts(section) {
   ));
 }
 
+function auditSkillItemShape(values, required) {
+  const exactItems = new Map(required.map((skill) => [`**${skill.name}**`, skill]));
+  const issues = [];
+  for (const value of values) {
+    if (exactItems.has(value)) continue;
+    const matches = required.filter((skill) => textContainsCoverageSkill(value, skill));
+    issues.push({
+      section: "skills",
+      reason: matches.length > 1 ? "compound-item" : matches.length === 1 ? "noncanonical-item" : "unexpected-item",
+      item: value.slice(0, 160),
+    });
+  }
+  for (const skill of required) {
+    const count = values.filter((value) => textContainsCoverageSkill(value, skill)).length;
+    if (count > 1) {
+      issues.push({
+        section: "skills",
+        reason: "duplicate-skill",
+        skillId: skill.id,
+        skill: skill.name,
+        count,
+      });
+    }
+  }
+  return issues;
+}
+
 function experienceRows(section) {
   return Array.isArray(section?.experiences)
     ? section.experiences
@@ -498,6 +525,7 @@ export function auditResumeCoverage(sections, rawContract, identity) {
     sections: {},
     missing: [],
     violations: [],
+    skillIssues: [],
     requiredRoleCount: careers.length,
     completeRoleCount: 0,
     careerIssues: [],
@@ -530,12 +558,14 @@ export function auditResumeCoverage(sections, rawContract, identity) {
     const values = section === "experience"
       ? experienceBulletTexts(sections?.experience)
       : skillItemTexts(sections?.skills);
+    const skillIssues = section === "skills" ? auditSkillItemShape(values, required) : [];
+    result.skillIssues.push(...skillIssues);
     const found = [];
     const missing = [];
     for (const skill of required) {
       const covered = section === "experience"
         ? values.some((value) => hasContextualBoldExperiencePlacement(value, skill))
-        : values.some((value) => textContainsBoldCoverageSkill(value, skill));
+        : values.includes(`**${skill.name}**`);
       if (covered) found.push(skill.name);
       else {
         missing.push(skill.name);
@@ -566,16 +596,19 @@ export function auditResumeCoverage(sections, rawContract, identity) {
       found,
       missing,
       forbidden: violations.map((skill) => skill.name),
+      issues: skillIssues,
       incompleteRoles: section === "experience"
         ? result.careerIssues.map((issue) => issue.company || issue.title || `#${issue.index + 1}`)
         : [],
       passed: missing.length === 0
         && violations.length === 0
+        && skillIssues.length === 0
         && (section !== "experience" || result.careerIssues.length === 0),
     };
   }
   result.passed = result.missing.length === 0
     && result.violations.length === 0
+    && result.skillIssues.length === 0
     && result.careerIssues.length === 0;
   return result;
 }
@@ -589,11 +622,12 @@ export function resumeCoveragePrompt(rawContract) {
   const excluded = contract.excluded.map((item) => cleanString(item?.name)).filter(Boolean);
   return [
     "RESUME COVERAGE CONTRACT — deterministic validation will enforce these exact placements.",
-    `Skills section (exact canonical names, each bolded once): ${skills.map((skill) => skill.name).join(", ") || "none"}`,
+    `Skills section closed set (exact canonical names, each bolded once): ${skills.map((skill) => skill.name).join(", ") || "none"}`,
     `Experience section (candidate-used; exact canonical names in credible bullets): ${experience.map((skill) => skill.name).join(", ") || "none"}`,
     familiar.length ? `Familiar-only terms: ${familiar.map((skill) => skill.name).join(", ")}. These may appear in Skills but must not be claimed in Experience.` : "",
     excluded.length ? `Excluded terms: ${excluded.join(", ")}. Do not add these to the resume.` : "",
     "For every assigned placement, use the exact canonical spelling and wrap its first meaningful occurrence exactly as **Canonical Skill Name**.",
+    "In Skills, return exactly one standalone item per assigned term, formatted only as **Canonical Skill Name**. Add no descriptions, compound items, repeated terms, subcategory items, or other skills; category labels are grouping labels only.",
     "In Experience, put target skills only inside complete, credible bullets. Each placement must connect a concrete task or workflow, the skill's technical function, and a practical purpose.",
     "Prefer one or two target skills per Experience bullet. Never use a standalone keyword-list bullet, and never infer related products, projects, metrics, ownership, or achievements.",
   ].filter(Boolean).join("\n");
@@ -603,12 +637,14 @@ export function resumeCoverageRepairPrompt({
   purpose,
   missing,
   remove,
+  skillIssues,
   incompleteRoles,
   currentSection,
   schema,
 }) {
   const names = Array.isArray(missing) ? missing.map(cleanString).filter(Boolean) : [];
   const removals = Array.isArray(remove) ? remove.map(cleanString).filter(Boolean) : [];
+  const skillsProblems = Array.isArray(skillIssues) ? skillIssues : [];
   const roles = Array.isArray(incompleteRoles) ? incompleteRoles : [];
   const instructions = purpose === "experience"
     ? [
@@ -618,14 +654,21 @@ export function resumeCoverageRepairPrompt({
         "Prefer one or two target skills per bullet. Do not append a keyword list or invent technologies, projects, metrics, ownership, or achievements.",
       ]
     : [
-        "Place each missing term once as an item in the most appropriate Skills category.",
-        "Use the exact canonical spelling wrapped exactly as **Canonical Skill Name**.",
-        "If the canonical term is already present but unbolded, fix that item instead of duplicating it.",
+        "Treat the Skills coverage contract as a closed set: include every assigned term exactly once and include no other skill items.",
+        "Every items array entry must be one standalone term formatted only as **Canonical Skill Name**.",
+        "Remove descriptions, comma-separated or compound lists, repeated terms, and subcategory items. Category labels are grouping labels only.",
+        "If a canonical term is already present but malformed or repeated, correct it in place instead of adding another copy.",
       ];
   return [
     `The generated ${purpose} section failed the deterministic coverage and formatting gate.`,
     `Required additions or formatting corrections: ${names.join(", ") || "none"}`,
     `Forbidden terms to remove from this section: ${removals.join(", ") || "none"}`,
+    skillsProblems.length
+      ? `Skills structure problems to correct:\n${skillsProblems.map((issue) => {
+          if (issue?.reason === "duplicate-skill") return `${cleanString(issue.skill)} appears ${Number(issue.count) || 2} times`;
+          return `${cleanString(issue?.reason)}: ${cleanString(issue?.item)}`;
+        }).join("\n")}`
+      : "",
     roles.length
       ? `Authoritative roles requiring substantive bullets:\n${roles.map((role) => {
           const identity = [

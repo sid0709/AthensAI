@@ -1,5 +1,24 @@
 /* global chrome */
-import { persistSpiritApiUrlToStorage } from './config/env.js';
+import {
+	API_URL,
+	JOB_API_STORAGE_KEY,
+	persistJobApiUrlToStorage,
+	persistSpiritApiUrlToStorage,
+} from './config/env.js';
+import {
+	SCRAPE_QUEUE_ALARM,
+	SCRAPE_QUEUE_BATCH_SIZE,
+	SCRAPE_QUEUE_MAX_ATTEMPTS,
+	SCRAPE_QUEUE_STORAGE_KEY,
+	classifyBulkItem,
+	emptyRunSummary,
+	incrementRunOutcome,
+	isRetryableBulkItem,
+	normalizeQueueState,
+	queueCounts,
+	retryDelayMs,
+	selectReadyItems,
+} from './api/scrapeQueue.js';
 
 chrome.sidePanel
 	.setPanelBehavior({ openPanelOnActionClick: true })
@@ -23,6 +42,9 @@ const MAX_RECENT_JOB_EVENTS = 5;
 const MAX_TRACKED_JOBS = 500;
 const pendingStoreTasks = [];
 let storeReady = false;
+let scrapeQueueState = normalizeQueueState();
+let scrapeQueueReady = false;
+let scrapeQueueDrainPromise = null;
 
 function isInjectableTabUrl(url) {
 	if (!url || typeof url !== 'string') return false;
@@ -165,6 +187,178 @@ function safeSendMessage(message) {
 			console.error('Failed to send runtime message', e);
 		}
 	}
+}
+
+function storageGet(key) {
+	return new Promise((resolve) => {
+		chrome.storage.local.get(key, (result) => {
+			if (chrome.runtime.lastError) resolve(null);
+			else resolve(result?.[key] ?? null);
+		});
+	});
+}
+
+function storageSet(value) {
+	return new Promise((resolve, reject) => {
+		chrome.storage.local.set(value, () => {
+			if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+			else resolve();
+		});
+	});
+}
+
+function trimRunSummaries() {
+	const entries = Object.entries(scrapeQueueState.runs);
+	if (entries.length <= 20) return;
+	entries.sort(([, a], [, b]) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+	scrapeQueueState.runs = Object.fromEntries(entries.slice(0, 20));
+}
+
+async function persistScrapeQueue() {
+	trimRunSummaries();
+	await storageSet({ [SCRAPE_QUEUE_STORAGE_KEY]: scrapeQueueState });
+}
+
+function scrapeQueueSnapshot(runId = null) {
+	const resolvedRunId = runId || Object.entries(scrapeQueueState.runs)
+		.sort(([, a], [, b]) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0]?.[0] || null;
+	return {
+		runId: resolvedRunId,
+		counts: queueCounts(scrapeQueueState.items, resolvedRunId),
+		summary: resolvedRunId
+			? { ...emptyRunSummary(), ...(scrapeQueueState.runs[resolvedRunId] || {}) }
+			: null,
+	};
+}
+
+function broadcastScrapeQueue(runId = null) {
+	safeSendMessage({ action: 'scrapeQueue:state', payload: scrapeQueueSnapshot(runId) });
+}
+
+function recordScrapeQueueOutcome(runId, outcome) {
+	scrapeQueueState.runs = incrementRunOutcome(scrapeQueueState.runs, runId, outcome);
+	scrapeQueueState.runs[runId].updatedAt = Date.now();
+}
+
+function scheduleScrapeQueueRetry() {
+	const nextAttemptAt = scrapeQueueState.items
+		.filter((item) => item.status === 'queued' && item.nextAttemptAt > Date.now())
+		.reduce((earliest, item) => Math.min(earliest, item.nextAttemptAt), Infinity);
+	if (Number.isFinite(nextAttemptAt)) {
+		chrome.alarms.create(SCRAPE_QUEUE_ALARM, { when: nextAttemptAt });
+	} else {
+		chrome.alarms.clear(SCRAPE_QUEUE_ALARM);
+	}
+}
+
+function scheduleImmediateScrapeQueueDrain() {
+	chrome.alarms.create(SCRAPE_QUEUE_ALARM, { when: Date.now() + 100 });
+}
+
+async function resolveJobApiUrl() {
+	return normalizeBaseUrl(API_URL || await storageGet(JOB_API_STORAGE_KEY));
+}
+
+async function requeueScrapeBatch(batch, error, retryable = true) {
+	const now = Date.now();
+	for (const selected of batch) {
+		const item = scrapeQueueState.items.find((candidate) => candidate.id === selected.id);
+		if (!item) continue;
+		item.attempts += 1;
+		if (retryable && item.attempts < SCRAPE_QUEUE_MAX_ATTEMPTS) {
+			item.status = 'queued';
+			item.nextAttemptAt = now + retryDelayMs(item.attempts);
+			item.lastError = error;
+		} else {
+			scrapeQueueState.items = scrapeQueueState.items.filter((candidate) => candidate.id !== item.id);
+			recordScrapeQueueOutcome(item.runId, 'failed');
+			safeSendMessage({
+				action: 'scrapeQueue:itemResult',
+				payload: { id: item.id, runId: item.runId, outcome: 'failed', error },
+			});
+		}
+	}
+}
+
+async function processScrapeBatch(batch) {
+	const baseUrl = await resolveJobApiUrl();
+	if (!baseUrl) {
+		await requeueScrapeBatch(batch, 'API base URL is not configured');
+		return;
+	}
+
+	let response;
+	try {
+		response = await fetch(`${baseUrl}/jobs/bulk`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jobs: batch.map((item) => item.job) }),
+		});
+	} catch (error) {
+		await requeueScrapeBatch(batch, error instanceof Error ? error.message : String(error));
+		return;
+	}
+
+	let body = null;
+	try { body = await response.json(); } catch { /* handled below */ }
+	if (!response.ok || !Array.isArray(body?.results)) {
+		await requeueScrapeBatch(
+			batch,
+			body?.error || `Bulk registration failed (${response.status})`,
+			response.status >= 500,
+		);
+		return;
+	}
+
+	for (const [index, selected] of batch.entries()) {
+		const item = scrapeQueueState.items.find((candidate) => candidate.id === selected.id);
+		if (!item) continue;
+		const result = body.results.find((candidate) => candidate.index === index) || body.results[index];
+		if (isRetryableBulkItem(result) && item.attempts + 1 < SCRAPE_QUEUE_MAX_ATTEMPTS) {
+			item.attempts += 1;
+			item.status = 'queued';
+			item.nextAttemptAt = Date.now() + retryDelayMs(item.attempts);
+			item.lastError = result?.error || 'Server failed to register job';
+			continue;
+		}
+
+		const outcome = classifyBulkItem(result);
+		scrapeQueueState.items = scrapeQueueState.items.filter((candidate) => candidate.id !== item.id);
+		recordScrapeQueueOutcome(item.runId, outcome);
+		safeSendMessage({
+			action: 'scrapeQueue:itemResult',
+			payload: { id: item.id, runId: item.runId, outcome, result },
+		});
+	}
+}
+
+async function drainScrapeQueue() {
+	if (!scrapeQueueReady) return;
+	if (scrapeQueueDrainPromise) return scrapeQueueDrainPromise;
+	scrapeQueueDrainPromise = (async () => {
+		while (true) {
+			const now = Date.now();
+			const batch = selectReadyItems(scrapeQueueState.items, now, SCRAPE_QUEUE_BATCH_SIZE);
+			if (!batch.length) break;
+			for (const item of batch) item.status = 'saving';
+			await persistScrapeQueue();
+			for (const runId of new Set(batch.map((item) => item.runId))) broadcastScrapeQueue(runId);
+			await processScrapeBatch(batch);
+			await persistScrapeQueue();
+			for (const runId of new Set(batch.map((item) => item.runId))) broadcastScrapeQueue(runId);
+		}
+		scheduleScrapeQueueRetry();
+	})().finally(() => { scrapeQueueDrainPromise = null; });
+	return scrapeQueueDrainPromise;
+}
+
+async function initializeScrapeQueue() {
+	scrapeQueueState = normalizeQueueState(await storageGet(SCRAPE_QUEUE_STORAGE_KEY));
+	scrapeQueueReady = true;
+	await persistScrapeQueue();
+	broadcastScrapeQueue();
+	scheduleImmediateScrapeQueueDrain();
+	void drainScrapeQueue();
 }
 
 function persistJobBidStore() {
@@ -405,6 +599,14 @@ function handleJobBidMessage(message) {
 
 loadJobBidStore();
 persistSpiritApiUrlToStorage();
+persistJobApiUrlToStorage();
+const scrapeQueueInitialization = initializeScrapeQueue().catch((error) => {
+	console.error('Failed to initialize scrape registration queue', error);
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+	if (alarm?.name === SCRAPE_QUEUE_ALARM) void drainScrapeQueue();
+});
 
 // Messages coming from content scripts that should be relayed to the extension UI
 // Listen for messages from the UI and forward them to the content script or to backend
@@ -431,6 +633,60 @@ function normalizeBaseUrl(raw) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+	if (message?.action === 'scrapeQueue:enqueue') {
+		(async () => {
+			await scrapeQueueInitialization;
+			const runId = typeof message.payload?.runId === 'string' ? message.payload.runId : '';
+			const job = message.payload?.job;
+			if (!runId || !job || typeof job !== 'object') {
+				sendResponse?.({ success: false, error: 'runId and job are required' });
+				return;
+			}
+			const id = globalThis.crypto?.randomUUID?.()
+				|| `scrape-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			scrapeQueueState.items.push({
+				id,
+				runId,
+				job,
+				status: 'queued',
+				attempts: 0,
+				createdAt: Date.now(),
+				nextAttemptAt: 0,
+			});
+			if (!scrapeQueueState.runs[runId]) {
+				scrapeQueueState.runs[runId] = { ...emptyRunSummary(), updatedAt: Date.now() };
+			}
+			await persistScrapeQueue();
+			broadcastScrapeQueue(runId);
+			scheduleImmediateScrapeQueueDrain();
+			sendResponse?.({ success: true, id, state: scrapeQueueSnapshot(runId) });
+			void drainScrapeQueue();
+		})().catch((error) => sendResponse?.({ success: false, error: error.message }));
+		return true;
+	}
+
+	if (message?.action === 'scrapeQueue:getState') {
+		(async () => {
+			await scrapeQueueInitialization;
+			const runId = typeof message.payload?.runId === 'string' ? message.payload.runId : null;
+			sendResponse?.({ success: true, state: scrapeQueueSnapshot(runId) });
+		})().catch((error) => sendResponse?.({ success: false, error: error.message }));
+		return true;
+	}
+
+	if (message?.action === 'scrapeQueue:recordOutcome') {
+		(async () => {
+			await scrapeQueueInitialization;
+			const { runId, outcome } = message.payload || {};
+			if (!runId) throw new Error('runId is required');
+			recordScrapeQueueOutcome(runId, outcome);
+			await persistScrapeQueue();
+			broadcastScrapeQueue(runId);
+			sendResponse?.({ success: true });
+		})().catch((error) => sendResponse?.({ success: false, error: error.message }));
+		return true;
+	}
+
 	// Content script -> background: read a local file via core-backend and return base64.
 	if (message?.action === 'readLocalFile') {
 		(async () => {

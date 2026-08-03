@@ -158,6 +158,7 @@ export function useGeneratorPage() {
   const [coverageDecisions, setCoverageDecisions] = useState<Record<string, CoverageDecision>>({});
   const [coverageAudit, setCoverageAudit] = useState<ResumeCoverageAudit | null>(null);
   const [qualityStatus, setQualityStatus] = useState<ResumeQualityStatus>("idle");
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [analyzingCoverage, setAnalyzingCoverage] = useState(false);
   const [view, setView] = useState<"editor" | "history">("editor");
   const [editorPanel, setEditorPanel] = useState<"document" | "pipeline">("document");
@@ -935,16 +936,18 @@ export function useGeneratorPage() {
 		}
 		if (!shouldReadPartial && !shouldReadTerminal) return;
 
-		if (shouldReadTerminal && ["failed", "completed_with_errors", "cancelled"].includes(task.status)) {
-			terminalHandled.current.add(task.id);
+		const terminalFailureMessage = shouldReadTerminal && ["failed", "completed_with_errors", "cancelled"].includes(task.status)
+			? String(item?.error || task.error || (task.status === "cancelled" ? "Generation cancelled" : "The background generation did not complete."))
+			: null;
+		if (terminalFailureMessage) {
 			setGenerating(false);
 			setQualityStatus("failed");
+			setGenerationError(terminalFailureMessage);
 			notify({
 				title: task.status === "cancelled" ? "Generation cancelled" : "Generation failed",
-				description: task.error || "The background generation did not complete.",
+				description: terminalFailureMessage,
 				tone: task.status === "cancelled" ? "warning" : "error",
 			});
-			return;
 		}
 
 		const readKey = `${task.id}:${terminal ? task.status : revision}`;
@@ -990,7 +993,7 @@ export function useGeneratorPage() {
 						steps: current?.steps ?? [],
 						cumulative: (stored.result?.usage as UsageBreakdown) ?? current?.cumulative ?? null,
 						done: true,
-						message: null,
+						message: terminalFailureMessage,
 					}));
 				}
 			})
@@ -1143,10 +1146,13 @@ export function useGeneratorPage() {
     setGenerated(null);
     setCoverageAudit(null);
     setQualityStatus("pending");
+    setGenerationError(null);
     const checklist = plannedGenerationSteps(plan);
     setGenProgress({ steps: checklist, cumulative: null, done: false, message: "Submitting generation…" });
+    let queuedInputId: string | null = null;
     try {
       const queued = await enqueueResumeGenerationRequest(generationPayload);
+      queuedInputId = queued.inputId;
       sessionGenerationTaskIds.current.add(queued.task.id);
       adoptTask(queued.task);
       setGenProgress({
@@ -1180,12 +1186,27 @@ export function useGeneratorPage() {
       notify({ title: "Resume generated", description: "Skill coverage and résumé quality both passed.", tone: "success" });
       return true;
     } catch (error) {
-      setGenerated(null);
-      setUsage(null);
+      const message = error instanceof Error ? error.message : "Generation failed — see backend logs.";
+      if (queuedInputId) {
+        try {
+          const stored = await getResumeGenerationTaskResult(queuedInputId, applier.name);
+          const sections = (stored.result?.sections || stored.partialSections || {}) as Record<string, unknown>;
+          if (Object.keys(sections).length) setGenerated(normalizeGenerated(sections));
+        } catch {
+          // The per-task restoration effect remains the fallback for transient reads.
+        }
+      }
       setQualityStatus("failed");
+      setGenerationError(message);
+      setGenProgress((current) => ({
+        steps: current?.steps ?? [],
+        cumulative: current?.cumulative ?? null,
+        done: true,
+        message,
+      }));
       notify({
         title: "Generation failed",
-        description: error instanceof Error ? error.message : "Generation failed — see backend logs.",
+        description: message,
         tone: "error",
       });
       return false;
@@ -1233,6 +1254,7 @@ export function useGeneratorPage() {
     coverageDecisions,
     coverageAudit,
     qualityStatus,
+    generationError,
     coverageIsCurrent,
     analyzingCoverage,
     setCoverageDecision,

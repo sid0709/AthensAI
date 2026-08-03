@@ -199,6 +199,36 @@ test("deterministic audit reports section-specific gaps", () => {
   assert.equal(audit.sections.skills.passed, true);
 });
 
+test("deterministic audit rejects repeated, compound, and out-of-contract Skills items", () => {
+  const contract = {
+    schemaVersion: 1,
+    maxRepairAttempts: 1,
+    skills: [
+      { id: "python", name: "Python", aliases: [], category: "language", requirement: 5, decision: "used", placements: ["skills"] },
+      { id: "openai", name: "OpenAI", aliases: [], category: "platform", requirement: 4, decision: "used", placements: ["skills"] },
+    ],
+    unresolved: [],
+    excluded: [],
+  };
+  const audit = auditResumeCoverage({
+    skills: {
+      skills: [
+        { category: "Languages", items: ["**Python**", "Python for API services"] },
+        { category: "AI Platforms", items: ["**OpenAI**, model orchestration", "Anthropic"] },
+      ],
+    },
+  }, contract);
+
+  assert.equal(audit.passed, false);
+  assert.deepEqual(audit.missing, [{ skillId: "openai", skill: "OpenAI", section: "skills" }]);
+  assert.deepEqual(audit.skillIssues, [
+    { section: "skills", reason: "noncanonical-item", item: "Python for API services" },
+    { section: "skills", reason: "noncanonical-item", item: "**OpenAI**, model orchestration" },
+    { section: "skills", reason: "unexpected-item", item: "Anthropic" },
+    { section: "skills", reason: "duplicate-skill", skillId: "python", skill: "Python", count: 2 },
+  ]);
+});
+
 test("deterministic audit requires a contextual bold Experience placement", () => {
   const contract = {
     schemaVersion: 1,
@@ -262,6 +292,24 @@ test("coverage repair instructions require contextual exact bold placement", () 
   assert.match(prompt, /Legacy\.Tool/);
   assert.match(prompt, /Authoritative roles requiring substantive bullets/);
   assert.match(prompt, /exactly one Experience object per authoritative profile role/);
+});
+
+test("Skills repair instructions enforce a closed set of atomic unique items", () => {
+  const prompt = resumeCoverageRepairPrompt({
+    purpose: "skills",
+    missing: ["OpenAI"],
+    remove: [],
+    skillIssues: [
+      { reason: "duplicate-skill", skill: "Python", count: 3 },
+      { reason: "unexpected-item", item: "Unsupported Tool" },
+    ],
+    currentSection: { skills: [] },
+    schema: { type: "object" },
+  });
+  assert.match(prompt, /closed set/);
+  assert.match(prompt, /standalone term/);
+  assert.match(prompt, /Python appears 3 times/);
+  assert.match(prompt, /unexpected-item: Unsupported Tool/);
 });
 
 test("deterministic audit rejects an authoritative career with no substantive bullets", () => {

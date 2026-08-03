@@ -1,4 +1,5 @@
 /** Server endpoints — configure in Extension/.env only. */
+/* global chrome */
 
 import { parseDuplicateWindowDays } from './duplicateWindow.js';
 
@@ -14,6 +15,16 @@ function normalizeBaseUrl(raw) {
 
 /** REST API base (scrap POST /jobs). */
 export const API_URL = normalizeBaseUrl(trimEnv(import.meta.env.VITE_API_URL));
+export const JOB_API_STORAGE_KEY = 'jobApiBaseUrl';
+
+export function persistJobApiUrlToStorage() {
+	if (!API_URL || typeof chrome === 'undefined' || !chrome.storage?.local) return;
+	try {
+		chrome.storage.local.set({ [JOB_API_STORAGE_KEY]: API_URL });
+	} catch (e) {
+		console.error('Failed to persist job API base URL from env', e);
+	}
+}
 
 /** Client-controlled duplicate lookback sent with every scraped job. */
 export const DUPLICATE_WINDOW_DAYS = parseDuplicateWindowDays(

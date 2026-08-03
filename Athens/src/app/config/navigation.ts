@@ -47,7 +47,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "bid-management", label: "Bid Management", icon: Clapperboard },
   { id: "apps-plugins", label: "Apps & Plugins", icon: Puzzle },
   { id: "firebase", label: "Firebase Atlas", icon: Flame },
-  { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
+  { id: "reports", label: "Analytics", icon: BarChart2 },
   { id: "ai-usage", label: "AI API Usage", icon: Cpu, admin: true },
   { id: "api-usage-monitor", label: "API Usage Monitor", icon: Gauge, admin: true },
   { id: "settings", label: "Settings", icon: Settings },

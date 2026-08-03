@@ -8,7 +8,8 @@
 		"activeTab",
 		"scripting",
 		"tabs",
-		"storage"
+		"storage",
+		"alarms"
 	],
 	"host_permissions": [
 		"http://*/*",

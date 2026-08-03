@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+/* global chrome */
 
 import {
 	Button,
@@ -19,7 +20,6 @@ import {
 } from '@mui/icons-material';
 import PropTypes from 'prop-types';
 import { useRuntime } from '../../../api/runtimeContext';
-import useApi from '../../../api/useApi';
 import { API_URL, DUPLICATE_WINDOW_DAYS } from '../../../config/env';
 import useNotification from '../../../api/useNotification';
 import {
@@ -29,7 +29,6 @@ import {
 	mergeJobValidationChecklist,
 } from '../../../api/jobValidation';
 import {
-	classifyJobSaveResult,
 	createScrapeRunStats,
 	formatElapsedTime,
 	getSkippedScrapeCount,
@@ -161,12 +160,14 @@ ValidationChecklist.propTypes = {
 	})).isRequired,
 };
 
-function RunSummary({ elapsedMs, stats, targetTab }) {
+function RunSummary({ elapsedMs, stats, targetTab, queue }) {
 	const skipped = getSkippedScrapeCount(stats);
 	const totals = [
 		{ label: 'Registered', value: stats.registered, color: 'success.main' },
 		{ label: 'Skipped', value: skipped, color: 'warning.main' },
 		{ label: 'Failed', value: stats.failed, color: 'error.main' },
+		{ label: 'Queued', value: queue.queued, color: 'info.light' },
+		{ label: 'Saving', value: queue.saving, color: 'primary.light' },
 	];
 
 	return (
@@ -179,7 +180,7 @@ function RunSummary({ elapsedMs, stats, targetTab }) {
 					{formatElapsedTime(elapsedMs)}
 				</Typography>
 			</Stack>
-			<Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 0.75 }}>
+			<Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 0.75 }}>
 				{totals.map(({ label, value, color }) => (
 					<Box
 						key={label}
@@ -231,6 +232,10 @@ RunSummary.propTypes = {
 		title: PropTypes.string.isRequired,
 		url: PropTypes.string.isRequired,
 	}),
+	queue: PropTypes.shape({
+		queued: PropTypes.number.isRequired,
+		saving: PropTypes.number.isRequired,
+	}).isRequired,
 };
 
 const ScrapComponent = () => {
@@ -243,12 +248,21 @@ const ScrapComponent = () => {
 	const [elapsedMs, setElapsedMs] = useState(0);
 	const [starting, setStarting] = useState(false);
 	const [targetTab, setTargetTab] = useState(null);
+	const [queueCounts, setQueueCounts] = useState({ queued: 0, saving: 0 });
 
 	const { addListener, removeListener } = useRuntime();
-	const api = useApi(API_URL);
 	const notification = useNotification();
 	const pendingResolvers = useRef(new Map());
 	const runStartedAt = useRef(null);
+	const runIdRef = useRef(null);
+
+	const sendRuntimeMessage = useCallback((message) => new Promise((resolve, reject) => {
+		chrome.runtime.sendMessage(message, (response) => {
+			if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+			else if (response?.success === false) reject(new Error(response.error || 'Background request failed'));
+			else resolve(response);
+		});
+	}), []);
 
 	const notifyFailure = useCallback((err, fallback) => {
 		notification.fail(err, { key: 'scrap-failure', autoHideDuration: 2200 });
@@ -263,7 +277,13 @@ const ScrapComponent = () => {
 
 	const recordOutcome = useCallback((outcome) => {
 		setRunStats((current) => incrementScrapeRunStats(current, outcome));
-	}, []);
+		if (runIdRef.current) {
+			void sendRuntimeMessage({
+				action: 'scrapeQueue:recordOutcome',
+				payload: { runId: runIdRef.current, outcome },
+			}).catch((error) => console.error('Failed to persist scrape outcome', error));
+		}
+	}, [sendRuntimeMessage]);
 
 	useEffect(() => {
 		const listener = (message) => {
@@ -277,10 +297,33 @@ const ScrapComponent = () => {
 					}
 				}
 			}
+			if (message?.action === 'scrapeQueue:state') {
+				const state = message.payload;
+				if (!state?.runId || (runIdRef.current && state.runId !== runIdRef.current)) return;
+				if (!runIdRef.current) runIdRef.current = state.runId;
+				setQueueCounts(state.counts || { queued: 0, saving: 0 });
+				if (state.summary) setRunStats({ ...createScrapeRunStats(), ...state.summary });
+			}
+			if (message?.action === 'scrapeQueue:itemResult'
+				&& message.payload?.runId === runIdRef.current) {
+				const outcome = message.payload.outcome;
+				if (outcome === SCRAPE_OUTCOMES.REGISTERED) {
+					notification.success('Job registered successfully', { key: 'scrap-outcome', autoHideDuration: 1200 });
+				} else if (outcome === SCRAPE_OUTCOMES.DUPLICATE) {
+					notification.info(message.payload.result?.reason || 'Duplicate job skipped', { key: 'scrap-outcome', autoHideDuration: 1200 });
+				} else if (outcome === SCRAPE_OUTCOMES.BLOCKED) {
+					notification.warning(message.payload.result?.reason || 'Job skipped by a blocking rule', { key: 'scrap-outcome', autoHideDuration: 1500 });
+				} else {
+					notifyFailure(new Error(message.payload.error || message.payload.result?.error || 'Failed to register job'));
+				}
+			}
 		};
 		addListener(listener);
+		void sendRuntimeMessage({ action: 'scrapeQueue:getState' })
+			.then((response) => listener({ action: 'scrapeQueue:state', payload: response?.state }))
+			.catch((error) => console.error('Failed to restore scrape queue state', error));
 		return () => removeListener(listener);
-	}, [addListener, removeListener]);
+	}, [addListener, removeListener, notification, notifyFailure, sendRuntimeMessage]);
 
 	useEffect(() => {
 		if (!scrapFlag || !runStartedAt.current) return undefined;
@@ -489,7 +532,7 @@ const ScrapComponent = () => {
 		handleHighlight("li", "class", "ant-dropdown-menu-item ant-dropdown-menu-item-only-child");
 		handleAction("li", "class", "ant-dropdown-menu-item ant-dropdown-menu-item-only-child", 0, "click", "");
 		await delay(250);
-		setProgress(100);
+		setProgress(90);
 
 		let success_wait_for_job_list = false;
 
@@ -529,38 +572,15 @@ const ScrapComponent = () => {
 		setValidationChecks(getJobValidationChecklist(resultData));
 		assertCompleteJob(resultData);
 
-		try {
-			const saveResult = await api.post('/jobs', resultData);
-			const outcome = classifyJobSaveResult(saveResult);
-			if (outcome === SCRAPE_OUTCOMES.REGISTERED) {
-				recordOutcome(outcome);
-				notification.success('Job registered successfully', {
-					key: 'scrap-outcome',
-					autoHideDuration: 1200,
-				});
-			} else if (outcome === SCRAPE_OUTCOMES.DUPLICATE) {
-				recordOutcome(outcome);
-				notification.info(saveResult.reason || 'Duplicate job skipped', {
-					key: 'scrap-outcome',
-					autoHideDuration: 1200,
-				});
-			} else if (outcome === SCRAPE_OUTCOMES.BLOCKED) {
-				recordOutcome(outcome);
-				notification.warning(saveResult.reason || 'Job skipped by a blocking rule', {
-					key: 'scrap-outcome',
-					autoHideDuration: 1500,
-				});
-			} else {
-				throw new Error(saveResult?.reason || saveResult?.error || 'Backend did not register the job');
-			}
-		} catch (err) {
-			notifyFailure(err, 'Failed to save job');
-			throw err;
-		}
-
-		setProgress(0);
+		await sendRuntimeMessage({
+			action: 'scrapeQueue:enqueue',
+			payload: { runId: runIdRef.current, job: resultData },
+		});
+		setProgress(100);
 		handleClear();
-		await delay(250);
+		await delay(100);
+		setProgress(0);
+		await delay(150);
 	}
 
 	useEffect(() => {
@@ -594,7 +614,7 @@ const ScrapComponent = () => {
 	}, [scrapFlag, notifyFailure, recordOutcome]);
 
 	const onScrapStart = async () => {
-		if (!api.baseUrl) {
+		if (!API_URL) {
 			notifyFailure(new Error('API base URL is not configured'));
 			return;
 		}
@@ -611,7 +631,10 @@ const ScrapComponent = () => {
 				throw new Error('Focus the job scraping website, then click Start again.');
 			}
 			setTargetTab(rememberedTab);
+			runIdRef.current = globalThis.crypto?.randomUUID?.()
+				|| `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 			setRunStats(createScrapeRunStats());
+			setQueueCounts({ queued: 0, saving: 0 });
 			setValidationChecks(pendingValidationChecklist());
 			setProgress(0);
 			setElapsedMs(0);
@@ -663,7 +686,7 @@ const ScrapComponent = () => {
 					<CircularProgressWithLabel size={72} value={progress} thickness={4} />
 					<ValidationChecklist checks={validationChecks} />
 					<Divider flexItem />
-					<RunSummary elapsedMs={elapsedMs} stats={runStats} targetTab={targetTab} />
+					<RunSummary elapsedMs={elapsedMs} stats={runStats} targetTab={targetTab} queue={queueCounts} />
 				</Stack>
 
 				<Stack direction="row" spacing={1.5}>

@@ -28,5 +28,5 @@ export function analyticsTrendSubtitle(data: JobAnalytics): string {
   if (data.trendData.length === 0) return "No applications in this period";
   const first = data.trendData[0]?.m;
   const last = data.trendData[data.trendData.length - 1]?.m;
-  return first === last ? `Submissions & responses — ${first}` : `Submissions & responses — ${first} to ${last}`;
+  return first === last ? `Applications — ${first}` : `Applications — ${first} to ${last}`;
 }

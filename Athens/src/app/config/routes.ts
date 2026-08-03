@@ -32,13 +32,13 @@ export const PATHS = {
 export const DEFAULT_TABS = {
   resumes: "library",
   calendar: "month",
-  reports: "overview",
+  reports: "postings",
   settings: "profile",
 } as const;
 
 export type ResumesTab = "library" | "editor" | "history" | "analysis";
 export type CalendarTab = "month" | "week";
-export type ReportsTab = "overview" | "sources" | "funnel" | "velocity" | "insights";
+export type ReportsTab = "postings" | "applications";
 export type SettingsTab = "profile" | "skills" | "notifications" | "integrations" | "security";
 
 const VIEW_TO_BASE: Record<View, string> = {

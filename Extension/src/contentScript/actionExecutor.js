@@ -1,4 +1,5 @@
 import { findElements, waitForElements } from './elementFinder';
+/* global chrome */
 
 function setNativeValue(element, value) {
 	if (!element) return;

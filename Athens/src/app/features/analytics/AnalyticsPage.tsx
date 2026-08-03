@@ -7,14 +7,15 @@ import { AthensSelect } from "../../components/forms";
 import { DEFAULT_TABS, normalizeTab, PATHS, type ReportsTab } from "../../config/routes";
 import { useAnalyticsFilters, DATE_RANGE_OPTIONS } from "../../hooks/useAnalyticsFilters";
 import { useJobAnalytics } from "./hooks/useJobAnalytics";
-import { AnalyticsOverviewTab } from "./components/AnalyticsOverviewTab";
-import { AnalyticsSourcesTab } from "./components/AnalyticsSourcesTab";
-import { AnalyticsFunnelTab } from "./components/AnalyticsFunnelTab";
-import { AnalyticsVelocityTab } from "./components/AnalyticsVelocityTab";
-import { AnalyticsInsightsTab } from "./components/AnalyticsInsightsTab";
+import { JobPostingProgress } from "./components/JobPostingProgress";
+import { ApplicationProgress } from "./components/ApplicationProgress";
 import { AnalyticsLoading, AnalyticsProfileGate } from "./components/AnalyticsStates";
 
-const TABS = ["overview", "sources", "funnel", "velocity", "insights"] as const satisfies readonly ReportsTab[];
+const TABS = ["postings", "applications"] as const satisfies readonly ReportsTab[];
+const TAB_LABELS: Record<ReportsTab, string> = {
+  postings: "Job postings",
+  applications: "My applications",
+};
 
 export function AnalyticsPage() {
   const { tab: tabParam } = useParams<{ tab?: string }>();
@@ -27,11 +28,8 @@ export function AnalyticsPage() {
     <AnalyticsLoading />
   ) : (
     <AnalyticsProfileGate ready={analytics.ready}>
-      {tab === "overview" && <AnalyticsOverviewTab range={range} analytics={analytics} />}
-      {tab === "sources" && <AnalyticsSourcesTab range={range} analytics={analytics} />}
-      {tab === "funnel" && <AnalyticsFunnelTab range={range} analytics={analytics} />}
-      {tab === "velocity" && <AnalyticsVelocityTab range={range} analytics={analytics} />}
-      {tab === "insights" && <AnalyticsInsightsTab range={range} analytics={analytics} />}
+      {tab === "postings" && <JobPostingProgress range={range} analytics={analytics} />}
+      {tab === "applications" && <ApplicationProgress range={range} analytics={analytics} />}
     </AnalyticsProfileGate>
   );
 
@@ -45,7 +43,7 @@ export function AnalyticsPage() {
               active={tab === t}
               onClick={() => navigate(`${PATHS.reports}/${t}`)}
             >
-              {t}
+              {TAB_LABELS[t]}
             </Pill>
           ))}
         </div>
