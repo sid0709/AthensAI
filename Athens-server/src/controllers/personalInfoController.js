@@ -1,7 +1,12 @@
 
+import { DocumentId } from "@nextoffer/shared/document-id";
 import { personalInfoCollection, accountInfoCollection } from "../db/dataStore.js";
 import { updateAccountInfoById } from "../services/accountInfoStore.js";
-import { verifyKey, getProvider } from "../services/llm/llmService.js";
+import {
+	verifyKey,
+	getProvider,
+	isModelCompatibleWithProvider,
+} from "../services/llm/llmService.js";
 import { toCanonical } from "../services/skillNormalize.js";
 import { emptyResumeCatalog, validateResumeCatalog } from "../services/resumeCatalogService.js";
 import {
@@ -246,6 +251,21 @@ function normalizeAutoBidProfile(body) {
 	};
 }
 
+const SERVER_MANAGED_PROFILE_FIELDS = new Set([
+	"defaultProvider",
+	"defaultModel",
+	"resumeUpdatedAt",
+]);
+
+/** Build an atomic dotted update without touching the dedicated AI default. */
+export function editableAutoBidProfileFieldSet(profile) {
+	return Object.fromEntries(
+		Object.entries(profile || {})
+			.filter(([field]) => !SERVER_MANAGED_PROFILE_FIELDS.has(field))
+			.map(([field, value]) => [`autoBidProfile.${field}`, value]),
+	);
+}
+
 function defaultEducationEntry() {
 	return { school: "", diploma: "", startMonth: "", startYear: "", endMonth: "", endYear: "" };
 }
@@ -331,7 +351,10 @@ export async function getAutoBidProfile(req, res) {
 		if (!accountInfoCollection) return res.status(503).json({ success: false, error: "Database not ready" });
 		const name = String(req.query?.applierName || "").trim();
 		if (!name) return res.status(400).json({ success: false, error: "applierName query required" });
-		const acc = await findAccountByApplierName(name);
+		const profileId = String(req.query?.profileId || "").trim();
+		const acc = profileId && DocumentId.isValid(profileId)
+			? await accountInfoCollection.findOne({ _id: new DocumentId(profileId) })
+			: await findAccountByApplierName(name);
 		if (!acc) {
 			return res.json({
 				success: true,
@@ -362,7 +385,13 @@ export async function upsertAutoBidProfile(req, res) {
 		const body = req.body || {};
 		const name = String(body.applierName || "").trim();
 		if (!name) return res.status(400).json({ success: false, error: "applierName required in body" });
-		const acc = await findAccountByApplierName(name, { _id: 1, name: 1, autoBidProfile: 1 });
+		const profileId = String(body.profileId || "").trim();
+		const acc = profileId && DocumentId.isValid(profileId)
+			? await accountInfoCollection.findOne(
+				{ _id: new DocumentId(profileId) },
+				{ projection: { _id: 1, name: 1, autoBidProfile: 1 } },
+			)
+			: await findAccountByApplierName(name, { _id: 1, name: 1, autoBidProfile: 1 });
 		if (!acc) {
 			return res.status(404).json({
 				success: false,
@@ -378,14 +407,15 @@ export async function upsertAutoBidProfile(req, res) {
 			acc.autoBidProfile,
 			unavailableFields,
 		);
-		// Preserve server-managed resume sync watermark across profile saves.
-		const autoBidProfile = await encryptProfileApiKeys({
-			...normalized,
-			resumeUpdatedAt: existing.resumeUpdatedAt || null,
-		});
+		const encryptedProfile = await encryptProfileApiKeys(normalized);
 		const vendorAllowed = body.vendorAllowed === true || body.vendorAllowed === "true";
 		const r = await updateAccountInfoById(acc._id, acc.name, {
-			$set: { autoBidProfile, vendorAllowed },
+			// Dotted writes make the dedicated default-model endpoint authoritative,
+			// even when an older full-profile Save request finishes afterward.
+			$set: {
+				...editableAutoBidProfileFieldSet(encryptedProfile),
+				vendorAllowed,
+			},
 		});
 		if (r.matchedCount === 0) {
 			return res.status(404).json({
@@ -394,7 +424,12 @@ export async function upsertAutoBidProfile(req, res) {
 			});
 		}
 		await invalidateMailAccountCache(acc.name);
-		const clientProfile = await decryptProfileApiKeysForClient(autoBidProfile);
+		const clientProfile = await decryptProfileApiKeysForClient({
+			...encryptedProfile,
+			defaultProvider: existing.defaultProvider || "",
+			defaultModel: existing.defaultModel || "",
+			resumeUpdatedAt: existing.resumeUpdatedAt || null,
+		});
 		return res.json({
 			success: true,
 			profile: clientProfile.profile,
@@ -422,8 +457,18 @@ export async function setDefaultModel(req, res) {
 		if (!name) return res.status(400).json({ success: false, error: "applierName required" });
 		if (!provider) return res.status(400).json({ success: false, valid: false, error: "provider must be openai or deepseek" });
 		if (!model) return res.status(400).json({ success: false, valid: false, error: "model required" });
+		if (!isModelCompatibleWithProvider(provider, model)) {
+			return res.status(400).json({
+				success: false,
+				valid: false,
+				error: `${model} is not a ${getProvider(provider).label} model.`,
+			});
+		}
 
-		const acc = await findAccountByApplierName(name);
+		const profileId = String(req.body?.profileId || "").trim();
+		const acc = profileId && DocumentId.isValid(profileId)
+			? await accountInfoCollection.findOne({ _id: new DocumentId(profileId) })
+			: await findAccountByApplierName(name);
 		if (!acc) return res.status(404).json({ success: false, error: `No account named "${name}".` });
 
 		const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
@@ -432,7 +477,7 @@ export async function setDefaultModel(req, res) {
 			return res.json({ success: false, valid: false, error: `No ${getProvider(provider).label} API key saved. Add it and save your profile first.` });
 		}
 
-		const check = await verifyKey({ provider, apiKey });
+		const check = await verifyKey({ provider, apiKey, model });
 		if (!check.ok) {
 			return res.json({ success: false, valid: false, error: check.message || `${getProvider(provider).label} key is invalid.` });
 		}

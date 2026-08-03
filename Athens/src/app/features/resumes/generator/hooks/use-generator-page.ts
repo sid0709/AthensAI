@@ -6,6 +6,7 @@ import { API_BASE } from "@/lib/api-base";
 import { retryTransient } from "@/lib/transient-retry";
 import { useApplier } from "@/context/applier-context";
 import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
+import { resolveSavedProfileAiDefault } from "@/app/data/settings/profile";
 import {
   enqueueResumeGenerationRequest,
   getCompletedResumeGenerationTaskResult,
@@ -623,14 +624,21 @@ export function useGeneratorPage() {
     }
     setLoadingProfile(true);
     try {
-      const raw = (await get(`/personal/auto-bid-profile?applierName=${encodeURIComponent(applierName)}`)) as {
+      const profileParams = new URLSearchParams({ applierName });
+      if (applier?._id != null) profileParams.set("profileId", String(applier._id));
+      const raw = (await get(`/personal/auto-bid-profile?${profileParams}`)) as {
         success?: boolean;
         profile?: Record<string, unknown>;
         data?: { profile?: Record<string, unknown> };
       };
       const profile = raw?.profile ?? raw?.data?.profile;
-      if (raw?.success && profile && typeof profile === "object") setIdentity(identityFromProfile(profile));
-      else {
+      if (raw?.success && profile && typeof profile === "object") {
+        setIdentity(identityFromProfile(profile));
+        const aiDefault = resolveSavedProfileAiDefault(profile);
+        if (aiDefault) {
+          setConfig((current) => ({ ...current, ...aiDefault }));
+        }
+      } else {
         setIdentity(null);
         notify({ title: "No profile found", description: `No profile data for ${applierName}.`, tone: "warning" });
       }
@@ -640,7 +648,7 @@ export function useGeneratorPage() {
     } finally {
       setLoadingProfile(false);
     }
-  }, [applier?.name, get, notify]);
+  }, [applier?._id, applier?.name, get, notify]);
 
   useEffect(() => {
     void loadIdentity();
@@ -667,6 +675,7 @@ export function useGeneratorPage() {
     try {
       const response = await post("/personal/resume-generator/analyze", {
         applierName,
+        profileId: applier?._id != null ? String(applier._id) : undefined,
         jobDescription,
         identity,
         coverage: config.coverage,
@@ -694,7 +703,7 @@ export function useGeneratorPage() {
     } finally {
       setAnalyzingCoverage(false);
     }
-  }, [applier?.name, config.coverage, config.jobDescription, identity, notify, post]);
+  }, [applier?._id, applier?.name, config.coverage, config.jobDescription, identity, notify, post]);
 
   // Pull the provider's live model list (needs the applier's API key in profile).
   const loadModels = useCallback(
@@ -708,8 +717,14 @@ export function useGeneratorPage() {
       setModelsLoading(true);
       setModelsNote(null);
       try {
+        const modelParams = new URLSearchParams({
+          provider: config.provider,
+          applierName,
+        });
+        if (applier?._id != null) modelParams.set("profileId", String(applier._id));
+        if (force) modelParams.set("force", "1");
         const res = (await get(
-          `/personal/llm-models?provider=${config.provider}&applierName=${encodeURIComponent(applierName)}${force ? "&force=1" : ""}`,
+          `/personal/llm-models?${modelParams}`,
         )) as { success?: boolean; models?: string[]; error?: string };
         if (res?.success && Array.isArray(res.models) && res.models.length) {
           const list = res.models;
@@ -735,7 +750,7 @@ export function useGeneratorPage() {
         setModelsLoading(false);
       }
     },
-    [applier?.name, config.provider, get],
+    [applier?._id, applier?.name, config.provider, get],
   );
 
   useEffect(() => {

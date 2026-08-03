@@ -114,6 +114,34 @@ test("company/title claim is global and inclusive through exactly 30 days", asyn
 	assert.equal(afterBoundary.claimed, true);
 });
 
+test("company/title claim honors a client-provided 14-day window", async () => {
+	const registry = memoryRegistry();
+	const firstAt = new Date("2026-01-01T00:00:00.000Z");
+	const first = await claimJobIdentity(registry, {
+		companyName: "Acme",
+		title: "Engineer",
+		acceptedAt: firstAt,
+		lookbackDays: 14,
+	});
+	await finalizeJobIdentityClaim(registry, first, { jobId: "job-14" });
+
+	const boundary = await claimJobIdentity(registry, {
+		companyName: "Acme",
+		title: "Engineer",
+		acceptedAt: new Date(firstAt.getTime() + 14 * 24 * 60 * 60 * 1000),
+		lookbackDays: 14,
+	});
+	assert.equal(boundary.duplicate, true);
+
+	const expired = await claimJobIdentity(registry, {
+		companyName: "Acme",
+		title: "Engineer",
+		acceptedAt: new Date(firstAt.getTime() + 14 * 24 * 60 * 60 * 1000 + 1),
+		lookbackDays: 14,
+	});
+	assert.equal(expired.claimed, true);
+});
+
 test("simultaneous identical submissions produce one atomic claim", async () => {
 	const registry = memoryRegistry();
 	const attempts = await Promise.all(

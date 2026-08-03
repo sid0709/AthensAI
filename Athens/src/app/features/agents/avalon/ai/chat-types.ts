@@ -6,7 +6,6 @@ export interface JsonSchemaDefinition {
 }
 
 export interface ChatRequest {
-  model?: string;
   system?: string;
   messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   temperature?: number;

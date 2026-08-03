@@ -84,7 +84,11 @@ export function ProfileTab() {
     }
     setLoading(true);
     try {
-      const data = await fetchAutoBidProfile(applier.name, signal);
+      const data = await fetchAutoBidProfile(
+        applier.name,
+        signal,
+        applier._id != null ? String(applier._id) : undefined,
+      );
       if (signal?.aborted) return;
       setProfile(data.profile);
       setVendorAllowed(data.vendorAllowed);
@@ -96,7 +100,7 @@ export function ProfileTab() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [applier?.name]);
+  }, [applier?._id, applier?.name]);
 
   useEffect(() => {
     if (!applierReady) return;
@@ -165,7 +169,12 @@ export function ProfileTab() {
     }
     setSaving(true);
     try {
-      const res = await saveAutoBidProfile(applier.name, profile, vendorAllowed);
+      const res = await saveAutoBidProfile(
+        applier.name,
+        profile,
+        vendorAllowed,
+        applier._id != null ? String(applier._id) : undefined,
+      );
       if (res.success) {
         toast.success("Profile saved");
         setAccountMissing(false);
@@ -213,7 +222,12 @@ export function ProfileTab() {
     });
     try {
       // Persist the latest profile first so LinkedIn / contact changes are on the server.
-      const saved = await saveAutoBidProfile(applier.name, profile, vendorAllowed);
+      const saved = await saveAutoBidProfile(
+        applier.name,
+        profile,
+        vendorAllowed,
+        applier._id != null ? String(applier._id) : undefined,
+      );
       if (!saved.success) {
         toast.error(saved.error || "Save profile before refreshing résumés");
         return;
@@ -426,6 +440,7 @@ export function ProfileTab() {
                 {applier?.name ? (
                   <DefaultModelCard
                     applierName={applier.name}
+                    profileId={applier._id != null ? String(applier._id) : undefined}
                     currentProvider={profile.defaultProvider}
                     currentModel={profile.defaultModel}
                     onSaved={(defaultProvider, defaultModel) => {

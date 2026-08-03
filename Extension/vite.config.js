@@ -33,6 +33,10 @@ export default defineConfig({
 		},
 	],
 	build: {
+		// Chrome treats shared extension chunks as belonging to the execution
+		// world that first loads them. Let native module imports load these
+		// chunks instead of preloading them from the side-panel document.
+		modulePreload: false,
 		rollupOptions: {
 			input: {
 				sidepanel: resolve(__dirname, "index.html"),

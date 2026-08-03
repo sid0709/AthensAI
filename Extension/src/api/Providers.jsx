@@ -5,8 +5,8 @@ import { BackendHealthProvider } from './backendHealth.jsx';
 const Providers = ({ children }) => {
 	return (
 		<SnackbarProvider
-			maxSnack={4}
-			anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+			maxSnack={2}
+			anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
 			dense
 			hideIconVariant={false}
 			style={{

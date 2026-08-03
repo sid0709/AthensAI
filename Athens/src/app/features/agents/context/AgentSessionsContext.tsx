@@ -15,9 +15,8 @@ import { useApplier } from "@/context/applier-context";
 import { storedAvalonSessionId } from "../../../services/agentApi";
 import type { DeployOptions } from "../../../types/agent";
 import {
-  resolveProfileDefaultModel,
   setProfileApplierName,
-  setProfileDefaultModel,
+  setProfileId,
 } from "../avalon/ai/model";
 import { formatApplierProfile } from "../avalon/ai/profile";
 import { AvalonControllerView } from "../components/AvalonControllerView";
@@ -230,9 +229,8 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setProfileApplierName(applierName || undefined);
-    const profile = applier?.autoBidProfile as Record<string, unknown> | undefined;
-    setProfileDefaultModel(resolveProfileDefaultModel(profile));
-  }, [applierName, applier?.autoBidProfile]);
+    setProfileId(profileId || undefined);
+  }, [applierName, profileId]);
 
   const initialSessionsRef = useRef<ReturnType<typeof loadSessions> | null>(null);
   if (!initialSessionsRef.current) initialSessionsRef.current = loadSessions(profileId);

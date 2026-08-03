@@ -1,4 +1,5 @@
 import { KeyManagementServiceClient } from '@google-cloud/kms';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import { accountInfoCollection } from '../db/dataStore.js';
 import { decryptSecret as decryptLegacy, encryptSecret as encryptLegacy, isEncryptedSecret } from '@nextoffer/shared/secretCrypto';
 
@@ -49,6 +50,17 @@ export async function decryptProfileApiKeys(profile) {
 	if (!profile || typeof profile !== 'object') return profile;
 	const out = { ...profile };
 	for (const field of FIELDS) if (typeof out[field] === 'string' && out[field]) out[field] = await decryptValue(out[field]);
+	return out;
+}
+
+export async function decryptSelectedProfileSecrets(profile, selectedFields) {
+	if (!profile || typeof profile !== 'object') return profile;
+	const selected = new Set(Array.isArray(selectedFields) ? selectedFields : []);
+	const out = { ...profile };
+	for (const field of FIELDS) {
+		if (typeof out[field] !== 'string' || !out[field]) continue;
+		out[field] = selected.has(field) ? await decryptValue(out[field]) : '';
+	}
 	return out;
 }
 
@@ -109,11 +121,44 @@ export async function decryptAccountDoc(doc) {
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-export async function loadDecryptedAutoBidProfile(applierNameRaw, projection = { autoBidProfile: 1 }) {
+async function findAutoBidProfile(applierNameRaw, projection) {
 	const name = String(applierNameRaw ?? '').trim();
 	if (!name || !accountInfoCollection) return null;
 	let acc = await accountInfoCollection.findOne({ name }, { projection });
 	if (!acc) acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${escapeRegExp(name)}$`, 'i') } }, { projection });
-	if (!acc?.autoBidProfile) return acc?.autoBidProfile || null;
-	return decryptProfileApiKeys(acc.autoBidProfile);
+	return acc?.autoBidProfile || null;
+}
+
+export async function loadDecryptedAutoBidProfile(applierNameRaw, projection = { autoBidProfile: 1 }) {
+	const profile = await findAutoBidProfile(applierNameRaw, projection);
+	return profile ? decryptProfileApiKeys(profile) : profile;
+}
+
+/** Load the reusable profile while decrypting only credentials needed by LLM flows. */
+export async function loadLlmAutoBidProfile(applierNameRaw, projection = { autoBidProfile: 1 }) {
+	const profile = await findAutoBidProfile(applierNameRaw, projection);
+	return profile
+		? decryptSelectedProfileSecrets(profile, ['openaiApiKey', 'deepseekApiKey'])
+		: profile;
+}
+
+/** Prefer the authenticated profile id, then retain name lookup compatibility. */
+export async function loadLlmAutoBidProfileForIdentity(
+	{ profileId, applierName } = {},
+	projection = { autoBidProfile: 1 },
+) {
+	const id = String(profileId || '').trim();
+	if (id && accountInfoCollection && DocumentId.isValid(id)) {
+		const account = await accountInfoCollection.findOne(
+			{ _id: new DocumentId(id) },
+			{ projection },
+		);
+		if (account?.autoBidProfile) {
+			return decryptSelectedProfileSecrets(
+				account.autoBidProfile,
+				['openaiApiKey', 'deepseekApiKey'],
+			);
+		}
+	}
+	return loadLlmAutoBidProfile(applierName, projection);
 }

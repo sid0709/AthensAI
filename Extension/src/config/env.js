@@ -1,5 +1,7 @@
 /** Server endpoints — configure in Extension/.env only. */
 
+import { parseDuplicateWindowDays } from './duplicateWindow.js';
+
 function trimEnv(value) {
 	const trimmed = typeof value === 'string' ? value.trim() : '';
 	return trimmed || null;
@@ -12,6 +14,11 @@ function normalizeBaseUrl(raw) {
 
 /** REST API base (scrap POST /jobs). */
 export const API_URL = normalizeBaseUrl(trimEnv(import.meta.env.VITE_API_URL));
+
+/** Client-controlled duplicate lookback sent with every scraped job. */
+export const DUPLICATE_WINDOW_DAYS = parseDuplicateWindowDays(
+	trimEnv(import.meta.env.VITE_DUPLICATE_WINDOW_DAYS),
+);
 
 /** Spirit / autofill service (content script + Agent tab). */
 export const SPIRIT_API_URL = normalizeBaseUrl(trimEnv(import.meta.env.VITE_SPIRIT_API_URL));

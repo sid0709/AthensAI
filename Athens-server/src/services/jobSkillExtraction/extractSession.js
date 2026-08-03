@@ -457,6 +457,7 @@ async function runSession(session, auth, { signal, onProgress } = {}) {
 export async function runSkillExtractionTask({
   taskId,
   applierName,
+  profileId,
   limit = null,
   signal,
   onProgress,
@@ -464,7 +465,7 @@ export async function runSkillExtractionTask({
   if (!jobsCollection) throw new Error('Database not ready');
   const name = String(applierName || '').trim();
   if (!name) throw new Error('applierName is required.');
-  const auth = await resolveExtractionAuth(name);
+  const auth = await resolveExtractionAuth(name, { profileId });
   const includeV2Jobs = await includeV2JobsForApplier(name);
   const parsedLimit = limit != null ? Math.max(1, Math.floor(Number(limit) || 1)) : null;
   const id = String(taskId || randomUUID());

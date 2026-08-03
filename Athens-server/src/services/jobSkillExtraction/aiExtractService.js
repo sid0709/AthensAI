@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import { jobsCollection, accountInfoCollection } from '../../db/dataStore.js';
 import { chatCompletion, resolveDefaultModel } from '../llm/llmService.js';
 import { JOB_SKILL_EXTRACTION_PROMPT } from '../../config/jobSkillExtractionPrompt.js';
@@ -242,9 +243,13 @@ async function persistExtractedJobs(rows, { signal } = {}) {
   return prepared;
 }
 
+export function extractionAuthFromProfile(profile) {
+  const resolved = resolveDefaultModel(profile);
+  return { ...resolved, providerId: resolved.provider };
+}
+
 async function getProfileForExtraction(account) {
-  const { provider, apiKey, model } = resolveDefaultModel(await decryptProfileApiKeys(account?.autoBidProfile || {}));
-  return { providerId: provider, apiKey, model };
+  return extractionAuthFromProfile(await decryptProfileApiKeys(account?.autoBidProfile || {}));
 }
 
 /**
@@ -253,21 +258,33 @@ async function getProfileForExtraction(account) {
  * the caller surfaces an error — we never borrow another account's key, model,
  * or billing.
  */
-export async function resolveExtractionAuth(applierName) {
+export async function resolveExtractionAuth(applierName, { profileId } = {}) {
   if (!accountInfoCollection) throw new Error('Database not ready');
   const name = String(applierName || '').trim();
   if (!name) {
     throw new Error('No applier specified — cannot resolve an AI API key for skill extraction.');
   }
-  const account = await accountInfoCollection.findOne({ name }, { projection: { autoBidProfile: 1, tier: 1 } });
+  const id = String(profileId || '').trim();
+  const account = id && DocumentId.isValid(id)
+    ? await accountInfoCollection.findOne(
+      { _id: new DocumentId(id) },
+      { projection: { name: 1, autoBidProfile: 1, tier: 1 } },
+    )
+    : await accountInfoCollection.findOne(
+      { name },
+      { projection: { name: 1, autoBidProfile: 1, tier: 1 } },
+    );
   if (!account) {
     throw new Error(`Account "${name}" not found — configure an AI API key in Settings → Profile.`);
   }
   const auth = await getProfileForExtraction(account);
-  if (!auth.apiKey) {
-    throw new Error(`No DeepSeek/OpenAI API key configured for "${name}" (Settings → Profile).`);
+  if (!auth.configured) {
+    throw new Error(`${auth.error} This default is required for job title review and skill extraction.`);
   }
-  return { ...auth, applierName: name, includeV2Jobs: isBetaTier(account.tier) };
+  if (!auth.apiKey) {
+    throw new Error(`No ${auth.providerId === 'deepseek' ? 'DeepSeek' : 'OpenAI'} API key configured for "${name}" (Settings → Profile).`);
+  }
+  return { ...auth, applierName: account.name || name, includeV2Jobs: isBetaTier(account.tier) };
 }
 
 /** Extract and persist several jobs with one LLM request and batched index writes. */

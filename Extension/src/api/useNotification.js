@@ -30,7 +30,7 @@ const useNotification = () => {
 	const showNotification = useCallback((message, options = {}) => {
 		const {
 			variant = 'default',
-			autoHideDuration = 5000,
+			autoHideDuration = 2500,
 			...otherOptions
 		} = options;
 

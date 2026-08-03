@@ -88,7 +88,7 @@ function parseJsonLoose(text) {
 
 function pickProvider(profile) {
 	const resolved = resolveDefaultModel(profile);
-	return resolved.apiKey ? resolved : null;
+	return resolved.configured && resolved.apiKey ? resolved : null;
 }
 
 /** Use the lowest supported reasoning budget without changing the profile model. */

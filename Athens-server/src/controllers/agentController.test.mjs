@@ -16,3 +16,16 @@ test('manual job descriptions strip markup, scripts, and control characters', ()
   );
   assert.equal(result, 'Build systems safely.');
 });
+
+test('agent AI uses only the profile default provider, model, and matching key', () => {
+  const result = agentControllerTest.resolveAgentProfileChat({
+    openaiApiKey: 'openai-key',
+    deepseekApiKey: 'deepseek-key',
+    defaultProvider: 'deepseek',
+    defaultModel: 'deepseek-v4-flash',
+  });
+
+  assert.equal(result.provider, 'deepseek');
+  assert.equal(result.model, 'deepseek-v4-flash');
+  assert.deepEqual(result.apiKeys, { deepseek: 'deepseek-key' });
+});

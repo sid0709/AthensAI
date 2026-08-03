@@ -1,21 +1,22 @@
 import { API_BASE } from "@/lib/api-base";
-import { AI_BFF_URL } from "./config";
 import type { ChatRequest, ChatResponse } from "./chat-types";
-import { getProfileApplierName, resolveChatModel } from "./model";
+import { getProfileApplierName, getProfileId } from "./model";
 import { getAgentRunContext } from "./run-context";
 
 const AGENTS_CHAT_URL = `${API_BASE.replace(/\/$/, "")}/agents/chat`;
 
 export async function chatCompletion(request: ChatRequest): Promise<ChatResponse> {
-  const model = resolveChatModel(request.model);
   const applierName = getProfileApplierName();
+  const profileId = getProfileId();
+  if (!applierName) {
+    throw new Error("Select an applier with a default AI model before running the agent.");
+  }
   const ctx = getAgentRunContext();
   const runId = request.runId ?? ctx.runId;
   const jobId = request.jobId ?? ctx.jobId;
   const feature = request.feature ?? ctx.feature;
 
   const payload = {
-    ...(model ? { model } : {}),
     system: request.system,
     messages: request.messages,
     ...(request.temperature != null ? { temperature: request.temperature } : {}),
@@ -31,19 +32,12 @@ export async function chatCompletion(request: ChatRequest): Promise<ChatResponse
   if (jobId) headers["x-job-id"] = jobId;
   if (feature) headers["x-feature"] = feature;
 
-  const response = applierName
-    ? await fetch(AGENTS_CHAT_URL, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ applierName, ...payload }),
-        signal: request.signal,
-      })
-    : await fetch(`${AI_BFF_URL}/v1/chat`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-        signal: request.signal,
-      });
+  const response = await fetch(AGENTS_CHAT_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ applierName, ...(profileId ? { profileId } : {}), ...payload }),
+    signal: request.signal,
+  });
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
@@ -51,12 +45,12 @@ export async function chatCompletion(request: ChatRequest): Promise<ChatResponse
   }
 
   const data = (await response.json()) as ChatResponse;
-  const billedModel = data.billedModel ?? data.model ?? model;
+  const billedModel = data.billedModel ?? data.model;
   return {
     ...data,
     model: billedModel,
     billedModel,
-    requestedModel: data.requestedModel ?? model,
-    modelMismatch: data.modelMismatch ?? (model != null && billedModel != null && model !== billedModel),
+    requestedModel: data.requestedModel,
+    modelMismatch: data.modelMismatch,
   };
 }

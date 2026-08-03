@@ -20,7 +20,11 @@ import {
   buildGenerationRequestFromSavedConfig,
   loadGeneratorConfig,
 } from "./resumeGenerationService.js";
-import { decryptAccountDoc, loadDecryptedAutoBidProfile } from "./autoBidProfileSecrets.js";
+import {
+  decryptAccountDoc,
+  loadDecryptedAutoBidProfile,
+  loadLlmAutoBidProfileForIdentity,
+} from "./autoBidProfileSecrets.js";
 import {
   TITLE_POLICY_VERSION,
   computeTitlePolicyFingerprint,
@@ -89,7 +93,13 @@ async function pdfPayloadForAgent(
 
 const cleanString = (v) => String(v ?? "").trim();
 
-async function findProfile(applierNameRaw) {
+async function findProfile(applierNameRaw, profileIdRaw) {
+  if (profileIdRaw) {
+    return loadLlmAutoBidProfileForIdentity({
+      applierName: applierNameRaw,
+      profileId: profileIdRaw,
+    });
+  }
   return loadDecryptedAutoBidProfile(applierNameRaw);
 }
 
@@ -721,6 +731,7 @@ export async function resolveSubmissionKitPdf({ applierName }) {
  */
 export async function ensureAgentJobResume({
   applierName,
+  profileId,
   jobId,
   jobDescription,
   forceRegenerate = false,
@@ -742,7 +753,7 @@ export async function ensureAgentJobResume({
   if (!parentId) throw new Error("jobId is required");
   if (!jd) throw new Error("jobDescription is required");
 
-  const profile = await findProfile(name);
+  const profile = await findProfile(name, profileId);
 	throwIfAborted();
   if (!profile) throw new Error(`No autoBidProfile found for ${name}`);
   const identity = identityFromProfile(profile);
@@ -762,6 +773,7 @@ export async function ensureAgentJobResume({
     generateParentJobId: parentId,
     structuredJob: true,
   });
+  body.profileId = cleanString(profileId) || undefined;
 
   // Resolve the saved preference before reuse so toggling dynamic titles
   // invalidates stale generated résumés and draft PDFs.
