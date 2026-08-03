@@ -13,11 +13,13 @@ const DEEPSEEK_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"];
  */
 export function DefaultModelCard({
   applierName,
+  profileId,
   currentProvider,
   currentModel,
   onSaved,
 }: {
   applierName: string;
+  profileId?: string;
   currentProvider: string;
   currentModel: string;
   onSaved: (provider: Provider, model: string) => void;
@@ -43,7 +45,7 @@ export function DefaultModelCard({
     }
     setLoadingModels(true);
     (async () => {
-      const list = await fetchLlmModels("openai", applierName);
+      const list = await fetchLlmModels("openai", applierName, profileId);
       if (cancelled) return;
       setModels(list);
       if (list.length && !list.includes(model)) setModel(list[0]);
@@ -53,7 +55,7 @@ export function DefaultModelCard({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, applierName]);
+  }, [provider, applierName, profileId]);
 
   const isCurrent = currentProvider === provider && currentModel === model;
 
@@ -62,7 +64,7 @@ export function DefaultModelCard({
     setSaving(true);
     setResult(null);
     try {
-      const res = await setDefaultModel(applierName, provider, model);
+      const res = await setDefaultModel(applierName, provider, model, profileId);
       if (res.success && res.valid) {
         setResult({ ok: true, msg: res.message || "Set as default." });
         onSaved(provider, model);
@@ -81,15 +83,15 @@ export function DefaultModelCard({
       <div>
         <h3 className="text-sm font-bold text-foreground">Default AI model</h3>
         <p className="text-xs text-muted-foreground mt-1">
-          Used by resume generation, agent work, and job-search skill extraction. Setting a
-          default validates the matching API key first.
+          Used by résumé analysis and generation, job-title review, skill extraction,
+          mail AI, and agent work. Setting a default validates the matching API key first.
         </p>
         {currentProvider && currentModel ? (
           <p className="text-xs text-muted-foreground mt-2">
             Current: <span className="font-semibold text-foreground">{currentProvider} · {currentModel}</span>
           </p>
         ) : (
-          <p className="text-xs text-amber-600 mt-2">No default set — features fall back to whichever key exists.</p>
+          <p className="text-xs text-amber-600 mt-2">No default set — AI features remain unavailable until you choose one.</p>
         )}
       </div>
 

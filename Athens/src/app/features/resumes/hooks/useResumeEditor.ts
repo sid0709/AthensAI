@@ -8,6 +8,7 @@ import {
   getResumeGenerationTaskResult,
 } from "@/app/api/backgroundTasks";
 import { createDefaultEditorDraft } from "../../../data/resumes/seedDocument";
+import { resolveSavedProfileAiDefault } from "../../../data/settings/profile";
 import { fetchAutoBidProfile } from "../../../services/profileApi";
 import {
   fetchGeneratorConfig,
@@ -116,12 +117,18 @@ export function useResumeEditor() {
     if (!applier?.name) return;
     setLoadingProfile(true);
     try {
-      const { profile } = await fetchAutoBidProfile(applier.name);
+      const { profile } = await fetchAutoBidProfile(
+        applier.name,
+        undefined,
+        applier._id != null ? String(applier._id) : undefined,
+      );
       const identity = identityFromProfile(profile);
+      const aiDefault = resolveSavedProfileAiDefault(profile);
       setGeneratorIdentity(identity);
       if (draft) {
         await persist({
           ...draft,
+          ...(aiDefault || {}),
           generatorIdentity: identity,
           document: {
             ...draft.document,
@@ -140,7 +147,7 @@ export function useResumeEditor() {
     } finally {
       setLoadingProfile(false);
     }
-  }, [applier?.name, draft, persist]);
+  }, [applier?._id, applier?.name, draft, persist]);
 
   useEffect(() => {
     if (applierReady && applier?.name) void reloadProfile();
@@ -152,12 +159,16 @@ export function useResumeEditor() {
       return;
     }
     try {
-      const list = await fetchLlmModels(draft.provider, applier.name);
+      const list = await fetchLlmModels(
+        draft.provider,
+        applier.name,
+        applier._id != null ? String(applier._id) : undefined,
+      );
       setModels(list.length ? list : FALLBACK_MODELS[draft.provider] ?? FALLBACK_MODELS.openai);
     } catch {
       setModels(FALLBACK_MODELS[draft?.provider ?? "openai"] ?? FALLBACK_MODELS.openai);
     }
-  }, [applier?.name, draft?.provider]);
+  }, [applier?._id, applier?.name, draft?.provider]);
 
   useEffect(() => {
     void loadModels();

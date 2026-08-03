@@ -289,7 +289,7 @@ async function runSession(session, { signal, onProgress } = {}) {
 	let auth;
 	try {
 		throwIfCancelled(signal);
-		auth = await resolveExtractionAuth(session.applierName);
+		auth = await resolveExtractionAuth(session.applierName, { profileId: session.profileId });
 		throwIfCancelled(signal);
 	} catch (error) {
 		session.running = false;
@@ -344,6 +344,7 @@ async function runSession(session, { signal, onProgress } = {}) {
 export async function runTitleReviewTask({
 	taskId,
 	applierName,
+	profileId,
 	limit = null,
 	signal,
 	onProgress,
@@ -359,6 +360,7 @@ export async function runTitleReviewTask({
 	const session = {
 		id,
 		applierName: name,
+		profileId: String(profileId || '').trim() || null,
 		queue: [],
 		limit: parsedLimit,
 		running: true,

@@ -4,6 +4,7 @@ import {
   buildParallelPurposeChains,
   buildTokenMap,
   formatCompanyToken,
+  prepareGeneration,
   resolveResumePromptSkills,
 } from "./resumeGenController.js";
 import {
@@ -121,6 +122,28 @@ test("coverage contract is authoritative for structured-job prompt skill scope",
   );
   assert.deepEqual(skills, ["Node.js", "Redis"]);
   assert.deepEqual(resolveResumePromptSkills(["Node.js"], null), ["Node.js"]);
+});
+
+test("resume generation ignores request/config models and uses the Profile default", async () => {
+  const prepared = await prepareGeneration({
+    applierName: "Test User",
+    provider: "openai",
+    model: "gpt-5.4-mini",
+    steps: [{ purpose: "summary", kind: "final" }],
+  }, {
+    loadProfile: async () => ({
+      openaiApiKey: "openai-key",
+      deepseekApiKey: "deepseek-key",
+      defaultProvider: "deepseek",
+      defaultModel: "deepseek-v4-flash",
+    }),
+    loadAccountTier: async () => "Beta",
+  });
+
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.providerId, "deepseek");
+  assert.equal(prepared.model, "deepseek-v4-flash");
+  assert.equal(prepared.apiKey, "deepseek-key");
 });
 
 test("resume generation parallelizes independent purpose chains without reordering their steps", () => {

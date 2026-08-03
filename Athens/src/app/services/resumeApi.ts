@@ -217,9 +217,11 @@ export async function saveGeneratorConfig(applierName: string, config: Partial<E
 
 // --- LLM models ---
 
-export async function fetchLlmModels(provider: string, applierName: string): Promise<string[]> {
+export async function fetchLlmModels(provider: string, applierName: string, profileId?: string): Promise<string[]> {
+  const params = new URLSearchParams({ provider, applierName });
+  if (profileId) params.set("profileId", profileId);
   const data = await apiFetch<{ models?: string[] }>(
-    `/personal/llm-models?provider=${encodeURIComponent(provider)}&applierName=${encodeURIComponent(applierName)}`,
+    `/personal/llm-models?${params}`,
   );
   return data.models ?? [];
 }

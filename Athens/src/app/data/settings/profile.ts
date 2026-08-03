@@ -76,6 +76,24 @@ export type UserProfile = {
   resumeUpdatedAt?: string | null;
 };
 
+export type ProfileAiDefault = {
+  provider: "openai" | "deepseek";
+  model: string;
+};
+
+/** Return only a complete, provider-compatible default saved in Profile. */
+export function resolveSavedProfileAiDefault(
+  profile: Pick<UserProfile, "defaultProvider" | "defaultModel"> | Record<string, unknown> | undefined,
+): ProfileAiDefault | null {
+  if (!profile) return null;
+  const provider = profile.defaultProvider;
+  const model = String(profile.defaultModel ?? "").trim();
+  if ((provider !== "openai" && provider !== "deepseek") || !model) return null;
+  const deepseekModel = model.toLowerCase().startsWith("deepseek-");
+  if ((provider === "deepseek") !== deepseekModel) return null;
+  return { provider, model };
+}
+
 export const emptyEducation = (): EducationEntry => ({
   school: "",
   diploma: "",
@@ -219,10 +237,15 @@ export function mapProfileFromApi(raw: Record<string, unknown> | undefined): Use
 }
 
 export function buildProfileSavePayload(profile: UserProfile, applierName: string, vendorAllowed: boolean) {
+  // The dedicated default-model endpoint owns these fields. Omitting them keeps
+  // a stale general Profile save from racing and reverting the selected model.
+  const editableProfile: Partial<UserProfile> = { ...profile };
+  delete editableProfile.defaultProvider;
+  delete editableProfile.defaultModel;
   return {
     applierName,
     vendorAllowed,
-    ...profile,
+    ...editableProfile,
     education: profile.education.filter((e) => e.school.trim() || e.diploma.trim() || e.startYear || e.endYear),
     careers: profile.careers.filter((c) => {
       const hasWho = !!(c.company.trim() || c.title.trim());

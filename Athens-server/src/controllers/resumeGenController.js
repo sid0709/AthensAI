@@ -21,6 +21,7 @@ import {
 import {
   loadDecryptedAutoBidProfile,
   loadLlmAutoBidProfile,
+  loadLlmAutoBidProfileForIdentity,
 } from "../services/autoBidProfileSecrets.js";
 import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.js";
 import { migrateGeneratorConfig } from "../services/resumeGeneratorConfigSchema.js";
@@ -68,6 +69,7 @@ function resumeTaskIdentity(req, applierName) {
 function persistedGenerationRequest(body, applierName) {
   return {
     applierName,
+    profileId: body.profileId ?? null,
     provider: body.provider ?? null,
     model: body.model ?? null,
     reasoningEffort: body.reasoningEffort ?? null,
@@ -219,7 +221,13 @@ function throwIfAborted(signal) {
 }
 
 /** Resolve an applier's autoBidProfile (exact, then case-insensitive). */
-async function findProfile(applierNameRaw) {
+async function findProfile(applierNameRaw, profileIdRaw) {
+  if (profileIdRaw) {
+    return loadLlmAutoBidProfileForIdentity({
+      applierName: applierNameRaw,
+      profileId: profileIdRaw,
+    });
+  }
   return loadLlmAutoBidProfile(applierNameRaw);
 }
 
@@ -237,7 +245,7 @@ export async function getLlmModels(req, res) {
     if (Array.isArray(provider.models)) {
       return res.json({ success: true, provider: providerId, models: provider.models });
     }
-    const profile = await findProfile(req.query?.applierName);
+    const profile = await findProfile(req.query?.applierName, req.query?.profileId);
     const apiKey = apiKeyFor(profile, providerId);
     if (!apiKey) {
       return res.json({ success: true, provider: providerId, models: [], error: `No ${provider.label} API key in profile.` });
@@ -360,17 +368,24 @@ async function resolveAccountTier(applierNameRaw) {
 // Validate + resolve a generation request. Returns { ok, ... } or { ok:false, status, error }.
 // Exported so the auto-bid agent path (agentResumeGenService) runs the SAME core
 // as the Editor — one implementation, no drift.
-export async function prepareGeneration(body) {
+export async function prepareGeneration(body, {
+  loadProfile = findProfile,
+  loadAccountTier = resolveAccountTier,
+} = {}) {
   const steps = Array.isArray(body.steps) ? body.steps : [];
   if (!steps.length) return { ok: false, status: 400, error: "steps are required" };
 
   // Provider + model always come from the profile's default (Settings → Profile),
   // never from the request — there is no per-generation model picker anymore.
   const [profile, accountTier] = await Promise.all([
-    findProfile(body.applierName),
-    resolveAccountTier(body.applierName),
+    loadProfile(body.applierName, body.profileId),
+    loadAccountTier(body.applierName),
   ]);
-  const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
+  const resolvedModel = resolveDefaultModel(profile);
+  const { provider: providerId, apiKey, model } = resolvedModel;
+  if (!resolvedModel.configured) {
+    return { ok: false, status: 400, error: resolvedModel.error };
+  }
   if (!apiKey) {
     return { ok: false, status: 400, error: `No ${getProvider(providerId).label} API key configured. Add it and set a default model in Settings → Profile.` };
   }
@@ -410,12 +425,13 @@ export async function analyzeResumeCoverage(req, res) {
     const jobDescription = cleanString(body.jobDescription);
     if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
     if (!jobDescription) return res.status(400).json({ success: false, error: "jobDescription is required" });
-    const profile = await findProfile(applierName);
-    const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
-    if (!apiKey || !model) {
+    const profile = await findProfile(applierName, body.profileId);
+    const resolvedModel = resolveDefaultModel(profile);
+    const { provider: providerId, apiKey, model } = resolvedModel;
+    if (!resolvedModel.configured || !apiKey) {
       return res.status(400).json({
         success: false,
-        error: "Configure an AI API key and default model in Settings → Profile before analyzing a job description.",
+        error: resolvedModel.error || "Configure the matching AI API key in Settings → Profile before analyzing a job description.",
       });
     }
     const identity = body.identity && typeof body.identity === "object" ? body.identity : profile ?? {};
@@ -770,7 +786,11 @@ export async function finalizeGenerationRun({ prep, body, result, startedAt, sig
     model: prep.model,
     status: "completed",
     backgroundTaskInputId: cleanString(body.backgroundTaskInputId) || null,
-    config: configSnapshot(body),
+    config: configSnapshot({
+      ...body,
+      provider: prep.providerId,
+      model: prep.model,
+    }),
     identity: body.identity ?? null,
     jobDescription: cleanString(body.jobDescription) || null,
     coverageAnalysis: body.coverage?.analysis ?? null,

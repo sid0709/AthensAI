@@ -69,7 +69,7 @@ function parseJsonLoose(text) {
 
 function pickProvider(profile) {
   const resolved = resolveDefaultModel(profile);
-  return resolved.apiKey ? resolved : null;
+  return resolved.configured && resolved.apiKey ? resolved : null;
 }
 
 /** Sum two loose usage objects (best-effort; missing fields treated as 0). */

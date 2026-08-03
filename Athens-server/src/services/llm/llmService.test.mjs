@@ -3,10 +3,58 @@ import assert from "node:assert/strict";
 
 import {
   DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS,
+  chatCompletion,
   isRequestTimeoutError,
+  isModelCompatibleWithProvider,
   resolveChatMaxTokens,
+  resolveDefaultModel,
   summarizeUsage,
 } from "./llmService.js";
+
+test("the saved profile default wins even when both provider keys exist", () => {
+  assert.deepEqual(
+    resolveDefaultModel({
+      openaiApiKey: "openai-key",
+      deepseekApiKey: "deepseek-key",
+      defaultProvider: "deepseek",
+      defaultModel: "deepseek-v4-flash",
+    }),
+    {
+      provider: "deepseek",
+      apiKey: "deepseek-key",
+      model: "deepseek-v4-flash",
+      configured: true,
+      error: null,
+    },
+  );
+});
+
+test("missing or cross-provider profile defaults never fall back to GPT", async () => {
+  const missing = resolveDefaultModel({ openaiApiKey: "openai-key" });
+  assert.equal(missing.model, "");
+  assert.equal(missing.configured, false);
+
+  const mismatched = resolveDefaultModel({
+    deepseekApiKey: "deepseek-key",
+    defaultProvider: "deepseek",
+    defaultModel: "gpt-5.4-mini",
+  });
+  assert.equal(mismatched.model, "");
+  assert.match(mismatched.error, /different provider/);
+  assert.equal(isModelCompatibleWithProvider("deepseek", "deepseek-v4-flash"), true);
+  assert.equal(isModelCompatibleWithProvider("deepseek", "gpt-5.4-mini"), false);
+  assert.equal(isModelCompatibleWithProvider("", "gpt-5.4-mini"), false);
+
+  await assert.rejects(
+    chatCompletion({
+      provider: "deepseek",
+      apiKey: "deepseek-key",
+      model: "",
+      messages: [{ role: "user", content: "test" }],
+    }),
+    /No default AI model/,
+  );
+});
 
 test("summarizeUsage matches codex pricing for DeepSeek cache hit/miss", () => {
   const raw = {

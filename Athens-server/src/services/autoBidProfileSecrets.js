@@ -1,4 +1,5 @@
 import { KeyManagementServiceClient } from '@google-cloud/kms';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import { accountInfoCollection } from '../db/dataStore.js';
 import { decryptSecret as decryptLegacy, encryptSecret as encryptLegacy, isEncryptedSecret } from '@nextoffer/shared/secretCrypto';
 
@@ -139,4 +140,25 @@ export async function loadLlmAutoBidProfile(applierNameRaw, projection = { autoB
 	return profile
 		? decryptSelectedProfileSecrets(profile, ['openaiApiKey', 'deepseekApiKey'])
 		: profile;
+}
+
+/** Prefer the authenticated profile id, then retain name lookup compatibility. */
+export async function loadLlmAutoBidProfileForIdentity(
+	{ profileId, applierName } = {},
+	projection = { autoBidProfile: 1 },
+) {
+	const id = String(profileId || '').trim();
+	if (id && accountInfoCollection && DocumentId.isValid(id)) {
+		const account = await accountInfoCollection.findOne(
+			{ _id: new DocumentId(id) },
+			{ projection },
+		);
+		if (account?.autoBidProfile) {
+			return decryptSelectedProfileSecrets(
+				account.autoBidProfile,
+				['openaiApiKey', 'deepseekApiKey'],
+			);
+		}
+	}
+	return loadLlmAutoBidProfile(applierName, projection);
 }

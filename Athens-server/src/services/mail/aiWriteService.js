@@ -34,7 +34,7 @@ const PROMPT_MAX = 4000;
 
 function pickProvider(profile) {
 	const resolved = resolveDefaultModel(profile);
-	return resolved.apiKey ? resolved : null;
+	return resolved.configured && resolved.apiKey ? resolved : null;
 }
 
 function stripFences(text) {
@@ -58,7 +58,7 @@ function resolveMode(raw) {
 export async function runMailAiWrite(input, profile, context = {}) {
 	const picked = pickProvider(profile);
 	if (!picked) {
-		return { ok: false, error: 'No LLM API key on applier profile' };
+		return { ok: false, error: 'Configure a default AI model and its API key in Settings → Profile' };
 	}
 
 	const mode = resolveMode(input.mode);

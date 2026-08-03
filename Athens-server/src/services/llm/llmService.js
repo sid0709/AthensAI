@@ -40,26 +40,41 @@ export function getProvider(id) {
   return PROVIDERS[id] || PROVIDERS.openai;
 }
 
+export function isModelCompatibleWithProvider(provider, model) {
+  const modelId = String(model || '').trim();
+  if (!modelId || (provider !== 'openai' && provider !== 'deepseek')) return false;
+  return provider === 'deepseek' ? isDeepSeekModel(modelId) : !isDeepSeekModel(modelId);
+}
+
 /**
- * Single source of truth for "which model do we call?" — resolves the profile's
- * saved default (defaultProvider + defaultModel), set via Settings → Profile.
- * Falls back to whichever provider has a key, then that provider's default
- * model, so it works before a default is explicitly chosen. Every feature
- * (resume generation, agent work, job skill extraction, resume analysis, mail
- * verification) goes through this — no hardcoded provider/model anywhere else.
+ * Single source of truth for "which model do we call?" — resolves only the
+ * profile's saved default (defaultProvider + defaultModel), set via
+ * Settings → Profile. A missing or inconsistent default stays unresolved so a
+ * feature cannot silently fall through to ai-bff's process-wide GPT default.
  *
- * @returns {{ provider: 'openai'|'deepseek', apiKey: string, model: string }}
+ * @returns {{ provider: 'openai'|'deepseek', apiKey: string, model: string, configured: boolean, error: string|null }}
  */
 export function resolveDefaultModel(profile) {
   const p = profile || {};
-  let provider = p.defaultProvider;
-  if (provider !== 'openai' && provider !== 'deepseek') {
-    provider = p.deepseekApiKey ? 'deepseek' : p.openaiApiKey ? 'openai' : 'deepseek';
-  }
+  const savedProvider = p.defaultProvider === 'openai' || p.defaultProvider === 'deepseek'
+    ? p.defaultProvider
+    : null;
+  const provider = savedProvider || (p.deepseekApiKey ? 'deepseek' : p.openaiApiKey ? 'openai' : 'deepseek');
   const apiKey = String((provider === 'openai' ? p.openaiApiKey : p.deepseekApiKey) || '').trim();
-  const fallbackModel = provider === 'openai' ? 'gpt-4o-mini' : (DEEPSEEK_MODELS[0] || 'deepseek-v4-flash');
-  const model = String(p.defaultModel || '').trim() || fallbackModel;
-  return { provider, apiKey, model };
+  const savedModel = String(p.defaultModel || '').trim();
+  let error = null;
+  if (!savedProvider || !savedModel) {
+    error = 'Set a default AI provider and model in Settings → Profile.';
+  } else if (!isModelCompatibleWithProvider(provider, savedModel)) {
+    error = `The saved ${provider} default model "${savedModel}" belongs to a different provider.`;
+  }
+  return {
+    provider,
+    apiKey,
+    model: error ? '' : savedModel,
+    configured: !error,
+    error,
+  };
 }
 
 export function getPricing(model) {
@@ -276,6 +291,12 @@ export async function chatCompletion({
   if (!apiKey) {
     throw new Error(`No API key configured for ${p.label}. Add it under Settings → Profile.`);
   }
+  if (!String(model || '').trim()) {
+    throw new Error('No default AI model is configured. Set one under Settings → Profile.');
+  }
+  if (!isModelCompatibleWithProvider(p.id, model)) {
+    throw new Error(`Model "${model}" is not valid for the ${p.label} profile default.`);
+  }
 
   const effectiveMaxTokens = resolveChatMaxTokens(p.id, maxTokens);
   const body = {
@@ -465,11 +486,13 @@ export async function chatCompletion({
 const modelCache = new Map();
 const MODEL_TTL_MS = 5 * 60 * 1000;
 
-export async function verifyKey({ provider, apiKey }) {
+export async function verifyKey({ provider, apiKey, model: requestedModel }) {
   const p = getProvider(provider);
   if (!apiKey) return { ok: false, status: 400, message: `No ${p.label} API key provided.` };
   try {
-    const model = Array.isArray(p.models) ? p.models[0] : 'gpt-4o-mini';
+    const model = isModelCompatibleWithProvider(p.id, requestedModel)
+      ? String(requestedModel).trim()
+      : Array.isArray(p.models) ? p.models[0] : 'gpt-4o-mini';
     const response = await fetchRetry(
       `${AI_BASE}/v1/chat/completions`,
       {

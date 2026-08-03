@@ -6,6 +6,7 @@ import {
 } from "./jobSkillExtraction/extractSession.js";
 import { pendingTitleReviewQuery } from "./jobTitleReview/titleReviewSession.js";
 import {
+	extractionAuthFromProfile,
 	parseJobSkillsBatchJson,
 	parseJobSkillsJson,
 	reasoningEffortForExtraction,
@@ -103,6 +104,18 @@ test("skill extraction chooses a low-latency reasoning mode supported by the GPT
 	assert.equal(reasoningEffortForExtraction("openai", "gpt-5-nano"), "minimal");
 	assert.equal(reasoningEffortForExtraction("openai", "gpt-5.4-mini"), "none");
 	assert.equal(reasoningEffortForExtraction("deepseek", "deepseek-chat"), undefined);
+});
+
+test("skill extraction and title review share the saved Profile default", () => {
+	const auth = extractionAuthFromProfile({
+		openaiApiKey: "openai-key",
+		deepseekApiKey: "deepseek-key",
+		defaultProvider: "deepseek",
+		defaultModel: "deepseek-v4-flash",
+	});
+	assert.equal(auth.providerId, "deepseek");
+	assert.equal(auth.model, "deepseek-v4-flash");
+	assert.equal(auth.apiKey, "deepseek-key");
 });
 
 test("skill extraction rejects generic practices but keeps named observability tools", () => {

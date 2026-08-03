@@ -34,13 +34,19 @@ async function parseJson(res: Response) {
   }
 }
 
-export async function fetchAutoBidProfile(applierName: string, signal?: AbortSignal): Promise<{
+export async function fetchAutoBidProfile(
+  applierName: string,
+  signal?: AbortSignal,
+  profileId?: string,
+): Promise<{
   profile: UserProfile;
   vendorAllowed: boolean;
   vendorPasswordSet: boolean;
   accountExists: boolean;
 }> {
-  const url = `${API_BASE.replace(/\/$/, "")}/personal/auto-bid-profile?applierName=${encodeURIComponent(applierName)}`;
+  const params = new URLSearchParams({ applierName });
+  if (profileId) params.set("profileId", profileId);
+  const url = `${API_BASE.replace(/\/$/, "")}/personal/auto-bid-profile?${params}`;
   const res = await retryTransient(async () => {
     const response = await fetch(url, { signal });
     if (!response.ok) {
@@ -104,12 +110,16 @@ export async function saveAutoBidProfile(
   applierName: string,
   profile: UserProfile,
   vendorAllowed: boolean,
+  profileId?: string,
 ): Promise<{ success: boolean; error?: string }> {
   const url = `${API_BASE.replace(/\/$/, "")}/personal/auto-bid-profile`;
   const res = await fetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildProfileSavePayload(profile, applierName, vendorAllowed)),
+    body: JSON.stringify({
+      ...buildProfileSavePayload(profile, applierName, vendorAllowed),
+      ...(profileId ? { profileId } : {}),
+    }),
   });
   const data = (await parseJson(res)) as { success?: boolean; error?: string } | null;
   if (!res.ok || !data?.success) {
@@ -249,8 +259,11 @@ export async function refreshGeneratedResumesIdentityStream(
 export async function fetchLlmModels(
   provider: "openai" | "deepseek",
   applierName: string,
+  profileId?: string,
 ): Promise<string[]> {
-  const url = `${API_BASE.replace(/\/$/, "")}/personal/llm-models?provider=${provider}&applierName=${encodeURIComponent(applierName)}`;
+  const params = new URLSearchParams({ provider, applierName });
+  if (profileId) params.set("profileId", profileId);
+  const url = `${API_BASE.replace(/\/$/, "")}/personal/llm-models?${params}`;
   const res = await fetch(url);
   const data = (await parseJson(res)) as { success?: boolean; models?: string[] } | null;
   return Array.isArray(data?.models) ? data!.models! : [];
@@ -261,12 +274,13 @@ export async function setDefaultModel(
   applierName: string,
   provider: "openai" | "deepseek",
   model: string,
+  profileId?: string,
 ): Promise<{ success: boolean; valid: boolean; message?: string; error?: string }> {
   const url = `${API_BASE.replace(/\/$/, "")}/personal/default-model`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ applierName, provider, model }),
+    body: JSON.stringify({ applierName, provider, model, ...(profileId ? { profileId } : {}) }),
   });
   const data = (await parseJson(res)) as
     | { success?: boolean; valid?: boolean; message?: string; error?: string }

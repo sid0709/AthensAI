@@ -68,6 +68,14 @@ function sanitizedJobDescription(raw) {
     .slice(0, 80_000);
 }
 
+function resolveAgentProfileChat(profile) {
+  const resolved = resolveDefaultModel(profile);
+  return {
+    ...resolved,
+    apiKeys: resolved.apiKey ? { [resolved.provider]: resolved.apiKey } : {},
+  };
+}
+
 async function accountForRequest(req) {
   if (!accountInfoCollection) return null;
   const profileId = String(req.query?.profileId || req.body?.profileId || '').trim();
@@ -260,20 +268,19 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
     return res.status(400).json({ error: "applierName required" });
   }
 
-  const acc = await findAccountByApplierName(applierName);
+  const acc = await accountForRequest(req);
   if (!acc) {
     return res.status(404).json({ error: `No account named "${applierName}".` });
   }
 
   const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
-  const { model: profileModel } = resolveDefaultModel(profile);
-  const model = String(req.body?.model || "").trim() || profileModel;
-
-  const openaiApiKey = String(profile.openaiApiKey || "").trim();
-  const deepseekApiKey = String(profile.deepseekApiKey || "").trim();
-  if (!openaiApiKey && !deepseekApiKey) {
+  const profileChat = resolveAgentProfileChat(profile);
+  if (!profileChat.configured) {
+    return res.status(400).json({ error: profileChat.error });
+  }
+  if (!profileChat.apiKey) {
     return res.status(400).json({
-      error: "No OpenAI or DeepSeek API key in profile. Add one under Settings → Profile.",
+      error: `No ${profileChat.provider === "deepseek" ? "DeepSeek" : "OpenAI"} API key in profile. Add one under Settings → Profile.`,
     });
   }
 
@@ -300,7 +307,8 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
         ...(feature ? { "x-feature": String(feature) } : { "x-feature": "avalon-agent-chat" }),
       },
       body: JSON.stringify({
-        model,
+        // The browser cannot override this. Profile is the only model source.
+        model: profileChat.model,
         system,
         messages,
         temperature,
@@ -312,10 +320,7 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
         jobId,
         feature: feature || "avalon-agent-chat",
         workloadClass: "interactive",
-        apiKeys: {
-          ...(openaiApiKey ? { openai: openaiApiKey } : {}),
-          ...(deepseekApiKey ? { deepseek: deepseekApiKey } : {}),
-        },
+        apiKeys: profileChat.apiKeys,
       }),
     });
   } catch (error) {
@@ -336,5 +341,6 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
 
 export const agentControllerTest = {
   canonicalJobUrl,
+  resolveAgentProfileChat,
   sanitizedJobDescription,
 };

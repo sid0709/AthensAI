@@ -175,6 +175,7 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 	const body = {
 		...(input.request || {}),
 		applierName: task.applierName,
+		profileId: input.profileId || task.profileId || input.request?.profileId,
 		backgroundTaskInputId: inputId,
 	};
 	let partialWrite = Promise.resolve();
@@ -217,6 +218,11 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 		const prep = await prepareGeneration(body);
 		throwIfAborted(signal);
 		if (!prep.ok) throw Object.assign(new Error(prep.error), { status: prep.status });
+		// The request may contain a stale model from a previously saved generator
+		// config. Execution and persisted audit metadata must both reflect the
+		// Profile default resolved by prepareGeneration at task run time.
+		body.provider = prep.providerId;
+		body.model = prep.model;
 		const startedAt = new Date();
 		const generated = await resumeGenLimiter.run(
 			task.applierName,
@@ -391,6 +397,7 @@ async function runResumeGeneration(task, signal) {
 				const requiresPdf = task.payload?.deferPdf === false;
 				result = await ensureAgentJobResume({
 					applierName: task.applierName,
+					profileId: task.profileId,
 					jobId: itemId,
 					jobDescription: description,
 					forceRegenerate: task.payload?.forceRegenerate === true,
@@ -502,6 +509,7 @@ async function runTitleReview(task, signal) {
 	const session = await runTitleReviewTask({
 		taskId: task.id,
 		applierName: task.applierName,
+		profileId: task.profileId,
 		limit: task.payload?.limit,
 		signal,
 		onProgress: (snapshot) => reporter.progress({
@@ -547,6 +555,7 @@ async function runSkillExtraction(task, signal) {
 	const session = await runSkillExtractionTask({
 		taskId: task.id,
 		applierName: task.applierName,
+		profileId: task.profileId,
 		limit: task.payload?.limit,
 		signal,
 		onProgress: (snapshot) => reporter.progress({
@@ -837,7 +846,7 @@ async function runJobEmbedding(task, signal) {
 async function runSkillEnrichment(task, signal) {
 	if (!externalScrapedJobsCollection) throw new Error('Database not ready');
 	const reporter = createTaskReporter(task.id);
-	const auth = await resolveExtractionAuth(task.applierName);
+	const auth = await resolveExtractionAuth(task.applierName, { profileId: task.profileId });
 	throwIfAborted(signal);
 	const maxItems = Math.max(
 		1,

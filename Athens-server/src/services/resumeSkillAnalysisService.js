@@ -132,7 +132,11 @@ async function syncResumeAnalysisCatalogStackFromAnalysis(ownerName, stackName) 
 
 async function extractSkillsWithLlm(extractedText, profile, ownerName, signal) {
   throwIfAborted(signal);
-  const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
+  const resolvedModel = resolveDefaultModel(profile);
+  const { provider: providerId, apiKey, model } = resolvedModel;
+  if (!resolvedModel.configured) {
+    throw new Error(resolvedModel.error);
+  }
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
   }

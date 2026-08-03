@@ -40,7 +40,11 @@ async function findAccount(applierNameRaw) {
 }
 
 async function analyzeJobDescription(jobDescription, profile, applierName, signal) {
-  const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
+  const resolvedModel = resolveDefaultModel(profile);
+  const { provider: providerId, apiKey, model } = resolvedModel;
+  if (!resolvedModel.configured) {
+    throw new Error(resolvedModel.error);
+  }
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
   }
