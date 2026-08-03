@@ -160,6 +160,12 @@ export async function initAvalonRelay(httpServer) {
 	if (redisUrl) {
 		const pubClient = createClient({ url: redisUrl });
 		const subClient = pubClient.duplicate();
+		pubClient.on("error", (error) => {
+			console.error("[avalon-relay] Redis publisher error:", error?.message || error);
+		});
+		subClient.on("error", (error) => {
+			console.error("[avalon-relay] Redis subscriber error:", error?.message || error);
+		});
 		await Promise.all([pubClient.connect(), subClient.connect()]);
 		io.adapter(createAdapter(pubClient, subClient, { key: "avalon-relay" }));
 		io.redisClients = [pubClient, subClient];

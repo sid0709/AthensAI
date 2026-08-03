@@ -4,7 +4,7 @@ import { DocumentId } from '@nextoffer/shared/document-id';
 import { Worker } from 'bullmq';
 import { installTerminalLogger } from '@nextoffer/shared/terminal-log';
 import { accountInfoCollection, initDataStore, closeDataStore } from '../db/dataStore.js';
-import { initRedis, closeRedis, getRedis } from '../db/redis.js';
+import { initRedis, closeRedis, duplicateRedisClient, getRedis } from '../db/redis.js';
 import {
 	initJobRankingCollection,
 	initQdrantCollections,
@@ -282,7 +282,7 @@ function createLaneWorker(lane, concurrency) {
 }
 
 async function startControlSubscriber() {
-	subscriber = getRedis().duplicate();
+	subscriber = duplicateRedisClient('background-task control subscriber');
 	await subscriber.connect();
 	await subscriber.subscribe(backgroundTaskKeys.controlChannel, (raw) => {
 		void (async () => {

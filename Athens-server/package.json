@@ -16,7 +16,7 @@
 		"test:resume-templates": "node --test src/services/resumeTemplate.test.mjs",
 		"test:resume-gen": "node --test src/controllers/resumeGenController.test.mjs src/services/resumeCareerTitlePolicy.test.mjs src/services/resumeCoverageService.test.mjs src/services/resumeGenerationService.test.mjs src/services/resumeGeneratorConfigSchema.test.mjs src/lib/betaTier.test.mjs src/services/agentResumeReuse.test.mjs src/services/refreshGeneratedResumesIdentity.test.mjs",
 		"test:concurrency": "node --test src/utils/concurrency.test.mjs",
-		"test:background-tasks": "node --test src/services/backgroundTasks/*.test.mjs",
+		"test:background-tasks": "node --test src/db/redis.test.mjs src/services/backgroundTasks/*.test.mjs",
 		"load-test:background-tasks": "node src/scripts/loadBackgroundTasks.mjs",
 		"firebase:normalize-job-statuses": "node src/scripts/normalizeJobStatuses.js",
 		"firebase:repair-job-status-caches": "node src/scripts/repairJobStatusCaches.js",

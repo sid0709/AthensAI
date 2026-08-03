@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { encryptSecret } from '@nextoffer/shared/secretCrypto';
 
 import {
 	decryptSelectedProfileSecrets,
@@ -21,6 +22,27 @@ test('client profile reads redact KMS secrets when the key is unavailable', asyn
 	} finally {
 		if (previous === undefined) delete process.env.KMS_KEY_NAME;
 		else process.env.KMS_KEY_NAME = previous;
+	}
+});
+
+test('client profile reads redact legacy secrets encrypted with another key', async () => {
+	const previous = process.env.API_KEYS_ENCRYPTION_KEY;
+	try {
+		process.env.API_KEYS_ENCRYPTION_KEY = 'a'.repeat(64);
+		const encrypted = encryptSecret('legacy-secret');
+		process.env.API_KEYS_ENCRYPTION_KEY = 'b'.repeat(64);
+
+		const result = await decryptProfileApiKeysForClient({
+			fullName: 'Test User',
+			openaiApiKey: encrypted,
+		});
+
+		assert.equal(result.profile.fullName, 'Test User');
+		assert.equal(result.profile.openaiApiKey, '');
+		assert.deepEqual(result.unavailableFields, ['openaiApiKey']);
+	} finally {
+		if (previous === undefined) delete process.env.API_KEYS_ENCRYPTION_KEY;
+		else process.env.API_KEYS_ENCRYPTION_KEY = previous;
 	}
 });
 

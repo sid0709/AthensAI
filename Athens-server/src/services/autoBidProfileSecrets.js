@@ -64,16 +64,11 @@ export async function decryptSelectedProfileSecrets(profile, selectedFields) {
 	return out;
 }
 
-function isUnavailableKmsError(error) {
-	return error?.code === 7 || /KMS_KEY_NAME is required|cloudkms\.cryptoKeyVersions\.useToDecrypt|PERMISSION_DENIED/i.test(
-		String(error?.message || error || ''),
-	);
-}
-
 /**
  * Decrypt secrets for a client-facing profile read without making the whole
- * profile unavailable when this runtime cannot access a KMS-encrypted field.
- * Unavailable values are redacted; callers may surface `unavailableFields`.
+ * profile unavailable when an individual encrypted field cannot be read.
+ * Unavailable values are redacted; callers preserve the stored ciphertext on
+ * writes and may surface `unavailableFields`.
  */
 export async function decryptProfileApiKeysForClient(profile) {
 	if (!profile || typeof profile !== 'object') return { profile, unavailableFields: [] };
@@ -83,8 +78,7 @@ export async function decryptProfileApiKeysForClient(profile) {
 		if (typeof out[field] !== 'string' || !out[field]) continue;
 		try {
 			out[field] = await decryptValue(out[field]);
-		} catch (error) {
-			if (!isUnavailableKmsError(error)) throw error;
+		} catch {
 			out[field] = '';
 			unavailableFields.push(field);
 		}

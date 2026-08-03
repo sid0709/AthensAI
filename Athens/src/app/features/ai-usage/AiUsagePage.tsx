@@ -229,9 +229,7 @@ export function AiUsagePage() {
                   {configuredKeys.map((key) => (
                     <li key={key.provider} className="flex items-start gap-2 text-sm min-w-0">
                       <Badge v="subtle">{providerLabel(key.provider)}</Badge>
-                      <code className="text-xs text-foreground break-all select-all" style={mono}>
-                        {key.value}
-                      </code>
+                      <span className="text-xs text-muted-foreground">Configured</span>
                     </li>
                   ))}
                 </ul>

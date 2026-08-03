@@ -100,6 +100,61 @@ export function startService(svc, onLine, onExit) {
 	return child;
 }
 
+export function serviceRestartDelay(attempt) {
+	const exponent = Math.max(0, Math.min(4, Number(attempt) || 0));
+	return Math.min(1_000 * (2 ** exponent), 10_000);
+}
+
+/**
+ * Keep each local service isolated: an unexpected exit restarts only that
+ * service instead of terminating healthy siblings and aborting their work.
+ */
+export function startSupervisedService(
+	svc,
+	onLine,
+	onExit,
+	{
+		start = startService,
+		schedule = setTimeout,
+		cancelSchedule = clearTimeout,
+		now = Date.now,
+	} = {},
+) {
+	let child = null;
+	let restartTimer = null;
+	let stopped = false;
+	let attempts = 0;
+	let startedAt = 0;
+
+	const launch = () => {
+		if (stopped) return;
+		startedAt = now();
+		child = start(svc, onLine, (name, code) => {
+			if (stopped) return;
+			if (now() - startedAt >= 30_000) attempts = 0;
+			const restartDelayMs = serviceRestartDelay(attempts++);
+			onLine({
+				service: 'dev',
+				line: `[dev] ${name} exited with code ${code ?? 'unknown'} — restarting in ${restartDelayMs}ms`,
+				at: now(),
+			});
+			onExit?.(name, code, { restarting: true, restartDelayMs });
+			restartTimer = schedule(launch, restartDelayMs);
+		});
+	};
+
+	launch();
+	return {
+		get killed() { return stopped; },
+		kill(signal = 'SIGTERM') {
+			if (stopped) return;
+			stopped = true;
+			if (restartTimer) cancelSchedule(restartTimer);
+			if (child && !child.killed) child.kill(signal);
+		},
+	};
+}
+
 export async function waitForBackends(isReady) {
 	const timeoutMs = Number(process.env.DEV_BACKEND_WAIT_MS || 90_000);
 	const intervalMs = 500;

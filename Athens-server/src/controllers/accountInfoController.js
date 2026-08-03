@@ -5,7 +5,6 @@ import {
 	insertAccountInfo,
 	updateAccountInfoById,
 } from "../services/accountInfoStore.js";
-import { decryptProfileApiKeysForClient } from "../services/autoBidProfileSecrets.js";
 
 export const getAuthSession = async (req, res) => {
 	if (!req.auth) {
@@ -57,20 +56,14 @@ function canAccessAccount(req, doc) {
 	return req.profileAccess?.profileIds?.has(id) || req.profileAccess?.profileNames?.has(name) || false;
 }
 
-async function sanitizeAccount(doc, { includeSecrets = false } = {}) {
+function sanitizeAccount(doc) {
 	if (!doc) return doc;
 	const { password, vendorPassword, ...rest } = doc;
 	const safe = { ...rest };
-	if (includeSecrets && safe.autoBidProfile) {
-		const decrypted = await decryptProfileApiKeysForClient(safe.autoBidProfile);
-		safe.autoBidProfile = decrypted.profile;
-		if (decrypted.unavailableFields.length) safe.secretFieldsUnavailable = decrypted.unavailableFields;
-	}
 	if (safe.notionIntegration && typeof safe.notionIntegration === "object") {
 		safe.notionIntegration = { ...safe.notionIntegration };
 		delete safe.notionIntegration.accessToken;
 	}
-	if (includeSecrets) return safe;
 	if (safe.autoBidProfile && typeof safe.autoBidProfile === "object") {
 		safe.autoBidProfile = { ...safe.autoBidProfile };
 		for (const field of ["openaiApiKey", "deepseekApiKey"]) {
@@ -85,8 +78,7 @@ export const getAccountInfo = async (req, res) => {
 	try {
 		console.log('GET /api/account_info - Fetching all account info');
 		const accountInfo = (await accountInfoCollection.find({}).toArray()).filter((doc) => canAccessAccount(req, doc));
-		const includeSecrets = !req.auth || tokenIsAdmin(req) || String(req.auth?.role || "").toLowerCase() === "owner";
-		const sanitized = await Promise.all(accountInfo.map((doc) => sanitizeAccount(doc, { includeSecrets })));
+		const sanitized = accountInfo.map((doc) => sanitizeAccount(doc));
 		res.status(200).json(sanitized);
 	} catch (error) {
 		console.error('Error in getAccountInfo:', error);
@@ -116,7 +108,7 @@ export const getAccountInfoByName = async (req, res) => {
 		// Decrypting KMS-backed credentials here can hold the entire UI at
 		// "Loading…" when KMS is slow or unavailable on a deployment. Settings
 		// retrieves credentials through the dedicated profile endpoint instead.
-		res.status(200).json({ success: true, data: await sanitizeAccount(doc) });
+		res.status(200).json({ success: true, data: sanitizeAccount(doc) });
 	} catch (error) {
 		console.error("Error in getAccountInfoByName:", error);
 		res.status(500).json({ success: false, message: error.message });
