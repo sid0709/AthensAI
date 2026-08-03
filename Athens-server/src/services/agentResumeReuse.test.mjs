@@ -33,20 +33,12 @@ test("matchesTitlePolicyFingerprint allows any doc when expected fingerprint omi
   assert.equal(matchesTitlePolicyFingerprint({ titlePolicyFingerprint: "old" }, undefined), true);
 });
 
-test("coverage-enabled Job Search runs reuse only a passing audited generation", () => {
+test("completed structured Job Search runs are reusable without an audit", () => {
   assert.equal(hasReusableCoverage({}, false), true);
   assert.equal(hasReusableCoverage({}, true), false);
   assert.equal(hasReusableCoverage({
-    generation: {
-      coverageContract: { skills: [] },
-      coverageAudit: { passed: false },
-    },
-  }, true), false);
-  assert.equal(hasReusableCoverage({
-    generation: {
-      coverageContract: { skills: [{ name: "Node.js" }] },
-      coverageAudit: { passed: true },
-    },
+    resume: { sections: { summary: { text: "Generated" } } },
+    generation: { coverageContract: { skills: [] }, coverageAudit: null },
   }, true), true);
 });
 

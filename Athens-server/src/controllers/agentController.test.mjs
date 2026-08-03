@@ -29,3 +29,26 @@ test('agent AI uses only the profile default provider, model, and matching key',
   assert.equal(result.model, 'deepseek-v4-flash');
   assert.deepEqual(result.apiKeys, { deepseek: 'deepseek-key' });
 });
+
+test('agent AI ignores unrelated encrypted profile secrets', async () => {
+  const previous = process.env.KMS_KEY_NAME;
+  delete process.env.KMS_KEY_NAME;
+  try {
+    const profile = await agentControllerTest.decryptAgentAiProfile({
+      defaultProvider: 'deepseek',
+      defaultModel: 'deepseek-v4-flash',
+      deepseekApiKey: 'deepseek-key',
+      openaiApiKey: 'kms:v1:unavailable-openai-key',
+      gmailAppPassword: 'kms:v1:unavailable-mail-secret',
+      defaultPassword: 'kms:v1:unavailable-browser-secret',
+    });
+
+    assert.equal(profile.deepseekApiKey, 'deepseek-key');
+    assert.equal(profile.openaiApiKey, '');
+    assert.equal(profile.gmailAppPassword, '');
+    assert.equal(profile.defaultPassword, '');
+  } finally {
+    if (previous === undefined) delete process.env.KMS_KEY_NAME;
+    else process.env.KMS_KEY_NAME = previous;
+  }
+});

@@ -115,8 +115,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     handlePreviewEdit,
     coverageAnalysis,
     coverageDecisions,
-    coverageAudit,
-    qualityStatus,
     generationError,
     coverageIsCurrent,
     setCoverageDecision,
@@ -238,21 +236,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                       ? `${coverageAnalysis?.skills.length ?? 0} skills mapped`
                       : "Runs automatically before generation",
                 },
-                {
-                  label: "Resume quality",
-                  ready: qualityStatus === "passed" || coverageAudit?.passed === true,
-                  running: qualityStatus === "running",
-                  failed: qualityStatus === "failed",
-                  detail: qualityStatus === "running"
-                    ? "Auditing content and repairing issues…"
-                    : coverageAudit
-                      ? `${coverageAudit.coveredCount}/${coverageAudit.requiredCount} skill placements · ${coverageAudit.completeRoleCount ?? 0}/${coverageAudit.requiredRoleCount ?? identity?.careers.length ?? 0} roles`
-                      : qualityStatus === "pending"
-                        ? "Waiting for AI content…"
-                        : qualityStatus === "failed"
-                          ? "Quality gate did not pass"
-                          : "Runs automatically after AI content",
-                },
               ].map((item) => (
                 <div key={item.label} className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
                   <div className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-white/75">
@@ -345,7 +328,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                   ) : undefined
                 }
               >
-                {qualityStatus === "failed" ? "Generation failed quality check" : genProgress.done ? "Generation complete" : "Generating…"}
+                {generationError ? "Generation failed" : genProgress.done ? "Generation complete" : "Generating…"}
               </SectionTitle>
               {generationError && (
                 <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-200">
@@ -481,16 +464,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
           </div>
 
           <div className={cardCls}>
-            <SectionTitle
-              icon={ShieldCheck}
-              right={coverageAudit ? (
-                <span className={`text-xs ${coverageAudit.passed ? "text-emerald-500" : "text-rose-500"}`}>
-                  {coverageAudit.passed
-                    ? "audit passed"
-                    : `${coverageAudit.missing.length + (coverageAudit.violations?.length ?? 0) + (coverageAudit.careerIssues?.length ?? 0)} issues`}
-                </span>
-              ) : undefined}
-            >
+            <SectionTitle icon={ShieldCheck}>
               Skill coverage
             </SectionTitle>
 
@@ -560,17 +534,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                   })}
                 </div>
 
-                {coverageAudit && (
-                  <div className={`rounded-xl border px-3 py-2 text-[11px] ${coverageAudit.passed ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200" : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200"}`}>
-                    {coverageAudit.passed
-                      ? `Validated all ${coverageAudit.requiredCount} required skill placements and ${coverageAudit.completeRoleCount ?? 0} career roles.`
-                      : `Still unresolved: ${[
-                          ...coverageAudit.missing.map((item) => `missing ${item.skill} (${item.section})`),
-                          ...(coverageAudit.violations ?? []).map((item) => `forbidden ${item.skill} (${item.section})`),
-                          ...(coverageAudit.careerIssues ?? []).map((item) => `no substantive bullets for ${item.company || item.title || `role #${item.index + 1}`}`),
-                        ].join(", ")}`}
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -607,18 +570,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                     }))}
                   >
                     {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}/5 and above</option>)}
-                  </select>
-                </Field>
-                <Field label="Targeted repair attempts">
-                  <select
-                    className={inputCls}
-                    value={config.coverage.maxRepairAttempts}
-                    onChange={(event) => setConfig((current) => ({
-                      ...current,
-                      coverage: { ...current.coverage, maxRepairAttempts: Number(event.target.value) },
-                    }))}
-                  >
-                    {[0, 1, 2].map((value) => <option key={value} value={value}>{value}</option>)}
                   </select>
                 </Field>
               </div>

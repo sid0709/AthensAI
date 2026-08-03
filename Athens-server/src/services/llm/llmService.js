@@ -162,7 +162,7 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 const DEFAULT_CHAT_TIMEOUT_MS = Number.parseInt(String(process.env.LLM_TIMEOUT_MS || ''), 10) || 600_000;
 export const DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS = Math.max(
   1_024,
-  Number.parseInt(String(process.env.DEEPSEEK_MAX_OUTPUT_TOKENS || ''), 10) || 8_192,
+  Number.parseInt(String(process.env.DEEPSEEK_MAX_OUTPUT_TOKENS || ''), 10) || 131_072,
 );
 
 /** DeepSeek otherwise runs to its provider ceiling when a caller omits maxTokens. */

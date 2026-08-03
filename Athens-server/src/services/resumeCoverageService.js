@@ -22,12 +22,13 @@ Rules:
 1. Do not infer a typical stack. Every item must be grounded in literal words from the posting.
 2. Include explicit named alternatives and examples (including names inside parentheses or “such as” lists). They will be verified separately; do not silently discard named products.
 3. Split a list of names into distinct atomic items rather than returning the list as one item.
-4. Preserve canonical casing, punctuation, and abbreviation spelling. Never title-case an ordinary phrase to make it look like a name.
+4. Preserve canonical casing, punctuation, and abbreviation spelling. Capitalization is not evidence that a phrase is a proper skill name. Reject title-cased generic category labels and common nouns; for example, “Programming Language” is not a skill. If the posting says “Python (Programming Language)”, output only “Python”.
 5. Provide only genuine aliases, abbreviations, spelling variants, or singular/plural forms. Never add related technologies as aliases.
 6. requirement is 5 for must-have/core/repeated terms, 4 for clearly required terms, 3 for relevant body terms, 2 for preferred/plus/example alternatives, and 1 for passing mentions. An example named inside a required capability, or repeated elsewhere, may still be 4–5.
 7. sourceText must be a short verbatim phrase from the posting that contains the item.
 8. Never output a common-noun capability, activity, architecture, or workflow phrase. If one contains one or more named technologies, output only those atomic names.
 9. Exclude soft skills, the hiring company's name (unless it is also an explicitly required product), benefits, degrees, seniority, and years of experience.
+10. Before returning an item, ask whether the text uniquely names a specific technology, product, standard, protocol, language, framework, library, platform, database, or named format. If it merely names a type or category of skill—even when every word starts with a capital letter—exclude it.
 
 Output ONLY JSON:
 {
@@ -621,7 +622,7 @@ export function resumeCoveragePrompt(rawContract) {
   const familiar = contract.skills.filter((skill) => skill.decision === "familiar");
   const excluded = contract.excluded.map((item) => cleanString(item?.name)).filter(Boolean);
   return [
-    "RESUME COVERAGE CONTRACT — deterministic validation will enforce these exact placements.",
+    "RESUME COVERAGE INSTRUCTIONS — use these requested placements while generating the structured sections.",
     `Skills section closed set (exact canonical names, each bolded once): ${skills.map((skill) => skill.name).join(", ") || "none"}`,
     `Experience section (candidate-used; exact canonical names in credible bullets): ${experience.map((skill) => skill.name).join(", ") || "none"}`,
     familiar.length ? `Familiar-only terms: ${familiar.map((skill) => skill.name).join(", ")}. These may appear in Skills but must not be claimed in Experience.` : "",

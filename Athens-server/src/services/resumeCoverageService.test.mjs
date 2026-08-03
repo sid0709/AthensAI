@@ -7,10 +7,17 @@ import {
   extractParentheticalCoverageCandidates,
   isNamedResumeCoverageSkill,
   parseResumeCoverageAnalysis,
+  RESUME_COVERAGE_ANALYSIS_PROMPT,
   resumeCoverageRepairPrompt,
   textContainsBoldCoverageSkill,
   textContainsCoverageSkill,
 } from "./resumeCoverageService.js";
+
+test("coverage analysis prompt rejects capitalized generic category labels", () => {
+  assert.match(RESUME_COVERAGE_ANALYSIS_PROMPT, /Capitalization is not evidence/);
+  assert.match(RESUME_COVERAGE_ANALYSIS_PROMPT, /“Programming Language” is not a skill/);
+  assert.match(RESUME_COVERAGE_ANALYSIS_PROMPT, /Python \(Programming Language\).*only “Python”/);
+});
 
 test("deterministic list fallback preserves explicit parenthetical alternatives", () => {
   const candidates = extractParentheticalCoverageCandidates(

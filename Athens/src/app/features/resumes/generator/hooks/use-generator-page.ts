@@ -1145,7 +1145,7 @@ export function useGeneratorPage() {
     setUsage(null);
     setGenerated(null);
     setCoverageAudit(null);
-    setQualityStatus("pending");
+    setQualityStatus("idle");
     setGenerationError(null);
     const checklist = plannedGenerationSteps(plan);
     setGenProgress({ steps: checklist, cumulative: null, done: false, message: "Submitting generation…" });
@@ -1169,21 +1169,17 @@ export function useGeneratorPage() {
       if (terminal.status === "cancelled") throw new Error("Resume generation cancelled");
       const stored = await getCompletedResumeGenerationTaskResult(queued.inputId, applier.name);
       const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
-      const finalAudit = (stored.result.coverageAudit as ResumeCoverageAudit | undefined) ?? null;
-      if (!finalAudit?.passed) {
-        throw new Error("Resume quality audit did not return a passing result.");
-      }
       setUsage(nextUsage);
       setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
-      setCoverageAudit(finalAudit);
-      setQualityStatus("passed");
+      setCoverageAudit(null);
+      setQualityStatus("idle");
       setGenProgress((current) => ({
         steps: current?.steps ?? [],
         cumulative: nextUsage,
         done: true,
         message: null,
       }));
-      notify({ title: "Resume generated", description: "Skill coverage and résumé quality both passed.", tone: "success" });
+      notify({ title: "Resume generated", description: "Structured résumé sections were generated successfully.", tone: "success" });
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Generation failed — see backend logs.";

@@ -87,7 +87,7 @@ test("summarizeUsage OpenAI cached input still works", () => {
 });
 
 test("DeepSeek chat calls receive a bounded default output budget", () => {
-  assert.ok(DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS >= 1024);
+  assert.ok(DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS >= 131_072);
   assert.equal(resolveChatMaxTokens("deepseek"), DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS);
   assert.equal(resolveChatMaxTokens("deepseek", 4000), 4000);
   assert.equal(resolveChatMaxTokens("openai"), undefined);

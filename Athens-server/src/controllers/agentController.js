@@ -10,7 +10,7 @@ import { DEEPSEEK_MODELS, listOpenAiModels } from "@nextoffer/shared/models";
 import { createAsyncHandler } from "../utils/http.js";
 import { findAccountByApplierName } from "../services/mail/credentials.js";
 import { resolveDefaultModel } from "../services/llm/llmService.js";
-import { decryptProfileApiKeys } from "../services/autoBidProfileSecrets.js";
+import { decryptSelectedProfileSecrets } from "../services/autoBidProfileSecrets.js";
 import { getServiceAuthHeaders } from "../services/googleServiceAuth.js";
 import { listJobsV2 } from "../services/jobListReadModelService.js";
 import { createJobRecord } from "./jobController.js";
@@ -76,6 +76,12 @@ function resolveAgentProfileChat(profile) {
   };
 }
 
+async function decryptAgentAiProfile(profile) {
+  const provider = profile?.defaultProvider === "openai" ? "openai" : "deepseek";
+  const keyField = provider === "openai" ? "openaiApiKey" : "deepseekApiKey";
+  return decryptSelectedProfileSecrets(profile, [keyField]);
+}
+
 async function accountForRequest(req) {
   if (!accountInfoCollection) return null;
   const profileId = String(req.query?.profileId || req.body?.profileId || '').trim();
@@ -95,7 +101,10 @@ async function resolveOpenAiKey(profileId) {
     { _id: new DocumentId(profileId) },
     { projection: { "autoBidProfile.openaiApiKey": 1 } },
   );
-  return String((await decryptProfileApiKeys(doc?.autoBidProfile || {}))?.openaiApiKey || '').trim() || envKey || null;
+  return String((await decryptSelectedProfileSecrets(
+    doc?.autoBidProfile || {},
+    ['openaiApiKey'],
+  ))?.openaiApiKey || '').trim() || envKey || null;
 }
 
 export const getAgentHealth = createAsyncHandler(async (_req, res) => {
@@ -138,7 +147,7 @@ export const getAgentJobSources = createAsyncHandler(async (req, res) => {
 export const getAgentReadiness = createAsyncHandler(async (req, res) => {
   const account = await accountForRequest(req);
   if (!account) return res.status(404).json({ error: 'Profile not found' });
-  const profile = await decryptProfileApiKeys(account.autoBidProfile || {});
+  const profile = await decryptAgentAiProfile(account.autoBidProfile || {});
   const model = resolveDefaultModel(profile);
   const resumeProfileReady = Boolean(
     String(profile?.name || account.name || '').trim() &&
@@ -273,7 +282,7 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
     return res.status(404).json({ error: `No account named "${applierName}".` });
   }
 
-  const profile = await decryptProfileApiKeys(acc.autoBidProfile || {});
+  const profile = await decryptAgentAiProfile(acc.autoBidProfile || {});
   const profileChat = resolveAgentProfileChat(profile);
   if (!profileChat.configured) {
     return res.status(400).json({ error: profileChat.error });
@@ -341,6 +350,7 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
 
 export const agentControllerTest = {
   canonicalJobUrl,
+  decryptAgentAiProfile,
   resolveAgentProfileChat,
   sanitizedJobDescription,
 };

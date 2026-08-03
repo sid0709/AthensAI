@@ -27,10 +27,8 @@ import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.j
 import { migrateGeneratorConfig } from "../services/resumeGeneratorConfigSchema.js";
 import {
   analyzeResumeCoverage as analyzeResumeCoverageLedger,
-  auditResumeCoverage,
   normalizeResumeCoverageContract,
   resumeCoveragePrompt,
-  resumeCoverageRepairPrompt,
 } from "../services/resumeCoverageService.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import {
@@ -622,132 +620,13 @@ export async function runGeneration({
   // Safety net if Experience was produced outside the final-step branch shape.
   Object.assign(sections, applyTitlePolicyToSections(sections, identity, dynamicTitles));
 
-  // Deterministic quality validation runs only after every AI-authored section
-  // is assembled. If a required placement is absent/malformed or a forbidden
-  // claim appears, rewrite only the affected section and re-audit.
-  if (onStep) onStep({
-    phase: "quality-start",
-    name: "Resume quality audit",
-    purpose: "quality",
-    kind: "quality-audit",
-  });
-  let coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
-  const maxRepairAttempts = coverageContract?.maxRepairAttempts ?? 1;
-  let repairIndex = steps.length;
-  for (let attempt = 1; !coverageAudit.passed && attempt <= maxRepairAttempts; attempt += 1) {
-    const affectedSections = [...new Set([
-      ...coverageAudit.missing.map((item) => item.section),
-      ...(coverageAudit.violations || []).map((item) => item.section),
-      ...(coverageAudit.skillIssues || []).map((item) => item.section),
-      ...((coverageAudit.careerIssues || []).length ? ["experience"] : []),
-    ])];
-    for (const purpose of ["skills", "experience"]) {
-      if (!affectedSections.includes(purpose)) continue;
-      throwIfAborted();
-      const missing = coverageAudit.missing
-        .filter((item) => item.section === purpose)
-        .map((item) => item.skill);
-      const remove = (coverageAudit.violations || [])
-        .filter((item) => item.section === purpose)
-        .map((item) => item.skill);
-      const finalDefinition = [...steps].reverse().find(
-        (step) => step?.kind === "final" && step?.purpose === purpose,
-      );
-      const index = ++repairIndex;
-      const name = `Resume quality repair: ${purpose}`;
-      if (onStep) onStep({
-        phase: "step-start",
-        index,
-        total: steps.length + affectedSections.length,
-        name,
-        purpose,
-        kind: "coverage-repair",
-      });
-      const prompt = resumeCoverageRepairPrompt({
-        purpose,
-        missing,
-        remove,
-        skillIssues: purpose === "skills" ? coverageAudit.skillIssues : [],
-        incompleteRoles: purpose === "experience" ? coverageAudit.careerIssues : [],
-        currentSection: sections[purpose],
-        schema: finalDefinition?.schema,
-      });
-      const repair = await chatCompletion({
-        provider: providerId,
-        apiKey,
-        model,
-        messages: [...prefixMessages, { role: "user", content: prompt }],
-        jsonMode: true,
-        cacheKey: `resume-${applierName || "anon"}`,
-        reasoningEffort,
-        feature: `resume-coverage-repair:${purpose}`,
-        applierName,
-        signal,
-      });
-      throwIfAborted();
-      let output = sections[purpose];
-      let repairError = null;
-      try {
-        output = parseJsonLoose(repair.content);
-        if (purpose === "experience") {
-          output = applyTitlePolicyToSections(
-            { experience: output },
-            identity,
-            dynamicTitles,
-          ).experience;
-        }
-        sections[purpose] = output;
-      } catch (error) {
-        repairError = error?.message || "Coverage repair returned invalid JSON.";
-      }
-      usage = addUsage(usage, repair.usage);
-      const entry = {
-        index,
-        name,
-        purpose,
-        kind: "coverage-repair",
-        usage: repair.usage,
-        output,
-        ...(repairError ? { error: repairError } : {}),
-        cumulative: usage,
-      };
-      perStep.push(entry);
-      if (onStep) onStep({ phase: "step-done", ...entry });
-    }
-    coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
-  }
-  if (!coverageAudit.passed) {
-    const remaining = [
-      ...coverageAudit.missing.map((item) => `missing ${item.skill} (${item.section})`),
-      ...(coverageAudit.violations || []).map((item) => `forbidden ${item.skill} (${item.section})`),
-      ...(coverageAudit.skillIssues || []).map((item) => `${item.reason}${item.skill ? ` ${item.skill}` : ""} (${item.section})`),
-      ...(coverageAudit.careerIssues || []).map((item) => `incomplete role #${item.index + 1} ${item.company || item.title}`),
-    ]
-      .join(", ");
-    const error = new Error(`Resume quality gate failed: ${remaining || "required coverage is incomplete"}.`);
-    error.status = 502;
-    error.coverageAudit = coverageAudit;
-    if (onStep) onStep({
-      phase: "quality-failed",
-      name: "Resume quality failed",
-      purpose: "quality",
-      kind: "quality-audit",
-    });
-    throw error;
-  }
-  if (onStep) onStep({
-    phase: "quality-done",
-    name: "Resume quality passed",
-    purpose: "quality",
-    kind: "quality-audit",
-  });
   throwIfAborted();
   return {
     sections,
     perStep,
     usage,
     coverageContract: coverageContract ?? null,
-    coverageAudit,
+    coverageAudit: null,
     isBeta: Boolean(isBeta),
     dynamicCareerTitles: dynamicTitles,
   };
