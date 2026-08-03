@@ -60,13 +60,14 @@ export function defaultSchemaFor(purpose: StepPurpose): string {
           properties: {
             experiences: {
               type: "array",
+              minItems: 1,
               items: {
                 type: "object",
                 properties: {
                   company: { type: "string" },
                   title: { type: "string" },
                   period: { type: "string" },
-                  bullets: { type: "array", items: { type: "string" } },
+                  bullets: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
                 },
                 required: ["company", "title", "bullets"],
               },

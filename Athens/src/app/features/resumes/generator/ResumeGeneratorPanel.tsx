@@ -40,6 +40,7 @@ export function ResumeGeneratorPanel({
     view,
     setView,
     generating,
+    analyzingCoverage,
     stopping,
     validation,
     handleGenerate,
@@ -66,8 +67,8 @@ export function ResumeGeneratorPanel({
   }, [pendingRun, applyRun, activeView, onPendingRunConsumed]);
 
   const onGenerate = async () => {
-    await handleGenerate();
-    onGenerated?.();
+    const completed = await handleGenerate();
+    if (completed) onGenerated?.();
   };
 
   return (
@@ -79,15 +80,15 @@ export function ResumeGeneratorPanel({
           <button
             type="button"
             onClick={() => void (generating ? handleCancelGeneration() : onGenerate())}
-            disabled={stopping || (!generating && (validation.length > 0 || !applier?.name))}
+            disabled={analyzingCoverage || stopping || (!generating && (validation.length > 0 || !applier?.name))}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 min-h-10 ${
               generating
                 ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
                 : "bg-primary text-white hover:bg-primary/90"
             }`}
           >
-            {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-            {stopping ? "Stopping…" : generating ? "Stop" : "Generate"}
+            {generating || analyzingCoverage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+            {stopping ? "Stopping…" : generating ? "Stop" : analyzingCoverage ? "Analyzing skills…" : "Generate"}
           </button>
         </div>
       )}

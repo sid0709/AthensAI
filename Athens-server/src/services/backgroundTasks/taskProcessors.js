@@ -116,6 +116,8 @@ function resultFromGenerationRecord(record) {
 		skillProfile: record.skillProfile || [],
 		techStack: record.techStack || null,
 		skillAnalysisError: record.skillAnalysisError || null,
+		coverageContract: record.coverageContract || null,
+		coverageAudit: record.coverageAudit || null,
 		generationId: String(record._id),
 		isBeta: record.isBeta === true,
 		dynamicCareerTitles: record.dynamicCareerTitles === true,
@@ -177,14 +179,32 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 	};
 	let partialWrite = Promise.resolve();
 	let stepRevision = 0;
-	const emitStep = (safeStep, label) => {
+	const emitStep = (safeStep, label = null) => {
 		if (!safeStep) return;
+		let progressLabel = label;
+		if (!progressLabel) {
+			switch (safeStep.phase) {
+				case 'queued':
+					progressLabel = 'Waiting for generation slot…';
+					break;
+				case 'quality-start':
+					progressLabel = 'Auditing résumé quality…';
+					break;
+				case 'quality-done':
+					progressLabel = 'Résumé quality passed — saving…';
+					break;
+				case 'quality-failed':
+					progressLabel = 'Résumé quality failed';
+					break;
+				case 'step-start':
+					progressLabel = `Running: ${safeStep.name || 'Step'}…`;
+					break;
+				default:
+					progressLabel = safeStep.name || 'Generating résumé…';
+			}
+		}
 		onStep?.({
-			step: label || (safeStep.phase === 'queued'
-				? 'Waiting for generation slot…'
-				: safeStep.phase === 'step-start'
-					? `Running: ${safeStep.name || 'Step'}…`
-					: safeStep.name || 'Generating résumé…'),
+			step: progressLabel,
 			stepEvent: safeStep,
 			stepRevision: ++stepRevision,
 		});
@@ -210,7 +230,12 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 				signal,
 			}, (step) => {
 				const safeStep = redisSafeStep(step);
-				if (step?.phase === 'step-done' && step?.kind === 'final' && step?.purpose && step.output != null) {
+				if (
+					step?.phase === 'step-done'
+					&& (step?.kind === 'final' || step?.kind === 'coverage-repair')
+					&& step?.purpose
+					&& step.output != null
+				) {
 					// A final checkmark is also the UI's signal to fetch this section.
 					// Persist first so that fetch can never race an unfinished write.
 					partialWrite = partialWrite.then(() => firestoreMutationLimiter.run(() => (
@@ -253,6 +278,8 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 			skillProfile: finalized.skillProfile,
 			techStack: finalized.techStack,
 			skillAnalysisError: finalized.skillAnalysisError,
+			coverageContract: finalized.coverageContract,
+			coverageAudit: finalized.coverageAudit,
 			generationId: finalized.generationId ? String(finalized.generationId) : null,
 			isBeta: finalized.isBeta,
 			dynamicCareerTitles: finalized.dynamicCareerTitles,

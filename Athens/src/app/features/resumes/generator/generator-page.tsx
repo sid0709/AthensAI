@@ -13,6 +13,7 @@ export function GeneratorPage() {
     view,
     setView,
     generating,
+    analyzingCoverage,
     stopping,
     validation,
     handleGenerate,
@@ -30,7 +31,7 @@ export function GeneratorPage() {
           <button
             type="button"
             onClick={() => void (generating ? handleCancelGeneration() : handleGenerate())}
-            disabled={stopping || (!generating && (validation.length > 0 || !applier?.name))}
+            disabled={analyzingCoverage || stopping || (!generating && (validation.length > 0 || !applier?.name))}
             className={`inline-flex items-center gap-2 px-4 h-[42px] rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
               generating
                 ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
@@ -38,7 +39,7 @@ export function GeneratorPage() {
             }`}
           >
             <Wand2 className="w-4 h-4" />
-            {stopping ? "Stopping…" : generating ? "Stop" : "Generate"}
+            {stopping ? "Stopping…" : generating ? "Stop" : analyzingCoverage ? "Analyzing skills…" : "Generate"}
           </button>
         }
       />

@@ -22,9 +22,7 @@ function taskIdentity(req, applierName) {
 function skillSession(task, pending = null) {
   if (!task) return { running: false, status: 'idle', pending, pendingKnown: pending != null };
   const progress = task.progress || {};
-  const status = task.status === 'queued'
-    ? 'running'
-    : task.status === 'cancelling'
+  const status = task.status === 'cancelling'
       ? 'stopping'
       : task.status === 'completed_with_errors' ? 'completed' : task.status;
   return {
@@ -43,6 +41,8 @@ function skillSession(task, pending = null) {
     phase: progress.phase ?? null,
     inflight: progress.active ?? 0,
     lastJob: progress.lastJob ?? null,
+    queuedAt: task.createdAt,
+    lastProgressAt: task.updatedAt,
     startedAt: task.startedAt,
     finishedAt: task.finishedAt,
     error: task.error,

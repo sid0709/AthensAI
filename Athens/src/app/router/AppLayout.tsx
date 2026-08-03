@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { TopNav } from "../components/layout/TopNav";
@@ -21,6 +21,7 @@ import {
 import type { View } from "../types";
 import { defaultJobSearchHref } from "../features/job-search/lib/jobSearchUrlState";
 import { BackgroundTaskProvider } from "../context/BackgroundTaskContext";
+import { useAuthExperience } from "../features/auth/experience/AuthExperienceContext";
 
 function AppProviders({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -89,12 +90,25 @@ function AppProviders({ children }: { children: ReactNode }) {
 export function AppLayout() {
   const location = useLocation();
   const active = viewFromPathname(location.pathname);
+  const { markAppShellReady, transitionActive } = useAuthExperience();
+  const appShellRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(markAppShellReady);
+    return () => window.cancelAnimationFrame(frame);
+  }, [markAppShellReady]);
+
+  useEffect(() => {
+    appShellRef.current?.toggleAttribute("inert", transitionActive);
+  }, [transitionActive]);
 
   return (
     <AppProviders>
       <div
+        ref={appShellRef}
         className="flex h-full min-h-0 w-full overflow-hidden bg-background text-foreground"
         style={{ fontFamily: "'Figtree',system-ui,sans-serif" }}
+        aria-hidden={transitionActive || undefined}
       >
         <Sidebar />
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">

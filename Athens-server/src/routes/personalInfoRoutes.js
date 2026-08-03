@@ -25,6 +25,7 @@ import {
 	getLlmModels,
   generateResume,
   generateResumeStream,
+  analyzeResumeCoverage,
   getResumeGenerationTaskResult,
   generateResumeForAgentJob,
   generateResumeForAgentJobStream,
@@ -93,6 +94,7 @@ router.post('/personal/resume-catalog/validate', validateResumeCatalogHandler);
 router.get('/personal/llm-models', getLlmModels);
 router.post('/personal/resume-generate', generateResume);
 router.post('/personal/resume-generate/stream', generateResumeStream);
+router.post('/personal/resume-generator/analyze', analyzeResumeCoverage);
 router.get('/personal/resume-generation-tasks/:inputId', getResumeGenerationTaskResult);
 router.post('/personal/resume-generate/for-agent-job', generateResumeForAgentJob);
 router.post('/personal/resume-generate/for-agent-job/stream', generateResumeForAgentJobStream);

@@ -91,7 +91,7 @@ test("enabled dynamic titles fall back for stacked / empty / missing model rows"
   assert.deepEqual(out.experiences[1].bullets, []);
 });
 
-test("reconcile preserves career count/order when model reorders or pads", () => {
+test("reconcile preserves career count/order and matches reordered model rows by company", () => {
   const section = {
     experiences: [
       { company: "Globex", title: "Senior Backend Engineer", bullets: ["second"] },
@@ -101,11 +101,25 @@ test("reconcile preserves career count/order when model reorders or pads", () =>
   };
   const out = reconcileExperienceTitles(section, identity, true);
   assert.equal(out.experiences.length, 2);
-  // Index-aligned to Profile order, not model company matching
   assert.equal(out.experiences[0].company, "Acme");
-  assert.equal(out.experiences[0].title, "Senior Backend Engineer");
+  assert.equal(out.experiences[0].title, "Java Engineer");
+  assert.deepEqual(out.experiences[0].bullets, ["first"]);
   assert.equal(out.experiences[1].company, "Globex");
-  assert.equal(out.experiences[1].title, "Java Engineer");
+  assert.equal(out.experiences[1].title, "Senior Backend Engineer");
+  assert.deepEqual(out.experiences[1].bullets, ["second"]);
+});
+
+test("reconcile leaves an omitted leading career empty instead of shifting later employers", () => {
+  const section = {
+    experiences: [
+      { company: "Globex", title: "Senior Backend Engineer", period: "2022 – Present", bullets: ["second"] },
+    ],
+  };
+  const out = reconcileExperienceTitles(section, identity, true);
+  assert.equal(out.experiences[0].company, "Acme");
+  assert.deepEqual(out.experiences[0].bullets, []);
+  assert.equal(out.experiences[1].company, "Globex");
+  assert.deepEqual(out.experiences[1].bullets, ["second"]);
 });
 
 test("applyTitlePolicyToSections leaves non-experience sections untouched", () => {
@@ -131,6 +145,7 @@ test("enabled dynamic-title guidance includes JD and authoritative sequence", ()
   assert.match(prompt, /Need a backend engineer/);
   assert.match(prompt, /Acme/);
   assert.match(prompt, /slash or keyword stacking/i);
+  assert.match(prompt, /at least one substantive bullet/i);
   assert.match(prompt, /Base prompt\./);
 });
 
@@ -142,6 +157,7 @@ test("disabled dynamic-title guidance requires exact Profile titles", () => {
   });
   assert.match(prompt, /dynamic career titles disabled/);
   assert.match(prompt, /EXACTLY/);
+  assert.match(prompt, /at least one substantive bullet/i);
 });
 
 test("title policy fingerprint changes with the saved preference, JD, careers, and policy version", () => {
@@ -163,7 +179,7 @@ test("title policy fingerprint changes with the saved preference, JD, careers, a
   assert.notEqual(a, b);
   assert.notEqual(a, c);
   assert.notEqual(a, d);
-  assert.equal(TITLE_POLICY_VERSION, 2);
+  assert.equal(TITLE_POLICY_VERSION, 3);
 });
 
 test("agent PDF render fingerprint includes title policy fingerprint", () => {

@@ -3378,7 +3378,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             break;
           }
           const data = await AthensApi.fetchMailThreads(applierName, {
-            folder: message.folder,
+            folder: 'inbox',
+            label: 'Notify/Unnecessary',
             page: message.page,
             pageSize: message.pageSize,
             force: Boolean(message.force),
@@ -3413,27 +3414,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             message.folder,
           );
           sendResponse({ ok: true, thread: data.thread || null });
-        } catch (err) {
-          sendResponse({ ok: false, error: err.message || String(err) });
-        }
-        break;
-      }
-
-      case 'GET_MAIL_FOLDER_COUNTS': {
-        try {
-          const auth = await MockApi.getAuth();
-          const settings = await AthensApi.getSettings();
-          const applierName =
-            settings.applierName || auth?.applierName || auth?.displayName || '';
-          if (!applierName) {
-            sendResponse({ ok: false, error: 'Sign in required.' });
-            break;
-          }
-          const data = await AthensApi.fetchMailFolderCounts(
-            applierName,
-            Boolean(message.force),
-          );
-          sendResponse({ ok: true, counts: data.counts || {} });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || String(err) });
         }

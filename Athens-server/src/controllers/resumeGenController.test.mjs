@@ -209,6 +209,6 @@ test("generation persistence fingerprint tracks the saved preference instead of 
     config: body,
   });
   assert.notEqual(staticFp, dynamicFp);
-  assert.equal(TITLE_POLICY_VERSION, 2);
+  assert.equal(TITLE_POLICY_VERSION, 3);
   assert.equal(staticFp.length, 40);
 });

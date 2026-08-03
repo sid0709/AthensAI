@@ -7,6 +7,7 @@ import { useAuth } from "@/context/auth-context";
 import { Button } from "../../components/ui/button";
 import { AuthSplitLayout } from "./components/AuthSplitLayout";
 import { display } from "../../lib/utils";
+import { useAuthExperience } from "./experience/AuthExperienceContext";
 
 export function SignUpPage() {
   const [name, setName] = useState("");
@@ -14,6 +15,7 @@ export function SignUpPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { signup, isAuthenticated } = useAuth();
+  const experience = useAuthExperience();
   const navigate = useNavigate();
 
   if (isAuthenticated) {
@@ -27,13 +29,15 @@ export function SignUpPage() {
       setError("Please fill in all fields");
       return;
     }
+    experience.beginAttempt();
     setLoading(true);
     const result = await signup(name.trim(), password);
     setLoading(false);
     if (result.success) {
-      toast.success("Account created", { description: "You're signed in." });
+      experience.completeAttempt(result.user?.name);
       navigate("/", { replace: true });
     } else {
+      experience.failAttempt();
       const msg = result.message || "Sign up failed";
       setError(msg);
       toast.error("Sign up failed", { description: msg });
@@ -42,14 +46,22 @@ export function SignUpPage() {
 
   return (
     <AuthSplitLayout>
-      <div className="flex items-center gap-3 mb-8">
-        <AppLogo size={44} />
+      <div className="flex items-center gap-3 mb-8 lg:hidden">
+        <AppLogo size={40} className="rounded-md" />
         <div>
-          <h2 className="text-2xl font-bold text-foreground" style={display}>
-            Create account
-          </h2>
-          <p className="text-sm text-muted-foreground">No invitation or email required</p>
+          <p className="font-bold text-foreground" style={display}>AthensAI</p>
+          <p className="text-xs text-muted-foreground">Begin your career journey</p>
         </div>
+      </div>
+
+      <div className="hidden lg:block mb-9">
+        <p className="mb-4 font-mono text-[9px] font-semibold uppercase tracking-[0.2em] text-violet-700/70">
+          New navigator // 02
+        </p>
+        <h2 className="text-[2.4rem] font-semibold leading-none tracking-[-0.045em] text-[#181522]" style={display}>
+          Enter the galaxy.
+        </h2>
+        <p className="mt-3 text-sm text-[#5f586d]">Create your AthensAI account and start charting what comes next.</p>
       </div>
 
       {error ? (
@@ -69,6 +81,7 @@ export function SignUpPage() {
             className="mt-1.5 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2.5 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
             autoComplete="username"
             placeholder="Choose a username"
+            disabled={loading}
           />
         </div>
         <div>
@@ -79,13 +92,14 @@ export function SignUpPage() {
             onChange={(e) => setPassword(e.target.value)}
             className="mt-1.5 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2.5 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
             autoComplete="new-password"
+            disabled={loading}
           />
         </div>
         <Button type="submit" className="w-full h-11 rounded-xl font-bold" disabled={loading}>
           {loading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Creating…
+              Mapping your signal…
             </>
           ) : (
             "Sign up"

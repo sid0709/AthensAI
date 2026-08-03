@@ -102,6 +102,7 @@ async function testMailApiUsesProfileCredentials() {
 
     const list = await AthensApi.fetchMailThreads('Oliver Baltay', {
       folder: 'sent',
+      label: 'Notify/Unnecessary',
       page: 2,
       pageSize: 20,
       force: true,
@@ -118,7 +119,7 @@ async function testMailApiUsesProfileCredentials() {
   );
   assert.strictEqual(
     requests[1].url,
-    'http://127.0.0.1:8979/api/mail/threads?applierName=Oliver+Baltay&folder=sent&page=2&pageSize=20&force=true',
+    'http://127.0.0.1:8979/api/mail/threads?applierName=Oliver+Baltay&folder=sent&page=2&pageSize=20&label=Notify%2FUnnecessary&force=true',
   );
   assert.strictEqual(
     requests[2].url,
