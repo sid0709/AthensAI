@@ -27,6 +27,7 @@ import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.j
 import { migrateGeneratorConfig } from "../services/resumeGeneratorConfigSchema.js";
 import {
   analyzeResumeCoverage as analyzeResumeCoverageLedger,
+  normalizeSkillsSectionToContract,
   normalizeResumeCoverageContract,
   resumeCoveragePrompt,
 } from "../services/resumeCoverageService.js";
@@ -339,6 +340,19 @@ export function resolveResumePromptSkills(jobSkills, coverageContract) {
   return Array.isArray(jobSkills) ? jobSkills.map(cleanString).filter(Boolean) : [];
 }
 
+function careersMissingGenerationEvidence(identity) {
+  const careers = Array.isArray(identity?.careers) ? identity.careers : [];
+  return careers.filter((career) => !cleanString(career?.description));
+}
+
+function optionalCareerDetailsPrompt(identity) {
+  const missing = careersMissingGenerationEvidence(identity);
+  if (!missing.length) return "";
+  return `OPTIONAL CAREER DETAILS — ${missing.length} career description${missing.length === 1 ? " is" : "s are"} blank.
+Career descriptions are optional and blank descriptions must not produce empty Experience roles. Treat Skill Coverage terms marked Used as explicitly confirmed candidate experience. Distribute those confirmed terms conservatively among suitable roles based on title and chronology, and write non-quantified bullets describing their technical function and practical purpose from the job description.
+Use each candidate-confirmed term in at most one suitable blank role unless separate role evidence is supplied. Keep a blank role to one or two conservative bullets and do not invent employer-specific facts, metrics, achievements, project names, internal systems, team size, ownership, or technologies outside the confirmed Used set.`;
+}
+
 function buildContextBlock(identity) {
   // Stable prefix (kept identical across steps) so the prompt cache covers it.
   return `CANDIDATE PROFILE — these are authoritative facts. Do not invent employers, dates, schools, or credentials.\n\n${JSON.stringify(
@@ -398,7 +412,6 @@ export async function prepareGeneration(body, {
   }
   const bad = Object.entries(finalsByPurpose).find(([, n]) => n !== 1);
   if (bad) return { ok: false, status: 400, error: `${bad[0]} must have exactly one final step (found ${bad[1]}).` };
-
   // Tier remains server-resolved metadata. Dynamic titles are a saved generator
   // preference available to every tier and are enabled only by an explicit boolean.
   const isBeta = isBetaTier(accountTier);
@@ -452,40 +465,9 @@ export async function analyzeResumeCoverage(req, res) {
 }
 
 /**
- * Build independent, contiguous section chains that may run concurrently.
- * Steps inside one section retain their conversation and order. Ambiguous plans
- * (unknown purposes, a purpose that reappears later, or steps after its final)
- * return null so the caller preserves the original global sequence.
- */
-export function buildParallelPurposeChains(steps) {
-  if (!Array.isArray(steps) || steps.length < 2) return null;
-  const chains = [];
-  const seen = new Set();
-  for (let i = 0; i < steps.length; i += 1) {
-    const step = steps[i] || {};
-    if (!PURPOSES.has(step.purpose)) return null;
-    let chain = chains.at(-1);
-    if (!chain || chain.purpose !== step.purpose) {
-      if (seen.has(step.purpose)) return null;
-      seen.add(step.purpose);
-      chain = { purpose: step.purpose, entries: [] };
-      chains.push(chain);
-    }
-    chain.entries.push({ step, index: i + 1 });
-  }
-  if (chains.length < 2) return null;
-  for (const chain of chains) {
-    const finals = chain.entries.filter(({ step }) => step.kind === "final");
-    if (finals.length !== 1 || chain.entries.at(-1)?.step?.kind !== "final") return null;
-  }
-  return chains;
-}
-
-/**
- * Runs the resume pipeline as cached per-section conversations. Independent
- * section chains run concurrently; fine-tunes within a section remain ordered.
- * Plans whose dependency shape is ambiguous retain the original global order.
- * `onStep` is invoked after every step for live progress streaming.
+ * Runs Experience, Skills, and Summary as concurrent section pipelines. Steps
+ * remain sequential inside each section and preserve that section's continuous
+ * conversation without creating cross-section output dependencies.
  */
 export async function runGeneration({
   providerId,
@@ -502,6 +484,7 @@ export async function runGeneration({
   isBeta = false,
   dynamicCareerTitles = false,
   signal,
+  chat = chatCompletion,
 }, onStep) {
 	const throwIfAborted = () => {
 		if (!signal?.aborted) return;
@@ -515,53 +498,81 @@ export async function runGeneration({
   //   {job_skills}                               → skills pre-fetched for a structured job
   //   {career}                                   → all roles, one per line
   //   {companyN} (N = 1,2,…) → natural-sentence summary of the Nth career
-  const tokenMap = buildTokenMap(
-    identity,
-    jobDescription,
-    resolveResumePromptSkills(jobSkills, coverageContract),
-  );
-  const applyTokens = (text) =>
-    String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {
+  const tokenMap = {
+    ...buildTokenMap(
+      identity,
+      jobDescription,
+      resolveResumePromptSkills(jobSkills, coverageContract),
+    ),
+    source_resume: JSON.stringify(identity ?? {}, null, 2),
+  };
+  const applyTokens = (text) => {
+    const unresolved = new Set();
+    const resolved = String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {
       const key = match.slice(1, -1).toLowerCase();
-      return Object.prototype.hasOwnProperty.call(tokenMap, key) ? tokenMap[key] : match;
+      if (Object.prototype.hasOwnProperty.call(tokenMap, key)) return tokenMap[key];
+      unresolved.add(match);
+      return match;
     });
+    if (unresolved.size) {
+      const error = new Error(`Unresolved prompt token${unresolved.size === 1 ? "" : "s"}: ${[...unresolved].join(", ")}.`);
+      error.status = 400;
+      throw error;
+    }
+    return resolved;
+  };
   const dynamicTitles = Boolean(dynamicCareerTitles);
   const careers = sourceCareers(identity);
 
-  const prefixMessages = [
-    { role: "system", content: applyTokens(systemInstruction || "You are an expert resume writer.") },
-    { role: "user", content: buildContextBlock(identity) },
-  ];
   const contractPrompt = resumeCoveragePrompt(coverageContract);
-  if (contractPrompt) prefixMessages.push({ role: "user", content: contractPrompt });
+  const systemContent = [
+    applyTokens(systemInstruction || "You are an expert resume writer."),
+    buildContextBlock(identity),
+    contractPrompt,
+    optionalCareerDetailsPrompt(identity),
+  ].filter(Boolean).join("\n\n");
   const sections = {};
   const perStep = [];
   let usage = EMPTY_USAGE();
-  let streamedUsage = EMPTY_USAGE();
+  const preparedSteps = steps.map((rawStep, offset) => {
+    const step = rawStep || {};
+    const index = offset + 1;
+    const isFinal = step.kind === "final";
+    const name = step.name || `Step ${index}`;
+    let userContent = applyTokens(step.prompt || "");
+    if (isFinal && step.purpose === "experience") {
+      userContent = appendExperienceTitlePolicy(userContent, {
+        dynamicCareerTitles: dynamicTitles,
+        jobDescription,
+        careers,
+      });
+    }
+    if (isFinal && step.schema) {
+      userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
+    }
+    return { step, index, isFinal, name, userContent };
+  });
+  const seriesByPurpose = new Map();
+  for (const prepared of preparedSteps) {
+    const purposeKey = cleanString(prepared.step.purpose) || `step-${prepared.index}`;
+    const series = seriesByPurpose.get(purposeKey) || [];
+    series.push(prepared);
+    seriesByPurpose.set(purposeKey, series);
+  }
 
-  const runChain = async (entries) => {
-    const messages = [...prefixMessages];
-    const completed = [];
-    for (const { step, index } of entries) {
+  const runPurposeSeries = async (purposeSteps) => {
+    let priorMessages = [];
+    for (const prepared of purposeSteps) {
       throwIfAborted();
-      const isFinal = step.kind === "final";
-      const name = step.name || `Step ${index}`;
+      const { step, index, isFinal, name, userContent } = prepared;
       if (onStep) onStep({ phase: "step-start", index, total: steps.length, name, purpose: step.purpose, kind: step.kind });
-
-      let userContent = applyTokens(step.prompt || "");
-      if (isFinal && step.purpose === "experience") {
-        userContent = appendExperienceTitlePolicy(userContent, {
-          dynamicCareerTitles: dynamicTitles,
-          jobDescription,
-          careers,
-        });
-      }
-      if (isFinal && step.schema) {
-        userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
-      }
-      messages.push({ role: "user", content: userContent });
-
-      const { content, usage: stepUsage } = await chatCompletion({
+      const currentUserMessage = { role: "user", content: userContent };
+      const messages = [
+        { role: "system", content: systemContent },
+        ...priorMessages,
+        currentUserMessage,
+      ];
+      const { content, usage: stepUsage } = await chat({
         provider: providerId,
         apiKey,
         model,
@@ -574,7 +585,11 @@ export async function runGeneration({
         signal,
       });
       throwIfAborted();
-      messages.push({ role: "assistant", content });
+      priorMessages = [
+        ...priorMessages,
+        currentUserMessage,
+        { role: "assistant", content: String(content ?? "") },
+      ];
 
       let output = content;
       if (isFinal) {
@@ -587,35 +602,30 @@ export async function runGeneration({
               dynamicTitles,
             ).experience;
           }
+          if (step.purpose === "skills") {
+            output = normalizeSkillsSectionToContract(output, coverageContract);
+          }
         } catch (err) {
           if (Number.isInteger(err?.status)) throw err;
-          const e = new Error(`${step.purpose} final step returned invalid JSON.`);
-          e.status = 502;
-          throw e;
+          const error = new Error(`${step.purpose} final step returned invalid JSON.`);
+          error.status = 502;
+          throw error;
         }
+        if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
       }
-      const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output };
-      completed.push(entry);
-      streamedUsage = addUsage(streamedUsage, stepUsage);
-      if (onStep) onStep({ phase: "step-done", ...entry, cumulative: streamedUsage });
-    }
-    return completed;
-  };
 
-  const parallelChains = buildParallelPurposeChains(steps);
-  const plannedChains = parallelChains || [{
-    purpose: null,
-    entries: steps.map((step, i) => ({ step: step || {}, index: i + 1 })),
-  }];
-  const completedChains = parallelChains
-    ? await Promise.all(plannedChains.map((chain) => runChain(chain.entries)))
-    : [await runChain(plannedChains[0].entries)];
-  const entries = completedChains.flat().sort((left, right) => left.index - right.index);
-  for (const entry of entries) {
-    if (entry.kind === "final" && PURPOSES.has(entry.purpose)) sections[entry.purpose] = entry.output;
-    usage = addUsage(usage, entry.usage);
-    perStep.push({ ...entry, cumulative: usage });
-  }
+      usage = addUsage(usage, stepUsage);
+      const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output, cumulative: usage };
+      perStep.push(entry);
+      if (onStep) onStep({ phase: "step-done", ...entry });
+    }
+  };
+  const seriesResults = await Promise.allSettled(
+    [...seriesByPurpose.values()].map((purposeSteps) => runPurposeSeries(purposeSteps)),
+  );
+  const failedSeries = seriesResults.find((result) => result.status === "rejected");
+  if (failedSeries) throw failedSeries.reason;
+  perStep.sort((left, right) => left.index - right.index);
 
   // Safety net if Experience was produced outside the final-step branch shape.
   Object.assign(sections, applyTitlePolicyToSections(sections, identity, dynamicTitles));
@@ -626,7 +636,6 @@ export async function runGeneration({
     perStep,
     usage,
     coverageContract: coverageContract ?? null,
-    coverageAudit: null,
     isBeta: Boolean(isBeta),
     dynamicCareerTitles: dynamicTitles,
   };
@@ -677,7 +686,6 @@ export async function finalizeGenerationRun({ prep, body, result, startedAt, sig
     jobDescription: cleanString(body.jobDescription) || null,
     coverageAnalysis: body.coverage?.analysis ?? null,
     coverageContract: result.coverageContract ?? null,
-    coverageAudit: result.coverageAudit ?? null,
     sections: result.sections,
     perStep: result.perStep,
     usage: result.usage,
@@ -727,7 +735,6 @@ export async function finalizeGenerationRun({ prep, body, result, startedAt, sig
     skillAnalysisError,
     generationId,
     coverageContract: result.coverageContract ?? null,
-    coverageAudit: result.coverageAudit ?? null,
     isBeta,
     dynamicCareerTitles,
     titlePolicyFingerprint,
@@ -762,7 +769,7 @@ function configSnapshot(body) {
     systemInstruction: body.systemInstruction ?? null,
     steps: body.steps ?? null,
     coverage: body.coverage?.settings ?? null,
-    schemaVersion: 3,
+    schemaVersion: 4,
   };
 }
 
@@ -915,7 +922,7 @@ export async function getGeneratorConfig(req, res) {
           $set: {
             applierName,
             config: migration.config,
-            schemaVersion: 3,
+            schemaVersion: 4,
             legacyConfigBackup,
             updatedAt: new Date(),
           },
@@ -932,7 +939,7 @@ export async function getGeneratorConfig(req, res) {
       updatedAt,
       source: resolved?.source ?? null,
       migration: migration?.migrated
-        ? { from: migration.sourceVersion, to: 3 }
+        ? { from: migration.sourceVersion, to: 4 }
         : null,
       legacyJobDescription: migration?.legacyJobDescription ?? null,
     });
@@ -958,13 +965,13 @@ export async function saveGeneratorConfig(req, res) {
         $set: {
           applierName,
           config: migration.config,
-          schemaVersion: 3,
+          schemaVersion: 4,
           updatedAt: new Date(),
         },
       },
       { upsert: true },
     );
-    return res.json({ success: true, schemaVersion: 3 });
+    return res.json({ success: true, schemaVersion: 4 });
   } catch (err) {
     console.error("PUT /api/personal/resume-generator/config error", err);
     return res.status(500).json({ success: false, error: err.message });

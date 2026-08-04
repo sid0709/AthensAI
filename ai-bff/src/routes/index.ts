@@ -64,7 +64,6 @@ export function createRoutes(kit: AiKit) {
         system: extractSystemFromOpenAi(openAiBody.messages),
         messages: normalizeOpenAiMessages(openAiBody.messages),
         temperature: openAiBody.temperature,
-        maxTokens: openAiBody.max_completion_tokens ?? openAiBody.max_tokens ?? openAiBody.maxTokens,
         reasoningEffort: openAiBody.reasoning_effort ?? openAiBody.reasoningEffort,
         topP: openAiBody.top_p ?? openAiBody.topP,
         stop: openAiBody.stop,

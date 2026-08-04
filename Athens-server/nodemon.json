@@ -5,7 +5,6 @@
   ],
   "ext": "js,mjs,cjs,json",
   "ignore": [
-    "src/**/*.test.mjs",
     "src/**/*.test.js",
     "scripts/**",
     ".cache/**",

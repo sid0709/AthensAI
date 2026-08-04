@@ -312,12 +312,6 @@ export function matchesTitlePolicyFingerprint(doc, expectedFingerprint) {
   return Boolean(stored) && stored === expectedFingerprint;
 }
 
-/** Completed structured generations remain reusable without a post-generation audit. */
-export function hasReusableCoverage(existing, coverageEnabled) {
-  if (!coverageEnabled) return true;
-  return Boolean(existing?.generation);
-}
-
 /** Find a completed generation or library resume linked to this job id. */
 export async function findExistingAgentJobResume(applierName, jobId, expectedTitlePolicyFingerprint) {
   const name = cleanString(applierName);
@@ -800,8 +794,7 @@ export async function ensureAgentJobResume({
   const existing = forceRegenerate
     ? null
     : await findExistingAgentJobResume(name, parentId, titlePolicyFingerprint);
-  const coverageEnabled = body.coverage?.settings?.enabled !== false;
-  if (existing?.resume && hasReusableCoverage(existing, coverageEnabled)) {
+  if (existing?.resume) {
     if (existing.recoveredJobLink) {
       try {
 				await firestoreMutationLimiter.run(() => resumeGenerationsCollection?.updateOne(
@@ -834,7 +827,6 @@ export async function ensureAgentJobResume({
       model: usage.model,
       provider: existing.generation?.provider ?? savedConfig.provider ?? null,
       coverageContract: existing.generation?.coverageContract ?? null,
-      coverageAudit: existing.generation?.coverageAudit ?? null,
       titlePolicyFingerprint,
     };
     if (deferPdf) return base;
@@ -935,7 +927,6 @@ export async function ensureAgentJobResume({
           jobDescription: jd,
           coverageAnalysis: body.coverage?.analysis ?? null,
           coverageContract: result.coverageContract ?? null,
-          coverageAudit: result.coverageAudit ?? null,
           sections: result.sections,
           perStep: result.perStep,
           usage: result.usage,
@@ -1006,7 +997,6 @@ export async function ensureAgentJobResume({
     model: prep.model,
     provider: prep.providerId,
     coverageContract: generated.result.coverageContract ?? null,
-    coverageAudit: generated.result.coverageAudit ?? null,
     titlePolicyFingerprint,
   };
 

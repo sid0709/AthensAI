@@ -403,7 +403,6 @@ jobs:
             set_env FIREBASE_AUTH_REQUIRED false
             set_env BACKGROUND_WORKERS_MODE local
             set_env FIRESTORE_WRITES_ENABLED true
-            set_env DEEPSEEK_MAX_OUTPUT_TOKENS 131072
             set_env REDIS_ENABLED true
             set_env REDIS_URL redis://redis:6379
             set_env QDRANT_URL http://qdrant:6333

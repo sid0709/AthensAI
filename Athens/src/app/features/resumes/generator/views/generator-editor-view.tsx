@@ -20,6 +20,13 @@ import {
 import { Field, Dropdown } from "../adapters/ui";
 import { Checkbox } from "@/app/components/ui/checkbox";
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/app/components/ui/sheet";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
@@ -124,6 +131,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
 
   const [designPanel, setDesignPanel] = useState<DesignPanel | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
+  const [systemInstructionOpen, setSystemInstructionOpen] = useState(false);
   const resolvedSystemInstruction = resolvePromptTokens(config.systemInstruction, tokenValues);
   const resolvedPlan = plan.map((step) => ({
     ...step,
@@ -139,10 +147,22 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
 
   return (
     <>
-      <p className="text-sm text-neutral-500 dark:text-white/50 mb-6 max-w-3xl">
-        The live preview stays fixed while you scroll the generation pipeline. Use the preview toolbar to open template,
-        theme, and layout settings.
-      </p>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="max-w-3xl text-sm text-neutral-500 dark:text-white/50">
+          The live preview stays fixed while you scroll the generation pipeline. Use the preview toolbar to open template,
+          theme, and layout settings.
+        </p>
+        <button
+          type="button"
+          onClick={() => setSystemInstructionOpen(true)}
+          aria-haspopup="dialog"
+          aria-expanded={systemInstructionOpen}
+          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-medium shadow-sm transition hover:bg-neutral-50 dark:border-white/10 dark:bg-neutral-900 dark:hover:bg-white/5"
+        >
+          <FileText className="h-3.5 w-3.5 text-sky-500" />
+          System instruction
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-5 items-start">
         {/* Sticky live preview */}
@@ -225,7 +245,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               {[
                 { label: "Career profile", ready: Boolean(identity), running: false, detail: identity ? `${identity.careers.length} roles loaded` : "Waiting for profile" },
-                { label: "Resume config", ready: configHydrated, running: false, detail: configHydrated ? "v3 loaded & autosaved" : "Loading saved config" },
+                { label: "Resume config", ready: configHydrated, running: false, detail: configHydrated ? "v4 loaded & autosaved" : "Loading saved config" },
                 {
                   label: "JD skill ledger",
                   ready: coverageIsCurrent,
@@ -253,7 +273,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               ))}
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
-              Paste a job description and choose Generate. Athens analyzes missing or stale skill coverage, generates the content, audits it, repairs only flagged sections, and saves only after quality passes.
+              Paste a job description and choose Generate. Athens analyzes missing or stale Skill Coverage, uses it to guide the configured prompts, and saves each final generated section.
             </p>
           </div>
 
@@ -468,11 +488,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               Skill coverage
             </SectionTitle>
 
-            {!config.coverage.enabled ? (
-              <p className="text-xs text-neutral-500 dark:text-white/50">
-                Deterministic coverage is disabled in Advanced settings.
-              </p>
-            ) : analyzingCoverage ? (
+            {analyzingCoverage ? (
               <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-xs text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200">
                 <Loader2 className="h-4 w-4 animate-spin" /> Extracting named JD skills and checking profile evidence…
               </div>
@@ -493,7 +509,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
             ) : (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-neutral-500 dark:text-white/45">
-                  <span>Priority {config.coverage.experienceRequirementThreshold}+ defaults to Used; lower priorities to Familiar. Click a chip to change it.</span>
+                  <span>Profile-evidenced skills default to Used; inferred and unsupported terms to Familiar. Priority 4+ Used JD skills are required in Experience.</span>
                   <button type="button" onClick={() => void runCoverageAnalysis()} className="ml-auto text-sky-600 hover:underline dark:text-sky-300">
                     Reanalyze
                   </button>
@@ -511,7 +527,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                             type="button"
                             className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10.5px] font-medium transition ${chip.className}`}
                             aria-label={`${skill.name}: ${chip.label}. Click to choose a status.`}
-                            title={`${skill.name} — ${chip.label} — priority ${skill.requirement}/5. ${skill.sourceText}`}
+                            title={`${skill.name} — ${chip.label} — ${skill.origin} · ${skill.confidence} · priority ${skill.requirement}/5. ${skill.sourceText}`}
                           >
                             {skill.name}
                           </button>
@@ -540,78 +556,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
 
           <details className={cardCls}>
             <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium tracking-tight">
-              <FileText className="h-4 w-4 text-sky-500" />
-              Advanced instructions &amp; coverage rules
-              <ChevronDown className="ml-auto h-4 w-4 text-neutral-400" />
-            </summary>
-            <div className="mt-4 space-y-4 border-t border-neutral-200 pt-4 dark:border-white/10">
-              <label className="flex items-start gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
-                <Checkbox
-                  checked={config.coverage.enabled}
-                  onCheckedChange={(checked) => setConfig((current) => ({
-                    ...current,
-                    coverage: { ...current.coverage, enabled: checked === true },
-                  }))}
-                  className="mt-0.5"
-                />
-                <span>
-                  <span className="block text-xs font-medium">Enforce exhaustive JD skill coverage</span>
-                  <span className="mt-0.5 block text-[11px] text-neutral-500 dark:text-white/50">Extract, verify, repair, and audit exact skill placement automatically.</span>
-                </span>
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Used + experience priority threshold">
-                  <select
-                    className={inputCls}
-                    value={config.coverage.experienceRequirementThreshold}
-                    onChange={(event) => setConfig((current) => ({
-                      ...current,
-                      coverage: { ...current.coverage, experienceRequirementThreshold: Number(event.target.value) },
-                    }))}
-                  >
-                    {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}/5 and above</option>)}
-                  </select>
-                </Field>
-              </div>
-              <Field label="Skill alias rules (JSON)">
-                <textarea
-                  key={JSON.stringify(config.coverage.aliases)}
-                  className={areaCls}
-                  rows={3}
-                  defaultValue={JSON.stringify(config.coverage.aliases, null, 2)}
-                  placeholder={'{\n  "Microsoft Dynamics": ["Dynamics 365"]\n}'}
-                  onBlur={(event) => {
-                    try {
-                      const parsed = JSON.parse(event.target.value || "{}") as Record<string, unknown>;
-                      const aliases = Object.fromEntries(
-                        Object.entries(parsed)
-                          .filter(([, values]) => Array.isArray(values))
-                          .map(([name, values]) => [name, (values as unknown[]).map(String).filter(Boolean)]),
-                      );
-                      event.target.setCustomValidity("");
-                      setConfig((current) => ({ ...current, coverage: { ...current.coverage, aliases } }));
-                    } catch {
-                      event.target.setCustomValidity("Enter a JSON object whose values are arrays of aliases.");
-                      event.target.reportValidity();
-                    }
-                  }}
-                />
-              </Field>
-              <div>
-                <div className="mb-2 text-xs font-medium">System instruction</div>
-                <JobRefField
-                  value={config.systemInstruction}
-                  onChange={(v) => setConfig((c) => ({ ...c, systemInstruction: v }))}
-                  tokenValues={tokenValues}
-                  rows={6}
-                  placeholder="System instruction… use {job_description}, {career}, {company1}…"
-                />
-              </div>
-            </div>
-          </details>
-
-          <details className={cardCls}>
-            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium tracking-tight">
               <ListChecks className="h-4 w-4 text-sky-500" />
               Advanced generation steps
               <span className={`ml-auto text-xs ${validation.length > 0 ? "text-rose-500" : "text-emerald-500"}`}>
@@ -620,20 +564,23 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               <ChevronDown className="h-4 w-4 text-neutral-400" />
             </summary>
             <div className="mt-4 border-t border-neutral-200 pt-4 dark:border-white/10">
-            <div className="flex flex-wrap gap-2 mb-3">
-              {PURPOSES.map((p) => (
-                <span
-                  key={p}
-                  className={`text-[11px] px-2 py-1 rounded-md border ${
-                    finalCountByPurpose[p] === 1
-                      ? "border-emerald-300 text-emerald-600 dark:border-emerald-500/40 dark:text-emerald-300"
-                      : "border-rose-300 text-rose-600 dark:border-rose-500/40 dark:text-rose-300"
-                  }`}
-                >
-                  {SECTION_LABEL[p]}: {finalCountByPurpose[p]} final
-                </span>
-              ))}
-            </div>
+              <p className="mb-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
+                Experience, Skills, and Summary run in parallel. Within each section, steps remain sequential and later steps see every earlier prompt and response.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {PURPOSES.map((p) => (
+                  <span
+                    key={p}
+                    className={`text-[11px] px-2 py-1 rounded-md border ${
+                      finalCountByPurpose[p] === 1
+                        ? "border-emerald-300 text-emerald-600 dark:border-emerald-500/40 dark:text-emerald-300"
+                        : "border-rose-300 text-rose-600 dark:border-rose-500/40 dark:text-rose-300"
+                    }`}
+                  >
+                    {SECTION_LABEL[p]}: {finalCountByPurpose[p]} final
+                  </span>
+                ))}
+              </div>
             <div className="space-y-3">
               {steps.map((step, i) => (
                 <StepCard
@@ -733,6 +680,34 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
           </div>
         </div>
       </div>
+
+      <Sheet open={systemInstructionOpen} onOpenChange={setSystemInstructionOpen}>
+        <SheetContent
+          side="right"
+          className="w-full gap-0 overflow-hidden border-l border-neutral-200 bg-white p-0 sm:max-w-xl dark:border-white/10 dark:bg-neutral-900"
+        >
+          <SheetHeader className="shrink-0 border-b border-neutral-200 px-5 py-4 pr-12 text-left dark:border-white/10">
+            <SheetTitle className="flex items-center gap-2 text-sm">
+              <FileText className="h-4 w-4 text-sky-500" />
+              System instruction
+            </SheetTitle>
+            <SheetDescription className="text-xs leading-relaxed">
+              Global truth, coverage, and writing rules. Changes save automatically with the résumé configuration.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            <JobRefField
+              value={config.systemInstruction}
+              onChange={(value) => setConfig((current) => ({ ...current, systemInstruction: value }))}
+              tokenValues={tokenValues}
+              rows={24}
+              className="[&>textarea]:min-h-[calc(100vh-13rem)] [&>div]:min-h-[calc(100vh-13rem)]"
+              ariaLabel="System instruction"
+              placeholder="System instruction… use {job_description}, {career}, {company1}…"
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <DesignModal open={designPanel === "template"} title="Template" icon={LayoutTemplate} onClose={closeDesignPanel} wide>
         <TemplatePanel

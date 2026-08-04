@@ -31,7 +31,6 @@ export interface ChatRequest {
   system?: string;
   messages: ChatMessageInput[];
   temperature?: number;
-  maxTokens?: number;
   /** Reasoning budget for OpenAI reasoning models such as GPT-5. */
   reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   topP?: number;
@@ -130,7 +129,6 @@ export type ProviderChatParams = {
   model: string;
   messages: ChatCompletionMessageParam[];
   temperature?: number;
-  maxTokens?: number;
   reasoningEffort?: ChatRequest['reasoningEffort'];
   topP?: number;
   stop?: string | string[];

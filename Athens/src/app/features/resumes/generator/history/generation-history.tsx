@@ -446,11 +446,6 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                             Failed
                           </span>
                         )}
-                        {run.coverageAudit && (
-                          <span className={`text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-md ${run.coverageAudit.passed ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200"}`}>
-                            Coverage {run.coverageAudit.coveredCount}/{run.coverageAudit.requiredCount}
-                          </span>
-                        )}
                       </div>
                       {snippet && (
                         <p className="text-[11px] text-neutral-500 dark:text-white/50 line-clamp-2 leading-relaxed">{snippet}</p>

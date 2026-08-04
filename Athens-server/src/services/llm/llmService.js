@@ -160,18 +160,6 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 
 /** Default chat timeout — generous so long completions are never cut off mid-stream. */
 const DEFAULT_CHAT_TIMEOUT_MS = Number.parseInt(String(process.env.LLM_TIMEOUT_MS || ''), 10) || 600_000;
-export const DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS = Math.max(
-  1_024,
-  Number.parseInt(String(process.env.DEEPSEEK_MAX_OUTPUT_TOKENS || ''), 10) || 131_072,
-);
-
-/** DeepSeek otherwise runs to its provider ceiling when a caller omits maxTokens. */
-export function resolveChatMaxTokens(provider, requestedMaxTokens) {
-  if (Number.isFinite(requestedMaxTokens) && requestedMaxTokens > 0) {
-    return Math.floor(requestedMaxTokens);
-  }
-  return provider === 'deepseek' ? DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS : undefined;
-}
 
 export function isRequestTimeoutError(error) {
   return error?.name === 'TimeoutError'
@@ -277,7 +265,6 @@ export async function chatCompletion({
   jsonMode = false,
   cacheKey,
   reasoningEffort,
-  maxTokens,
   timeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
   retries = 4,
   runId,
@@ -298,7 +285,6 @@ export async function chatCompletion({
     throw new Error(`Model "${model}" is not valid for the ${p.label} profile default.`);
   }
 
-  const effectiveMaxTokens = resolveChatMaxTokens(p.id, maxTokens);
   const body = {
     model,
     messages,
@@ -313,11 +299,6 @@ export async function chatCompletion({
   if (p.id === 'openai' && isReasoningModel(model) && reasoningEffort && reasoningEffort !== 'default') {
     body.reasoning_effort = reasoningEffort;
   }
-  if (Number.isFinite(effectiveMaxTokens) && effectiveMaxTokens > 0) {
-    if (p.id === 'openai' && isReasoningModel(model)) body.max_completion_tokens = effectiveMaxTokens;
-    else body.max_tokens = effectiveMaxTokens;
-  }
-
   const promptChars = messages.reduce((sum, m) => sum + String(m?.content || '').length, 0);
   const startedAt = Date.now();
   const reqId = requestId || randomUUID();
@@ -335,7 +316,6 @@ export async function chatCompletion({
       messageCount: messages.length,
       promptChars,
       jsonMode: jsonMode || undefined,
-      maxTokens: effectiveMaxTokens,
       priority: priorityKey,
     });
   }
@@ -422,7 +402,7 @@ export async function chatCompletion({
       const finishReason = data?.choices?.[0]?.finish_reason ?? null;
       if (jsonMode && finishReason === 'length') {
         const err = new Error(
-          `${p.label} reached the ${effectiveMaxTokens ?? 'configured'}-token output limit before returning complete JSON.`,
+          `${p.label} reached its provider-native output limit before returning complete JSON.`,
         );
         err.status = 502;
         err.provider = p.id;
@@ -433,7 +413,6 @@ export async function chatCompletion({
           provider: p.id,
           requestedModel: model,
           outputTokens: usage.outputTokens,
-          maxTokens: effectiveMaxTokens,
         });
         throw err;
       }
@@ -521,7 +500,6 @@ export async function verifyKey({ provider, apiKey, model: requestedModel }) {
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content: 'ping' }],
-          max_tokens: 1,
           apiKeys: p.id === 'deepseek' ? { deepseek: apiKey } : { openai: apiKey },
         }),
       },

@@ -139,7 +139,6 @@ export class AiKit {
           model: requestedModel,
           messages,
           temperature: request.temperature,
-          maxTokens: request.maxTokens,
           reasoningEffort: request.reasoningEffort,
           topP: request.topP,
           stop: request.stop,

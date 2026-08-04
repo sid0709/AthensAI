@@ -47,7 +47,6 @@ import type {
   Purpose,
   CoverageDecision,
   ResumeCoverageAnalysis,
-  ResumeCoverageAudit,
   ResumeTheme,
   StepKind,
   UploadedTemplateManifest,
@@ -81,6 +80,15 @@ function apiErrorMessage(error: unknown, fallback: string) {
     : error instanceof Error && error.message !== "Request failed"
       ? error.message
       : fallback;
+}
+
+function coverageCareerKey(identity: Identity | null): string {
+  return JSON.stringify((identity?.careers ?? []).map((career) => ({
+    company: career.company,
+    title: career.title,
+    period: career.period,
+    description: career.description,
+  })));
 }
 
 function mergeGenerationStep(
@@ -132,8 +140,6 @@ function plannedGenerationSteps(plan: Array<Pick<GenStep, "name" | "purpose" | "
   }));
 }
 
-type ResumeQualityStatus = "idle" | "pending" | "running" | "passed" | "failed";
-
 export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
 
 export function useGeneratorPage() {
@@ -155,9 +161,8 @@ export function useGeneratorPage() {
   const [generated, setGenerated] = useState<GeneratedContent | null>(null);
   const [coverageAnalysis, setCoverageAnalysis] = useState<ResumeCoverageAnalysis | null>(null);
   const [coverageAnalysisJd, setCoverageAnalysisJd] = useState("");
+  const [coverageAnalysisCareerKey, setCoverageAnalysisCareerKey] = useState("");
   const [coverageDecisions, setCoverageDecisions] = useState<Record<string, CoverageDecision>>({});
-  const [coverageAudit, setCoverageAudit] = useState<ResumeCoverageAudit | null>(null);
-  const [qualityStatus, setQualityStatus] = useState<ResumeQualityStatus>("idle");
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [analyzingCoverage, setAnalyzingCoverage] = useState(false);
   const [view, setView] = useState<"editor" | "history">("editor");
@@ -256,7 +261,9 @@ export function useGeneratorPage() {
   const tokenValues: Record<string, string> = (() => {
     const careers = identity?.careers ?? [];
     const coverageSkills = coverageAnalysis
+      && coverageAnalysis.schemaVersion === 3
       && coverageAnalysisJd === config.jobDescription
+      && coverageAnalysisCareerKey === coverageCareerKey(identity)
       && config.jobDescription.trim()
       ? coverageAnalysis.skills
         .filter((skill) => (
@@ -522,9 +529,8 @@ export function useGeneratorPage() {
     setGenerating(false);
     setCoverageAnalysis(null);
     setCoverageAnalysisJd("");
+    setCoverageAnalysisCareerKey("");
     setCoverageDecisions({});
-    setCoverageAudit(null);
-    setQualityStatus("idle");
 
     let cancelled = false;
     let next = defaultConfig();
@@ -657,13 +663,13 @@ export function useGeneratorPage() {
 
   const coverageIsCurrent = Boolean(
     coverageAnalysis
+    && coverageAnalysis.schemaVersion === 3
     && coverageAnalysisJd === config.jobDescription
+    && coverageAnalysisCareerKey === coverageCareerKey(identity)
     && config.jobDescription.trim(),
   );
   const setCoverageDecision = useCallback((skillId: string, decision: CoverageDecision) => {
     setCoverageDecisions((current) => ({ ...current, [skillId]: decision }));
-    setCoverageAudit(null);
-    setQualityStatus("idle");
   }, []);
 
   const runCoverageAnalysis = useCallback(async (): Promise<ResumeCoverageAnalysis | null> => {
@@ -671,8 +677,6 @@ export function useGeneratorPage() {
     const jobDescription = config.jobDescription.trim();
     if (!applierName || !jobDescription) return null;
     setAnalyzingCoverage(true);
-    setCoverageAudit(null);
-    setQualityStatus("idle");
     try {
       const response = await post("/personal/resume-generator/analyze", {
         applierName,
@@ -692,6 +696,7 @@ export function useGeneratorPage() {
       );
       setCoverageAnalysis(analysis);
       setCoverageAnalysisJd(config.jobDescription);
+      setCoverageAnalysisCareerKey(coverageCareerKey(identity));
       setCoverageDecisions(automaticDecisions);
       return analysis;
     } catch (error) {
@@ -904,10 +909,6 @@ export function useGeneratorPage() {
 		const stepEvent = item?.stepEvent && typeof item.stepEvent === "object"
 			? item.stepEvent as Record<string, unknown>
 			: null;
-		const workflowPhase = String(stepEvent?.phase || "");
-		if (workflowPhase === "quality-start") setQualityStatus("running");
-		if (workflowPhase === "quality-done") setQualityStatus("passed");
-		if (workflowPhase === "quality-failed") setQualityStatus("failed");
 		const previousRevision = restoredRevisions.current.get(task.id) ?? -1;
 		const shouldReadPartial = active && revision > previousRevision;
 		const shouldReadTerminal = terminal && !terminalHandled.current.has(task.id);
@@ -941,7 +942,6 @@ export function useGeneratorPage() {
 			: null;
 		if (terminalFailureMessage) {
 			setGenerating(false);
-			setQualityStatus("failed");
 			setGenerationError(terminalFailureMessage);
 			notify({
 				title: task.status === "cancelled" ? "Generation cancelled" : "Generation failed",
@@ -957,7 +957,7 @@ export function useGeneratorPage() {
 		if (shouldReadTerminal) terminalHandled.current.add(task.id);
 		const expectedPartialPurpose = shouldReadPartial
 			&& stepEvent?.phase === "step-done"
-				&& (stepEvent?.kind === "final" || stepEvent?.kind === "coverage-repair")
+				&& stepEvent?.kind === "final"
 			? String(stepEvent.purpose || "")
 			: "";
 		void retryTransient(async () => {
@@ -982,11 +982,6 @@ export function useGeneratorPage() {
 					));
 				}
 				if (stored.result?.usage) setUsage(stored.result.usage as UsageBreakdown);
-				if (stored.result?.coverageAudit) {
-					const audit = stored.result.coverageAudit as ResumeCoverageAudit;
-					setCoverageAudit(audit);
-					setQualityStatus(audit.passed ? "passed" : "failed");
-				}
 				if (shouldReadTerminal) {
 					setGenerating(false);
 					setGenProgress((current) => ({
@@ -1041,7 +1036,6 @@ export function useGeneratorPage() {
       totalUsage: usage,
       coverageAnalysis,
       coverageDecisions,
-      coverageAudit,
       sections: generated,
     };
     const blob = new Blob([JSON.stringify(log, null, 2)], { type: "application/json" });
@@ -1089,15 +1083,14 @@ export function useGeneratorPage() {
     );
     setCoverageAnalysis(analysis);
     setCoverageAnalysisJd(analysis ? String(run.jobDescription ?? "") : "");
+    setCoverageAnalysisCareerKey(analysis ? coverageCareerKey(identity) : "");
     setCoverageDecisions(analysis
       ? {
           ...defaultCoverageDecisions(analysis, config.coverage.experienceRequirementThreshold),
           ...contractDecisions,
         }
       : {});
-    setCoverageAudit(run.coverageAudit ?? null);
-    setQualityStatus(run.coverageAudit?.passed ? "passed" : run.coverageAudit ? "failed" : "idle");
-  }, [config.coverage.experienceRequirementThreshold]);
+  }, [config.coverage.experienceRequirementThreshold, identity]);
 
   const handleGenerate = async () => {
     if (!applier?.name) {
@@ -1144,8 +1137,6 @@ export function useGeneratorPage() {
     setGenerating(true);
     setUsage(null);
     setGenerated(null);
-    setCoverageAudit(null);
-    setQualityStatus("idle");
     setGenerationError(null);
     const checklist = plannedGenerationSteps(plan);
     setGenProgress({ steps: checklist, cumulative: null, done: false, message: "Submitting generation…" });
@@ -1171,8 +1162,6 @@ export function useGeneratorPage() {
       const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
       setUsage(nextUsage);
       setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
-      setCoverageAudit(null);
-      setQualityStatus("idle");
       setGenProgress((current) => ({
         steps: current?.steps ?? [],
         cumulative: nextUsage,
@@ -1192,7 +1181,6 @@ export function useGeneratorPage() {
           // The per-task restoration effect remains the fallback for transient reads.
         }
       }
-      setQualityStatus("failed");
       setGenerationError(message);
       setGenProgress((current) => ({
         steps: current?.steps ?? [],
@@ -1248,8 +1236,6 @@ export function useGeneratorPage() {
     coverageAnalysis,
     coverageAnalysisJd,
     coverageDecisions,
-    coverageAudit,
-    qualityStatus,
     generationError,
     coverageIsCurrent,
     analyzingCoverage,

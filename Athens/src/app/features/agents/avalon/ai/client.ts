@@ -20,7 +20,6 @@ export async function chatCompletion(request: ChatRequest): Promise<ChatResponse
     system: request.system,
     messages: request.messages,
     ...(request.temperature != null ? { temperature: request.temperature } : {}),
-    ...(request.maxTokens != null ? { maxTokens: request.maxTokens } : {}),
     responseSchema: request.responseSchema,
     ...(runId ? { runId } : {}),
     ...(jobId ? { jobId } : {}),

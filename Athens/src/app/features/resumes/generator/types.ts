@@ -103,18 +103,18 @@ export type ProviderId = "openai" | "deepseek";
 // OpenAI reasoning models accept reasoning_effort. "default" = don't send it.
 export type ReasoningEffort = "default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-export const RESUME_GENERATOR_CONFIG_VERSION = 3 as const;
+export const RESUME_GENERATOR_CONFIG_VERSION = 4 as const;
 
 export type CoverageDecision = "used" | "familiar" | "exclude";
 
 export type ResumeCoverageSettings = {
   enabled: boolean;
   experienceRequirementThreshold: number;
-  maxRepairAttempts: number;
   aliases: Record<string, string[]>;
 };
 
 export type ResumeCoverageEvidence = {
+  roleIndex: number;
   company: string;
   title: string;
   excerpt: string;
@@ -125,6 +125,9 @@ export type ResumeCoverageSkill = {
   name: string;
   aliases: string[];
   category: string;
+  origin: "jd" | "career" | "inferred";
+  confidence: "explicit" | "strongly_implied" | "commonly_expected";
+  inferredFrom: string[];
   requirement: number;
   sourceText: string;
   evidenceStatus: "verified" | "unverified";
@@ -133,45 +136,11 @@ export type ResumeCoverageSkill = {
 };
 
 export type ResumeCoverageAnalysis = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   fingerprint: string;
   jobDescriptionHash: string;
   skills: ResumeCoverageSkill[];
   unresolvedCount: number;
-};
-
-export type ResumeCoverageAuditSection = {
-  required: string[];
-  found: string[];
-  missing: string[];
-  forbidden?: string[];
-  incompleteRoles?: string[];
-  passed: boolean;
-};
-
-export type ResumeCoverageAudit = {
-  schemaVersion: 1;
-  passed: boolean;
-  requiredCount: number;
-  coveredCount: number;
-  sections: Partial<Record<"skills" | "experience", ResumeCoverageAuditSection>>;
-  missing: { skillId: string; skill: string; section: "skills" | "experience" }[];
-  violations?: {
-    skillId: string;
-    skill: string;
-    section: "skills" | "experience";
-    reason: "excluded" | "familiar-only";
-  }[];
-  requiredRoleCount?: number;
-  completeRoleCount?: number;
-  careerIssues?: {
-    index: number;
-    company: string;
-    title: string;
-    period: string;
-    description: string;
-    reason: "missing-role" | "no-substantive-bullets";
-  }[];
 };
 
 export type GeneratorConfig = {

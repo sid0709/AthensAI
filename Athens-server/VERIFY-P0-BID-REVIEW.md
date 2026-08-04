@@ -2,12 +2,6 @@
 
 Date: 2026-07-17
 
-## Automated
-
-- `node --test src/lib/bidResultStatus.test.mjs` — **9/9 pass**
-  - Confirms `deriveBidUiStatus` prefers `reviewStatus` over `status=skipped`
-  - Canonical résumé naming helpers also covered (P2)
-
 ## Live API (Athens-server on `:8979`, applier `Eli Taylor`)
 
 | Criterion | Result | How |
@@ -19,7 +13,7 @@ Date: 2026-07-17
 | Reviewer undo does **not** bump `resubmitCount`; Mark fixed does | Pass | After mark-fixed `resubmitCount=1`; reject + undo kept `resubmitCount=1` while `rejectCount` increased |
 | Optional `rejectReason` stored / listed | Pass | Reason returned on reject payload and rejected list |
 | Timeline ordered history | Pass | `GET /bid-results/:id/events` → `reviewer_reject → vendor_mark_fixed → reviewer_reject → reviewer_undo` |
-| Status mapping unit test / code path | Pass | `bidResultStatus.js` + tests; controller uses `deriveBidUiStatus` |
+| Status mapping code path | Pass | `bidResultStatus.js`; controller uses `deriveBidUiStatus` |
 
 ## Code paths verified by review
 
@@ -44,7 +38,7 @@ If endpoints 404 after pulling code, restart Athens-server so nodemon/node loads
 
 # P2 — Canonical résumé naming (verified)
 
-- Unit tests: stem format, folder===file stem, case-sensitive mismatch, Windows reserved names
+- Reviewed stem format, folder===file stem, case-sensitive mismatch, and Windows reserved names
 - `POST /bid-results/resume-audit` → records the selected original and verifies the uploaded name against `Profile Name.pdf`
 - `GET /bid-results/resumes.zip?jobIds=…` → 200 zip; entries like `Motional - Senior Engineer - Eli Taylor - …/….pdf` (stem match)
 - Bid-Monitor page-hook records original vs expected; still renames to profile for ATS; toast + Athens BidDetail mismatch banner

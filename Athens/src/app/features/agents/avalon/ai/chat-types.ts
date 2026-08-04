@@ -9,7 +9,6 @@ export interface ChatRequest {
   system?: string;
   messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   temperature?: number;
-  maxTokens?: number;
   responseSchema?: JsonSchemaDefinition;
   /** Abort the request when the caller's run is stopped (auto-run Stop). */
   signal?: AbortSignal;
