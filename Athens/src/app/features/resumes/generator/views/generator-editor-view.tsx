@@ -273,7 +273,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               ))}
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
-              Paste a job description and choose Generate. Athens analyzes missing or stale skill coverage, generates the content, audits it, repairs only flagged sections, and saves only after quality passes.
+              Paste a job description and choose Generate. Athens analyzes missing or stale Skill Coverage, uses it to guide the configured prompts, and saves each final generated section.
             </p>
           </div>
 

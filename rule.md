@@ -1,6 +1,6 @@
 # AthensAI Engineering Rules
 
-Read this file before changing this repository. Treat these rules as acceptance criteria for implementation, prompts, tests, and review.
+Read this file before changing this repository. Treat these rules as acceptance criteria for implementation, prompts, and review.
 
 ## 1. Prefer data and contracts over hardcoding
 
@@ -22,19 +22,17 @@ Read this file before changing this repository. Treat these rules as acceptance 
 - Prefer one or two target skills per Experience bullet. Do not repeatedly force the same workflow across employers.
 - Do not infer related products, frameworks, projects, ownership, metrics, or achievements merely from a target keyword.
 
-## 3. Quality is enforced, not merely requested
+## 3. Generation follows the configured prompt pipeline
 
-- Generate is one automatic workflow: analyze Skill Coverage when it is missing or stale, generate all sections, run deterministic résumé-quality validation after AI content arrives, repair targeted issues, and report success only after the final audit passes.
-- Prompts guide generation; deterministic validators enforce exact coverage and formatting after generation.
-- Resume validation must check career completeness as well as each required skill's section, exact canonical spelling, and bold Markdown form.
-- Repair only the missing or invalid placements and preserve already-good content.
-- A repaired Experience placement must remain contextual and truthful; appending raw terms is not a valid repair.
+- Generate analyzes Skill Coverage when it is missing or stale, runs the configured section steps, and saves their final structured outputs.
+- Skill Coverage is injected into the model context as generation guidance. Do not run a post-generation coverage audit, quality gate, or model repair pass.
+- Generation may fail for transport, model, schema-parsing, cancellation, or persistence errors, but must not fail because a generated keyword placement differs from Skill Coverage guidance.
 - Keep generation plans inspectable with fully resolved prompt tokens so the UI shows the actual model request.
 
 ## 4. State boundaries
 
 - `Profile` and `ResumeConfig` are reusable persistent state.
-- Job description, Skill Coverage analysis and decisions, generated sections, progress, usage, audit results, and errors belong to an application run.
+- Job description, Skill Coverage analysis and decisions, generated sections, progress, usage, and errors belong to an application run.
 - Refreshing the Resume Generator starts a clean application run and loads only Profile and ResumeConfig.
 - Completed or historical runs may be loaded only through an explicit History action; they must not silently repopulate the editor or preview after refresh.
 

@@ -164,14 +164,6 @@ export function textContainsCoverageSkill(text, skill, aliases = {}) {
   });
 }
 
-/** Exact canonical Markdown form required by the résumé coverage contract. */
-export function textContainsBoldCoverageSkill(text, skill) {
-  const name = cleanString(typeof skill === "string" ? skill : skill?.name).normalize("NFKC");
-  if (!name) return false;
-  const body = regexEscape(name).replace(/\s+/g, "\\s+");
-  return new RegExp(`\\*\\*\\s*${body}\\s*\\*\\*`, "u").test(String(text ?? "").normalize("NFKC"));
-}
-
 /**
  * A coverage item must be both grounded in the JD and look like a real name in
  * the JD's original casing. This prevents a model from turning a common phrase

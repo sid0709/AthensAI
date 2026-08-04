@@ -209,7 +209,7 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 		throwIfAborted(signal);
 		if (!prep.ok) throw Object.assign(new Error(prep.error), { status: prep.status });
 		// The request may contain a stale model from a previously saved generator
-		// config. Execution and persisted audit metadata must both reflect the
+		// config. Execution and persisted run metadata must both reflect the
 		// Profile default resolved by prepareGeneration at task run time.
 		body.provider = prep.providerId;
 		body.model = prep.model;
