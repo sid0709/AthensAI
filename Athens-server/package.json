@@ -34,7 +34,8 @@
 		"deploy-title-review-indexes": "node src/scripts/deployTitleReviewIndexes.js --wait",
 		"rebuild-title-review-read-model": "node src/scripts/rebuildTitleReviewReadModel.js",
 		"benchmark-title-review": "node src/scripts/benchmarkTitleReviewReadModel.js",
-		"monitoring:rollup": "node src/scripts/rollupMonitoring.js"
+		"monitoring:rollup": "node src/scripts/rollupMonitoring.js",
+		"test:athens-lens": "node --test src/services/athensLens.test.js"
 	},
 	"dependencies": {
 		"@google-cloud/kms": "^5.4.0",

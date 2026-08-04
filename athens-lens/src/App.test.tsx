@@ -5,11 +5,14 @@ import { App } from "./App";
 import { MOCK_JOBS } from "./jobs/mockJobs";
 import type { AuthStore, Credentials, JobsRepository, Session } from "./types";
 
-function makeSession(email = "alex.taylor@example.com"): Session {
+function makeSession(username = "Alex Taylor"): Session {
   return {
-    email,
+    username,
     displayName: "Alex Taylor",
-    authenticatedAt: "2026-08-04T12:00:00.000Z"
+    profileId: "profile-1",
+    authenticatedAt: "2026-08-04T12:00:00.000Z",
+    expiresAt: "2099-08-04T12:00:00.000Z",
+    accessToken: "test-access-token"
   };
 }
 
@@ -18,7 +21,7 @@ function makeAuthStore(initialSession: Session | null): AuthStore {
   return {
     restore: vi.fn(async () => session),
     signIn: vi.fn(async (credentials: Credentials) => {
-      session = makeSession(credentials.email);
+      session = makeSession(credentials.username);
       return session;
     }),
     signOut: vi.fn(async () => {
@@ -43,11 +46,11 @@ describe("Athens Lens app", () => {
 
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByText("Enter a valid email address.")).toBeInTheDocument();
+    expect(screen.getByText("Enter your username.")).toBeInTheDocument();
     expect(screen.getByText("Enter your password.")).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("Email address"), "alex.taylor@example.com");
-    await user.type(screen.getByLabelText("Password"), "demo-password");
+    await user.type(screen.getByLabelText("Username"), "Alex Taylor");
+    await user.type(screen.getByLabelText("Vendor access password"), "demo-password");
     await user.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();

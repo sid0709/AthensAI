@@ -1,12 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { LoginScreen } from "./auth/LoginScreen";
-import { demoAuthStore } from "./auth/authStore";
+import { athensAuthStore } from "./auth/authStore";
 import { InboxWorkspace } from "./inbox/InboxWorkspace";
 import { mockInboxRepository } from "./inbox/inboxRepository";
 import { MOCK_UNREAD_COUNT } from "./inbox/mockInbox";
 import { JobsWorkspace } from "./jobs/JobsWorkspace";
-import { mockJobsRepository } from "./jobs/jobsRepository";
-import { MOCK_JOBS } from "./jobs/mockJobs";
+import { athensJobsRepository } from "./jobs/jobsRepository";
 import { useWorkspaceRoute } from "./navigation/routes";
 import {
   AiAnswerPanel,
@@ -28,12 +27,14 @@ type SessionState =
   | { status: "ready"; session: Session | null };
 
 export function App({
-  authStore = demoAuthStore,
-  jobsRepository = mockJobsRepository,
+  authStore = athensAuthStore,
+  jobsRepository = athensJobsRepository,
   inboxRepository = mockInboxRepository
 }: AppProps) {
   const [sessionState, setSessionState] = useState<SessionState>({ status: "restoring" });
   const [aiJob, setAiJob] = useState<Job | null>(null);
+  const [jobsCount, setJobsCount] = useState(0);
+  const handleJobsLoaded = useCallback((count: number) => setJobsCount(count), []);
   const { route, navigate } = useWorkspaceRoute();
   const recording = useMockRecording();
 
@@ -78,17 +79,17 @@ export function App({
     await authStore.signOut();
     recording.reset();
     setAiJob(null);
+    setJobsCount(0);
     setSessionState({ status: "ready", session: null });
   };
 
   const navigateView = (view: "jobs" | "inbox") => navigate({ view });
-
   const workspace = route.view === "inbox" ? (
       <InboxWorkspace
         session={sessionState.session}
         inboxRepository={inboxRepository}
         route={route}
-        jobsCount={MOCK_JOBS.length}
+        jobsCount={jobsCount}
         inboxUnreadCount={MOCK_UNREAD_COUNT}
         onNavigate={navigate}
         onNavigateView={navigateView}
@@ -108,6 +109,7 @@ export function App({
         recording.start(job);
       }}
       onAskAi={setAiJob}
+      onJobsLoaded={handleJobsLoaded}
       onLogout={logout}
     />
   );

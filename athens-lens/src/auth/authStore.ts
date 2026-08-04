@@ -1,4 +1,5 @@
 import { storage } from "wxt/utils/storage";
+import { requestAthensApi } from "../api/athensApi";
 import type { AuthStore, Credentials, Session } from "../types";
 
 export const SESSION_STORAGE_KEY = "local:athens-lens:session" as const;
@@ -7,40 +8,62 @@ const sessionStorage = storage.defineItem<Session | null>(SESSION_STORAGE_KEY, {
   fallback: null
 });
 
-function deriveDisplayName(email: string): string {
-  const localPart = email.split("@")[0] ?? "Athens user";
-  const words = localPart
-    .split(/[._+-]+/)
-    .map((word) => word.trim())
-    .filter(Boolean);
-
-  if (words.length === 0) {
-    return "Athens user";
-  }
-
-  return words
-    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
-    .join(" ");
+interface SignInResponse {
+  success: true;
+  session: Session;
 }
 
-export const demoAuthStore: AuthStore = {
-  restore() {
-    return sessionStorage.getValue();
+function isSession(value: unknown): value is Session {
+  if (!value || typeof value !== "object") return false;
+  const session = value as Record<string, unknown>;
+  return [
+    "username",
+    "displayName",
+    "profileId",
+    "authenticatedAt",
+    "expiresAt",
+    "accessToken"
+  ].every((key) => typeof session[key] === "string" && session[key].length > 0);
+}
+
+export const athensAuthStore: AuthStore = {
+  async restore() {
+    const session = await sessionStorage.getValue();
+    const expiresAt = Date.parse(session?.expiresAt || "");
+    if (!session?.accessToken || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      await sessionStorage.removeValue();
+      return null;
+    }
+    return session;
   },
 
   async signIn(credentials: Credentials) {
-    const email = credentials.email.trim().toLowerCase();
-    const session: Session = {
-      email,
-      displayName: deriveDisplayName(email),
-      authenticatedAt: new Date().toISOString()
-    };
+    const username = credentials.username.trim();
+    const response = await requestAthensApi<SignInResponse>("/athens-lens/auth/signin", {
+      method: "POST",
+      body: JSON.stringify({ username, password: credentials.password })
+    });
+    const session = response.session;
+    if (!isSession(session)) throw new Error("Athens server returned an invalid sign-in response.");
 
     await sessionStorage.setValue(session);
     return session;
   },
 
   async signOut() {
-    await sessionStorage.removeValue();
+    const session = await sessionStorage.getValue();
+    try {
+      if (session?.accessToken) {
+        await requestAthensApi("/athens-lens/auth/signout", {
+          method: "POST",
+          accessToken: session.accessToken
+        });
+      }
+    } catch {
+      // Local logout must remain available if the server is offline. The
+      // server-side session still expires automatically.
+    } finally {
+      await sessionStorage.removeValue();
+    }
   }
 };

@@ -8,7 +8,7 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onSignIn }: LoginScreenProps) {
-  const [credentials, setCredentials] = useState<Credentials>({ email: "", password: "" });
+  const [credentials, setCredentials] = useState<Credentials>({ username: "", password: "" });
   const [errors, setErrors] = useState<CredentialErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -26,8 +26,8 @@ export function LoginScreen({ onSignIn }: LoginScreenProps) {
     setIsSubmitting(true);
     try {
       await onSignIn(credentials);
-    } catch {
-      setSubmitError("We couldn't start your demo session. Try again.");
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "We couldn't sign you in. Try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -48,27 +48,27 @@ export function LoginScreen({ onSignIn }: LoginScreenProps) {
 
         <form className="login-form" onSubmit={handleSubmit} noValidate>
           <div className="field-group">
-            <label htmlFor="email">Email address</label>
+            <label htmlFor="username">Username</label>
             <input
-              id="email"
-              name="email"
-              type="email"
-              autoComplete="email"
+              id="username"
+              name="username"
+              type="text"
+              autoComplete="username"
               autoFocus
-              aria-invalid={Boolean(errors.email)}
-              aria-describedby={errors.email ? "email-error" : undefined}
-              value={credentials.email}
+              aria-invalid={Boolean(errors.username)}
+              aria-describedby={errors.username ? "username-error" : undefined}
+              value={credentials.username}
               onChange={(event) => {
-                setCredentials((current) => ({ ...current, email: event.target.value }));
-                if (errors.email) setErrors((current) => ({ ...current, email: undefined }));
+                setCredentials((current) => ({ ...current, username: event.target.value }));
+                if (errors.username) setErrors((current) => ({ ...current, username: undefined }));
               }}
-              placeholder="you@example.com"
+              placeholder="Oliver Baltay"
             />
-            {errors.email ? <p className="field-error" id="email-error">{errors.email}</p> : null}
+            {errors.username ? <p className="field-error" id="username-error">{errors.username}</p> : null}
           </div>
 
           <div className="field-group">
-            <label htmlFor="password">Password</label>
+            <label htmlFor="password">Vendor access password</label>
             <input
               id="password"
               name="password"
@@ -81,7 +81,7 @@ export function LoginScreen({ onSignIn }: LoginScreenProps) {
                 setCredentials((current) => ({ ...current, password: event.target.value }));
                 if (errors.password) setErrors((current) => ({ ...current, password: undefined }));
               }}
-              placeholder="Enter any password"
+              placeholder="Enter your vendor password"
             />
             {errors.password ? <p className="field-error" id="password-error">{errors.password}</p> : null}
           </div>
@@ -96,7 +96,7 @@ export function LoginScreen({ onSignIn }: LoginScreenProps) {
 
         <p className="demo-note">
           <LockKeyhole size={14} aria-hidden="true" />
-          Demo mode — your password is never stored or sent.
+          Your vendor password is used only to sign in and is never stored.
         </p>
       </section>
     </main>

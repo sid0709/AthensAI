@@ -1,12 +1,15 @@
 export interface Credentials {
-  email: string;
+  username: string;
   password: string;
 }
 
 export interface Session {
-  email: string;
+  username: string;
   displayName: string;
+  profileId: string;
   authenticatedAt: string;
+  expiresAt: string;
+  accessToken: string;
 }
 
 export interface AuthStore {
@@ -15,7 +18,7 @@ export interface AuthStore {
   signOut(): Promise<void>;
 }
 
-export type WorkMode = "Remote" | "Hybrid" | "On-site";
+export type WorkMode = string;
 
 export interface Job {
   id: string;
@@ -33,7 +36,7 @@ export interface Job {
 }
 
 export interface JobsRepository {
-  listJobs(): Promise<readonly Job[]>;
+  listJobs(session: Session): Promise<readonly Job[]>;
 }
 
 export type InboxMessageKind = "security-code" | "account" | "general";

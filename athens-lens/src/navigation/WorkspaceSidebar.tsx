@@ -74,7 +74,7 @@ export function WorkspaceSidebar({
         <span className="user-avatar" aria-hidden="true">{initials(session.displayName)}</span>
         <span className="user-copy">
           <strong>{session.displayName}</strong>
-          <span>{session.email}</span>
+          <span>{session.username}</span>
         </span>
         <button className="icon-button" type="button" aria-label="Log out" onClick={onLogout}>
           <LogOut size={18} aria-hidden="true" />

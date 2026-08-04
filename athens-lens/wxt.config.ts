@@ -2,26 +2,42 @@ import { defineConfig } from "wxt";
 
 export default defineConfig({
   modules: ["@wxt-dev/module-react"],
-  manifest: {
-    name: "Athens Lens",
-    description: "A focused job search assistant in your Chrome side panel.",
-    version: "0.1.0",
-    minimum_chrome_version: "116",
-    permissions: ["sidePanel", "storage"],
-    action: {
-      default_title: "Open Athens Lens",
-      default_icon: {
+  manifest: () => {
+    const configuredApiUrl = process.env.WXT_ATHENS_API_URL;
+    const apiHosts = new Set([
+      "http://127.0.0.1:8979/*",
+      "http://localhost:8979/*"
+    ]);
+    if (configuredApiUrl) {
+      const url = new URL(configuredApiUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error("WXT_ATHENS_API_URL must be an http(s) URL");
+      }
+      apiHosts.add(`${url.origin}/*`);
+    }
+
+    return {
+      name: "Athens Lens",
+      description: "A focused job search assistant in your Chrome side panel.",
+      version: "0.1.0",
+      minimum_chrome_version: "116",
+      permissions: ["sidePanel", "storage"],
+      host_permissions: [...apiHosts],
+      action: {
+        default_title: "Open Athens Lens",
+        default_icon: {
+          16: "icon-16.png",
+          32: "icon-32.png",
+          48: "icon-48.png",
+          128: "icon-128.png"
+        }
+      },
+      icons: {
         16: "icon-16.png",
         32: "icon-32.png",
         48: "icon-48.png",
         128: "icon-128.png"
       }
-    },
-    icons: {
-      16: "icon-16.png",
-      32: "icon-32.png",
-      48: "icon-48.png",
-      128: "icon-128.png"
-    }
+    };
   }
 });

@@ -67,6 +67,7 @@ import firebaseRoutes from "./src/routes/firebaseRoutes.js";
 import bidResultsRoutes from "./src/routes/bidResultsRoutes.js";
 import jobAnalyzeRoutes from "./src/routes/jobAnalyzeRoutes.js";
 import backgroundTaskRoutes from "./src/routes/backgroundTaskRoutes.js";
+import athensLensRoutes from "./src/routes/athensLensRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 import { requireFirebaseAuth } from "./src/middleware/firebaseAuth.js";
 import internalTaskRoutes from "./src/routes/internalTaskRoutes.js";
@@ -203,6 +204,9 @@ function createApp() {
 		});
 	});
 	app.use("/internal/tasks", internalTaskRoutes);
+	// Athens Lens has a separate vendor-password session boundary. Keep these
+	// routes independent from both Firebase owner auth and legacy Bid Monitor.
+	app.use("/api", athensLensRoutes);
 
 	app.use(requireFirebaseAuth);
 	app.use(requireRoleScope);

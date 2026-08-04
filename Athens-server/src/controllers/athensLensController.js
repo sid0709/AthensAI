@@ -1,0 +1,123 @@
+import bcrypt from "bcrypt";
+import { accountInfoCollection } from "../db/dataStore.js";
+import { listAthensLensJobs } from "../services/athensLensJobsService.js";
+import {
+	createAthensLensSession,
+	revokeAthensLensSession,
+} from "../services/athensLensSessionService.js";
+
+function escapeRegExp(value) {
+	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function findAccountByUsername(username) {
+	if (!accountInfoCollection) return null;
+	const projection = { name: 1, tier: 1, vendorAllowed: 1, vendorPassword: 1 };
+	const exact = await accountInfoCollection.findOne({ name: username }, { projection });
+	if (exact) return exact;
+	return accountInfoCollection.findOne(
+		{ name: { $regex: new RegExp(`^${escapeRegExp(username)}$`, "i") } },
+		{ projection },
+	);
+}
+
+export async function signInAthensLens(req, res) {
+	try {
+		const username = String(req.body?.username || "").trim();
+		const password = String(req.body?.password || "");
+		if (!username || !password) {
+			return res.status(400).json({
+				success: false,
+				code: "MISSING_CREDENTIALS",
+				message: "Username and vendor access password are required",
+			});
+		}
+		if (username.length > 200) {
+			return res.status(400).json({
+				success: false,
+				code: "INVALID_USERNAME",
+				message: "Enter a valid username",
+			});
+		}
+
+		const account = await findAccountByUsername(username);
+		if (!account) {
+			return res.status(401).json({
+				success: false,
+				code: "INVALID_CREDENTIALS",
+				message: "Invalid username or vendor access password",
+			});
+		}
+
+		if (!account.vendorAllowed) {
+			return res.status(403).json({
+				success: false,
+				code: "VENDOR_ACCESS_OFF",
+				message: "Vendor access is not enabled for this profile.",
+			});
+		}
+		if (!account.vendorPassword) {
+			return res.status(403).json({
+				success: false,
+				code: "VENDOR_PASSWORD_UNSET",
+				message: "Set a vendor access password in Athens before signing in.",
+			});
+		}
+		if (!(await bcrypt.compare(password, account.vendorPassword))) {
+			return res.status(401).json({
+				success: false,
+				code: "INVALID_CREDENTIALS",
+				message: "Invalid username or vendor access password",
+			});
+		}
+
+		const result = await createAthensLensSession({
+			accountId: account._id,
+			applierName: account.name,
+			username: account.name,
+		});
+		return res.json({
+			success: true,
+			session: {
+				username: result.session.username,
+				displayName: account.name,
+				profileId: result.session.accountId,
+				authenticatedAt: result.session.authenticatedAt,
+				expiresAt: result.session.expiresAt,
+				accessToken: result.token,
+			},
+		});
+	} catch (error) {
+		console.error("[athens-lens] sign-in failed", error?.message || error);
+		return res.status(error?.status || 500).json({
+			success: false,
+			code: error?.code || "SIGN_IN_FAILED",
+			message: error?.status === 503 ? error.message : "Unable to sign in",
+		});
+	}
+}
+
+export async function signOutAthensLens(req, res) {
+	try {
+		await revokeAthensLensSession(req.athensLensToken);
+		return res.json({ success: true });
+	} catch (error) {
+		console.error("[athens-lens] sign-out failed", error?.message || error);
+		return res.status(503).json({ success: false, message: "Unable to sign out" });
+	}
+}
+
+export async function listAthensLensJobsHandler(req, res) {
+	try {
+		const jobs = await listAthensLensJobs(req.athensLensSession.applierName);
+		return res.json({ success: true, jobs, total: jobs.length });
+	} catch (error) {
+		console.error("[athens-lens] jobs list failed", error?.message || error);
+		return res.status(error?.status || 500).json({
+			success: false,
+			message: error?.status === 503 ? error.message : "Unable to load Bid Ready jobs",
+		});
+	}
+}
+
+export const athensLensControllerTest = { findAccountByUsername };

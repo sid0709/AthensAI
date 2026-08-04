@@ -17,7 +17,8 @@ const DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
 });
 
 function formatPostedAt(value: string): string {
-  return DATE_FORMAT.format(new Date(`${value}T00:00:00Z`));
+  const date = new Date(`${value}T00:00:00Z`);
+  return value && !Number.isNaN(date.getTime()) ? DATE_FORMAT.format(date) : "Not listed";
 }
 
 export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDetailProps) {
@@ -62,19 +63,23 @@ export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDet
             <p>{job.description}</p>
           </section>
 
-          <section className="detail-section">
-            <h2>What you'll do</h2>
-            <ul>
-              {job.responsibilities.map((responsibility) => <li key={responsibility}>{responsibility}</li>)}
-            </ul>
-          </section>
+          {job.responsibilities.length > 0 ? (
+            <section className="detail-section">
+              <h2>What you'll do</h2>
+              <ul>
+                {job.responsibilities.map((responsibility) => <li key={responsibility}>{responsibility}</li>)}
+              </ul>
+            </section>
+          ) : null}
 
-          <section className="detail-section">
-            <h2>What you'll bring</h2>
-            <ul>
-              {job.qualifications.map((qualification) => <li key={qualification}>{qualification}</li>)}
-            </ul>
-          </section>
+          {job.qualifications.length > 0 ? (
+            <section className="detail-section">
+              <h2>What you'll bring</h2>
+              <ul>
+                {job.qualifications.map((qualification) => <li key={qualification}>{qualification}</li>)}
+              </ul>
+            </section>
+          ) : null}
         </div>
       </div>
 
@@ -86,11 +91,11 @@ export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDet
         <button
           className="primary-button detail-action"
           type="button"
-          disabled={isRecording}
+          disabled={isRecording || !job.applyUrl}
           onClick={() => onApply(job)}
         >
           {isRecording ? <Video size={18} aria-hidden="true" /> : <ArrowUpRight size={18} aria-hidden="true" />}
-          <span>{isRecording ? "Recording active" : "Apply & record"}</span>
+          <span>{isRecording ? "Recording active" : job.applyUrl ? "Apply & record" : "Link unavailable"}</span>
         </button>
       </footer>
     </article>

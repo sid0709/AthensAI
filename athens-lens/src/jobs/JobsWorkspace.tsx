@@ -1,5 +1,6 @@
 import { AlertCircle, BriefcaseBusiness, RefreshCw } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { AthensApiError } from "../api/athensApi";
 import type { WorkspaceRoute, WorkspaceView } from "../navigation/routes";
 import type { Job, JobsRepository, Session } from "../types";
 import { JobDetail } from "./JobDetail";
@@ -15,12 +16,13 @@ interface JobsWorkspaceProps {
   onNavigateView(view: WorkspaceView): void;
   onApply(job: Job): void;
   onAskAi(job: Job): void;
+  onJobsLoaded(count: number): void;
   onLogout(): Promise<void>;
 }
 
 type LoadState =
   | { status: "loading" }
-  | { status: "error" }
+  | { status: "error"; message: string }
   | { status: "ready"; jobs: readonly Job[] };
 
 export function JobsWorkspace({
@@ -33,6 +35,7 @@ export function JobsWorkspace({
   onNavigateView,
   onApply,
   onAskAi,
+  onJobsLoaded,
   onLogout
 }: JobsWorkspaceProps) {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
@@ -41,20 +44,26 @@ export function JobsWorkspace({
   useEffect(() => {
     let isActive = true;
 
-    jobsRepository.listJobs().then(
+    jobsRepository.listJobs(session).then(
       (jobs) => {
         if (!isActive) return;
         setLoadState({ status: "ready", jobs });
+        onJobsLoaded(jobs.length);
       },
-      () => {
-        if (isActive) setLoadState({ status: "error" });
+      (error) => {
+        if (isActive) {
+          setLoadState({
+            status: "error",
+            message: error instanceof AthensApiError ? error.message : "Jobs couldn't be loaded."
+          });
+        }
       }
     );
 
     return () => {
       isActive = false;
     };
-  }, [jobsRepository, loadAttempt]);
+  }, [jobsRepository, loadAttempt, onJobsLoaded, session]);
 
   if (loadState.status === "loading") {
     return <AppStatus label="Loading jobs…" />;
@@ -63,19 +72,24 @@ export function JobsWorkspace({
   if (loadState.status === "error") {
     return (
       <AppStatus
-        label="Jobs couldn't be loaded."
+        label={loadState.message}
         icon={<AlertCircle size={24} aria-hidden="true" />}
         action={
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => {
-              setLoadState({ status: "loading" });
-              setLoadAttempt((current) => current + 1);
-            }}
-          >
-            <RefreshCw size={16} aria-hidden="true" />Try again
-          </button>
+          <div className="status-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setLoadState({ status: "loading" });
+                setLoadAttempt((current) => current + 1);
+              }}
+            >
+              <RefreshCw size={16} aria-hidden="true" />Try again
+            </button>
+            <button className="text-button" type="button" onClick={() => void onLogout()}>
+              Sign out
+            </button>
+          </div>
         }
       />
     );

@@ -120,6 +120,12 @@ a:focus-visible {
   font-size: var(--font-size-sm);
 }
 
+.status-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .status-logo {
   display: grid;
   width: 44px;
