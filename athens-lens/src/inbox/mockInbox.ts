@@ -11,6 +11,7 @@ export const MOCK_INBOX_MESSAGES = [
     isUnread: true,
     kind: "security-code",
     securityCode: "482917",
+    bodyLoaded: true,
     body: [
       "We received a request to verify your candidate account.",
       "Enter the security code below to continue. This code expires in 10 minutes.",
@@ -26,6 +27,7 @@ export const MOCK_INBOX_MESSAGES = [
     receivedAt: "2026-08-04T14:08:00.000Z",
     isUnread: true,
     kind: "general",
+    bodyLoaded: true,
     body: [
       "Thank you for your interest in the Customer Operations Lead role.",
       "We would like to schedule a short introductory conversation. Please reply with a few times that work well for you this week."
@@ -41,6 +43,7 @@ export const MOCK_INBOX_MESSAGES = [
     isUnread: true,
     kind: "security-code",
     securityCode: "731204",
+    bodyLoaded: true,
     body: [
       "Use the code below to finish signing in.",
       "For your security, the code can only be used once and expires shortly."
@@ -55,6 +58,7 @@ export const MOCK_INBOX_MESSAGES = [
     receivedAt: "2026-08-03T18:11:00.000Z",
     isUnread: false,
     kind: "account",
+    bodyLoaded: true,
     body: [
       "Your application has been received successfully.",
       "Our team is reviewing applications and will contact you if your experience matches the role."
@@ -69,6 +73,7 @@ export const MOCK_INBOX_MESSAGES = [
     receivedAt: "2026-08-03T16:03:00.000Z",
     isUnread: false,
     kind: "general",
+    bodyLoaded: true,
     body: [
       "Thank you for sharing your background with us.",
       "Could you confirm your preferred start date? A short reply is all we need."
@@ -83,6 +88,7 @@ export const MOCK_INBOX_MESSAGES = [
     receivedAt: "2026-08-02T20:36:00.000Z",
     isUnread: false,
     kind: "account",
+    bodyLoaded: true,
     body: [
       "Your candidate profile was updated successfully.",
       "No further action is needed. You can return to the portal whenever you would like to make another change."

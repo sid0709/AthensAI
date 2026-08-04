@@ -3,7 +3,10 @@ import test from "node:test";
 import { athensLensAuthTest } from "../middleware/athensLensAuth.js";
 import { mapAthensLensJob } from "./athensLensJobsService.js";
 import { athensLensSessionTest } from "./athensLensSessionService.js";
-import { mapAthensLensGmailMessage } from "../controllers/athensLensMailController.js";
+import {
+	mapAthensLensGmailEnvelope,
+	mapAthensLensGmailMessage,
+} from "../controllers/athensLensMailController.js";
 
 test("Athens Lens job mapping preserves server data without domain-specific branches", () => {
 	const result = mapAthensLensJob(
@@ -66,7 +69,24 @@ test("Athens Lens maps live Gmail content and extracts security codes", () => {
 	assert.equal(message.securityCode, "482917");
 	assert.equal(message.kind, "security-code");
 	assert.equal(message.isUnread, true);
+	assert.equal(message.bodyLoaded, true);
 	assert.deepEqual(message.body, ["Use security code: 482917", "This code expires soon."]);
+});
+
+test("Athens Lens Gmail envelopes render before message bodies", () => {
+	const message = mapAthensLensGmailEnvelope({
+		uid: 43,
+		from: "security@example.com",
+		fromName: "Account Security",
+		subject: "Your code is 731204",
+		date: "2026-08-04T12:31:00.000Z",
+		seen: true,
+	});
+
+	assert.equal(message.id, "43");
+	assert.equal(message.securityCode, "731204");
+	assert.equal(message.bodyLoaded, false);
+	assert.deepEqual(message.body, []);
 });
 
 test("Athens Lens mapping rejects unsafe application schemes", () => {

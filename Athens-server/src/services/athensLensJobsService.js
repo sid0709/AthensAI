@@ -1,6 +1,7 @@
 import { DocumentId } from "@nextoffer/shared/document-id";
 import { jobsCollection } from "../db/dataStore.js";
-import { listBidQueueJobs } from "./jobBidStatusService.js";
+import { resolveApplierId } from "./jobBidStatusService.js";
+import { readCanonicalProjectedJobStatusIdsByState } from "./jobStatusProjectionService.js";
 
 const JOB_PROJECTION = {
 	title: 1,
@@ -149,16 +150,16 @@ export async function listAthensLensJobs(applierName, { limit = 100 } = {}) {
 	}
 
 	const boundedLimit = Math.max(1, Math.min(500, Number(limit) || 100));
-	const queued = await listBidQueueJobs(applierName, {
-		limit: boundedLimit,
-		includeCompleted: false,
-	});
-	if (!queued.length) return [];
+	const applierId = await resolveApplierId(applierName);
+	if (!applierId) return [];
+	const idsByState = await readCanonicalProjectedJobStatusIdsByState(String(applierId), ["bid-ready"]);
+	const jobIds = (idsByState.get("bid-ready") || []).slice(0, boundedLimit).map(String);
+	if (!jobIds.length) return [];
 
-	const ids = queued
-		.map((job) => {
+	const ids = jobIds
+		.map((jobId) => {
 			try {
-				return new DocumentId(String(job.jobId));
+				return new DocumentId(jobId);
 			} catch {
 				return null;
 			}
@@ -167,9 +168,9 @@ export async function listAthensLensJobs(applierName, { limit = 100 } = {}) {
 	const docs = await jobsCollection.find({ _id: { $in: ids } }, { projection: JOB_PROJECTION }).toArray();
 	const byId = new Map(docs.map((job) => [String(job._id), job]));
 
-	return queued.flatMap((queueJob) => {
-		const job = byId.get(String(queueJob.jobId));
-		return job ? [mapAthensLensJob(job, queueJob)] : [];
+	return jobIds.flatMap((jobId) => {
+		const job = byId.get(jobId);
+		return job ? [mapAthensLensJob(job, { jobId })] : [];
 	});
 }
 

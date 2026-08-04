@@ -36,4 +36,25 @@ describe("athensInboxRepository", () => {
     const [, request] = fetchMock.mock.calls[0]!;
     expect(new Headers(request?.headers).get("Authorization")).toBe("Bearer gmail-token");
   });
+
+  it("loads Gmail bodies separately with a bounded ID query", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return new Response(JSON.stringify({
+        success: true,
+        messages: [MOCK_INBOX_MESSAGES[0]]
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(athensInboxRepository.loadMessageBodies(SESSION, ["42", "43", "42"]))
+      .resolves.toEqual([MOCK_INBOX_MESSAGES[0]]);
+    const [url, request] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toContain("/athens-lens/gmail/message-bodies?ids=42%2C43");
+    expect(new Headers(request?.headers).get("Authorization")).toBe("Bearer gmail-token");
+  });
 });

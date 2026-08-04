@@ -8,6 +8,7 @@ function isInboxMessage(value: unknown): value is InboxMessage {
   return ["id", "sender", "senderEmail", "subject", "preview", "receivedAt", "kind"]
     .every((key) => typeof message[key] === "string") &&
     typeof message.isUnread === "boolean" &&
+    typeof message.bodyLoaded === "boolean" &&
     Array.isArray(message.body);
 }
 
@@ -28,6 +29,20 @@ export const athensInboxRepository: InboxRepository = {
     });
     if (!isInboxSnapshot(response)) throw new Error("Athens server returned an invalid Gmail response.");
     return response;
+  },
+
+  async loadMessageBodies(session, messageIds) {
+    const ids = [...new Set(messageIds)].filter(Boolean);
+    if (!ids.length) return [];
+    const query = new URLSearchParams({ ids: ids.join(",") });
+    const response = await requestAthensApi<{ messages: InboxMessage[] }>(
+      `/athens-lens/gmail/message-bodies?${query.toString()}`,
+      { accessToken: session.accessToken }
+    );
+    if (!Array.isArray(response.messages) || !response.messages.every(isInboxMessage)) {
+      throw new Error("Athens server returned invalid Gmail message content.");
+    }
+    return response.messages;
   }
 };
 
@@ -39,5 +54,10 @@ export const mockInboxRepository: InboxRepository = {
       total: MOCK_INBOX_MESSAGES.length,
       unreadCount: MOCK_UNREAD_COUNT
     };
+  },
+
+  async loadMessageBodies(_session, messageIds) {
+    const requested = new Set(messageIds);
+    return MOCK_INBOX_MESSAGES.filter((message) => requested.has(message.id));
   }
 };

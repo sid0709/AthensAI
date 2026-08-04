@@ -2,6 +2,8 @@ import { AlertCircle, BriefcaseBusiness, RefreshCw } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { AthensApiError } from "../api/athensApi";
 import type { WorkspaceRoute, WorkspaceView } from "../navigation/routes";
+import { useWorkspaceCache } from "../state/workspaceCache";
+import { refreshJobs } from "../state/workspaceData";
 import type { Job, JobsRepository, Session } from "../types";
 import { JobDetail } from "./JobDetail";
 import { JobList } from "./JobList";
@@ -16,14 +18,8 @@ interface JobsWorkspaceProps {
   onNavigateView(view: WorkspaceView): void;
   onApply(job: Job): void;
   onAskAi(job: Job): void;
-  onJobsLoaded(count: number): void;
   onLogout(): Promise<void>;
 }
-
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; jobs: readonly Job[] };
 
 export function JobsWorkspace({
   session,
@@ -35,25 +31,22 @@ export function JobsWorkspace({
   onNavigateView,
   onApply,
   onAskAi,
-  onJobsLoaded,
   onLogout
 }: JobsWorkspaceProps) {
-  const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+  const jobs = useWorkspaceCache((state) => state.jobsByProfile[session.profileId]?.data);
+  const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const requestKey = `${session.profileId}:${loadAttempt}`;
 
   useEffect(() => {
     let isActive = true;
 
-    jobsRepository.listJobs(session).then(
-      (jobs) => {
-        if (!isActive) return;
-        setLoadState({ status: "ready", jobs });
-        onJobsLoaded(jobs.length);
-      },
+    refreshJobs(session, jobsRepository).then(
+      () => undefined,
       (error) => {
         if (isActive) {
-          setLoadState({
-            status: "error",
+          setLoadError({
+            key: requestKey,
             message: error instanceof AthensApiError ? error.message : "Jobs couldn't be loaded."
           });
         }
@@ -63,16 +56,18 @@ export function JobsWorkspace({
     return () => {
       isActive = false;
     };
-  }, [jobsRepository, loadAttempt, onJobsLoaded, session]);
+  }, [jobsRepository, requestKey, session]);
 
-  if (loadState.status === "loading") {
+  const currentError = loadError?.key === requestKey ? loadError.message : null;
+
+  if (!jobs && !currentError) {
     return <AppStatus label="Loading jobs…" />;
   }
 
-  if (loadState.status === "error") {
+  if (!jobs && currentError) {
     return (
       <AppStatus
-        label={loadState.message}
+        label={currentError}
         icon={<AlertCircle size={24} aria-hidden="true" />}
         action={
           <div className="status-actions">
@@ -80,7 +75,6 @@ export function JobsWorkspace({
               className="secondary-button"
               type="button"
               onClick={() => {
-                setLoadState({ status: "loading" });
                 setLoadAttempt((current) => current + 1);
               }}
             >
@@ -95,17 +89,18 @@ export function JobsWorkspace({
     );
   }
 
-  const selectedJobId = route.itemId ?? loadState.jobs[0]?.id ?? null;
-  const selectedJob = loadState.jobs.find((job) => job.id === selectedJobId) ?? loadState.jobs[0] ?? null;
+  const visibleJobs = jobs ?? [];
+  const selectedJobId = route.itemId ?? visibleJobs[0]?.id ?? null;
+  const selectedJob = visibleJobs.find((job) => job.id === selectedJobId) ?? visibleJobs[0] ?? null;
 
-  if (loadState.jobs.length === 0) {
+  if (visibleJobs.length === 0) {
     return <AppStatus label="No jobs to show yet." icon={<BriefcaseBusiness size={24} aria-hidden="true" />} />;
   }
 
   return (
     <main className={`workspace workspace--${route.itemId ? "detail" : "list"}`}>
       <JobList
-        jobs={loadState.jobs}
+        jobs={visibleJobs}
         selectedJobId={selectedJobId}
         session={session}
         inboxUnreadCount={inboxUnreadCount}

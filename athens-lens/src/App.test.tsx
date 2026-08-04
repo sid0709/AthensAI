@@ -3,8 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mockInboxRepository } from "./inbox/inboxRepository";
+import { MOCK_INBOX_MESSAGES, MOCK_UNREAD_COUNT } from "./inbox/mockInbox";
 import { MOCK_JOBS } from "./jobs/mockJobs";
-import type { AuthStore, Credentials, JobsRepository, Session } from "./types";
+import { resetWorkspaceCacheForTests, useWorkspaceCache } from "./state/workspaceCache";
+import type { AuthStore, Credentials, InboxRepository, JobsRepository, Session } from "./types";
 
 function makeSession(username = "Alex Taylor"): Session {
   return {
@@ -36,7 +38,8 @@ const jobsRepository: JobsRepository = {
 };
 
 describe("Athens Lens app", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await resetWorkspaceCacheForTests();
     window.location.hash = "#jobs";
   });
 
@@ -95,6 +98,26 @@ describe("Athens Lens app", () => {
     expect(screen.queryByRole("heading", { name: "Welcome back" })).not.toBeInTheDocument();
   });
 
+  it("renders cached jobs immediately and replaces them with authoritative server data", async () => {
+    const cachedJob = { ...MOCK_JOBS[0], id: "cached-job", title: "Cached opportunity" };
+    useWorkspaceCache.getState().setJobs("profile-1", [cachedJob], Date.now() - 60_000);
+    let resolveJobs: ((jobs: typeof MOCK_JOBS) => void) | undefined;
+    const repository: JobsRepository = {
+      listJobs: vi.fn(() => new Promise<typeof MOCK_JOBS>((resolve) => {
+        resolveJobs = resolve;
+      }))
+    };
+
+    render(<App authStore={makeAuthStore(makeSession())} jobsRepository={repository} />);
+
+    expect(await screen.findByRole("heading", { name: "Cached opportunity" })).toBeInTheDocument();
+    expect(screen.queryByText("Loading jobs…")).not.toBeInTheDocument();
+    resolveJobs?.(MOCK_JOBS);
+    expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Cached opportunity" })).not.toBeInTheDocument();
+    expect(repository.listJobs).toHaveBeenCalledOnce();
+  });
+
   it("routes to Gmail, opens a security email, and copies its code", async () => {
     const user = userEvent.setup();
     const { container } = render(
@@ -117,6 +140,46 @@ describe("Athens Lens app", () => {
 
     await user.click(screen.getByRole("button", { name: "Inbox" }));
     expect(container.querySelector(".workspace")).toHaveClass("workspace--list");
+  });
+
+  it("renders Gmail envelopes before asynchronously loaded message bodies", async () => {
+    window.location.hash = "#inbox";
+    const envelopes = MOCK_INBOX_MESSAGES.map((message) => ({
+      ...message,
+      preview: "",
+      securityCode: undefined,
+      body: [],
+      bodyLoaded: false
+    }));
+    let resolveSelectedBody: ((messages: readonly (typeof MOCK_INBOX_MESSAGES)[number][]) => void) | undefined;
+    const selectedBody = new Promise<readonly (typeof MOCK_INBOX_MESSAGES)[number][]>((resolve) => {
+      resolveSelectedBody = resolve;
+    });
+    const inboxRepository: InboxRepository = {
+      listMessages: vi.fn(async () => ({
+        accountEmail: "candidate@example.com",
+        messages: envelopes,
+        total: envelopes.length,
+        unreadCount: MOCK_UNREAD_COUNT
+      })),
+      loadMessageBodies: vi.fn((_session, messageIds) => messageIds.length === 1
+        ? selectedBody
+        : new Promise<never>(() => undefined))
+    };
+
+    render(
+      <App
+        authStore={makeAuthStore(makeSession())}
+        jobsRepository={jobsRepository}
+        inboxRepository={inboxRepository}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: MOCK_INBOX_MESSAGES[0].subject })).toBeInTheDocument();
+    expect(screen.getByText("Loading message…")).toBeInTheDocument();
+    resolveSelectedBody?.([MOCK_INBOX_MESSAGES[0]]);
+    expect(await screen.findByText(MOCK_INBOX_MESSAGES[0].body[0])).toBeInTheDocument();
+    expect(inboxRepository.loadMessageBodies).toHaveBeenCalledWith(expect.anything(), [MOCK_INBOX_MESSAGES[0].id]);
   });
 
   it("starts, restarts, completes, and reviews a mock bid recording", async () => {

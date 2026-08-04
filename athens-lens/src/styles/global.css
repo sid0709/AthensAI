@@ -886,6 +886,30 @@ a:focus-visible {
   white-space: pre-wrap;
 }
 
+.message-body-state {
+  display: flex;
+  min-height: 140px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.message-body-state p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.loading-spinner {
+  animation: loading-spin 800ms linear infinite;
+}
+
+@keyframes loading-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Mock recording and AI assistance */
 .recording-dock {
   position: fixed;

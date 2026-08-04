@@ -58,10 +58,12 @@ export interface InboxMessage {
   kind: InboxMessageKind;
   securityCode?: string;
   body: readonly string[];
+  bodyLoaded: boolean;
 }
 
 export interface InboxRepository {
   listMessages(session: Session): Promise<InboxSnapshot>;
+  loadMessageBodies(session: Session, messageIds: readonly string[]): Promise<readonly InboxMessage[]>;
 }
 
 export interface InboxSnapshot {

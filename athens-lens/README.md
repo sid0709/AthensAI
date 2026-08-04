@@ -4,6 +4,8 @@ Athens Lens is a Chrome side-panel app built with React, Vite, and WXT.
 
 Authentication, Bid Ready jobs, and the recent Gmail inbox use Athens-server. Sign-in accepts an Athens profile username plus that profile's vendor access password. Gmail reads the profile's configured email and Google app password server-side; those credentials are never sent to the extension. Bid recording and AI form answers remain simulated in this MVP.
 
+Jobs and Gmail use an account-scoped Zustand cache persisted asynchronously through WXT local storage. Cached lists paint immediately and then revalidate in the background; successful server responses always replace cached data. Gmail fetches lightweight envelopes first, then loads the selected message and the remaining recent bodies in separate deduplicated batches.
+
 ## Development
 
 ```bash

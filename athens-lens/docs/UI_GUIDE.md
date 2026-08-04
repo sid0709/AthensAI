@@ -43,6 +43,8 @@ One-off layout geometry may be local when it has no reusable semantic meaning. N
 - Job headers show data-backed skill and metadata chips instead of description excerpts. Skill chips may use the subtle Athens-blue token pair; location, work mode, employment type, seniority, salary, and other job tags remain neutral.
 - Every interactive element needs default, hover, active where useful, disabled where applicable, and `:focus-visible` states.
 - Loading, empty, and error states use concise language and the same neutral surface hierarchy.
+- Cached Jobs and Gmail lists remain visible during background refresh. Never replace usable stale data with a blocking loader; only a successful authoritative response replaces it.
+- Gmail renders envelope rows first. Message detail uses a compact inline loading state while safe text content arrives asynchronously, without shifting the navigation pane.
 - Recording uses a persistent neutral dock with a single red status dot and identifies the active company and role. Confirmation and AI assistance use white modal or drawer surfaces, not colored dashboards.
 - Gmail messages use sender initials or a security-key icon, preserve the real text structure, and never inject remote email HTML into the extension page.
 

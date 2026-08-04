@@ -1,10 +1,14 @@
 import { resolveMailCredentials } from "../services/mail/credentials.js";
-import { fetchRecentInboxWithBodies } from "../services/mail/imapClient.js";
+import {
+	fetchInboxBodiesByUid,
+	fetchRecentInboxEnvelopes,
+} from "../services/mail/imapClient.js";
 import { extractVerificationCode } from "../services/mail/verificationCode.js";
 
 const DEFAULT_MESSAGE_LIMIT = 15;
 const MAX_MESSAGE_LIMIT = 25;
-const MAX_MESSAGE_TEXT_LENGTH = 200_000;
+const MAX_BODY_BATCH_SIZE = 15;
+const MAX_MESSAGE_TEXT_LENGTH = 100_000;
 
 function text(value) {
 	return typeof value === "string" ? value.trim() : "";
@@ -40,29 +44,53 @@ export function mapAthensLensGmailMessage(message) {
 		kind: securityCode ? "security-code" : "general",
 		...(securityCode ? { securityCode } : {}),
 		body: paragraphs(bodyText),
+		bodyLoaded: true,
 	};
+}
+
+export function mapAthensLensGmailEnvelope(message) {
+	const subject = text(message?.subject) || "(No subject)";
+	const securityCode = extractVerificationCode(subject);
+	const senderEmail = text(message?.from);
+	return {
+		id: String(message?.uid || ""),
+		sender: text(message?.fromName) || senderEmail || "Unknown sender",
+		senderEmail,
+		subject,
+		preview: "",
+		receivedAt: isoDate(message?.date),
+		isUnread: message?.seen !== true,
+		kind: securityCode ? "security-code" : "general",
+		...(securityCode ? { securityCode } : {}),
+		body: [],
+		bodyLoaded: false,
+	};
+}
+
+async function mailCredentials(req, res) {
+	const credentials = await resolveMailCredentials(req.athensLensSession.applierName);
+	if (credentials.ok) return credentials;
+	res.status(409).json({
+		success: false,
+		code: "GMAIL_NOT_CONFIGURED",
+		message: credentials.error,
+	});
+	return null;
 }
 
 export async function listAthensLensGmailMessages(req, res) {
 	try {
-		const applierName = req.athensLensSession.applierName;
-		const credentials = await resolveMailCredentials(applierName);
-		if (!credentials.ok) {
-			return res.status(409).json({
-				success: false,
-				code: "GMAIL_NOT_CONFIGURED",
-				message: credentials.error,
-			});
-		}
+		const credentials = await mailCredentials(req, res);
+		if (!credentials) return;
 
 		const requestedLimit = Number.parseInt(String(req.query?.limit || DEFAULT_MESSAGE_LIMIT), 10);
 		const limit = Math.max(1, Math.min(MAX_MESSAGE_LIMIT, requestedLimit || DEFAULT_MESSAGE_LIMIT));
-		const liveMessages = await fetchRecentInboxWithBodies(
+		const liveMessages = await fetchRecentInboxEnvelopes(
 			credentials.email,
 			credentials.password,
 			limit,
 		);
-		const messages = liveMessages.map(mapAthensLensGmailMessage).filter((message) => message.id);
+		const messages = liveMessages.map(mapAthensLensGmailEnvelope).filter((message) => message.id);
 
 		return res.json({
 			success: true,
@@ -77,6 +105,38 @@ export async function listAthensLensGmailMessages(req, res) {
 			success: false,
 			code: "GMAIL_UNAVAILABLE",
 			message: "Gmail could not be loaded. Check the profile email and Google app password.",
+		});
+	}
+}
+
+export async function listAthensLensGmailMessageBodies(req, res) {
+	try {
+		const requestedIds = String(req.query?.ids || "")
+			.split(",")
+			.map((value) => value.trim())
+			.filter((value) => /^\d+$/.test(value))
+			.map((value) => Number.parseInt(value, 10))
+			.filter((value) => Number.isSafeInteger(value) && value > 0);
+		const ids = [...new Set(requestedIds)].slice(0, MAX_BODY_BATCH_SIZE);
+		if (!ids.length) {
+			return res.status(400).json({
+				success: false,
+				code: "INVALID_MESSAGE_IDS",
+				message: "At least one valid Gmail message ID is required.",
+			});
+		}
+
+		const credentials = await mailCredentials(req, res);
+		if (!credentials) return;
+		const liveMessages = await fetchInboxBodiesByUid(credentials.email, credentials.password, ids);
+		const messages = liveMessages.map(mapAthensLensGmailMessage).filter((message) => message.id);
+		return res.json({ success: true, messages });
+	} catch (error) {
+		console.error("[athens-lens] Gmail message bodies failed", error?.message || error);
+		return res.status(502).json({
+			success: false,
+			code: "GMAIL_UNAVAILABLE",
+			message: "Gmail message content could not be loaded.",
 		});
 	}
 }

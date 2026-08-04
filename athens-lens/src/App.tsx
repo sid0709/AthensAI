@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { LoginScreen } from "./auth/LoginScreen";
 import { athensAuthStore } from "./auth/authStore";
 import { InboxWorkspace } from "./inbox/InboxWorkspace";
@@ -6,6 +6,8 @@ import { athensInboxRepository } from "./inbox/inboxRepository";
 import { JobsWorkspace } from "./jobs/JobsWorkspace";
 import { athensJobsRepository } from "./jobs/jobsRepository";
 import { useWorkspaceRoute } from "./navigation/routes";
+import { useWorkspaceCache } from "./state/workspaceCache";
+import { invalidateWorkspaceRequests, warmWorkspaceLists } from "./state/workspaceData";
 import {
   AiAnswerPanel,
   BidOutcomeToast,
@@ -32,10 +34,6 @@ export function App({
 }: AppProps) {
   const [sessionState, setSessionState] = useState<SessionState>({ status: "restoring" });
   const [aiJob, setAiJob] = useState<Job | null>(null);
-  const [jobsCount, setJobsCount] = useState(0);
-  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
-  const handleJobsLoaded = useCallback((count: number) => setJobsCount(count), []);
-  const handleInboxLoaded = useCallback((count: number) => setInboxUnreadCount(count), []);
   const { route, navigate } = useWorkspaceRoute();
   const recording = useMockRecording();
 
@@ -55,6 +53,20 @@ export function App({
     };
   }, [authStore]);
 
+  const activeSession = sessionState.status === "ready" ? sessionState.session : null;
+  const cachedJobsCount = useWorkspaceCache((state) => activeSession
+    ? state.jobsByProfile[activeSession.profileId]?.data.length
+    : undefined);
+  const cachedInboxUnreadCount = useWorkspaceCache((state) => activeSession
+    ? state.inboxByProfile[activeSession.profileId]?.data.unreadCount
+    : undefined);
+  useEffect(() => {
+    if (!activeSession) return;
+    void warmWorkspaceLists(activeSession, jobsRepository, inboxRepository);
+  }, [activeSession, inboxRepository, jobsRepository]);
+  const jobsCount = cachedJobsCount ?? 0;
+  const inboxUnreadCount = cachedInboxUnreadCount ?? 0;
+
   if (sessionState.status === "restoring") {
     return (
       <main className="app-status" role="status">
@@ -64,7 +76,8 @@ export function App({
     );
   }
 
-  if (!sessionState.session) {
+  const session = sessionState.session;
+  if (!session) {
     return (
       <LoginScreen
         onSignIn={async (credentials: Credentials) => {
@@ -77,29 +90,29 @@ export function App({
   }
 
   const logout = async () => {
+    const profileId = session.profileId;
+    invalidateWorkspaceRequests(profileId);
     await authStore.signOut();
+    useWorkspaceCache.getState().clearProfile(profileId);
     recording.reset();
     setAiJob(null);
-    setJobsCount(0);
-    setInboxUnreadCount(0);
     setSessionState({ status: "ready", session: null });
   };
 
   const navigateView = (view: "jobs" | "inbox") => navigate({ view });
   const workspace = route.view === "inbox" ? (
       <InboxWorkspace
-        session={sessionState.session}
+        session={session}
         inboxRepository={inboxRepository}
         route={route}
         jobsCount={jobsCount}
-        onInboxLoaded={handleInboxLoaded}
         onNavigate={navigate}
         onNavigateView={navigateView}
         onLogout={logout}
       />
     ) : (
     <JobsWorkspace
-      session={sessionState.session}
+      session={session}
       jobsRepository={jobsRepository}
       route={route}
       inboxUnreadCount={inboxUnreadCount}
@@ -111,7 +124,6 @@ export function App({
         recording.start(job);
       }}
       onAskAi={setAiJob}
-      onJobsLoaded={handleJobsLoaded}
       onLogout={logout}
     />
   );

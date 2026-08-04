@@ -76,7 +76,7 @@ export function InboxList({
                 <time dateTime={message.receivedAt}>{formatMessageTime(message.receivedAt)}</time>
               </span>
               <span className="inbox-subject">{message.subject}</span>
-              <span>{message.preview}</span>
+              <span>{message.preview || (message.bodyLoaded ? "" : "Loading preview…")}</span>
             </span>
           </button>
         ))}

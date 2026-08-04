@@ -1,10 +1,12 @@
-import { ArrowLeft, Check, Copy } from "lucide-react";
+import { ArrowLeft, Check, Copy, LoaderCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import type { InboxMessage } from "../types";
 import { MailSenderIcon } from "./MailSenderIcon";
 
 interface MessageDetailProps {
   message: InboxMessage;
+  bodyError: string | null;
+  onRetry(): void;
   onBack(): void;
 }
 
@@ -15,7 +17,7 @@ const DATE_TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit"
 });
 
-export function MessageDetail({ message, onBack }: MessageDetailProps) {
+export function MessageDetail({ message, bodyError, onRetry, onBack }: MessageDetailProps) {
   const [copied, setCopied] = useState(false);
 
   async function copyCode() {
@@ -60,11 +62,25 @@ export function MessageDetail({ message, onBack }: MessageDetailProps) {
             </section>
           ) : null}
 
-          <section className="message-body">
-            {message.body.length > 0
-              ? message.body.map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>)
-              : <p>No text content.</p>}
-          </section>
+          {bodyError ? (
+            <section className="message-body-state" role="status">
+              <p>{bodyError}</p>
+              <button className="secondary-button" type="button" onClick={onRetry}>
+                <RefreshCw size={16} aria-hidden="true" />Try again
+              </button>
+            </section>
+          ) : !message.bodyLoaded ? (
+            <section className="message-body-state" role="status">
+              <LoaderCircle className="loading-spinner" size={18} aria-hidden="true" />
+              <p>Loading message…</p>
+            </section>
+          ) : (
+            <section className="message-body">
+              {message.body.length > 0
+                ? message.body.map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>)
+                : <p>No text content.</p>}
+            </section>
+          )}
         </div>
       </div>
     </article>
