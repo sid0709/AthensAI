@@ -1,21 +1,31 @@
 import { useEffect, useState } from "react";
 import { LoginScreen } from "./auth/LoginScreen";
 import { demoAuthStore } from "./auth/authStore";
+import { InboxWorkspace } from "./inbox/InboxWorkspace";
+import { mockInboxRepository } from "./inbox/inboxRepository";
+import { MOCK_UNREAD_COUNT } from "./inbox/mockInbox";
 import { JobsWorkspace } from "./jobs/JobsWorkspace";
 import { mockJobsRepository } from "./jobs/jobsRepository";
-import type { AuthStore, Credentials, JobsRepository, Session } from "./types";
+import { useWorkspaceRoute } from "./navigation/routes";
+import type { AuthStore, Credentials, InboxRepository, JobsRepository, Session } from "./types";
 
 interface AppProps {
   authStore?: AuthStore;
   jobsRepository?: JobsRepository;
+  inboxRepository?: InboxRepository;
 }
 
 type SessionState =
   | { status: "restoring" }
   | { status: "ready"; session: Session | null };
 
-export function App({ authStore = demoAuthStore, jobsRepository = mockJobsRepository }: AppProps) {
+export function App({
+  authStore = demoAuthStore,
+  jobsRepository = mockJobsRepository,
+  inboxRepository = mockInboxRepository
+}: AppProps) {
   const [sessionState, setSessionState] = useState<SessionState>({ status: "restoring" });
+  const { route, navigate } = useWorkspaceRoute();
 
   useEffect(() => {
     let isActive = true;
@@ -54,14 +64,36 @@ export function App({ authStore = demoAuthStore, jobsRepository = mockJobsReposi
     );
   }
 
+  const logout = async () => {
+    await authStore.signOut();
+    setSessionState({ status: "ready", session: null });
+  };
+
+  const navigateView = (view: "jobs" | "inbox") => navigate({ view });
+
+  if (route.view === "inbox") {
+    return (
+      <InboxWorkspace
+        session={sessionState.session}
+        inboxRepository={inboxRepository}
+        route={route}
+        inboxUnreadCount={MOCK_UNREAD_COUNT}
+        onNavigate={navigate}
+        onNavigateView={navigateView}
+        onLogout={logout}
+      />
+    );
+  }
+
   return (
     <JobsWorkspace
       session={sessionState.session}
       jobsRepository={jobsRepository}
-      onLogout={async () => {
-        await authStore.signOut();
-        setSessionState({ status: "ready", session: null });
-      }}
+      route={route}
+      inboxUnreadCount={MOCK_UNREAD_COUNT}
+      onNavigate={navigate}
+      onNavigateView={navigateView}
+      onLogout={logout}
     />
   );
 }

@@ -284,6 +284,7 @@ a:focus-visible {
   flex: 0 0 100%;
   flex-direction: column;
   overflow: hidden;
+  border-right: 1px solid var(--color-border);
   background: var(--color-navigation);
 }
 
@@ -317,6 +318,53 @@ a:focus-visible {
   height: 30px;
   flex: 0 0 auto;
   border-radius: 9px;
+}
+
+.workspace-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+}
+
+.workspace-navigation button {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.workspace-navigation button:hover {
+  background: var(--color-hover);
+}
+
+.workspace-navigation button[aria-current="page"] {
+  background: var(--color-surface-subtle);
+  font-weight: 550;
+}
+
+.navigation-badge {
+  display: grid;
+  min-width: 22px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0 6px;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--color-text);
+  color: var(--color-canvas);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .job-list-heading {
@@ -431,6 +479,42 @@ a:focus-visible {
   align-items: center;
   gap: var(--space-1);
   color: var(--color-text-muted) !important;
+}
+
+.inbox-list-item {
+  min-height: 92px;
+}
+
+.inbox-list-item--unread .inbox-sender-row strong,
+.inbox-list-item--unread .inbox-subject {
+  color: var(--color-text);
+  font-weight: 650;
+}
+
+.inbox-sender-row {
+  display: flex !important;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.inbox-sender-row strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-sender-row time {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 450;
+}
+
+.inbox-subject {
+  color: var(--color-text-secondary);
+  font-weight: 500;
 }
 
 .user-footer {
@@ -677,6 +761,113 @@ a:focus-visible {
 
 .detail-action {
   width: 100%;
+}
+
+/* Gmail inbox */
+.message-content {
+  width: min(100%, 640px);
+}
+
+.message-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-3) 0 var(--space-8);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.message-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+}
+
+.message-heading > div {
+  min-width: 0;
+}
+
+.message-heading h1 {
+  margin: 0 0 var(--space-3);
+  font-size: clamp(20px, 5vw, 28px);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: var(--line-height-tight);
+}
+
+.message-heading p,
+.message-heading time {
+  display: block;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.message-heading time {
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+}
+
+.security-code-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-subtle);
+}
+
+.security-code-card > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.security-code-card span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.security-code-card strong {
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.security-code-card .secondary-button {
+  flex: 0 0 auto;
+}
+
+.message-body {
+  padding: var(--space-6) 0 var(--space-10);
+}
+
+.message-body p {
+  margin: 0 0 var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+@media (max-width: 380px) {
+  .security-code-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .security-code-card .secondary-button {
+    width: 100%;
+  }
 }
 
 @media (min-width: 560px) {

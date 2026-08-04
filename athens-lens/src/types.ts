@@ -35,3 +35,22 @@ export interface Job {
 export interface JobsRepository {
   listJobs(): Promise<readonly Job[]>;
 }
+
+export type InboxMessageKind = "security-code" | "account" | "general";
+
+export interface InboxMessage {
+  id: string;
+  sender: string;
+  senderEmail: string;
+  subject: string;
+  preview: string;
+  receivedAt: string;
+  isUnread: boolean;
+  kind: InboxMessageKind;
+  securityCode?: string;
+  body: readonly string[];
+}
+
+export interface InboxRepository {
+  listMessages(): Promise<readonly InboxMessage[]>;
+}

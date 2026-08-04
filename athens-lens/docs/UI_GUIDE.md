@@ -15,7 +15,7 @@ Athens Lens uses the quiet, neutral visual language of the ChatGPT desktop refer
 All reusable visual values live in `src/styles/tokens.css`. Components must consume those custom properties rather than introduce competing colors, spacing, radii, typography, shadows, or timing values.
 
 - Canvas: `#ffffff`
-- Navigation: `#eaf3e6`
+- Navigation: `#ffffff`; use neutral-gray hover and selected fills only
 - Subtle surface: `#f7f7f7`
 - Primary text: `#0d0d0d`
 - Brand/focus: `#1f6feb`

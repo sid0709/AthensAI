@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { MOCK_JOBS } from "./jobs/mockJobs";
 import type { AuthStore, Credentials, JobsRepository, Session } from "./types";
@@ -32,6 +32,10 @@ const jobsRepository: JobsRepository = {
 };
 
 describe("Athens Lens app", () => {
+  beforeEach(() => {
+    window.location.hash = "#jobs";
+  });
+
   it("shows validation, signs in, navigates jobs, and logs out", async () => {
     const user = userEvent.setup();
     const authStore = makeAuthStore(null);
@@ -77,6 +81,24 @@ describe("Athens Lens app", () => {
     resolveJobs?.(MOCK_JOBS);
     expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Welcome back" })).not.toBeInTheDocument();
+  });
+
+  it("routes to Gmail, opens a security email, and copies its code", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App authStore={makeAuthStore(makeSession())} jobsRepository={jobsRepository} />);
+
+    await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
+    await user.click(screen.getByRole("button", { name: /Gmail inbox/ }));
+
+    expect(await screen.findByRole("heading", { name: "Your verification code is 482917" })).toBeInTheDocument();
+    expect(container.querySelector(".security-code-card strong")).toHaveTextContent("482917");
+    expect(window.location.hash).toBe("#inbox");
+
+    await user.click(screen.getByRole("button", { name: "Copy code" }));
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Inbox" }));
+    expect(container.querySelector(".workspace")).toHaveClass("workspace--list");
   });
 
   it("shows an empty state and retries a failed job load", async () => {

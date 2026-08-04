@@ -1,5 +1,6 @@
 import { AlertCircle, BriefcaseBusiness, RefreshCw } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import type { WorkspaceRoute, WorkspaceView } from "../navigation/routes";
 import type { Job, JobsRepository, Session } from "../types";
 import { JobDetail } from "./JobDetail";
 import { JobList } from "./JobList";
@@ -7,6 +8,10 @@ import { JobList } from "./JobList";
 interface JobsWorkspaceProps {
   session: Session;
   jobsRepository: JobsRepository;
+  route: WorkspaceRoute;
+  inboxUnreadCount: number;
+  onNavigate(route: WorkspaceRoute): void;
+  onNavigateView(view: WorkspaceView): void;
   onLogout(): Promise<void>;
 }
 
@@ -15,10 +20,16 @@ type LoadState =
   | { status: "error" }
   | { status: "ready"; jobs: readonly Job[] };
 
-export function JobsWorkspace({ session, jobsRepository, onLogout }: JobsWorkspaceProps) {
+export function JobsWorkspace({
+  session,
+  jobsRepository,
+  route,
+  inboxUnreadCount,
+  onNavigate,
+  onNavigateView,
+  onLogout
+}: JobsWorkspaceProps) {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const [mobilePane, setMobilePane] = useState<"list" | "detail">("list");
   const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
@@ -28,7 +39,6 @@ export function JobsWorkspace({ session, jobsRepository, onLogout }: JobsWorkspa
       (jobs) => {
         if (!isActive) return;
         setLoadState({ status: "ready", jobs });
-        setSelectedJobId((current) => current ?? jobs[0]?.id ?? null);
       },
       () => {
         if (isActive) setLoadState({ status: "error" });
@@ -65,25 +75,27 @@ export function JobsWorkspace({ session, jobsRepository, onLogout }: JobsWorkspa
     );
   }
 
-  const selectedJob = loadState.jobs.find((job) => job.id === selectedJobId) ?? null;
+  const selectedJobId = route.itemId ?? loadState.jobs[0]?.id ?? null;
+  const selectedJob = loadState.jobs.find((job) => job.id === selectedJobId) ?? loadState.jobs[0] ?? null;
 
   if (loadState.jobs.length === 0) {
     return <AppStatus label="No jobs to show yet." icon={<BriefcaseBusiness size={24} aria-hidden="true" />} />;
   }
 
   return (
-    <main className={`workspace workspace--${mobilePane}`}>
+    <main className={`workspace workspace--${route.itemId ? "detail" : "list"}`}>
       <JobList
         jobs={loadState.jobs}
         selectedJobId={selectedJobId}
         session={session}
+        inboxUnreadCount={inboxUnreadCount}
         onSelect={(jobId) => {
-          setSelectedJobId(jobId);
-          setMobilePane("detail");
+          onNavigate({ view: "jobs", itemId: jobId });
         }}
+        onNavigate={onNavigateView}
         onLogout={() => void onLogout()}
       />
-      {selectedJob ? <JobDetail job={selectedJob} onBack={() => setMobilePane("list")} /> : null}
+      {selectedJob ? <JobDetail job={selectedJob} onBack={() => onNavigate({ view: "jobs" })} /> : null}
     </main>
   );
 }
