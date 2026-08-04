@@ -55,7 +55,7 @@ describe("Athens Lens app", () => {
 
     await user.click(screen.getByRole("button", { name: new RegExp(MOCK_JOBS[1].title) }));
     expect(screen.getByRole("heading", { name: MOCK_JOBS[1].title })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "View job" })).toHaveAttribute("href", MOCK_JOBS[1].applyUrl);
+    expect(screen.getByRole("button", { name: "Apply & record" })).toBeEnabled();
     expect(container.querySelector(".workspace")).toHaveClass("workspace--detail");
 
     await user.click(screen.getByRole("button", { name: "All jobs" }));
@@ -99,6 +99,35 @@ describe("Athens Lens app", () => {
 
     await user.click(screen.getByRole("button", { name: "Inbox" }));
     expect(container.querySelector(".workspace")).toHaveClass("workspace--list");
+  });
+
+  it("starts, restarts, completes, and reviews a mock bid recording", async () => {
+    const user = userEvent.setup();
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    render(<App authStore={makeAuthStore(makeSession())} jobsRepository={jobsRepository} />);
+
+    await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
+    await user.click(screen.getByRole("button", { name: "Apply & record" }));
+
+    expect(openWindow).toHaveBeenCalledWith(MOCK_JOBS[0].applyUrl, "_blank", "noopener,noreferrer");
+    expect(screen.getByRole("complementary", { name: "Mock application recording" })).toBeInTheDocument();
+    expect(screen.getByText("Demo MP4 · 00:00")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Restart" }));
+    await user.click(screen.getAllByRole("button", { name: "Ask AI" })[0]!);
+    expect(screen.getByRole("dialog", { name: "Form answers" })).toBeInTheDocument();
+    expect(screen.getByText("Detected questions")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close AI answers" }));
+
+    await user.click(screen.getByRole("button", { name: /Gmail inbox/ }));
+    expect(await screen.findByText("Recording application")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Complete Bid" }));
+    expect(screen.getByRole("dialog", { name: "Did you submit this bid?" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Yes, submitted" }));
+    expect(screen.getByText("Bid marked as submitted")).toBeInTheDocument();
+
+    openWindow.mockRestore();
   });
 
   it("shows an empty state and retries a failed job load", async () => {

@@ -28,6 +28,7 @@ export function JobList({
       title="Jobs"
       count={jobs.length}
       countLabel={`${jobs.length} jobs`}
+      jobsCount={jobs.length}
       inboxUnreadCount={inboxUnreadCount}
       session={session}
       onNavigate={onNavigate}

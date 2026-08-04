@@ -1,9 +1,12 @@
-import { ArrowLeft, ArrowUpRight, BriefcaseBusiness, CalendarDays, MapPin } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BriefcaseBusiness, CalendarDays, MapPin, Sparkles, Video } from "lucide-react";
 import type { Job } from "../types";
 
 interface JobDetailProps {
   job: Job;
+  isRecording: boolean;
   onBack(): void;
+  onApply(job: Job): void;
+  onAskAi(job: Job): void;
 }
 
 const DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
@@ -17,7 +20,7 @@ function formatPostedAt(value: string): string {
   return DATE_FORMAT.format(new Date(`${value}T00:00:00Z`));
 }
 
-export function JobDetail({ job, onBack }: JobDetailProps) {
+export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDetailProps) {
   return (
     <article className="job-detail" aria-labelledby="job-detail-title">
       <header className="detail-toolbar">
@@ -76,10 +79,19 @@ export function JobDetail({ job, onBack }: JobDetailProps) {
       </div>
 
       <footer className="detail-footer">
-        <a className="primary-button detail-action" href={job.applyUrl} target="_blank" rel="noreferrer">
-          <span>View job</span>
-          <ArrowUpRight size={18} aria-hidden="true" />
-        </a>
+        <button className="secondary-button ai-action" type="button" onClick={() => onAskAi(job)}>
+          <Sparkles size={17} aria-hidden="true" />
+          Ask AI
+        </button>
+        <button
+          className="primary-button detail-action"
+          type="button"
+          disabled={isRecording}
+          onClick={() => onApply(job)}
+        >
+          {isRecording ? <Video size={18} aria-hidden="true" /> : <ArrowUpRight size={18} aria-hidden="true" />}
+          <span>{isRecording ? "Recording active" : "Apply & record"}</span>
+        </button>
       </footer>
     </article>
   );

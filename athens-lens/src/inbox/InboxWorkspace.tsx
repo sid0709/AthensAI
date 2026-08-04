@@ -8,6 +8,7 @@ interface InboxWorkspaceProps {
   session: Session;
   inboxRepository: InboxRepository;
   route: WorkspaceRoute;
+  jobsCount: number;
   inboxUnreadCount: number;
   onNavigate(route: WorkspaceRoute): void;
   onNavigateView(view: WorkspaceView): void;
@@ -18,6 +19,7 @@ export function InboxWorkspace({
   session,
   inboxRepository,
   route,
+  jobsCount,
   inboxUnreadCount,
   onNavigate,
   onNavigateView,
@@ -52,6 +54,7 @@ export function InboxWorkspace({
       <InboxList
         messages={messages}
         selectedMessageId={selectedMessageId}
+        jobsCount={jobsCount}
         inboxUnreadCount={inboxUnreadCount}
         session={session}
         onSelect={(messageId) => onNavigate({ view: "inbox", itemId: messageId })}

@@ -8,6 +8,7 @@ interface WorkspaceSidebarProps {
   title: string;
   count: number;
   countLabel: string;
+  jobsCount: number;
   inboxUnreadCount: number;
   session: Session;
   children: ReactNode;
@@ -29,6 +30,7 @@ export function WorkspaceSidebar({
   title,
   count,
   countLabel,
+  jobsCount,
   inboxUnreadCount,
   session,
   children,
@@ -37,13 +39,6 @@ export function WorkspaceSidebar({
 }: WorkspaceSidebarProps) {
   return (
     <aside className="job-navigation" aria-label={`${title} navigation`}>
-      <header className="navigation-header">
-        <div className="brand-lockup">
-          <img src="/logo.png" alt="" />
-          <span>Athens Lens</span>
-        </div>
-      </header>
-
       <nav className="workspace-navigation" aria-label="Workspace">
         <button
           type="button"
@@ -52,6 +47,7 @@ export function WorkspaceSidebar({
         >
           <BriefcaseBusiness size={17} aria-hidden="true" />
           <span>Jobs</span>
+          {jobsCount > 0 ? <span className="navigation-badge">{jobsCount}</span> : null}
         </button>
         <button
           type="button"

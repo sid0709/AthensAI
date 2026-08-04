@@ -2,7 +2,7 @@
 
 Athens Lens is a backend-free Chrome side-panel MVP built with React, Vite, and WXT.
 
-The mock MVP includes job browsing and a Gmail-style inbox for opening verification emails and copying security codes. Use the **Jobs** and **Gmail inbox** workspace routes in the side panel to switch views.
+The mock MVP includes job browsing, a Gmail-style inbox for verification codes, and a simulated bid-recording workflow. **Apply & record** opens the mock job URL and starts a persistent demo MP4 timer; users can restart it, ask for mock AI form answers, complete the bid, and record whether it was submitted.
 
 ## Development
 

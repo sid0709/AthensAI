@@ -6,6 +6,7 @@ import type { InboxMessage, Session } from "../types";
 interface InboxListProps {
   messages: readonly InboxMessage[];
   selectedMessageId: string | null;
+  jobsCount: number;
   inboxUnreadCount: number;
   session: Session;
   onSelect(messageId: string): void;
@@ -21,6 +22,7 @@ const TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
 export function InboxList({
   messages,
   selectedMessageId,
+  jobsCount,
   inboxUnreadCount,
   session,
   onSelect,
@@ -33,6 +35,7 @@ export function InboxList({
       title="Inbox"
       count={messages.length}
       countLabel={`${messages.length} messages`}
+      jobsCount={jobsCount}
       inboxUnreadCount={inboxUnreadCount}
       session={session}
       onNavigate={onNavigate}

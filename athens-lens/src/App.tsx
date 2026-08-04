@@ -6,8 +6,16 @@ import { mockInboxRepository } from "./inbox/inboxRepository";
 import { MOCK_UNREAD_COUNT } from "./inbox/mockInbox";
 import { JobsWorkspace } from "./jobs/JobsWorkspace";
 import { mockJobsRepository } from "./jobs/jobsRepository";
+import { MOCK_JOBS } from "./jobs/mockJobs";
 import { useWorkspaceRoute } from "./navigation/routes";
-import type { AuthStore, Credentials, InboxRepository, JobsRepository, Session } from "./types";
+import {
+  AiAnswerPanel,
+  BidOutcomeToast,
+  RecordingDock,
+  SubmissionDialog
+} from "./recording/RecordingExperience";
+import { useMockRecording } from "./recording/useMockRecording";
+import type { AuthStore, Credentials, InboxRepository, Job, JobsRepository, Session } from "./types";
 
 interface AppProps {
   authStore?: AuthStore;
@@ -25,7 +33,9 @@ export function App({
   inboxRepository = mockInboxRepository
 }: AppProps) {
   const [sessionState, setSessionState] = useState<SessionState>({ status: "restoring" });
+  const [aiJob, setAiJob] = useState<Job | null>(null);
   const { route, navigate } = useWorkspaceRoute();
+  const recording = useMockRecording();
 
   useEffect(() => {
     let isActive = true;
@@ -66,34 +76,58 @@ export function App({
 
   const logout = async () => {
     await authStore.signOut();
+    recording.reset();
+    setAiJob(null);
     setSessionState({ status: "ready", session: null });
   };
 
   const navigateView = (view: "jobs" | "inbox") => navigate({ view });
 
-  if (route.view === "inbox") {
-    return (
+  const workspace = route.view === "inbox" ? (
       <InboxWorkspace
         session={sessionState.session}
         inboxRepository={inboxRepository}
         route={route}
+        jobsCount={MOCK_JOBS.length}
         inboxUnreadCount={MOCK_UNREAD_COUNT}
         onNavigate={navigate}
         onNavigateView={navigateView}
         onLogout={logout}
       />
-    );
-  }
-
-  return (
+    ) : (
     <JobsWorkspace
       session={sessionState.session}
       jobsRepository={jobsRepository}
       route={route}
       inboxUnreadCount={MOCK_UNREAD_COUNT}
+      recordingJobId={recording.state.status === "recording" ? recording.state.job?.id ?? null : null}
       onNavigate={navigate}
       onNavigateView={navigateView}
+      onApply={(job) => {
+        window.open(job.applyUrl, "_blank", "noopener,noreferrer");
+        recording.start(job);
+      }}
+      onAskAi={setAiJob}
       onLogout={logout}
     />
+  );
+
+  return (
+    <>
+      {workspace}
+      <RecordingDock
+        state={recording.state}
+        onRestart={recording.restart}
+        onComplete={recording.complete}
+        onAskAi={setAiJob}
+      />
+      <SubmissionDialog
+        state={recording.state}
+        onResume={recording.resume}
+        onFinish={recording.finish}
+      />
+      <AiAnswerPanel job={aiJob} onClose={() => setAiJob(null)} />
+      <BidOutcomeToast state={recording.state} onDismiss={recording.clearOutcome} />
+    </>
   );
 }

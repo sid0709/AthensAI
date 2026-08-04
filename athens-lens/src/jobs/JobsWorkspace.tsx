@@ -10,8 +10,11 @@ interface JobsWorkspaceProps {
   jobsRepository: JobsRepository;
   route: WorkspaceRoute;
   inboxUnreadCount: number;
+  recordingJobId: string | null;
   onNavigate(route: WorkspaceRoute): void;
   onNavigateView(view: WorkspaceView): void;
+  onApply(job: Job): void;
+  onAskAi(job: Job): void;
   onLogout(): Promise<void>;
 }
 
@@ -25,8 +28,11 @@ export function JobsWorkspace({
   jobsRepository,
   route,
   inboxUnreadCount,
+  recordingJobId,
   onNavigate,
   onNavigateView,
+  onApply,
+  onAskAi,
   onLogout
 }: JobsWorkspaceProps) {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
@@ -95,7 +101,15 @@ export function JobsWorkspace({
         onNavigate={onNavigateView}
         onLogout={() => void onLogout()}
       />
-      {selectedJob ? <JobDetail job={selectedJob} onBack={() => onNavigate({ view: "jobs" })} /> : null}
+      {selectedJob ? (
+        <JobDetail
+          job={selectedJob}
+          isRecording={recordingJobId === selectedJob.id}
+          onBack={() => onNavigate({ view: "jobs" })}
+          onApply={onApply}
+          onAskAi={onAskAi}
+        />
+      ) : null}
     </main>
   );
 }

@@ -9,6 +9,7 @@ Athens Lens uses the quiet, neutral visual language of the ChatGPT desktop refer
 3. **Content stays readable.** Detail text uses a constrained measure, relaxed body line height, and clear section rhythm.
 4. **Brand is a signal, not a surface.** Athens blue is reserved for the logo and keyboard focus. Primary actions remain neutral black.
 5. **Behavior comes from contracts.** Components render the `Job` and `Session` contracts and never branch on employers, titles, locations, or description keywords.
+6. **One product identity.** Chrome already displays Athens Lens in its side-panel header, so authenticated workspace screens do not repeat the logo or product name.
 
 ## Tokens
 
@@ -28,6 +29,7 @@ One-off layout geometry may be local when it has no reusable semantic meaning. N
 ## Layout and responsiveness
 
 - Below 560px, navigation and detail are separate full-width panes. Selecting a job opens detail; **All jobs** returns to the list.
+- Jobs and Gmail are equal-width horizontal tabs with content centered on both axes. Never stack these primary routes vertically.
 - At 560px and wider, navigation is fixed at 220px and detail fills the remaining width. The selected job stays visible in both panes.
 - At 760px and wider, navigation becomes 244px and the detail metadata can use three columns.
 - Both the job list and detail body own their scrolling regions. Headers and footers remain fixed.
@@ -40,6 +42,7 @@ One-off layout geometry may be local when it has no reusable semantic meaning. N
 - Raised surfaces use a 1px neutral border before adding shadow.
 - Every interactive element needs default, hover, active where useful, disabled where applicable, and `:focus-visible` states.
 - Loading, empty, and error states use concise language and the same neutral surface hierarchy.
+- Mock recording uses a persistent neutral dock with a single red status dot. Confirmation and AI assistance use white modal or drawer surfaces, not colored dashboards.
 
 ## Typography and icons
 
