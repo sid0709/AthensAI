@@ -47,7 +47,7 @@ async function runTests() {
     maxTokens: 1400,
     reasoningEffort: 'minimal',
   });
-  assert(extractionRequest.maxTokens === 1400, 'max completion tokens parsed');
+  assert(!('maxTokens' in extractionRequest), 'application token caps are discarded');
   assert(extractionRequest.reasoningEffort === 'minimal', 'reasoning effort parsed');
 
   const billedUsage = { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 };

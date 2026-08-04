@@ -83,6 +83,15 @@ function apiErrorMessage(error: unknown, fallback: string) {
       : fallback;
 }
 
+function coverageCareerKey(identity: Identity | null): string {
+  return JSON.stringify((identity?.careers ?? []).map((career) => ({
+    company: career.company,
+    title: career.title,
+    period: career.period,
+    description: career.description,
+  })));
+}
+
 function mergeGenerationStep(
   current: GenProgress | null,
   event: Record<string, unknown>,
@@ -155,6 +164,7 @@ export function useGeneratorPage() {
   const [generated, setGenerated] = useState<GeneratedContent | null>(null);
   const [coverageAnalysis, setCoverageAnalysis] = useState<ResumeCoverageAnalysis | null>(null);
   const [coverageAnalysisJd, setCoverageAnalysisJd] = useState("");
+  const [coverageAnalysisCareerKey, setCoverageAnalysisCareerKey] = useState("");
   const [coverageDecisions, setCoverageDecisions] = useState<Record<string, CoverageDecision>>({});
   const [coverageAudit, setCoverageAudit] = useState<ResumeCoverageAudit | null>(null);
   const [qualityStatus, setQualityStatus] = useState<ResumeQualityStatus>("idle");
@@ -256,7 +266,9 @@ export function useGeneratorPage() {
   const tokenValues: Record<string, string> = (() => {
     const careers = identity?.careers ?? [];
     const coverageSkills = coverageAnalysis
+      && coverageAnalysis.schemaVersion === 3
       && coverageAnalysisJd === config.jobDescription
+      && coverageAnalysisCareerKey === coverageCareerKey(identity)
       && config.jobDescription.trim()
       ? coverageAnalysis.skills
         .filter((skill) => (
@@ -522,6 +534,7 @@ export function useGeneratorPage() {
     setGenerating(false);
     setCoverageAnalysis(null);
     setCoverageAnalysisJd("");
+    setCoverageAnalysisCareerKey("");
     setCoverageDecisions({});
     setCoverageAudit(null);
     setQualityStatus("idle");
@@ -657,7 +670,9 @@ export function useGeneratorPage() {
 
   const coverageIsCurrent = Boolean(
     coverageAnalysis
+    && coverageAnalysis.schemaVersion === 3
     && coverageAnalysisJd === config.jobDescription
+    && coverageAnalysisCareerKey === coverageCareerKey(identity)
     && config.jobDescription.trim(),
   );
   const setCoverageDecision = useCallback((skillId: string, decision: CoverageDecision) => {
@@ -692,6 +707,7 @@ export function useGeneratorPage() {
       );
       setCoverageAnalysis(analysis);
       setCoverageAnalysisJd(config.jobDescription);
+      setCoverageAnalysisCareerKey(coverageCareerKey(identity));
       setCoverageDecisions(automaticDecisions);
       return analysis;
     } catch (error) {
@@ -1089,6 +1105,7 @@ export function useGeneratorPage() {
     );
     setCoverageAnalysis(analysis);
     setCoverageAnalysisJd(analysis ? String(run.jobDescription ?? "") : "");
+    setCoverageAnalysisCareerKey(analysis ? coverageCareerKey(identity) : "");
     setCoverageDecisions(analysis
       ? {
           ...defaultCoverageDecisions(analysis, config.coverage.experienceRequirementThreshold),
@@ -1097,7 +1114,7 @@ export function useGeneratorPage() {
       : {});
     setCoverageAudit(run.coverageAudit ?? null);
     setQualityStatus(run.coverageAudit?.passed ? "passed" : run.coverageAudit ? "failed" : "idle");
-  }, [config.coverage.experienceRequirementThreshold]);
+  }, [config.coverage.experienceRequirementThreshold, identity]);
 
   const handleGenerate = async () => {
     if (!applier?.name) {

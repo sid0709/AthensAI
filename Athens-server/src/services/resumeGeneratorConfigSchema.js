@@ -1,6 +1,6 @@
 import { defaultGeneratorConfig } from "../config/resumeGeneratorDefaults.js";
 
-export const RESUME_GENERATOR_CONFIG_VERSION = 3;
+export const RESUME_GENERATOR_CONFIG_VERSION = 4;
 
 const cleanString = (value) => String(value ?? "").trim();
 
@@ -31,13 +31,8 @@ function normalizeAliases(value) {
 export function normalizeCoverageSettings(value) {
   const raw = value && typeof value === "object" ? value : {};
   return {
-    enabled: raw.enabled !== false,
-    experienceRequirementThreshold: numberInRange(
-      raw.experienceRequirementThreshold,
-      DEFAULT_COVERAGE_SETTINGS.experienceRequirementThreshold,
-      1,
-      5,
-    ),
+    enabled: true,
+    experienceRequirementThreshold: 4,
     maxRepairAttempts: numberInRange(
       raw.maxRepairAttempts,
       DEFAULT_COVERAGE_SETTINGS.maxRepairAttempts,
@@ -96,21 +91,23 @@ function stepList(saved, base) {
     : Array.isArray(saved.refinementSteps) && saved.refinementSteps.length
       ? saved.refinementSteps
       : base;
-  return source.map((step, index) => ({
-    ...step,
-    id: cleanString(step?.id) || `migrated-step-${index + 1}`,
-    name: cleanString(step?.name) || `Step ${index + 1}`,
-    prompt: String(step?.prompt ?? ""),
-    schema: typeof step?.schema === "string"
-      ? step.schema
-      : step?.schema && typeof step.schema === "object"
-        ? JSON.stringify(step.schema, null, 2)
-        : "",
-  }));
+  return source.map((step, index) => {
+    return {
+      ...step,
+      id: cleanString(step?.id) || `migrated-step-${index + 1}`,
+      name: cleanString(step?.name) || `Step ${index + 1}`,
+      prompt: String(step?.prompt ?? ""),
+      schema: typeof step?.schema === "string"
+        ? step.schema
+        : step?.schema && typeof step.schema === "object"
+          ? JSON.stringify(step.schema, null, 2)
+          : "",
+    };
+  });
 }
 
 /**
- * Convert every historical Resume Generator shape into the one canonical v3
+ * Convert every historical Resume Generator shape into the one canonical v4
  * persistence shape. Job descriptions and generated documents intentionally do
  * not belong here; they are ApplicationRun data.
  */

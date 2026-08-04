@@ -6,6 +6,8 @@ export function JobRefField({
   onChange,
   tokenValues,
   rows = 5,
+  className = "",
+  ariaLabel,
   placeholder,
 }: {
   value: string;
@@ -13,6 +15,8 @@ export function JobRefField({
   /** token name (without braces) → resolved value, used for hover previews + which tokens to chip. */
   tokenValues: Record<string, string>;
   rows?: number;
+  className?: string;
+  ariaLabel?: string;
   placeholder?: string;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -42,7 +46,7 @@ export function JobRefField({
   };
 
   return (
-    <div className="relative rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-white/10 focus-within:border-neutral-900 dark:focus-within:border-white/30 overflow-hidden">
+    <div className={`relative overflow-hidden rounded-xl border border-neutral-200 bg-white focus-within:border-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:focus-within:border-white/30 ${className}`}>
       <div
         ref={ovRef}
         aria-hidden
@@ -74,6 +78,7 @@ export function JobRefField({
       </div>
       <textarea
         ref={taRef}
+        aria-label={ariaLabel}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onScroll={syncScroll}

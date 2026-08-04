@@ -225,7 +225,6 @@ async function classifyPreparedBatch(messages, allowedLabels, labelDefinitions, 
 			jsonMode: true,
 			cacheKey: `mail-labels-${catalogHash}`,
 			reasoningEffort: reasoningEffortForMail(picked.provider, picked.model),
-			maxTokens: Math.max(240, messages.length * 60),
 			applierName: context.applierName,
 			signal: context.signal,
 			messages: [
@@ -290,7 +289,6 @@ async function classifySnippetBatch(messages, allowedLabels, labelDefinitions, p
 			jsonMode: true,
 			cacheKey: `mail-label-snippets-${catalogHash}`,
 			reasoningEffort: reasoningEffortForMail(picked.provider, picked.model),
-			maxTokens: Math.max(240, messages.length * 55),
 			applierName: context.applierName,
 			signal: context.signal,
 			messages: [

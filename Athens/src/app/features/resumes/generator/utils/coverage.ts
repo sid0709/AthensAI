@@ -2,10 +2,13 @@ import type { CoverageDecision, ResumeCoverageAnalysis, ResumeCoverageSkill } fr
 
 export function defaultCoverageDecision(
   skill: ResumeCoverageSkill,
-  experienceRequirementThreshold: number,
+  _experienceRequirementThreshold: number,
 ): CoverageDecision {
+  if (skill.decision === "used" || skill.decision === "familiar" || skill.decision === "exclude") {
+    return skill.decision;
+  }
   if (skill.evidenceStatus === "verified") return "used";
-  return skill.requirement >= experienceRequirementThreshold ? "used" : "familiar";
+  return "familiar";
 }
 
 export function defaultCoverageDecisions(

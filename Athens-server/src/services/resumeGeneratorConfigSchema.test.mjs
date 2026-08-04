@@ -6,7 +6,7 @@ import {
   migrateGeneratorConfig,
 } from "./resumeGeneratorConfigSchema.js";
 
-test("legacy EditorDraft migrates to canonical v3 without run data", () => {
+test("legacy EditorDraft migrates to canonical v4 without run data", () => {
   const legacy = {
     document: { id: "draft", summary: "transient" },
     jobDescription: "Transient JD",
@@ -34,7 +34,7 @@ test("legacy EditorDraft migrates to canonical v3 without run data", () => {
   assert.equal(migrated.sourceVersion, 2);
   assert.equal(migrated.migrated, true);
   assert.equal(migrated.legacyJobDescription, "Transient JD");
-  assert.equal(migrated.config.schemaVersion, 3);
+  assert.equal(migrated.config.schemaVersion, 4);
   assert.equal(migrated.config.theme.baseSize, 11);
   assert.equal(migrated.config.theme.paper, "a4");
   assert.equal(migrated.config.layout[0].type, "experience");
@@ -43,7 +43,33 @@ test("legacy EditorDraft migrates to canonical v3 without run data", () => {
   assert.equal("refinementSteps" in migrated.config, false);
 });
 
-test("canonical v3 config remains canonical", () => {
+test("canonical v4 config remains canonical", () => {
   const canonical = migrateGeneratorConfig(defaultGeneratorConfig()).config;
   assert.equal(isCanonicalGeneratorConfig(canonical), true);
+});
+
+test("coverage controls migrate to fixed enabled priority-four settings", () => {
+  const saved = defaultGeneratorConfig();
+  saved.coverage = {
+    enabled: false,
+    experienceRequirementThreshold: 5,
+    maxRepairAttempts: 2,
+    aliases: { "Node.js": ["NodeJS"] },
+  };
+  const migrated = migrateGeneratorConfig(saved).config;
+
+  assert.equal(migrated.coverage.enabled, true);
+  assert.equal(migrated.coverage.experienceRequirementThreshold, 4);
+  assert.equal(migrated.coverage.maxRepairAttempts, 2);
+  assert.deepEqual(migrated.coverage.aliases, { "Node.js": ["NodeJS"] });
+});
+
+test("saved system and step prompts are preserved without content migration", () => {
+  const saved = defaultGeneratorConfig();
+  saved.systemInstruction = "My database system instruction.";
+  saved.steps[1].prompt = "My database Skills prompt, including legacy wording.";
+
+  const migrated = migrateGeneratorConfig(saved).config;
+  assert.equal(migrated.systemInstruction, saved.systemInstruction);
+  assert.equal(migrated.steps[1].prompt, saved.steps[1].prompt);
 });

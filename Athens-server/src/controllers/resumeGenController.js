@@ -27,8 +27,11 @@ import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.j
 import { migrateGeneratorConfig } from "../services/resumeGeneratorConfigSchema.js";
 import {
   analyzeResumeCoverage as analyzeResumeCoverageLedger,
+  auditResumeCoverage,
+  normalizeSkillsSectionToContract,
   normalizeResumeCoverageContract,
   resumeCoveragePrompt,
+  resumeCoverageRepairPrompt,
 } from "../services/resumeCoverageService.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import {
@@ -339,6 +342,19 @@ export function resolveResumePromptSkills(jobSkills, coverageContract) {
   return Array.isArray(jobSkills) ? jobSkills.map(cleanString).filter(Boolean) : [];
 }
 
+function careersMissingGenerationEvidence(identity) {
+  const careers = Array.isArray(identity?.careers) ? identity.careers : [];
+  return careers.filter((career) => !cleanString(career?.description));
+}
+
+function optionalCareerDetailsPrompt(identity) {
+  const missing = careersMissingGenerationEvidence(identity);
+  if (!missing.length) return "";
+  return `OPTIONAL CAREER DETAILS — ${missing.length} career description${missing.length === 1 ? " is" : "s are"} blank.
+Career descriptions are optional and blank descriptions must not produce empty Experience roles. Treat Skill Coverage terms marked Used as explicitly confirmed candidate experience. Distribute those confirmed terms conservatively among suitable roles based on title and chronology, and write non-quantified bullets describing their technical function and practical purpose from the job description.
+Use each candidate-confirmed term in at most one suitable blank role unless separate role evidence is supplied. Keep a blank role to one or two conservative bullets and do not invent employer-specific facts, metrics, achievements, project names, internal systems, team size, ownership, or technologies outside the confirmed Used set.`;
+}
+
 function buildContextBlock(identity) {
   // Stable prefix (kept identical across steps) so the prompt cache covers it.
   return `CANDIDATE PROFILE — these are authoritative facts. Do not invent employers, dates, schools, or credentials.\n\n${JSON.stringify(
@@ -398,7 +414,6 @@ export async function prepareGeneration(body, {
   }
   const bad = Object.entries(finalsByPurpose).find(([, n]) => n !== 1);
   if (bad) return { ok: false, status: 400, error: `${bad[0]} must have exactly one final step (found ${bad[1]}).` };
-
   // Tier remains server-resolved metadata. Dynamic titles are a saved generator
   // preference available to every tier and are enabled only by an explicit boolean.
   const isBeta = isBetaTier(accountTier);
@@ -452,40 +467,9 @@ export async function analyzeResumeCoverage(req, res) {
 }
 
 /**
- * Build independent, contiguous section chains that may run concurrently.
- * Steps inside one section retain their conversation and order. Ambiguous plans
- * (unknown purposes, a purpose that reappears later, or steps after its final)
- * return null so the caller preserves the original global sequence.
- */
-export function buildParallelPurposeChains(steps) {
-  if (!Array.isArray(steps) || steps.length < 2) return null;
-  const chains = [];
-  const seen = new Set();
-  for (let i = 0; i < steps.length; i += 1) {
-    const step = steps[i] || {};
-    if (!PURPOSES.has(step.purpose)) return null;
-    let chain = chains.at(-1);
-    if (!chain || chain.purpose !== step.purpose) {
-      if (seen.has(step.purpose)) return null;
-      seen.add(step.purpose);
-      chain = { purpose: step.purpose, entries: [] };
-      chains.push(chain);
-    }
-    chain.entries.push({ step, index: i + 1 });
-  }
-  if (chains.length < 2) return null;
-  for (const chain of chains) {
-    const finals = chain.entries.filter(({ step }) => step.kind === "final");
-    if (finals.length !== 1 || chain.entries.at(-1)?.step?.kind !== "final") return null;
-  }
-  return chains;
-}
-
-/**
- * Runs the resume pipeline as cached per-section conversations. Independent
- * section chains run concurrently; fine-tunes within a section remain ordered.
- * Plans whose dependency shape is ambiguous retain the original global order.
- * `onStep` is invoked after every step for live progress streaming.
+ * Runs each configured step in order as one system message plus one fully
+ * resolved user prompt. Earlier outputs are inserted through prompt tokens;
+ * final JSON is parsed and assigned to the matching résumé section.
  */
 export async function runGeneration({
   providerId,
@@ -502,6 +486,7 @@ export async function runGeneration({
   isBeta = false,
   dynamicCareerTitles = false,
   signal,
+  chat = chatCompletion,
 }, onStep) {
 	const throwIfAborted = () => {
 		if (!signal?.aborted) return;
@@ -515,126 +500,286 @@ export async function runGeneration({
   //   {job_skills}                               → skills pre-fetched for a structured job
   //   {career}                                   → all roles, one per line
   //   {companyN} (N = 1,2,…) → natural-sentence summary of the Nth career
-  const tokenMap = buildTokenMap(
-    identity,
-    jobDescription,
-    resolveResumePromptSkills(jobSkills, coverageContract),
-  );
-  const applyTokens = (text) =>
-    String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {
+  const tokenMap = {
+    ...buildTokenMap(
+      identity,
+      jobDescription,
+      resolveResumePromptSkills(jobSkills, coverageContract),
+    ),
+    source_resume: JSON.stringify(identity ?? {}, null, 2),
+    work_experience: "",
+    previous_output: "",
+    previous_plan: "",
+    plan_output: "",
+  };
+  const applyTokens = (text) => {
+    const unresolved = new Set();
+    const resolved = String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {
       const key = match.slice(1, -1).toLowerCase();
-      return Object.prototype.hasOwnProperty.call(tokenMap, key) ? tokenMap[key] : match;
+      if (Object.prototype.hasOwnProperty.call(tokenMap, key)) return tokenMap[key];
+      unresolved.add(match);
+      return match;
     });
+    if (unresolved.size) {
+      const error = new Error(`Unresolved prompt token${unresolved.size === 1 ? "" : "s"}: ${[...unresolved].join(", ")}.`);
+      error.status = 400;
+      throw error;
+    }
+    return resolved;
+  };
   const dynamicTitles = Boolean(dynamicCareerTitles);
   const careers = sourceCareers(identity);
 
-  const prefixMessages = [
-    { role: "system", content: applyTokens(systemInstruction || "You are an expert resume writer.") },
-    { role: "user", content: buildContextBlock(identity) },
-  ];
   const contractPrompt = resumeCoveragePrompt(coverageContract);
-  if (contractPrompt) prefixMessages.push({ role: "user", content: contractPrompt });
+  const systemContent = [
+    applyTokens(systemInstruction || "You are an expert resume writer."),
+    buildContextBlock(identity),
+    contractPrompt,
+    optionalCareerDetailsPrompt(identity),
+  ].filter(Boolean).join("\n\n");
   const sections = {};
   const perStep = [];
   let usage = EMPTY_USAGE();
-  let streamedUsage = EMPTY_USAGE();
+  const latestPlanByPurpose = {};
+  const purposeStepCounts = {};
+  let previousOutput = "";
 
-  const runChain = async (entries) => {
-    const messages = [...prefixMessages];
-    const completed = [];
-    for (const { step, index } of entries) {
-      throwIfAborted();
-      const isFinal = step.kind === "final";
-      const name = step.name || `Step ${index}`;
-      if (onStep) onStep({ phase: "step-start", index, total: steps.length, name, purpose: step.purpose, kind: step.kind });
+  for (let offset = 0; offset < steps.length; offset += 1) {
+    const step = steps[offset] || {};
+    const index = offset + 1;
+    const isFinal = step.kind === "final";
+    const name = step.name || `Step ${index}`;
+    tokenMap.previous_output = previousOutput;
+    tokenMap.previous_plan = latestPlanByPurpose[step.purpose] || "";
+    tokenMap.plan_output = latestPlanByPurpose[step.purpose] || "";
+    if (onStep) onStep({ phase: "step-start", index, total: steps.length, name, purpose: step.purpose, kind: step.kind });
 
-      let userContent = applyTokens(step.prompt || "");
-      if (isFinal && step.purpose === "experience") {
-        userContent = appendExperienceTitlePolicy(userContent, {
-          dynamicCareerTitles: dynamicTitles,
-          jobDescription,
-          careers,
-        });
-      }
-      if (isFinal && step.schema) {
-        userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
-      }
-      messages.push({ role: "user", content: userContent });
-
-      const { content, usage: stepUsage } = await chatCompletion({
-        provider: providerId,
-        apiKey,
-        model,
-        messages,
-        jsonMode: isFinal,
-        cacheKey: `resume-${applierName || "anon"}`,
-        reasoningEffort,
-        feature: `resume-generate:${step.purpose || step.kind || "step"}`,
-        applierName,
-        signal,
+    let userContent = applyTokens(step.prompt || "");
+    if (isFinal && step.purpose === "experience") {
+      userContent = appendExperienceTitlePolicy(userContent, {
+        dynamicCareerTitles: dynamicTitles,
+        jobDescription,
+        careers,
       });
-      throwIfAborted();
-      messages.push({ role: "assistant", content });
-
-      let output = content;
-      if (isFinal) {
-        try {
-          output = parseJsonLoose(content);
-          if (step.purpose === "experience") {
-            output = applyTitlePolicyToSections(
-              { experience: output },
-              identity,
-              dynamicTitles,
-            ).experience;
-          }
-        } catch (err) {
-          if (Number.isInteger(err?.status)) throw err;
-          const e = new Error(`${step.purpose} final step returned invalid JSON.`);
-          e.status = 502;
-          throw e;
-        }
-      }
-      const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output };
-      completed.push(entry);
-      streamedUsage = addUsage(streamedUsage, stepUsage);
-      if (onStep) onStep({ phase: "step-done", ...entry, cumulative: streamedUsage });
     }
-    return completed;
-  };
+    if (isFinal && step.schema) {
+      userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
+    }
+    const { content, usage: stepUsage } = await chat({
+      provider: providerId,
+      apiKey,
+      model,
+      messages: [
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
+      ],
+      jsonMode: isFinal,
+      cacheKey: `resume-${applierName || "anon"}`,
+      reasoningEffort,
+      feature: `resume-generate:${step.purpose || step.kind || "step"}`,
+      applierName,
+      signal,
+    });
+    throwIfAborted();
 
-  const parallelChains = buildParallelPurposeChains(steps);
-  const plannedChains = parallelChains || [{
-    purpose: null,
-    entries: steps.map((step, i) => ({ step: step || {}, index: i + 1 })),
-  }];
-  const completedChains = parallelChains
-    ? await Promise.all(plannedChains.map((chain) => runChain(chain.entries)))
-    : [await runChain(plannedChains[0].entries)];
-  const entries = completedChains.flat().sort((left, right) => left.index - right.index);
-  for (const entry of entries) {
-    if (entry.kind === "final" && PURPOSES.has(entry.purpose)) sections[entry.purpose] = entry.output;
-    usage = addUsage(usage, entry.usage);
-    perStep.push({ ...entry, cumulative: usage });
+    let output = content;
+    if (isFinal) {
+      try {
+        output = parseJsonLoose(content);
+        if (step.purpose === "experience") {
+          output = applyTitlePolicyToSections(
+            { experience: output },
+            identity,
+            dynamicTitles,
+          ).experience;
+        }
+        if (step.purpose === "skills") {
+          output = normalizeSkillsSectionToContract(output, coverageContract);
+        }
+      } catch (err) {
+        if (Number.isInteger(err?.status)) throw err;
+        const error = new Error(`${step.purpose} final step returned invalid JSON.`);
+        error.status = 502;
+        throw error;
+      }
+      if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
+    }
+
+    const serialized = typeof output === "string" ? output : JSON.stringify(output, null, 2);
+    const count = (purposeStepCounts[step.purpose] || 0) + 1;
+    purposeStepCounts[step.purpose] = count;
+    for (const tokenPurpose of new Set([
+      step.purpose,
+      String(step.purpose || "").replace(/s$/i, ""),
+    ])) {
+      if (!tokenPurpose) continue;
+      tokenMap[`${tokenPurpose}_step${count}`] = serialized;
+      tokenMap[`${tokenPurpose}_output`] = serialized;
+    }
+    if (!isFinal) latestPlanByPurpose[step.purpose] = serialized;
+    if (isFinal && step.purpose === "experience") tokenMap.work_experience = serialized;
+    previousOutput = serialized;
+    usage = addUsage(usage, stepUsage);
+    const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output, cumulative: usage };
+    perStep.push(entry);
+    if (onStep) onStep({ phase: "step-done", ...entry });
   }
 
   // Safety net if Experience was produced outside the final-step branch shape.
   Object.assign(sections, applyTitlePolicyToSections(sections, identity, dynamicTitles));
 
+  // Validate only after every AI-authored section is assembled. Repair the
+  // affected section, then re-audit; never report success for an empty role or
+  // a malformed/forbidden coverage placement.
+  if (onStep) onStep({
+    phase: "quality-start",
+    name: "Resume quality audit",
+    purpose: "quality",
+    kind: "quality-audit",
+  });
+  let coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
+  const maxRepairAttempts = coverageContract?.maxRepairAttempts ?? 1;
+  let repairIndex = steps.length;
+  for (let attempt = 1; !coverageAudit.passed && attempt <= maxRepairAttempts; attempt += 1) {
+    const affectedSections = [...new Set([
+      ...coverageAudit.missing.map((item) => item.section),
+      ...(coverageAudit.violations || []).map((item) => item.section),
+      ...(coverageAudit.skillIssues || []).map((item) => item.section),
+      ...(coverageAudit.experienceIssues || []).map((item) => item.section),
+      ...((coverageAudit.careerIssues || []).length ? ["experience"] : []),
+    ])];
+    for (const purpose of ["skills", "experience"]) {
+      if (!affectedSections.includes(purpose)) continue;
+      throwIfAborted();
+      const missing = coverageAudit.missing
+        .filter((item) => item.section === purpose)
+        .map((item) => item.skill);
+      const remove = (coverageAudit.violations || [])
+        .filter((item) => item.section === purpose)
+        .map((item) => item.skill);
+      const finalDefinition = [...steps].reverse().find(
+        (step) => step?.kind === "final" && step?.purpose === purpose,
+      );
+      const index = ++repairIndex;
+      const name = `Resume quality repair: ${purpose}`;
+      if (onStep) onStep({
+        phase: "step-start",
+        index,
+        total: steps.length + affectedSections.length,
+        name,
+        purpose,
+        kind: "coverage-repair",
+      });
+      const prompt = resumeCoverageRepairPrompt({
+        purpose,
+        missing,
+        remove,
+        skillIssues: purpose === "skills" ? coverageAudit.skillIssues : [],
+        experienceIssues: purpose === "experience" ? coverageAudit.experienceIssues : [],
+        incompleteRoles: purpose === "experience" ? coverageAudit.careerIssues : [],
+        currentSection: sections[purpose],
+        schema: finalDefinition?.schema,
+      });
+      const repair = await chat({
+        provider: providerId,
+        apiKey,
+        model,
+        messages: [
+          { role: "system", content: systemContent },
+          { role: "user", content: prompt },
+        ],
+        jsonMode: true,
+        cacheKey: `resume-${applierName || "anon"}`,
+        reasoningEffort,
+        feature: `resume-coverage-repair:${purpose}`,
+        applierName,
+        signal,
+      });
+      throwIfAborted();
+      let output = sections[purpose];
+      let repairError = null;
+      try {
+        output = parseJsonLoose(repair.content);
+        if (purpose === "experience") {
+          output = applyTitlePolicyToSections(
+            { experience: output },
+            identity,
+            dynamicTitles,
+          ).experience;
+        }
+        if (purpose === "skills") {
+          output = normalizeSkillsSectionToContract(output, coverageContract);
+        }
+        sections[purpose] = output;
+      } catch (error) {
+        repairError = error?.message || "Coverage repair returned invalid JSON.";
+      }
+      usage = addUsage(usage, repair.usage);
+      const entry = {
+        index,
+        name,
+        purpose,
+        kind: "coverage-repair",
+        usage: repair.usage,
+        output,
+        ...(repairError ? { error: repairError } : {}),
+        cumulative: usage,
+      };
+      perStep.push(entry);
+      if (onStep) onStep({ phase: "step-done", ...entry });
+    }
+    coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
+  }
+  if (!coverageAudit.passed) {
+    const remaining = [
+      ...coverageAudit.missing.map((item) => `missing ${item.skill} (${item.section})`),
+      ...(coverageAudit.violations || []).map((item) => `forbidden ${item.skill} (${item.section})`),
+      ...(coverageAudit.skillIssues || []).map((item) => `${item.reason}${item.skill ? ` ${item.skill}` : ""} (${item.section})`),
+      ...(coverageAudit.experienceIssues || []).map((item) => `${item.reason}${item.skill ? ` ${item.skill}` : ""} (experience)`),
+      ...(coverageAudit.careerIssues || []).map((item) => `incomplete role #${item.index + 1} ${item.company || item.title}`),
+    ].join(", ");
+    const error = new Error(`Resume quality gate failed: ${remaining || "required coverage is incomplete"}.`);
+    error.status = 502;
+    error.coverageAudit = coverageAudit;
+    if (onStep) onStep({
+      phase: "quality-failed",
+      name: "Resume quality failed",
+      purpose: "quality",
+      kind: "quality-audit",
+    });
+    throw error;
+  }
+  if (onStep) onStep({
+    phase: "quality-done",
+    name: "Resume quality passed",
+    purpose: "quality",
+    kind: "quality-audit",
+  });
   throwIfAborted();
   return {
     sections,
     perStep,
     usage,
     coverageContract: coverageContract ?? null,
-    coverageAudit: null,
+    coverageAudit,
     isBeta: Boolean(isBeta),
     dynamicCareerTitles: dynamicTitles,
   };
 }
 
+/** Refuse to persist or report a generation that bypassed the final quality gate. */
+export function assertPassedResumeQualityAudit(result) {
+  if (result?.coverageAudit?.passed === true) return result.coverageAudit;
+  const error = new Error("Resume quality gate did not pass; generation was not saved.");
+  error.status = 502;
+  error.coverageAudit = result?.coverageAudit ?? null;
+  throw error;
+}
+
 /** Persist the finished run and sync it into the résumé library. */
 export async function finalizeGenerationRun({ prep, body, result, startedAt, signal }) {
   throwIfAborted(signal);
+  assertPassedResumeQualityAudit(result);
   // Skill proficiency is derived by the scoring logic downstream, so no separate
   // LLM analysis pass runs here — the generation ends at the section steps.
   const skillProfile = [];
@@ -762,7 +907,7 @@ function configSnapshot(body) {
     systemInstruction: body.systemInstruction ?? null,
     steps: body.steps ?? null,
     coverage: body.coverage?.settings ?? null,
-    schemaVersion: 3,
+    schemaVersion: 4,
   };
 }
 
@@ -915,7 +1060,7 @@ export async function getGeneratorConfig(req, res) {
           $set: {
             applierName,
             config: migration.config,
-            schemaVersion: 3,
+            schemaVersion: 4,
             legacyConfigBackup,
             updatedAt: new Date(),
           },
@@ -932,7 +1077,7 @@ export async function getGeneratorConfig(req, res) {
       updatedAt,
       source: resolved?.source ?? null,
       migration: migration?.migrated
-        ? { from: migration.sourceVersion, to: 3 }
+        ? { from: migration.sourceVersion, to: 4 }
         : null,
       legacyJobDescription: migration?.legacyJobDescription ?? null,
     });
@@ -958,13 +1103,13 @@ export async function saveGeneratorConfig(req, res) {
         $set: {
           applierName,
           config: migration.config,
-          schemaVersion: 3,
+          schemaVersion: 4,
           updatedAt: new Date(),
         },
       },
       { upsert: true },
     );
-    return res.json({ success: true, schemaVersion: 3 });
+    return res.json({ success: true, schemaVersion: 4 });
   } catch (err) {
     console.error("PUT /api/personal/resume-generator/config error", err);
     return res.status(500).json({ success: false, error: err.message });

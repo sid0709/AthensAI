@@ -33,13 +33,17 @@ test("matchesTitlePolicyFingerprint allows any doc when expected fingerprint omi
   assert.equal(matchesTitlePolicyFingerprint({ titlePolicyFingerprint: "old" }, undefined), true);
 });
 
-test("completed structured Job Search runs are reusable without an audit", () => {
-  assert.equal(hasReusableCoverage({}, false), true);
+test("only completed Job Search runs with a passed quality audit are reusable", () => {
+  assert.equal(hasReusableCoverage({}, false), false);
   assert.equal(hasReusableCoverage({}, true), false);
   assert.equal(hasReusableCoverage({
     resume: { sections: { summary: { text: "Generated" } } },
     generation: { coverageContract: { skills: [] }, coverageAudit: null },
-  }, true), true);
+  }, true), false);
+  assert.equal(hasReusableCoverage({
+    resume: { sections: { summary: { text: "Generated" } } },
+    generation: { coverageContract: null, coverageAudit: { passed: true } },
+  }, false), true);
 });
 
 test("title-policy fingerprint change invalidates agent draft PDF cache", async () => {

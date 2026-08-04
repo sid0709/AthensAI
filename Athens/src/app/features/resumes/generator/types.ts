@@ -103,7 +103,7 @@ export type ProviderId = "openai" | "deepseek";
 // OpenAI reasoning models accept reasoning_effort. "default" = don't send it.
 export type ReasoningEffort = "default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-export const RESUME_GENERATOR_CONFIG_VERSION = 3 as const;
+export const RESUME_GENERATOR_CONFIG_VERSION = 4 as const;
 
 export type CoverageDecision = "used" | "familiar" | "exclude";
 
@@ -115,6 +115,7 @@ export type ResumeCoverageSettings = {
 };
 
 export type ResumeCoverageEvidence = {
+  roleIndex: number;
   company: string;
   title: string;
   excerpt: string;
@@ -125,6 +126,9 @@ export type ResumeCoverageSkill = {
   name: string;
   aliases: string[];
   category: string;
+  origin: "jd" | "career" | "inferred";
+  confidence: "explicit" | "strongly_implied" | "commonly_expected";
+  inferredFrom: string[];
   requirement: number;
   sourceText: string;
   evidenceStatus: "verified" | "unverified";
@@ -133,7 +137,7 @@ export type ResumeCoverageSkill = {
 };
 
 export type ResumeCoverageAnalysis = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   fingerprint: string;
   jobDescriptionHash: string;
   skills: ResumeCoverageSkill[];
@@ -146,11 +150,12 @@ export type ResumeCoverageAuditSection = {
   missing: string[];
   forbidden?: string[];
   incompleteRoles?: string[];
+  issues?: Array<Record<string, unknown>>;
   passed: boolean;
 };
 
 export type ResumeCoverageAudit = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   passed: boolean;
   requiredCount: number;
   coveredCount: number;
@@ -160,8 +165,18 @@ export type ResumeCoverageAudit = {
     skillId: string;
     skill: string;
     section: "skills" | "experience";
-    reason: "excluded" | "familiar-only";
+    reason: "excluded" | "familiar-only" | "experience-not-permitted";
   }[];
+  experienceIssues?: Array<{
+    section: "experience";
+    reason: "keyword-density" | "repeated-skill" | "unsupported-role-placement" | "unsupported-role-spread";
+    skillId?: string;
+    skill?: string;
+    roleIndex?: number;
+    bulletIndex?: number;
+    count?: number;
+    skills?: string[];
+  }>;
   requiredRoleCount?: number;
   completeRoleCount?: number;
   careerIssues?: {

@@ -74,12 +74,11 @@ export function createOpenAiCompatibleProvider(
         ...(params.temperature != null ? { temperature: params.temperature } : {}),
         ...(id === 'openai' && isOpenAiReasoningModel(params.model)
           ? {
-              max_completion_tokens: params.maxTokens,
               // The installed SDK's union can lag newly released effort values;
               // OpenAI validates model-specific support at request time.
               reasoning_effort: params.reasoningEffort as OpenAiReasoningEffort | undefined,
             }
-          : { max_tokens: params.maxTokens }),
+          : {}),
         top_p: params.topP,
         stop: params.stop,
         tools: params.tools,

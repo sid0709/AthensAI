@@ -2,11 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS,
   chatCompletion,
   isRequestTimeoutError,
   isModelCompatibleWithProvider,
-  resolveChatMaxTokens,
   resolveDefaultModel,
   summarizeUsage,
 } from "./llmService.js";
@@ -84,13 +82,6 @@ test("summarizeUsage OpenAI cached input still works", () => {
   assert.equal(u.inputTokens, 600);
   assert.equal(u.cachedTokens, 400);
   assert.ok(u.priced);
-});
-
-test("DeepSeek chat calls receive a bounded default output budget", () => {
-  assert.ok(DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS >= 131_072);
-  assert.equal(resolveChatMaxTokens("deepseek"), DEFAULT_DEEPSEEK_CHAT_MAX_TOKENS);
-  assert.equal(resolveChatMaxTokens("deepseek", 4000), 4000);
-  assert.equal(resolveChatMaxTokens("openai"), undefined);
 });
 
 test("request timeouts are terminal rather than retryable network errors", () => {

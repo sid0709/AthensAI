@@ -293,7 +293,7 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
     });
   }
 
-  const { messages, system, temperature, maxTokens, responseSchema, runId, jobId, feature } = req.body || {};
+  const { messages, system, temperature, responseSchema, runId, jobId, feature } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "messages required" });
   }
@@ -321,7 +321,6 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
         system,
         messages,
         temperature,
-        maxTokens,
         responseSchema,
         requestId,
         runId,

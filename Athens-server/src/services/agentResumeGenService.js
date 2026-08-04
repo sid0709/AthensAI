@@ -312,10 +312,9 @@ export function matchesTitlePolicyFingerprint(doc, expectedFingerprint) {
   return Boolean(stored) && stored === expectedFingerprint;
 }
 
-/** Completed structured generations remain reusable without a post-generation audit. */
-export function hasReusableCoverage(existing, coverageEnabled) {
-  if (!coverageEnabled) return true;
-  return Boolean(existing?.generation);
+/** Only generations that passed the final deterministic quality audit are reusable. */
+export function hasReusableCoverage(existing, _coverageEnabled) {
+  return existing?.generation?.coverageAudit?.passed === true;
 }
 
 /** Find a completed generation or library resume linked to this job id. */

@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  defaultGeneratorConfig,
-  LEGACY_TIERED_EXPERIENCE_PROMPT,
-} from "../config/resumeGeneratorDefaults.js";
+import { defaultGeneratorConfig } from "../config/resumeGeneratorDefaults.js";
 import {
   buildGenerationRequestFromSavedConfig,
   isDefaultGeneratorPipeline,
@@ -80,16 +77,23 @@ test("dynamic career titles are optional and disabled by default", () => {
   assert.equal(mergeStoredConfig({ dynamicCareerTitles: "true" }).dynamicCareerTitles, false);
 });
 
-test("legacy tier-gated default prompts migrate to the saved preference wording", () => {
-  const legacy = defaultGeneratorConfig();
-  const experience = legacy.steps.find((step) => step.purpose === "experience");
-  experience.prompt = LEGACY_TIERED_EXPERIENCE_PROMPT;
+test("new generator configs contain no authored prompt defaults", () => {
+  const config = defaultGeneratorConfig();
+  assert.equal(config.systemInstruction, "");
+  assert.equal(config.steps.every((step) => step.prompt === ""), true);
+  assert.equal(isDefaultGeneratorPipeline(config), true);
+});
 
-  assert.equal(isDefaultGeneratorPipeline(legacy), true);
-  const merged = mergeStoredConfig(legacy);
-  const migratedPrompt = merged.steps.find((step) => step.purpose === "experience")?.prompt;
-  assert.doesNotMatch(migratedPrompt, /Beta accounts/);
-  assert.match(migratedPrompt, /Dynamic career titles preference/);
+test("authored prompt variants remain untouched during v4 migration", () => {
+  const saved = defaultGeneratorConfig();
+  const experience = saved.steps.find((step) => step.purpose === "experience");
+  experience.prompt = "My edited Experience policy.";
+
+  const merged = mergeStoredConfig(saved);
+  assert.equal(
+    merged.steps.find((step) => step.purpose === "experience")?.prompt,
+    "My edited Experience policy.",
+  );
 });
 
 test("saved dynamic career titles propagate to Agent and Job Search generation requests", () => {

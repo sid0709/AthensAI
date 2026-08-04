@@ -6,6 +6,7 @@ import {
   buildResumeCoverageContract,
   extractParentheticalCoverageCandidates,
   isNamedResumeCoverageSkill,
+  normalizeSkillsSectionToContract,
   parseResumeCoverageAnalysis,
   RESUME_COVERAGE_ANALYSIS_PROMPT,
   resumeCoverageRepairPrompt,
@@ -103,7 +104,7 @@ test("coverage analysis keeps only atomic proper names when the model returns co
   );
 });
 
-test("coverage analysis defaults high-priority skills to used and lower-priority skills to familiar", () => {
+test("coverage analysis defaults only career-evidenced skills to used", () => {
   const jobDescription = "Required: REST APIs, SOAP, NetSuite, webhooks, and OAuth. Acumatica is a plus.";
   const content = JSON.stringify({
     skills: [
@@ -128,13 +129,96 @@ test("coverage analysis defaults high-priority skills to used and lower-priority
 
   assert.deepEqual(
     analysis.skills.filter((skill) => skill.decision === "used").map((skill) => skill.name).sort(),
-    ["NetSuite", "OAuth", "REST", "SOAP"],
+    ["OAuth", "REST"],
   );
   assert.deepEqual(
     analysis.skills.filter((skill) => skill.decision === "familiar").map((skill) => skill.name).sort(),
-    ["Acumatica"],
+    ["Acumatica", "NetSuite", "SOAP"],
   );
   assert.equal(analysis.unresolvedCount, 0);
+});
+
+test("coverage analysis combines JD, career, and anchored inferred companions", () => {
+  const jobDescription = "Operate Kubernetes deployments with Helm charts and production observability.";
+  const analysis = parseResumeCoverageAnalysis(JSON.stringify({
+    skills: [
+      { name: "Kubernetes", category: "platform", origin: "jd", confidence: "explicit", requirement: 5, sourceText: "Kubernetes deployments" },
+      { name: "Helm", category: "tool", origin: "jd", confidence: "explicit", requirement: 4, sourceText: "Helm charts" },
+      { name: "Terraform", category: "tool", origin: "career", confidence: "explicit", requirement: 3, sourceText: "Terraform modules" },
+      { name: "Argo CD", category: "tool", origin: "inferred", confidence: "strongly_implied", inferredFrom: ["Kubernetes", "Helm"], requirement: 2, sourceText: "Common deployment companion" },
+      { name: "AWS", category: "cloud", origin: "inferred", confidence: "commonly_expected", inferredFrom: ["Kubernetes"], requirement: 2, sourceText: "One possible cloud vendor" },
+    ],
+  }), {
+    jobDescription,
+    identity: {
+      careers: [{
+        company: "Acme",
+        title: "Platform Engineer",
+        description: "Built reusable Terraform modules for internal infrastructure.",
+      }],
+    },
+  });
+
+  assert.deepEqual(
+    Object.fromEntries(analysis.skills.map((skill) => [skill.name, skill.origin])),
+    { Helm: "jd", Kubernetes: "jd", Terraform: "career", "Argo CD": "inferred" },
+  );
+  assert.equal(analysis.skills.find((skill) => skill.name === "Terraform")?.decision, "used");
+  assert.equal(analysis.skills.find((skill) => skill.name === "Argo CD")?.decision, "familiar");
+  assert.equal(analysis.skills.some((skill) => skill.name === "AWS"), false);
+});
+
+test("coverage contract separates required and optional Experience permissions", () => {
+  const analysis = {
+    fingerprint: "analysis-origins",
+    skills: [
+      {
+        id: "k8s",
+        name: "Kubernetes",
+        aliases: [],
+        category: "platform",
+        origin: "jd",
+        confidence: "explicit",
+        inferredFrom: [],
+        requirement: 5,
+        decision: "used",
+        evidenceStatus: "verified",
+        evidence: [{ roleIndex: 0, company: "Acme", title: "Platform Engineer", excerpt: "Kubernetes" }],
+      },
+      {
+        id: "terraform",
+        name: "Terraform",
+        aliases: [],
+        category: "tool",
+        origin: "career",
+        confidence: "explicit",
+        inferredFrom: [],
+        requirement: 3,
+        decision: "used",
+        evidenceStatus: "verified",
+        evidence: [{ roleIndex: 1, company: "Beta", title: "Engineer", excerpt: "Terraform" }],
+      },
+      {
+        id: "argo",
+        name: "Argo CD",
+        aliases: [],
+        category: "tool",
+        origin: "inferred",
+        confidence: "strongly_implied",
+        inferredFrom: ["Kubernetes", "Helm"],
+        requirement: 2,
+        decision: "familiar",
+        evidenceStatus: "unverified",
+        evidence: [],
+      },
+    ],
+  };
+  const contract = buildResumeCoverageContract(analysis, {}, { maxRepairAttempts: 1 });
+
+  assert.deepEqual(contract.skills.find((skill) => skill.id === "k8s")?.requiredPlacements, ["skills", "experience"]);
+  assert.deepEqual(contract.skills.find((skill) => skill.id === "terraform")?.requiredPlacements, ["skills"]);
+  assert.deepEqual(contract.skills.find((skill) => skill.id === "terraform")?.allowedPlacements, ["skills", "experience"]);
+  assert.deepEqual(contract.skills.find((skill) => skill.id === "argo")?.allowedPlacements, ["skills"]);
 });
 
 test("coverage contract separates used, familiar-only, and excluded terms", () => {
@@ -175,12 +259,12 @@ test("structured runs apply the same automatic coverage decisions as the Editor"
 
   assert.deepEqual(payload.decisions, {
     verified: "used",
-    required: "used",
+    required: "familiar",
     optional: "familiar",
   });
   const contract = buildResumeCoverageContract(payload.analysis, payload.decisions, payload.settings);
   assert.deepEqual(contract.skills.find((skill) => skill.id === "verified").placements, ["skills"]);
-  assert.deepEqual(contract.skills.find((skill) => skill.id === "required").placements, ["skills", "experience"]);
+  assert.deepEqual(contract.skills.find((skill) => skill.id === "required").placements, ["skills"]);
   assert.deepEqual(contract.skills.find((skill) => skill.id === "optional").placements, ["skills"]);
   assert.equal(contract.maxRepairAttempts, 2);
 });
@@ -220,7 +304,7 @@ test("deterministic audit rejects repeated, compound, and out-of-contract Skills
   const audit = auditResumeCoverage({
     skills: {
       skills: [
-        { category: "Languages", items: ["**Python**", "Python for API services"] },
+        { category: "Languages", items: ["**Python**", "Python for API services", "**Python**"] },
         { category: "AI Platforms", items: ["**OpenAI**, model orchestration", "Anthropic"] },
       ],
     },
@@ -234,6 +318,36 @@ test("deterministic audit rejects repeated, compound, and out-of-contract Skills
     { section: "skills", reason: "unexpected-item", item: "Anthropic" },
     { section: "skills", reason: "duplicate-skill", skillId: "python", skill: "Python", count: 2 },
   ]);
+});
+
+test("Skills normalization repairs malformed bolding, duplicates, and missing contract terms", () => {
+  const contract = {
+    schemaVersion: 1,
+    maxRepairAttempts: 1,
+    skills: [
+      { id: "aws", name: "AWS", aliases: [], category: "cloud", requirement: 5, decision: "used", placements: ["skills"] },
+      { id: "alb", name: "Application Load Balancer", aliases: ["ALB"], category: "cloud", requirement: 4, decision: "familiar", placements: ["skills"] },
+      { id: "dynamodb", name: "AWS DynamoDB", aliases: ["DynamoDB"], category: "cloud", requirement: 4, decision: "familiar", placements: ["skills"] },
+      { id: "lambda", name: "AWS Lambda", aliases: ["Lambda"], category: "cloud", requirement: 4, decision: "familiar", placements: ["skills"] },
+      { id: "node", name: "Node.js", aliases: ["NodeJS"], category: "platform", requirement: 5, decision: "used", placements: ["skills"] },
+    ],
+    unresolved: [],
+    excluded: [],
+  };
+  const normalized = normalizeSkillsSectionToContract({
+    skills: [
+      { category: "Cloud", items: ["**AWS**", "AWS", "**Application Load Balancer"] },
+      { category: "Backend", items: ["NodeJS", "Unexpected Tool"] },
+    ],
+  }, contract);
+
+  assert.deepEqual(normalized, {
+    skills: [
+      { category: "Cloud", items: ["**AWS**", "**Application Load Balancer**", "**AWS DynamoDB**", "**AWS Lambda**"] },
+      { category: "Backend", items: ["**Node.js**"] },
+    ],
+  });
+  assert.equal(auditResumeCoverage({ skills: normalized }, contract).passed, true);
 });
 
 test("deterministic audit requires a contextual bold Experience placement", () => {
@@ -386,4 +500,65 @@ test("deterministic audit rejects familiar-only Experience claims and excluded t
     { skillId: "excluded", skill: "Legacy.Tool", section: "experience", reason: "excluded" },
     { skillId: "familiar", skill: "Example.Tool", section: "experience", reason: "familiar-only" },
   ]);
+});
+
+test("deterministic audit rejects dense, repeated, and unsupported role placements", () => {
+  const evidence = [{ roleIndex: 0, company: "Acme", title: "Engineer", excerpt: "Supported the tool." }];
+  const skill = (id, name, requiredExperience = false) => ({
+    id,
+    name,
+    aliases: [],
+    category: "tool",
+    origin: "jd",
+    confidence: "explicit",
+    inferredFrom: [],
+    requirement: requiredExperience ? 5 : 3,
+    evidenceStatus: "verified",
+    evidence,
+    decision: "used",
+    allowedPlacements: ["skills", "experience"],
+    requiredPlacements: requiredExperience ? ["skills", "experience"] : ["skills"],
+  });
+  const contract = {
+    schemaVersion: 2,
+    maxRepairAttempts: 1,
+    skills: [
+      skill("python", "Python", true),
+      skill("node", "Node.js"),
+      skill("docker", "Docker"),
+      skill("k8s", "Kubernetes"),
+    ],
+    unresolved: [],
+    excluded: [],
+  };
+  const audit = auditResumeCoverage({
+    skills: {
+      skills: [{ category: "Tools", items: ["**Python**", "**Node.js**", "**Docker**", "**Kubernetes**"] }],
+    },
+    experience: {
+      experiences: [
+        {
+          bullets: [
+            "Built API services with **Python**, Node.js, Docker, and Kubernetes to support repeatable production request processing.",
+            "Developed Python validation handlers that checked structured payloads before downstream service processing.",
+            "Maintained Python integration modules that routed customer events through supported application workflows.",
+          ],
+        },
+        {
+          bullets: ["Applied Python processing logic to maintain a separate production workflow for another employer."],
+        },
+      ],
+    },
+  }, contract, {
+    careers: [
+      { company: "Acme", title: "Engineer", description: "Used Python, Node.js, Docker, and Kubernetes." },
+      { company: "Beta", title: "Engineer", description: "Supported unrelated services." },
+    ],
+  });
+
+  assert.equal(audit.passed, false);
+  assert.deepEqual(
+    new Set(audit.experienceIssues.map((issue) => issue.reason)),
+    new Set(["keyword-density", "repeated-skill", "unsupported-role-placement"]),
+  );
 });

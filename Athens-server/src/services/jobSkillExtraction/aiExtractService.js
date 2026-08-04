@@ -29,12 +29,10 @@ function numericEnv(name, fallback, minimum = 0) {
 }
 
 const MAX_CHARS = numericEnv('JOB_SKILL_EXTRACT_MAX_CHARS', 8000, 1000);
-const MAX_OUTPUT_TOKENS = numericEnv('JOB_SKILL_EXTRACT_MAX_OUTPUT_TOKENS', 1400, 256);
 const REQUEST_TIMEOUT_MS = numericEnv('JOB_SKILL_EXTRACT_TIMEOUT_MS', 90_000, 10_000);
 const REQUEST_RETRIES = numericEnv('JOB_SKILL_EXTRACT_RETRIES', 1);
 export const MAX_ATTEMPTS = numericEnv('JOB_SKILL_EXTRACT_MAX_ATTEMPTS', 3, 1);
 export const SKILL_EXTRACT_BATCH_SIZE = Math.floor(numericEnv('JOB_SKILL_EXTRACT_BATCH_SIZE', 8, 1));
-const BATCH_MAX_OUTPUT_TOKENS = numericEnv('JOB_SKILL_EXTRACT_BATCH_MAX_OUTPUT_TOKENS', 6000, 512);
 
 const GENERIC_SKILL_NAMES = new Set([
   'automated testing',
@@ -309,10 +307,6 @@ export async function extractAndPersistJobBatch(jobs, auth, { signal } = {}) {
       jobId: `batch:${withText[0].id}:${withText.length}`,
       signal,
       reasoningEffort: reasoningEffortForExtraction(auth.providerId, auth.model),
-      maxTokens: Math.min(
-        BATCH_MAX_OUTPUT_TOKENS,
-        Math.max(MAX_OUTPUT_TOKENS, 400 + withText.length * 450),
-      ),
       timeoutMs: REQUEST_TIMEOUT_MS,
       retries: REQUEST_RETRIES,
       messages: [

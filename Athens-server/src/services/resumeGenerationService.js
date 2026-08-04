@@ -2,7 +2,6 @@ import { DEEPSEEK_MODELS } from "@nextoffer/shared/models";
 import { resumeGeneratorConfigCollection } from "../db/dataStore.js";
 import {
   defaultGeneratorConfig,
-  LEGACY_TIERED_EXPERIENCE_PROMPT,
   stepsToPlan,
 } from "../config/resumeGeneratorDefaults.js";
 import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
@@ -25,24 +24,6 @@ function sameValue(left, right) {
   return normalizedKey(left) === normalizedKey(right);
 }
 
-function migrateLegacyTitlePrompt(step) {
-  if (
-    step?.purpose !== "experience"
-    || step?.kind !== "final"
-    || cleanString(step.prompt) !== LEGACY_TIERED_EXPERIENCE_PROMPT
-  ) {
-    return step;
-  }
-  const current = defaultGeneratorConfig().steps.find(
-    (candidate) => candidate.purpose === "experience" && candidate.kind === "final",
-  );
-  return { ...step, prompt: current?.prompt ?? step.prompt };
-}
-
-function migrateStoredSteps(steps) {
-  return Array.isArray(steps) ? steps.map(migrateLegacyTitlePrompt) : steps;
-}
-
 function configUpdatedAt(configRecord) {
   const value = configRecord?.updatedAt;
   const date = value?.toDate instanceof Function ? value.toDate() : value;
@@ -61,16 +42,15 @@ export function isDefaultGeneratorPipeline(config) {
   const normalized = migrateGeneratorConfig(config).config;
   if ((config.dynamicCareerTitles === true) !== base.dynamicCareerTitles) return false;
   if (JSON.stringify(normalized.coverage) !== JSON.stringify(base.coverage)) return false;
-  if (cleanString(config.systemInstruction) !== cleanString(base.systemInstruction)) return false;
-  if (!Array.isArray(config.steps) || config.steps.length !== base.steps.length) return false;
+  if (cleanString(normalized.systemInstruction) !== cleanString(base.systemInstruction)) return false;
+  if (!Array.isArray(normalized.steps) || normalized.steps.length !== base.steps.length) return false;
   return base.steps.every((defaultStep) => {
-    const step = config.steps.find((candidate) =>
+    const step = normalized.steps.find((candidate) =>
       candidate?.purpose === defaultStep.purpose && candidate?.kind === defaultStep.kind,
     );
-    const migratedStep = migrateLegacyTitlePrompt(step);
     return step
-      && cleanString(migratedStep.prompt) === cleanString(defaultStep.prompt)
-      && cleanString(migratedStep.schema) === cleanString(defaultStep.schema);
+      && cleanString(step.prompt) === cleanString(defaultStep.prompt)
+      && cleanString(step.schema) === cleanString(defaultStep.schema);
   });
 }
 
@@ -193,7 +173,7 @@ export function mergeStoredConfig(saved) {
     layout: Array.isArray(canonical.layout) && canonical.layout.length ? canonical.layout : base.layout,
     systemInstruction: canonical.systemInstruction ?? base.systemInstruction,
     steps: Array.isArray(canonical.steps) && canonical.steps.length
-      ? migrateStoredSteps(canonical.steps)
+      ? canonical.steps
       : base.steps,
   };
 }
