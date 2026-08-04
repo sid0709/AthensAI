@@ -60,7 +60,6 @@ function record(value: unknown): Record<string, unknown> {
 
 function normalizeCoverageSettings(value: unknown): ResumeCoverageSettings {
   const raw = record(value);
-  const attempts = Math.min(2, Math.max(0, Math.round(Number(raw.maxRepairAttempts) || 0)));
   const aliases: Record<string, string[]> = {};
   for (const [name, values] of Object.entries(record(raw.aliases))) {
     if (!Array.isArray(values)) continue;
@@ -70,7 +69,6 @@ function normalizeCoverageSettings(value: unknown): ResumeCoverageSettings {
   return {
     enabled: true,
     experienceRequirementThreshold: 4,
-    maxRepairAttempts: raw.maxRepairAttempts == null ? 1 : attempts,
     aliases,
   };
 }
@@ -314,7 +312,6 @@ export const defaultConfig = (): GeneratorConfig => {
     coverage: {
       enabled: true,
       experienceRequirementThreshold: 4,
-      maxRepairAttempts: 1,
       aliases: {},
     },
   };

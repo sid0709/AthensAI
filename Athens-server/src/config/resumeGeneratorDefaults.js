@@ -110,7 +110,6 @@ export function defaultGeneratorConfig() {
     coverage: {
       enabled: true,
       experienceRequirementThreshold: 4,
-      maxRepairAttempts: 1,
       aliases: {},
     },
   };

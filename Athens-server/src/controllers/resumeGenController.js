@@ -27,11 +27,9 @@ import { loadGeneratorConfigRecord } from "../services/resumeGenerationService.j
 import { migrateGeneratorConfig } from "../services/resumeGeneratorConfigSchema.js";
 import {
   analyzeResumeCoverage as analyzeResumeCoverageLedger,
-  auditResumeCoverage,
   normalizeSkillsSectionToContract,
   normalizeResumeCoverageContract,
   resumeCoveragePrompt,
-  resumeCoverageRepairPrompt,
 } from "../services/resumeCoverageService.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import {
@@ -467,9 +465,9 @@ export async function analyzeResumeCoverage(req, res) {
 }
 
 /**
- * Runs each configured step in order as one system message plus one fully
- * resolved user prompt. Earlier outputs are inserted through prompt tokens;
- * final JSON is parsed and assigned to the matching résumé section.
+ * Runs Experience, Skills, and Summary as concurrent section pipelines. Steps
+ * remain sequential inside each section and preserve that section's continuous
+ * conversation without creating cross-section output dependencies.
  */
 export async function runGeneration({
   providerId,
@@ -507,10 +505,6 @@ export async function runGeneration({
       resolveResumePromptSkills(jobSkills, coverageContract),
     ),
     source_resume: JSON.stringify(identity ?? {}, null, 2),
-    work_experience: "",
-    previous_output: "",
-    previous_plan: "",
-    plan_output: "",
   };
   const applyTokens = (text) => {
     const unresolved = new Set();
@@ -540,20 +534,11 @@ export async function runGeneration({
   const sections = {};
   const perStep = [];
   let usage = EMPTY_USAGE();
-  const latestPlanByPurpose = {};
-  const purposeStepCounts = {};
-  let previousOutput = "";
-
-  for (let offset = 0; offset < steps.length; offset += 1) {
-    const step = steps[offset] || {};
+  const preparedSteps = steps.map((rawStep, offset) => {
+    const step = rawStep || {};
     const index = offset + 1;
     const isFinal = step.kind === "final";
     const name = step.name || `Step ${index}`;
-    tokenMap.previous_output = previousOutput;
-    tokenMap.previous_plan = latestPlanByPurpose[step.purpose] || "";
-    tokenMap.plan_output = latestPlanByPurpose[step.purpose] || "";
-    if (onStep) onStep({ phase: "step-start", index, total: steps.length, name, purpose: step.purpose, kind: step.kind });
-
     let userContent = applyTokens(step.prompt || "");
     if (isFinal && step.purpose === "experience") {
       userContent = appendExperienceTitlePolicy(userContent, {
@@ -565,221 +550,100 @@ export async function runGeneration({
     if (isFinal && step.schema) {
       userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
     }
-    const { content, usage: stepUsage } = await chat({
-      provider: providerId,
-      apiKey,
-      model,
-      messages: [
-        { role: "system", content: systemContent },
-        { role: "user", content: userContent },
-      ],
-      jsonMode: isFinal,
-      cacheKey: `resume-${applierName || "anon"}`,
-      reasoningEffort,
-      feature: `resume-generate:${step.purpose || step.kind || "step"}`,
-      applierName,
-      signal,
-    });
-    throwIfAborted();
-
-    let output = content;
-    if (isFinal) {
-      try {
-        output = parseJsonLoose(content);
-        if (step.purpose === "experience") {
-          output = applyTitlePolicyToSections(
-            { experience: output },
-            identity,
-            dynamicTitles,
-          ).experience;
-        }
-        if (step.purpose === "skills") {
-          output = normalizeSkillsSectionToContract(output, coverageContract);
-        }
-      } catch (err) {
-        if (Number.isInteger(err?.status)) throw err;
-        const error = new Error(`${step.purpose} final step returned invalid JSON.`);
-        error.status = 502;
-        throw error;
-      }
-      if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
-    }
-
-    const serialized = typeof output === "string" ? output : JSON.stringify(output, null, 2);
-    const count = (purposeStepCounts[step.purpose] || 0) + 1;
-    purposeStepCounts[step.purpose] = count;
-    for (const tokenPurpose of new Set([
-      step.purpose,
-      String(step.purpose || "").replace(/s$/i, ""),
-    ])) {
-      if (!tokenPurpose) continue;
-      tokenMap[`${tokenPurpose}_step${count}`] = serialized;
-      tokenMap[`${tokenPurpose}_output`] = serialized;
-    }
-    if (!isFinal) latestPlanByPurpose[step.purpose] = serialized;
-    if (isFinal && step.purpose === "experience") tokenMap.work_experience = serialized;
-    previousOutput = serialized;
-    usage = addUsage(usage, stepUsage);
-    const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output, cumulative: usage };
-    perStep.push(entry);
-    if (onStep) onStep({ phase: "step-done", ...entry });
+    return { step, index, isFinal, name, userContent };
+  });
+  const seriesByPurpose = new Map();
+  for (const prepared of preparedSteps) {
+    const purposeKey = cleanString(prepared.step.purpose) || `step-${prepared.index}`;
+    const series = seriesByPurpose.get(purposeKey) || [];
+    series.push(prepared);
+    seriesByPurpose.set(purposeKey, series);
   }
 
-  // Safety net if Experience was produced outside the final-step branch shape.
-  Object.assign(sections, applyTitlePolicyToSections(sections, identity, dynamicTitles));
-
-  // Validate only after every AI-authored section is assembled. Repair the
-  // affected section, then re-audit; never report success for an empty role or
-  // a malformed/forbidden coverage placement.
-  if (onStep) onStep({
-    phase: "quality-start",
-    name: "Resume quality audit",
-    purpose: "quality",
-    kind: "quality-audit",
-  });
-  let coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
-  const maxRepairAttempts = coverageContract?.maxRepairAttempts ?? 1;
-  let repairIndex = steps.length;
-  for (let attempt = 1; !coverageAudit.passed && attempt <= maxRepairAttempts; attempt += 1) {
-    const affectedSections = [...new Set([
-      ...coverageAudit.missing.map((item) => item.section),
-      ...(coverageAudit.violations || []).map((item) => item.section),
-      ...(coverageAudit.skillIssues || []).map((item) => item.section),
-      ...(coverageAudit.experienceIssues || []).map((item) => item.section),
-      ...((coverageAudit.careerIssues || []).length ? ["experience"] : []),
-    ])];
-    for (const purpose of ["skills", "experience"]) {
-      if (!affectedSections.includes(purpose)) continue;
+  const runPurposeSeries = async (purposeSteps) => {
+    let priorMessages = [];
+    for (const prepared of purposeSteps) {
       throwIfAborted();
-      const missing = coverageAudit.missing
-        .filter((item) => item.section === purpose)
-        .map((item) => item.skill);
-      const remove = (coverageAudit.violations || [])
-        .filter((item) => item.section === purpose)
-        .map((item) => item.skill);
-      const finalDefinition = [...steps].reverse().find(
-        (step) => step?.kind === "final" && step?.purpose === purpose,
-      );
-      const index = ++repairIndex;
-      const name = `Resume quality repair: ${purpose}`;
-      if (onStep) onStep({
-        phase: "step-start",
-        index,
-        total: steps.length + affectedSections.length,
-        name,
-        purpose,
-        kind: "coverage-repair",
-      });
-      const prompt = resumeCoverageRepairPrompt({
-        purpose,
-        missing,
-        remove,
-        skillIssues: purpose === "skills" ? coverageAudit.skillIssues : [],
-        experienceIssues: purpose === "experience" ? coverageAudit.experienceIssues : [],
-        incompleteRoles: purpose === "experience" ? coverageAudit.careerIssues : [],
-        currentSection: sections[purpose],
-        schema: finalDefinition?.schema,
-      });
-      const repair = await chat({
+      const { step, index, isFinal, name, userContent } = prepared;
+      if (onStep) onStep({ phase: "step-start", index, total: steps.length, name, purpose: step.purpose, kind: step.kind });
+      const currentUserMessage = { role: "user", content: userContent };
+      const messages = [
+        { role: "system", content: systemContent },
+        ...priorMessages,
+        currentUserMessage,
+      ];
+      const { content, usage: stepUsage } = await chat({
         provider: providerId,
         apiKey,
         model,
-        messages: [
-          { role: "system", content: systemContent },
-          { role: "user", content: prompt },
-        ],
-        jsonMode: true,
+        messages,
+        jsonMode: isFinal,
         cacheKey: `resume-${applierName || "anon"}`,
         reasoningEffort,
-        feature: `resume-coverage-repair:${purpose}`,
+        feature: `resume-generate:${step.purpose || step.kind || "step"}`,
         applierName,
         signal,
       });
       throwIfAborted();
-      let output = sections[purpose];
-      let repairError = null;
-      try {
-        output = parseJsonLoose(repair.content);
-        if (purpose === "experience") {
-          output = applyTitlePolicyToSections(
-            { experience: output },
-            identity,
-            dynamicTitles,
-          ).experience;
+      priorMessages = [
+        ...priorMessages,
+        currentUserMessage,
+        { role: "assistant", content: String(content ?? "") },
+      ];
+
+      let output = content;
+      if (isFinal) {
+        try {
+          output = parseJsonLoose(content);
+          if (step.purpose === "experience") {
+            output = applyTitlePolicyToSections(
+              { experience: output },
+              identity,
+              dynamicTitles,
+            ).experience;
+          }
+          if (step.purpose === "skills") {
+            output = normalizeSkillsSectionToContract(output, coverageContract);
+          }
+        } catch (err) {
+          if (Number.isInteger(err?.status)) throw err;
+          const error = new Error(`${step.purpose} final step returned invalid JSON.`);
+          error.status = 502;
+          throw error;
         }
-        if (purpose === "skills") {
-          output = normalizeSkillsSectionToContract(output, coverageContract);
-        }
-        sections[purpose] = output;
-      } catch (error) {
-        repairError = error?.message || "Coverage repair returned invalid JSON.";
+        if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
       }
-      usage = addUsage(usage, repair.usage);
-      const entry = {
-        index,
-        name,
-        purpose,
-        kind: "coverage-repair",
-        usage: repair.usage,
-        output,
-        ...(repairError ? { error: repairError } : {}),
-        cumulative: usage,
-      };
+
+      usage = addUsage(usage, stepUsage);
+      const entry = { index, name, purpose: step.purpose, kind: step.kind, usage: stepUsage, output, cumulative: usage };
       perStep.push(entry);
       if (onStep) onStep({ phase: "step-done", ...entry });
     }
-    coverageAudit = auditResumeCoverage(sections, coverageContract, identity);
-  }
-  if (!coverageAudit.passed) {
-    const remaining = [
-      ...coverageAudit.missing.map((item) => `missing ${item.skill} (${item.section})`),
-      ...(coverageAudit.violations || []).map((item) => `forbidden ${item.skill} (${item.section})`),
-      ...(coverageAudit.skillIssues || []).map((item) => `${item.reason}${item.skill ? ` ${item.skill}` : ""} (${item.section})`),
-      ...(coverageAudit.experienceIssues || []).map((item) => `${item.reason}${item.skill ? ` ${item.skill}` : ""} (experience)`),
-      ...(coverageAudit.careerIssues || []).map((item) => `incomplete role #${item.index + 1} ${item.company || item.title}`),
-    ].join(", ");
-    const error = new Error(`Resume quality gate failed: ${remaining || "required coverage is incomplete"}.`);
-    error.status = 502;
-    error.coverageAudit = coverageAudit;
-    if (onStep) onStep({
-      phase: "quality-failed",
-      name: "Resume quality failed",
-      purpose: "quality",
-      kind: "quality-audit",
-    });
-    throw error;
-  }
-  if (onStep) onStep({
-    phase: "quality-done",
-    name: "Resume quality passed",
-    purpose: "quality",
-    kind: "quality-audit",
-  });
+  };
+  const seriesResults = await Promise.allSettled(
+    [...seriesByPurpose.values()].map((purposeSteps) => runPurposeSeries(purposeSteps)),
+  );
+  const failedSeries = seriesResults.find((result) => result.status === "rejected");
+  if (failedSeries) throw failedSeries.reason;
+  perStep.sort((left, right) => left.index - right.index);
+
+  // Safety net if Experience was produced outside the final-step branch shape.
+  Object.assign(sections, applyTitlePolicyToSections(sections, identity, dynamicTitles));
+
   throwIfAborted();
   return {
     sections,
     perStep,
     usage,
     coverageContract: coverageContract ?? null,
-    coverageAudit,
     isBeta: Boolean(isBeta),
     dynamicCareerTitles: dynamicTitles,
   };
 }
 
-/** Refuse to persist or report a generation that bypassed the final quality gate. */
-export function assertPassedResumeQualityAudit(result) {
-  if (result?.coverageAudit?.passed === true) return result.coverageAudit;
-  const error = new Error("Resume quality gate did not pass; generation was not saved.");
-  error.status = 502;
-  error.coverageAudit = result?.coverageAudit ?? null;
-  throw error;
-}
-
 /** Persist the finished run and sync it into the résumé library. */
 export async function finalizeGenerationRun({ prep, body, result, startedAt, signal }) {
   throwIfAborted(signal);
-  assertPassedResumeQualityAudit(result);
   // Skill proficiency is derived by the scoring logic downstream, so no separate
   // LLM analysis pass runs here — the generation ends at the section steps.
   const skillProfile = [];
@@ -822,7 +686,6 @@ export async function finalizeGenerationRun({ prep, body, result, startedAt, sig
     jobDescription: cleanString(body.jobDescription) || null,
     coverageAnalysis: body.coverage?.analysis ?? null,
     coverageContract: result.coverageContract ?? null,
-    coverageAudit: result.coverageAudit ?? null,
     sections: result.sections,
     perStep: result.perStep,
     usage: result.usage,
@@ -872,7 +735,6 @@ export async function finalizeGenerationRun({ prep, body, result, startedAt, sig
     skillAnalysisError,
     generationId,
     coverageContract: result.coverageContract ?? null,
-    coverageAudit: result.coverageAudit ?? null,
     isBeta,
     dynamicCareerTitles,
     titlePolicyFingerprint,

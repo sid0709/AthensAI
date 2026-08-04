@@ -117,7 +117,6 @@ function resultFromGenerationRecord(record) {
 		techStack: record.techStack || null,
 		skillAnalysisError: record.skillAnalysisError || null,
 		coverageContract: record.coverageContract || null,
-		coverageAudit: record.coverageAudit || null,
 		generationId: String(record._id),
 		isBeta: record.isBeta === true,
 		dynamicCareerTitles: record.dynamicCareerTitles === true,
@@ -188,15 +187,6 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 				case 'queued':
 					progressLabel = 'Waiting for generation slot…';
 					break;
-				case 'quality-start':
-					progressLabel = 'Auditing résumé quality…';
-					break;
-				case 'quality-done':
-					progressLabel = 'Résumé quality passed — saving…';
-					break;
-				case 'quality-failed':
-					progressLabel = 'Résumé quality failed';
-					break;
 				case 'step-start':
 					progressLabel = `Running: ${safeStep.name || 'Step'}…`;
 					break;
@@ -238,7 +228,7 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 				const safeStep = redisSafeStep(step);
 				if (
 					step?.phase === 'step-done'
-					&& (step?.kind === 'final' || step?.kind === 'coverage-repair')
+					&& step?.kind === 'final'
 					&& step?.purpose
 					&& step.output != null
 				) {
@@ -285,7 +275,6 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 			techStack: finalized.techStack,
 			skillAnalysisError: finalized.skillAnalysisError,
 			coverageContract: finalized.coverageContract,
-			coverageAudit: finalized.coverageAudit,
 			generationId: finalized.generationId ? String(finalized.generationId) : null,
 			isBeta: finalized.isBeta,
 			dynamicCareerTitles: finalized.dynamicCareerTitles,

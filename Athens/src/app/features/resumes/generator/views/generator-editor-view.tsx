@@ -564,20 +564,23 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               <ChevronDown className="h-4 w-4 text-neutral-400" />
             </summary>
             <div className="mt-4 border-t border-neutral-200 pt-4 dark:border-white/10">
-            <div className="flex flex-wrap gap-2 mb-3">
-              {PURPOSES.map((p) => (
-                <span
-                  key={p}
-                  className={`text-[11px] px-2 py-1 rounded-md border ${
-                    finalCountByPurpose[p] === 1
-                      ? "border-emerald-300 text-emerald-600 dark:border-emerald-500/40 dark:text-emerald-300"
-                      : "border-rose-300 text-rose-600 dark:border-rose-500/40 dark:text-rose-300"
-                  }`}
-                >
-                  {SECTION_LABEL[p]}: {finalCountByPurpose[p]} final
-                </span>
-              ))}
-            </div>
+              <p className="mb-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
+                Experience, Skills, and Summary run in parallel. Within each section, steps remain sequential and later steps see every earlier prompt and response.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {PURPOSES.map((p) => (
+                  <span
+                    key={p}
+                    className={`text-[11px] px-2 py-1 rounded-md border ${
+                      finalCountByPurpose[p] === 1
+                        ? "border-emerald-300 text-emerald-600 dark:border-emerald-500/40 dark:text-emerald-300"
+                        : "border-rose-300 text-rose-600 dark:border-rose-500/40 dark:text-rose-300"
+                    }`}
+                  >
+                    {SECTION_LABEL[p]}: {finalCountByPurpose[p]} final
+                  </span>
+                ))}
+              </div>
             <div className="space-y-3">
               {steps.map((step, i) => (
                 <StepCard

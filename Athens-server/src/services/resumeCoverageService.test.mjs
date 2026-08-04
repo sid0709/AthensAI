@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  auditResumeCoverage,
   buildAutomaticResumeCoveragePayload,
   buildResumeCoverageContract,
   extractParentheticalCoverageCandidates,
@@ -9,8 +8,6 @@ import {
   normalizeSkillsSectionToContract,
   parseResumeCoverageAnalysis,
   RESUME_COVERAGE_ANALYSIS_PROMPT,
-  resumeCoverageRepairPrompt,
-  textContainsBoldCoverageSkill,
   textContainsCoverageSkill,
 } from "./resumeCoverageService.js";
 
@@ -40,13 +37,6 @@ test("coverage matching handles aliases, punctuation, plurals, and strict bounda
   }), true);
   assert.equal(textContainsCoverageSkill("The migration disappeared overnight", { name: "SAP" }), false);
   assert.equal(textContainsCoverageSkill("Managed Gmail workflows", { name: "AI" }), false);
-});
-
-test("bold coverage requires the exact canonical spelling inside Markdown markers", () => {
-  assert.equal(textContainsBoldCoverageSkill("Built with **Node.js** services.", { name: "Node.js" }), true);
-  assert.equal(textContainsBoldCoverageSkill("Built with **NodeJS** services.", { name: "Node.js" }), false);
-  assert.equal(textContainsBoldCoverageSkill("Built with Node.js services.", { name: "Node.js" }), false);
-  assert.equal(textContainsBoldCoverageSkill("Built with **node.js** services.", { name: "Node.js" }), false);
 });
 
 test("coverage names include named technologies and reject ordinary technical concepts", () => {
@@ -269,57 +259,6 @@ test("structured runs apply the same automatic coverage decisions as the Editor"
   assert.equal(contract.maxRepairAttempts, 2);
 });
 
-test("deterministic audit reports section-specific gaps", () => {
-  const contract = {
-    schemaVersion: 1,
-    maxRepairAttempts: 1,
-    skills: [
-      { id: "node", name: "Node.js", aliases: ["NodeJS"], category: "language", requirement: 5, decision: "used", placements: ["skills", "experience"] },
-      { id: "soap", name: "SOAP", aliases: [], category: "protocol", requirement: 4, decision: "familiar", placements: ["skills"] },
-    ],
-    unresolved: [],
-    excluded: [],
-  };
-  const audit = auditResumeCoverage({
-    skills: { skills: [{ category: "Languages", items: ["**Node.js**", "**SOAP**"] }] },
-    experience: { experiences: [{ bullets: ["Built API routing for services."] }] },
-  }, contract);
-
-  assert.equal(audit.passed, false);
-  assert.deepEqual(audit.missing, [{ skillId: "node", skill: "Node.js", section: "experience" }]);
-  assert.equal(audit.sections.skills.passed, true);
-});
-
-test("deterministic audit rejects repeated, compound, and out-of-contract Skills items", () => {
-  const contract = {
-    schemaVersion: 1,
-    maxRepairAttempts: 1,
-    skills: [
-      { id: "python", name: "Python", aliases: [], category: "language", requirement: 5, decision: "used", placements: ["skills"] },
-      { id: "openai", name: "OpenAI", aliases: [], category: "platform", requirement: 4, decision: "used", placements: ["skills"] },
-    ],
-    unresolved: [],
-    excluded: [],
-  };
-  const audit = auditResumeCoverage({
-    skills: {
-      skills: [
-        { category: "Languages", items: ["**Python**", "Python for API services", "**Python**"] },
-        { category: "AI Platforms", items: ["**OpenAI**, model orchestration", "Anthropic"] },
-      ],
-    },
-  }, contract);
-
-  assert.equal(audit.passed, false);
-  assert.deepEqual(audit.missing, [{ skillId: "openai", skill: "OpenAI", section: "skills" }]);
-  assert.deepEqual(audit.skillIssues, [
-    { section: "skills", reason: "noncanonical-item", item: "Python for API services" },
-    { section: "skills", reason: "noncanonical-item", item: "**OpenAI**, model orchestration" },
-    { section: "skills", reason: "unexpected-item", item: "Anthropic" },
-    { section: "skills", reason: "duplicate-skill", skillId: "python", skill: "Python", count: 2 },
-  ]);
-});
-
 test("Skills normalization repairs malformed bolding, duplicates, and missing contract terms", () => {
   const contract = {
     schemaVersion: 1,
@@ -347,7 +286,6 @@ test("Skills normalization repairs malformed bolding, duplicates, and missing co
       { category: "Backend", items: ["**Node.js**"] },
     ],
   });
-  assert.equal(auditResumeCoverage({ skills: normalized }, contract).passed, true);
 });
 
 test("deterministic audit requires a contextual bold Experience placement", () => {

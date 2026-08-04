@@ -110,7 +110,6 @@ export type CoverageDecision = "used" | "familiar" | "exclude";
 export type ResumeCoverageSettings = {
   enabled: boolean;
   experienceRequirementThreshold: number;
-  maxRepairAttempts: number;
   aliases: Record<string, string[]>;
 };
 
@@ -142,51 +141,6 @@ export type ResumeCoverageAnalysis = {
   jobDescriptionHash: string;
   skills: ResumeCoverageSkill[];
   unresolvedCount: number;
-};
-
-export type ResumeCoverageAuditSection = {
-  required: string[];
-  found: string[];
-  missing: string[];
-  forbidden?: string[];
-  incompleteRoles?: string[];
-  issues?: Array<Record<string, unknown>>;
-  passed: boolean;
-};
-
-export type ResumeCoverageAudit = {
-  schemaVersion: 2;
-  passed: boolean;
-  requiredCount: number;
-  coveredCount: number;
-  sections: Partial<Record<"skills" | "experience", ResumeCoverageAuditSection>>;
-  missing: { skillId: string; skill: string; section: "skills" | "experience" }[];
-  violations?: {
-    skillId: string;
-    skill: string;
-    section: "skills" | "experience";
-    reason: "excluded" | "familiar-only" | "experience-not-permitted";
-  }[];
-  experienceIssues?: Array<{
-    section: "experience";
-    reason: "keyword-density" | "repeated-skill" | "unsupported-role-placement" | "unsupported-role-spread";
-    skillId?: string;
-    skill?: string;
-    roleIndex?: number;
-    bulletIndex?: number;
-    count?: number;
-    skills?: string[];
-  }>;
-  requiredRoleCount?: number;
-  completeRoleCount?: number;
-  careerIssues?: {
-    index: number;
-    company: string;
-    title: string;
-    period: string;
-    description: string;
-    reason: "missing-role" | "no-substantive-bullets";
-  }[];
 };
 
 export type GeneratorConfig = {

@@ -351,7 +351,6 @@ export async function fetchGenerationDetail(id: string, applierName: string): Pr
     skillAnalysisError: typeof r.skillAnalysisError === "string" ? r.skillAnalysisError : null,
     coverageAnalysis: (r.coverageAnalysis as HistoryRunDetail["coverageAnalysis"]) ?? null,
     coverageContract: (r.coverageContract as HistoryRunDetail["coverageContract"]) ?? null,
-    coverageAudit: (r.coverageAudit as HistoryRunDetail["coverageAudit"]) ?? null,
   };
 }
 

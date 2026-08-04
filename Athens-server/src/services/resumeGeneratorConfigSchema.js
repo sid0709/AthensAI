@@ -7,14 +7,8 @@ const cleanString = (value) => String(value ?? "").trim();
 const DEFAULT_COVERAGE_SETTINGS = Object.freeze({
   enabled: true,
   experienceRequirementThreshold: 4,
-  maxRepairAttempts: 1,
   aliases: {},
 });
-
-function numberInRange(value, fallback, min, max) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : fallback;
-}
 
 function normalizeAliases(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -33,12 +27,6 @@ export function normalizeCoverageSettings(value) {
   return {
     enabled: true,
     experienceRequirementThreshold: 4,
-    maxRepairAttempts: numberInRange(
-      raw.maxRepairAttempts,
-      DEFAULT_COVERAGE_SETTINGS.maxRepairAttempts,
-      0,
-      2,
-    ),
     aliases: normalizeAliases(raw.aliases),
   };
 }

@@ -225,7 +225,6 @@ export interface HistoryRunDetail extends HistoryRunSummary {
   skillAnalysisError?: string | null;
   coverageAnalysis?: import("../features/resumes/generator/types").ResumeCoverageAnalysis | null;
   coverageContract?: Record<string, unknown> | null;
-  coverageAudit?: import("../features/resumes/generator/types").ResumeCoverageAudit | null;
 }
 
 export interface GenerateInput {

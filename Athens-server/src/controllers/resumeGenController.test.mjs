@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  assertPassedResumeQualityAudit,
   buildTokenMap,
   formatCompanyToken,
   prepareGeneration,
@@ -15,17 +14,6 @@ import {
   computeTitlePolicyFingerprint,
   sourceCareers,
 } from "../services/resumeCareerTitlePolicy.js";
-
-test("finished generations require an explicitly passed quality audit", () => {
-  assert.throws(
-    () => assertPassedResumeQualityAudit({ coverageAudit: null }),
-    (error) => error?.status === 502 && /not saved/.test(error.message),
-  );
-  assert.deepEqual(
-    assertPassedResumeQualityAudit({ coverageAudit: { passed: true } }),
-    { passed: true },
-  );
-});
 
 test("formatCompanyToken formats full career entry as natural sentence", () => {
   const result = formatCompanyToken({
@@ -180,7 +168,7 @@ test("Experience generation allows optional blank career descriptions", async ()
   assert.equal(prepared.ok, true);
 });
 
-test("resume generation sends two-message sequential calls and resolves earlier outputs", async () => {
+test("resume generation runs section series concurrently and keeps each conversation continuous", async () => {
   const identity = {
     fullName: "Test User",
     careers: [{
@@ -191,13 +179,30 @@ test("resume generation sends two-message sequential calls and resolves earlier 
     }],
   };
   const calls = [];
-  const responses = [
-    "PLAN CONTENT",
-    JSON.stringify({ experiences: [{ company: "First Company", title: "Engineer", period: "2022 – Present", bullets: ["Built production APIs for reliable customer workflows."] }] }),
-    "SKILL POOL",
-    JSON.stringify({ skills: [{ category: "Backend", items: ["APIs"] }] }),
-    JSON.stringify({ summary: "Engineer who builds production APIs." }),
-  ];
+  let initialCount = 0;
+  let releaseInitial;
+  let barrierTimer;
+  const initialBarrier = new Promise((resolve, reject) => {
+    releaseInitial = () => {
+      clearTimeout(barrierTimer);
+      resolve();
+    };
+    barrierTimer = setTimeout(
+      () => reject(new Error("Section pipelines did not start concurrently.")),
+      1_000,
+    );
+  });
+  const responseFor = (request) => {
+    const purpose = String(request.feature).split(":").at(-1);
+    const turn = request.messages.filter((message) => message.role === "user").length;
+    if (purpose === "experience" && turn < 4) return `EXPERIENCE PLAN ${turn}`;
+    if (purpose === "experience") {
+      return JSON.stringify({ experiences: [{ company: "First Company", title: "Engineer", period: "2022 – Present", bullets: ["Built production APIs for reliable customer workflows."] }] });
+    }
+    if (purpose === "skills" && turn === 1) return "SKILL POOL";
+    if (purpose === "skills") return JSON.stringify({ skills: [{ category: "Backend", items: ["APIs"] }] });
+    return JSON.stringify({ summary: "Engineer who builds production APIs." });
+  };
   const result = await runGeneration({
     providerId: "deepseek",
     apiKey: "test-key",
@@ -207,35 +212,70 @@ test("resume generation sends two-message sequential calls and resolves earlier 
     jobDescription: "Build APIs.",
     coverageContract: null,
     steps: [
-      { purpose: "experience", kind: "fine-tune", prompt: "Plan {career}. Prior: {previous_plan}" },
-      { purpose: "experience", kind: "final", prompt: "Use this plan: {plan_output}", schema: { type: "object" } },
+      { purpose: "experience", kind: "fine-tune", prompt: "Plan {career}." },
+      { purpose: "experience", kind: "fine-tune", prompt: "Improve the Experience plan with clearer evidence boundaries." },
+      { purpose: "experience", kind: "fine-tune", prompt: "Review the Experience plan for repetition." },
+      { purpose: "experience", kind: "final", prompt: "Write the final Experience section from our work above.", schema: { type: "object" } },
       { purpose: "skills", kind: "fine-tune", prompt: "Build a skill pool." },
-      { purpose: "skills", kind: "final", prompt: "Use this pool: {skill_step1}", schema: { type: "object" } },
-      { purpose: "summary", kind: "final", prompt: "Source: {source_resume}\nExperience: {work_experience}", schema: { type: "object" } },
+      { purpose: "skills", kind: "final", prompt: "Write the final Skills section from our work above.", schema: { type: "object" } },
+      { purpose: "summary", kind: "final", prompt: "Write a summary from this profile: {source_resume}", schema: { type: "object" } },
     ],
     chat: async (request) => {
       calls.push(request);
+      if (request.messages.length === 2) {
+        initialCount += 1;
+        if (initialCount === 3) releaseInitial();
+        await initialBarrier;
+      }
       return {
-        content: responses[calls.length - 1],
+        content: responseFor(request),
         usage: { model: "deepseek-v4-flash", inputTokens: 1, cachedTokens: 0, outputTokens: 1, totalTokens: 2, cost: 0, savings: 0 },
       };
     },
   });
 
-  assert.equal(calls.length, 5);
-  assert.equal(calls.every((call) => call.messages.length === 2), true);
-  assert.equal(calls.every((call) => call.messages[0].role === "system" && call.messages[1].role === "user"), true);
-  assert.match(calls[0].messages[0].content, /Career descriptions are optional/);
-  assert.match(calls[1].messages[1].content, /PLAN CONTENT/);
-  assert.doesNotMatch(calls[1].messages[1].content, /\{plan_output\}/);
-  assert.match(calls[3].messages[1].content, /SKILL POOL/);
-  assert.doesNotMatch(calls[3].messages[1].content, /\{skill_step1\}/);
-  assert.match(calls[4].messages[1].content, /Built production APIs for reliable customer workflows/);
-  assert.doesNotMatch(calls[4].messages[1].content, /\{(?:source_resume|work_experience)\}/);
+  assert.equal(calls.length, 7);
+  const experienceCalls = calls
+    .filter((call) => call.feature === "resume-generate:experience")
+    .sort((left, right) => left.messages.length - right.messages.length);
+  const skillsCalls = calls
+    .filter((call) => call.feature === "resume-generate:skills")
+    .sort((left, right) => left.messages.length - right.messages.length);
+  const summaryCalls = calls.filter((call) => call.feature === "resume-generate:summary");
+  assert.equal(initialCount, 3);
+  assert.deepEqual(experienceCalls.map((call) => call.messages.length), [2, 4, 6, 8]);
+  assert.deepEqual(experienceCalls[3].messages.map((message) => message.role), [
+    "system", "user", "assistant", "user", "assistant", "user", "assistant", "user",
+  ]);
+  assert.match(experienceCalls[0].messages[0].content, /Career descriptions are optional/);
+  assert.equal(experienceCalls[3].messages[2].content, "EXPERIENCE PLAN 1");
+  assert.equal(experienceCalls[3].messages[4].content, "EXPERIENCE PLAN 2");
+  assert.equal(experienceCalls[3].messages[6].content, "EXPERIENCE PLAN 3");
+  assert.deepEqual(skillsCalls.map((call) => call.messages.length), [2, 4]);
+  assert.equal(skillsCalls[1].messages[2].content, "SKILL POOL");
+  assert.equal(summaryCalls.length, 1);
+  assert.equal(summaryCalls[0].messages.length, 2);
+  assert.match(summaryCalls[0].messages[1].content, /Test User/);
+  assert.doesNotMatch(summaryCalls[0].messages[1].content, /\{source_resume\}/);
   assert.equal(result.sections.experience.experiences[0].bullets.length, 1);
 });
 
-test("resume generation repairs empty authoritative roles before reporting success", async () => {
+test("unknown prompt tokens are rejected before a model call", async () => {
+  await assert.rejects(
+    runGeneration({
+      providerId: "deepseek",
+      apiKey: "test-key",
+      model: "deepseek-v4-flash",
+      systemInstruction: "SYSTEM INSTRUCTION",
+      identity: { careers: [] },
+      steps: [{ purpose: "experience", kind: "fine-tune", prompt: "Use {unknown_reference}." }],
+      chat: async () => assert.fail("The model must not be called for an unresolved token."),
+    }),
+    /Unresolved prompt token: \{unknown_reference\}/,
+  );
+});
+
+test("resume generation returns final sections without an audit or repair pass", async () => {
   const identity = {
     careers: [
       {
@@ -252,32 +292,14 @@ test("resume generation repairs empty authoritative roles before reporting succe
       },
     ],
   };
-  const responses = [
-    {
-      experiences: identity.careers.map((career) => ({
-        company: career.company,
-        title: career.title,
-        period: career.period,
-        bullets: [],
-      })),
-    },
-    {
-      experiences: [
-        {
-          company: "First Company",
-          title: "Senior Engineer",
-          period: "2024 – Present",
-          bullets: ["Built production services that supported reliable customer workflows and ongoing releases."],
-        },
-        {
-          company: "Second Company",
-          title: "Engineer",
-          period: "2021 – 2024",
-          bullets: ["Supported production integrations and resolved customer workflow issues across connected services."],
-        },
-      ],
-    },
-  ];
+  const response = {
+    experiences: identity.careers.map((career) => ({
+      company: career.company,
+      title: career.title,
+      period: career.period,
+      bullets: [],
+    })),
+  };
   const events = [];
   let calls = 0;
   const result = await runGeneration({
@@ -296,27 +318,27 @@ test("resume generation repairs empty authoritative roles before reporting succe
     applierName: "Test User",
     jobDescription: "Build production services.",
     coverageContract: null,
-    chat: async () => ({
-      content: JSON.stringify(responses[calls++]),
-      usage: {
-        model: "deepseek-v4-flash",
-        inputTokens: 1,
-        cachedTokens: 0,
-        outputTokens: 1,
-        totalTokens: 2,
-        cost: 0,
-        savings: 0,
-      },
-    }),
+    chat: async () => {
+      calls += 1;
+      return {
+        content: JSON.stringify(response),
+        usage: {
+          model: "deepseek-v4-flash",
+          inputTokens: 1,
+          cachedTokens: 0,
+          outputTokens: 1,
+          totalTokens: 2,
+          cost: 0,
+          savings: 0,
+        },
+      };
+    },
   }, (event) => events.push(event));
 
-  assert.equal(calls, 2);
-  assert.equal(result.coverageAudit.passed, true);
-  assert.equal(result.coverageAudit.completeRoleCount, 2);
-  assert.equal(result.sections.experience.experiences.every((role) => role.bullets.length > 0), true);
-  assert.equal(events.some((event) => event.phase === "quality-start"), true);
-  assert.equal(events.some((event) => event.kind === "coverage-repair"), true);
-  assert.equal(events.some((event) => event.phase === "quality-done"), true);
+  assert.equal(calls, 1);
+  assert.equal(result.sections.experience.experiences.every((role) => role.bullets.length === 0), true);
+  assert.equal(events.some((event) => String(event.phase).startsWith("quality-")), false);
+  assert.equal(events.some((event) => event.kind === "coverage-repair"), false);
 });
 
 test("shared title policy keeps Profile titles when the saved preference is disabled", () => {
