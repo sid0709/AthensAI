@@ -17,13 +17,18 @@ function isJob(value: unknown): value is Job {
     "location",
     "workMode",
     "employmentType",
+    "seniority",
+    "salary",
+    "experience",
     "postedAt",
-    "summary",
+    "applicantsText",
     "description",
     "applyUrl"
   ].every((key) => typeof job[key] === "string") &&
     Array.isArray(job.responsibilities) &&
-    Array.isArray(job.qualifications);
+    Array.isArray(job.qualifications) &&
+    Array.isArray(job.skills) &&
+    Array.isArray(job.tags);
 }
 
 export const athensJobsRepository: JobsRepository = {

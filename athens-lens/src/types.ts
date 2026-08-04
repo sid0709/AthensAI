@@ -27,8 +27,13 @@ export interface Job {
   location: string;
   workMode: WorkMode;
   employmentType: string;
+  seniority: string;
+  salary: string;
+  experience: string;
   postedAt: string;
-  summary: string;
+  skills: readonly string[];
+  tags: readonly string[];
+  applicantsText: string;
   description: string;
   responsibilities: readonly string[];
   qualifications: readonly string[];

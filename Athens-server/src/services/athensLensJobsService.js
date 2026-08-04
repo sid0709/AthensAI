@@ -16,6 +16,13 @@ const JOB_PROJECTION = {
 	location: 1,
 	workMode: 1,
 	employmentType: 1,
+	seniority: 1,
+	salary: 1,
+	experience: 1,
+	skills: 1,
+	aiSkills: 1,
+	tags: 1,
+	applicants: 1,
 	description: 1,
 	jobDescription: 1,
 	responsibilities: 1,
@@ -44,19 +51,50 @@ function textList(value) {
 	return value.map((item) => plainText(item)).filter(Boolean);
 }
 
+function uniqueTextList(values) {
+	const seen = new Set();
+	return values.flatMap((value) => {
+		const normalized = plainText(value);
+		const key = normalized.toLocaleLowerCase("en-US");
+		if (!normalized || seen.has(key)) return [];
+		seen.add(key);
+		return [normalized];
+	});
+}
+
+function displayText(value) {
+	return Array.isArray(value) ? uniqueTextList(value).join(", ") : text(value);
+}
+
+function skillNames(job) {
+	const analyzed = Array.isArray(job?.aiSkills)
+		? job.aiSkills.map((skill) => typeof skill === "string" ? skill : skill?.name)
+		: [];
+	return uniqueTextList([...analyzed, ...textList(job?.skills)]);
+}
+
+function applicantsText(value) {
+	if (typeof value === "string") return plainText(value);
+	if (!value || typeof value !== "object") return "";
+	if (text(value.text)) return text(value.text);
+	const count = Number(value.count);
+	return Number.isFinite(count) && count >= 0 ? `${count} applicants` : "";
+}
+
 function companyName(job) {
 	if (typeof job?.company === "string") return text(job.company);
 	return text(job?.company?.name) || text(job?.companyName);
 }
 
 function workMode(value) {
-	const normalized = text(value).toLowerCase();
+	const displayed = displayText(value);
+	const normalized = displayed.toLowerCase();
 	if (normalized.includes("remote")) return "Remote";
 	if (normalized.includes("hybrid")) return "Hybrid";
 	if (normalized.includes("on-site") || normalized.includes("onsite") || normalized.includes("office")) {
 		return "On-site";
 	}
-	return text(value) || "Not specified";
+	return displayed || "Not specified";
 }
 
 function isoDate(value) {
@@ -74,14 +112,6 @@ function httpUrl(value) {
 	}
 }
 
-function summarize(description, title, company) {
-	if (!description) return `${title} at ${company}.`;
-	if (description.length <= 180) return description;
-	const shortened = description.slice(0, 181);
-	const lastSpace = shortened.lastIndexOf(" ");
-	return `${shortened.slice(0, lastSpace > 120 ? lastSpace : 180).trimEnd()}…`;
-}
-
 export function mapAthensLensJob(job, queueJob) {
 	const details = job?.details && typeof job.details === "object" ? job.details : {};
 	const title = text(job?.title) || text(queueJob?.title) || "Untitled role";
@@ -92,11 +122,16 @@ export function mapAthensLensJob(job, queueJob) {
 		id: String(job?._id || queueJob?.jobId || ""),
 		title,
 		company,
-		location: text(job?.location) || text(details.position) || "Not specified",
+		location: displayText(job?.location) || displayText(details.position) || "Not specified",
 		workMode: workMode(job?.workMode || details.remote),
-		employmentType: text(job?.employmentType) || text(details.time) || "Not specified",
+		employmentType: displayText(job?.employmentType) || displayText(details.time) || "Not specified",
+		seniority: displayText(job?.seniority) || displayText(details.seniority) || "Not specified",
+		salary: displayText(job?.salary) || displayText(details.money) || "Undisclosed",
+		experience: displayText(job?.experience) || displayText(details.date),
 		postedAt: isoDate(job?.postedAt || job?._createdAt || job?.createdAt),
-		summary: summarize(description, title, company),
+		skills: skillNames(job),
+		tags: uniqueTextList(textList(job?.tags)),
+		applicantsText: applicantsText(job?.applicants),
 		description: description || "No job description has been provided.",
 		responsibilities: textList(job?.responsibilities),
 		qualifications: textList(job?.qualifications),
@@ -135,4 +170,4 @@ export async function listAthensLensJobs(applierName, { limit = 100 } = {}) {
 	});
 }
 
-export const athensLensJobsTest = { httpUrl, isoDate, plainText, summarize, workMode };
+export const athensLensJobsTest = { applicantsText, displayText, httpUrl, isoDate, plainText, skillNames, workMode };

@@ -55,6 +55,9 @@ describe("Athens Lens app", () => {
 
     expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();
     expect(screen.getByText("8", { selector: ".job-count" })).toBeInTheDocument();
+    expect(screen.getByText("Product design")).toBeInTheDocument();
+    expect(screen.getByText("Hybrid")).toBeInTheDocument();
+    expect(screen.getByText("Senior level")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: new RegExp(MOCK_JOBS[1].title) }));
     expect(screen.getByRole("heading", { name: MOCK_JOBS[1].title })).toBeInTheDocument();

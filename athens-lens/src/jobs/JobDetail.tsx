@@ -1,4 +1,18 @@
-import { ArrowLeft, ArrowUpRight, BriefcaseBusiness, CalendarDays, MapPin, Sparkles, Video } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Banknote,
+  BriefcaseBusiness,
+  CalendarDays,
+  GraduationCap,
+  MapPin,
+  Sparkles,
+  Tag,
+  Users,
+  Video,
+  Wifi
+} from "lucide-react";
+import type { ReactNode } from "react";
 import type { Job } from "../types";
 
 interface JobDetailProps {
@@ -21,6 +35,14 @@ function formatPostedAt(value: string): string {
   return value && !Number.isNaN(date.getTime()) ? DATE_FORMAT.format(date) : "Not listed";
 }
 
+function hasValue(value: string): boolean {
+  return Boolean(value && value !== "Not specified" && value !== "—");
+}
+
+function JobChip({ children, icon, skill = false }: { children: ReactNode; icon?: ReactNode; skill?: boolean }) {
+  return <span className={`job-chip${skill ? " job-chip--skill" : ""}`}>{icon}{children}</span>;
+}
+
 export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDetailProps) {
   return (
     <article className="job-detail" aria-labelledby="job-detail-title">
@@ -39,24 +61,27 @@ export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDet
             <div className="detail-title-group">
               <p className="company-name">{job.company}</p>
               <h1 id="job-detail-title">{job.title}</h1>
-              <p className="job-summary">{job.summary}</p>
+              <div className="job-tag-groups">
+                {job.skills.length > 0 ? (
+                  <div className="job-chip-row" aria-label="Job skills">
+                    {job.skills.slice(0, 6).map((skill) => <JobChip key={skill} skill>{skill}</JobChip>)}
+                    {job.skills.length > 6 ? <JobChip skill>+{job.skills.length - 6} more</JobChip> : null}
+                  </div>
+                ) : null}
+                <div className="job-chip-row" aria-label="Job details">
+                  {hasValue(job.location) ? <JobChip icon={<MapPin size={12} aria-hidden="true" />}>{job.location}</JobChip> : null}
+                  {hasValue(job.workMode) ? <JobChip icon={<Wifi size={12} aria-hidden="true" />}>{job.workMode}</JobChip> : null}
+                  {hasValue(job.employmentType) ? <JobChip icon={<BriefcaseBusiness size={12} aria-hidden="true" />}>{job.employmentType}</JobChip> : null}
+                  {hasValue(job.seniority) ? <JobChip icon={<GraduationCap size={12} aria-hidden="true" />}>{job.seniority}</JobChip> : null}
+                  {job.experience ? <JobChip>{job.experience}</JobChip> : null}
+                  {job.salary ? <JobChip icon={<Banknote size={12} aria-hidden="true" />}>{job.salary}</JobChip> : null}
+                  {job.applicantsText ? <JobChip icon={<Users size={12} aria-hidden="true" />}>{job.applicantsText}</JobChip> : null}
+                  {job.postedAt ? <JobChip icon={<CalendarDays size={12} aria-hidden="true" />}>{formatPostedAt(job.postedAt)}</JobChip> : null}
+                  {job.tags.map((tag) => <JobChip key={tag} icon={<Tag size={12} aria-hidden="true" />}>{tag}</JobChip>)}
+                </div>
+              </div>
             </div>
           </section>
-
-          <dl className="job-metadata">
-            <div>
-              <dt><MapPin size={16} aria-hidden="true" />Location</dt>
-              <dd>{job.location} · {job.workMode}</dd>
-            </div>
-            <div>
-              <dt><BriefcaseBusiness size={16} aria-hidden="true" />Employment</dt>
-              <dd>{job.employmentType}</dd>
-            </div>
-            <div>
-              <dt><CalendarDays size={16} aria-hidden="true" />Posted</dt>
-              <dd>{formatPostedAt(job.postedAt)}</dd>
-            </div>
-          </dl>
 
           <section className="detail-section">
             <h2>About the role</h2>

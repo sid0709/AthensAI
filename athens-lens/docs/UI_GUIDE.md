@@ -7,7 +7,7 @@ Athens Lens uses the quiet, neutral visual language of the ChatGPT desktop refer
 1. **Calm before decorative.** Prefer whitespace, typography, and alignment over extra containers or color.
 2. **Navigation feels native.** Job rows are compact, left-aligned, and use a subtle hover or selected fill rather than card shadows.
 3. **Content stays readable.** Detail text uses a constrained measure, relaxed body line height, and clear section rhythm.
-4. **Brand is a signal, not a surface.** Athens blue is reserved for the logo and keyboard focus. Primary actions remain neutral black.
+4. **Brand is a signal, not a surface.** Athens blue is reserved for the logo, keyboard focus, and subtle skill chips. Primary actions remain neutral black.
 5. **Behavior comes from contracts.** Components render the `Job` and `Session` contracts and never branch on employers, titles, locations, or description keywords.
 6. **One product identity.** Chrome already displays Athens Lens in its side-panel header, so authenticated workspace screens do not repeat the logo or product name.
 
@@ -31,7 +31,7 @@ One-off layout geometry may be local when it has no reusable semantic meaning. N
 - Below 560px, navigation and detail are separate full-width panes. Selecting a job opens detail; **All jobs** returns to the list.
 - Jobs and Gmail are equal-width horizontal tabs with content centered on both axes. Never stack these primary routes vertically.
 - At 560px and wider, navigation is fixed at 220px and detail fills the remaining width. The selected job stays visible in both panes.
-- At 760px and wider, navigation becomes 244px and the detail metadata can use three columns.
+- At 760px and wider, navigation becomes 244px while detail content retains its readable maximum width.
 - Both the job list and detail body own their scrolling regions. Headers and footers remain fixed.
 - Avoid horizontal scrolling down to the supported 320px minimum width.
 
@@ -40,6 +40,7 @@ One-off layout geometry may be local when it has no reusable semantic meaning. N
 - Navigation rows use 12px padding, a 12px radius, an 8% neutral selected fill, and no outer card border.
 - Inputs and primary controls are 48px high. Secondary and icon controls are at least 36–40px high.
 - Raised surfaces use a 1px neutral border before adding shadow.
+- Job headers show data-backed skill and metadata chips instead of description excerpts. Skill chips may use the subtle Athens-blue token pair; location, work mode, employment type, seniority, salary, and other job tags remain neutral.
 - Every interactive element needs default, hover, active where useful, disabled where applicable, and `:focus-visible` states.
 - Loading, empty, and error states use concise language and the same neutral surface hierarchy.
 - Mock recording uses a persistent neutral dock with a single red status dot. Confirmation and AI assistance use white modal or drawer surfaces, not colored dashboards.
