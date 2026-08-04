@@ -19,7 +19,8 @@ export function RecordingDock({ state, onRestart, onComplete, onAskAi }: Recordi
       <div className="recording-status">
         <span className="recording-dot" aria-hidden="true" />
         <span>
-          <strong>Recording application</strong>
+          <strong>Recording application ({state.job.company})</strong>
+          <small>Role · {state.job.title}</small>
           <small>Demo MP4 · {formatRecordingTime(state.elapsedSeconds)}</small>
         </span>
       </div>

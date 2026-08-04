@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { mockInboxRepository } from "./inbox/inboxRepository";
 import { MOCK_JOBS } from "./jobs/mockJobs";
 import type { AuthStore, Credentials, JobsRepository, Session } from "./types";
 
@@ -58,6 +59,11 @@ describe("Athens Lens app", () => {
     expect(screen.getByText("Product design")).toBeInTheDocument();
     expect(screen.getByText("Hybrid")).toBeInTheDocument();
     expect(screen.getByText("Senior level")).toBeInTheDocument();
+    expect(screen.getByText("Posted Aug 3, 2026")).toBeInTheDocument();
+    expect(container.querySelector('.company-logo--detail img')).toHaveAttribute(
+      "src",
+      MOCK_JOBS[0].companyLogoUrl
+    );
 
     await user.click(screen.getByRole("button", { name: new RegExp(MOCK_JOBS[1].title) }));
     expect(screen.getByRole("heading", { name: MOCK_JOBS[1].title })).toBeInTheDocument();
@@ -91,7 +97,13 @@ describe("Athens Lens app", () => {
 
   it("routes to Gmail, opens a security email, and copies its code", async () => {
     const user = userEvent.setup();
-    const { container } = render(<App authStore={makeAuthStore(makeSession())} jobsRepository={jobsRepository} />);
+    const { container } = render(
+      <App
+        authStore={makeAuthStore(makeSession())}
+        jobsRepository={jobsRepository}
+        inboxRepository={mockInboxRepository}
+      />
+    );
 
     await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
     await user.click(screen.getByRole("button", { name: /Gmail inbox/ }));
@@ -110,7 +122,13 @@ describe("Athens Lens app", () => {
   it("starts, restarts, completes, and reviews a mock bid recording", async () => {
     const user = userEvent.setup();
     const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
-    render(<App authStore={makeAuthStore(makeSession())} jobsRepository={jobsRepository} />);
+    render(
+      <App
+        authStore={makeAuthStore(makeSession())}
+        jobsRepository={jobsRepository}
+        inboxRepository={mockInboxRepository}
+      />
+    );
 
     await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
     await user.click(screen.getByRole("button", { name: "Apply & record" }));
@@ -126,7 +144,8 @@ describe("Athens Lens app", () => {
     await user.click(screen.getByRole("button", { name: "Close AI answers" }));
 
     await user.click(screen.getByRole("button", { name: /Gmail inbox/ }));
-    expect(await screen.findByText("Recording application")).toBeInTheDocument();
+    expect(await screen.findByText(`Recording application (${MOCK_JOBS[0].company})`)).toBeInTheDocument();
+    expect(screen.getByText(`Role · ${MOCK_JOBS[0].title}`)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Complete Bid" }));
     expect(screen.getByRole("dialog", { name: "Did you submit this bid?" })).toBeInTheDocument();

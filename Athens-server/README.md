@@ -18,6 +18,7 @@ Athens Lens uses a separate session boundary from Firebase owner auth and the le
 
 - `POST /api/athens-lens/auth/signin` with `{ "username", "password" }` validates the profile username, `vendorAllowed`, and the bcrypt vendor access password. It returns an opaque expiring bearer session.
 - `GET /api/athens-lens/jobs` with `Authorization: Bearer <token>` returns only that session profile's current Bid Ready jobs.
+- `GET /api/athens-lens/gmail/messages` reads the profile's recent Gmail inbox through its stored Google app password and returns safe text content plus detected verification codes.
 - `POST /api/athens-lens/auth/signout` with the same bearer token revokes the Redis session.
 
 No Athens Lens endpoint accepts an applier name from the client. Set `ATHENS_LENS_SESSION_TTL_SECONDS` to override the default 12-hour lifetime.

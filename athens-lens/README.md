@@ -2,7 +2,7 @@
 
 Athens Lens is a Chrome side-panel app built with React, Vite, and WXT.
 
-Authentication and the Jobs workspace use Athens-server. Sign-in accepts an Athens profile username plus that profile's vendor access password, and Jobs shows its current Bid Ready queue. The Gmail inbox, bid recording, and AI form-answer experiences remain simulated in this MVP.
+Authentication, Bid Ready jobs, and the recent Gmail inbox use Athens-server. Sign-in accepts an Athens profile username plus that profile's vendor access password. Gmail reads the profile's configured email and Google app password server-side; those credentials are never sent to the extension. Bid recording and AI form answers remain simulated in this MVP.
 
 ## Development
 

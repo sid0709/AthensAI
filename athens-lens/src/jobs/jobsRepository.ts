@@ -14,6 +14,7 @@ function isJob(value: unknown): value is Job {
     "id",
     "title",
     "company",
+    "companyLogoUrl",
     "location",
     "workMode",
     "employmentType",

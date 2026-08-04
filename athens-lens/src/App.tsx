@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { LoginScreen } from "./auth/LoginScreen";
 import { athensAuthStore } from "./auth/authStore";
 import { InboxWorkspace } from "./inbox/InboxWorkspace";
-import { mockInboxRepository } from "./inbox/inboxRepository";
-import { MOCK_UNREAD_COUNT } from "./inbox/mockInbox";
+import { athensInboxRepository } from "./inbox/inboxRepository";
 import { JobsWorkspace } from "./jobs/JobsWorkspace";
 import { athensJobsRepository } from "./jobs/jobsRepository";
 import { useWorkspaceRoute } from "./navigation/routes";
@@ -29,12 +28,14 @@ type SessionState =
 export function App({
   authStore = athensAuthStore,
   jobsRepository = athensJobsRepository,
-  inboxRepository = mockInboxRepository
+  inboxRepository = athensInboxRepository
 }: AppProps) {
   const [sessionState, setSessionState] = useState<SessionState>({ status: "restoring" });
   const [aiJob, setAiJob] = useState<Job | null>(null);
   const [jobsCount, setJobsCount] = useState(0);
+  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
   const handleJobsLoaded = useCallback((count: number) => setJobsCount(count), []);
+  const handleInboxLoaded = useCallback((count: number) => setInboxUnreadCount(count), []);
   const { route, navigate } = useWorkspaceRoute();
   const recording = useMockRecording();
 
@@ -80,6 +81,7 @@ export function App({
     recording.reset();
     setAiJob(null);
     setJobsCount(0);
+    setInboxUnreadCount(0);
     setSessionState({ status: "ready", session: null });
   };
 
@@ -90,7 +92,7 @@ export function App({
         inboxRepository={inboxRepository}
         route={route}
         jobsCount={jobsCount}
-        inboxUnreadCount={MOCK_UNREAD_COUNT}
+        onInboxLoaded={handleInboxLoaded}
         onNavigate={navigate}
         onNavigateView={navigateView}
         onLogout={logout}
@@ -100,7 +102,7 @@ export function App({
       session={sessionState.session}
       jobsRepository={jobsRepository}
       route={route}
-      inboxUnreadCount={MOCK_UNREAD_COUNT}
+      inboxUnreadCount={inboxUnreadCount}
       recordingJobId={recording.state.status === "recording" ? recording.state.job?.id ?? null : null}
       onNavigate={navigate}
       onNavigateView={navigateView}

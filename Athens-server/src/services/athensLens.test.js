@@ -3,13 +3,14 @@ import test from "node:test";
 import { athensLensAuthTest } from "../middleware/athensLensAuth.js";
 import { mapAthensLensJob } from "./athensLensJobsService.js";
 import { athensLensSessionTest } from "./athensLensSessionService.js";
+import { mapAthensLensGmailMessage } from "../controllers/athensLensMailController.js";
 
 test("Athens Lens job mapping preserves server data without domain-specific branches", () => {
 	const result = mapAthensLensJob(
 		{
 			_id: "job-1",
 			title: "Example role",
-			company: { name: "Example company" },
+			company: { name: "Example company", logo: "//cdn.example.com/company.png" },
 			details: { position: "Chicago, IL", remote: "Hybrid", time: "Contract" },
 			seniority: "Mid level",
 			salary: "$100k–$120k",
@@ -31,6 +32,7 @@ test("Athens Lens job mapping preserves server data without domain-specific bran
 		id: "job-1",
 		title: "Example role",
 		company: "Example company",
+		companyLogoUrl: "https://cdn.example.com/company.png",
 		location: "Chicago, IL",
 		workMode: "Hybrid",
 		employmentType: "Contract",
@@ -47,6 +49,24 @@ test("Athens Lens job mapping preserves server data without domain-specific bran
 		applyUrl: "https://example.com/apply/1",
 		bidReadyAt: "2026-08-04",
 	});
+});
+
+test("Athens Lens maps live Gmail content and extracts security codes", () => {
+	const message = mapAthensLensGmailMessage({
+		uid: 42,
+		from: "security@example.com",
+		fromName: "Account Security",
+		subject: "Your security code",
+		date: "2026-08-04T12:30:00.000Z",
+		bodyText: "Use security code: 482917\n\nThis code expires soon.",
+		seen: false,
+	});
+
+	assert.equal(message.id, "42");
+	assert.equal(message.securityCode, "482917");
+	assert.equal(message.kind, "security-code");
+	assert.equal(message.isUnread, true);
+	assert.deepEqual(message.body, ["Use security code: 482917", "This code expires soon."]);
 });
 
 test("Athens Lens mapping rejects unsafe application schemes", () => {

@@ -1,6 +1,8 @@
+import { AlertCircle, Mail, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AthensApiError } from "../api/athensApi";
 import type { WorkspaceRoute, WorkspaceView } from "../navigation/routes";
-import type { InboxMessage, InboxRepository, Session } from "../types";
+import type { InboxRepository, InboxSnapshot, Session } from "../types";
 import { InboxList } from "./InboxList";
 import { MessageDetail } from "./MessageDetail";
 
@@ -9,7 +11,7 @@ interface InboxWorkspaceProps {
   inboxRepository: InboxRepository;
   route: WorkspaceRoute;
   jobsCount: number;
-  inboxUnreadCount: number;
+  onInboxLoaded(unreadCount: number): void;
   onNavigate(route: WorkspaceRoute): void;
   onNavigateView(view: WorkspaceView): void;
   onLogout(): Promise<void>;
@@ -20,24 +22,40 @@ export function InboxWorkspace({
   inboxRepository,
   route,
   jobsCount,
-  inboxUnreadCount,
+  onInboxLoaded,
   onNavigate,
   onNavigateView,
   onLogout
 }: InboxWorkspaceProps) {
-  const [messages, setMessages] = useState<readonly InboxMessage[] | null>(null);
+  const [loadState, setLoadState] = useState<
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | { status: "ready"; snapshot: InboxSnapshot }
+  >({ status: "loading" });
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     let isActive = true;
-    inboxRepository.listMessages().then((nextMessages) => {
-      if (isActive) setMessages(nextMessages);
-    });
+    inboxRepository.listMessages(session).then(
+      (snapshot) => {
+        if (!isActive) return;
+        setLoadState({ status: "ready", snapshot });
+        onInboxLoaded(snapshot.unreadCount);
+      },
+      (error) => {
+        if (!isActive) return;
+        setLoadState({
+          status: "error",
+          message: error instanceof AthensApiError ? error.message : "Gmail couldn't be loaded."
+        });
+      }
+    );
     return () => {
       isActive = false;
     };
-  }, [inboxRepository]);
+  }, [inboxRepository, loadAttempt, onInboxLoaded, session]);
 
-  if (!messages) {
+  if (loadState.status === "loading") {
     return (
       <main className="app-status" role="status">
         <div className="status-logo"><MailStatusIcon /></div>
@@ -45,6 +63,26 @@ export function InboxWorkspace({
       </main>
     );
   }
+
+  if (loadState.status === "error") {
+    return (
+      <main className="app-status" role="status">
+        <div className="status-logo"><AlertCircle size={22} aria-hidden="true" /></div>
+        <p>{loadState.message}</p>
+        <div className="status-actions">
+          <button className="secondary-button" type="button" onClick={() => {
+            setLoadState({ status: "loading" });
+            setLoadAttempt((current) => current + 1);
+          }}>
+            <RefreshCw size={16} aria-hidden="true" />Try again
+          </button>
+          <button className="text-button" type="button" onClick={() => void onLogout()}>Sign out</button>
+        </div>
+      </main>
+    );
+  }
+
+  const { messages } = loadState.snapshot;
 
   const selectedMessageId = route.itemId ?? messages[0]?.id ?? null;
   const selectedMessage = messages.find((message) => message.id === selectedMessageId) ?? messages[0] ?? null;
@@ -55,7 +93,7 @@ export function InboxWorkspace({
         messages={messages}
         selectedMessageId={selectedMessageId}
         jobsCount={jobsCount}
-        inboxUnreadCount={inboxUnreadCount}
+        inboxUnreadCount={loadState.snapshot.unreadCount}
         session={session}
         onSelect={(messageId) => onNavigate({ view: "inbox", itemId: messageId })}
         onNavigate={onNavigateView}
@@ -69,5 +107,5 @@ export function InboxWorkspace({
 }
 
 function MailStatusIcon() {
-  return <span aria-hidden="true">✉</span>;
+  return <Mail size={22} aria-hidden="true" />;
 }

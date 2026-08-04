@@ -278,6 +278,7 @@ export async function fetchRecentInboxWithBodies(email, password, count = 10, ma
 					date: parsed.date ?? message.envelope?.date ?? null,
 					bodyText: textBody || '',
 					bodyHtml: extractHtmlBody(parsed) || '',
+					seen: message.flags?.has('\\Seen') ?? false,
 				});
 			} catch {
 				/* skip unparseable message */

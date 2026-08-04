@@ -6,6 +6,7 @@ const JOB_PROJECTION = {
 	title: 1,
 	company: 1,
 	companyName: 1,
+	companyIcon: 1,
 	applyLink: 1,
 	jobLink: 1,
 	source: 1,
@@ -105,7 +106,8 @@ function isoDate(value) {
 
 function httpUrl(value) {
 	try {
-		const url = new URL(text(value));
+		const raw = text(value);
+		const url = new URL(raw.startsWith("//") ? `https:${raw}` : raw);
 		return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
 	} catch {
 		return "";
@@ -122,6 +124,7 @@ export function mapAthensLensJob(job, queueJob) {
 		id: String(job?._id || queueJob?.jobId || ""),
 		title,
 		company,
+		companyLogoUrl: httpUrl(job?.company?.logo || job?.companyIcon),
 		location: displayText(job?.location) || displayText(details.position) || "Not specified",
 		workMode: workMode(job?.workMode || details.remote),
 		employmentType: displayText(job?.employmentType) || displayText(details.time) || "Not specified",

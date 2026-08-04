@@ -1,7 +1,7 @@
-import { KeyRound, Mail } from "lucide-react";
 import { WorkspaceSidebar } from "../navigation/WorkspaceSidebar";
 import type { WorkspaceView } from "../navigation/routes";
 import type { InboxMessage, Session } from "../types";
+import { MailSenderIcon } from "./MailSenderIcon";
 
 interface InboxListProps {
   messages: readonly InboxMessage[];
@@ -18,6 +18,25 @@ const TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "2-digit"
 });
+
+const DAY_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric"
+});
+
+const YEAR_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric"
+});
+
+function formatMessageTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return TIME_FORMAT.format(date);
+  return date.getFullYear() === now.getFullYear() ? DAY_FORMAT.format(date) : YEAR_FORMAT.format(date);
+}
 
 export function InboxList({
   messages,
@@ -50,13 +69,11 @@ export function InboxList({
             aria-current={selectedMessageId === message.id ? "page" : undefined}
             onClick={() => onSelect(message.id)}
           >
-            <span className="job-list-icon" aria-hidden="true">
-              {message.kind === "security-code" ? <KeyRound size={16} /> : <Mail size={16} />}
-            </span>
+            <MailSenderIcon message={message} size="list" />
             <span className="job-list-copy">
               <span className="inbox-sender-row">
                 <strong>{message.sender}</strong>
-                <time dateTime={message.receivedAt}>{TIME_FORMAT.format(new Date(message.receivedAt))}</time>
+                <time dateTime={message.receivedAt}>{formatMessageTime(message.receivedAt)}</time>
               </span>
               <span className="inbox-subject">{message.subject}</span>
               <span>{message.preview}</span>

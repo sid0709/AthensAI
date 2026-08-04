@@ -24,6 +24,7 @@ export interface Job {
   id: string;
   title: string;
   company: string;
+  companyLogoUrl: string;
   location: string;
   workMode: WorkMode;
   employmentType: string;
@@ -60,5 +61,12 @@ export interface InboxMessage {
 }
 
 export interface InboxRepository {
-  listMessages(): Promise<readonly InboxMessage[]>;
+  listMessages(session: Session): Promise<InboxSnapshot>;
+}
+
+export interface InboxSnapshot {
+  accountEmail: string;
+  messages: readonly InboxMessage[];
+  total: number;
+  unreadCount: number;
 }

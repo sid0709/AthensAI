@@ -425,15 +425,35 @@ a:focus-visible {
   background: var(--color-selected);
 }
 
-.job-list-icon {
+.company-logo {
   display: grid;
-  width: 28px;
-  height: 28px;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid rgb(13 13 13 / 9%);
+  background: var(--color-canvas);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  overflow: hidden;
+}
+
+.company-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.company-logo--list {
+  width: 30px;
+  height: 30px;
   border-radius: var(--radius-sm);
-  background: rgb(255 255 255 / 58%);
+  font-size: var(--font-size-xs);
+}
+
+.company-logo--detail {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-lg);
 }
 
 .job-list-copy {
@@ -477,6 +497,30 @@ a:focus-visible {
 .inbox-list-item--unread .inbox-subject {
   color: var(--color-text);
   font-weight: 650;
+}
+
+.mail-sender-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-weight: 650;
+}
+
+.mail-sender-icon--list {
+  width: 30px;
+  height: 30px;
+  font-size: var(--font-size-xs);
+}
+
+.mail-sender-icon--detail {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
 }
 
 .inbox-sender-row {
@@ -629,20 +673,6 @@ a:focus-visible {
   padding: var(--space-3) 0 var(--space-6);
 }
 
-.company-mark {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-subtle);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-}
-
 .detail-title-group {
   min-width: 0;
 }
@@ -694,6 +724,16 @@ a:focus-visible {
   border-color: var(--color-brand-border);
   background: var(--color-brand-subtle);
   color: var(--color-brand-strong);
+}
+
+.job-posted-date {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 550;
 }
 
 .detail-section {
@@ -773,17 +813,6 @@ a:focus-visible {
   border-bottom: 1px solid var(--color-border);
 }
 
-.message-icon {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-subtle);
-}
-
 .message-heading > div {
   min-width: 0;
 }
@@ -854,6 +883,7 @@ a:focus-visible {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
+  white-space: pre-wrap;
 }
 
 /* Mock recording and AI assistance */
@@ -897,8 +927,11 @@ a:focus-visible {
 }
 
 .recording-status small {
+  overflow: hidden;
   color: var(--color-text-muted);
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recording-dot {
@@ -1239,7 +1272,7 @@ a:focus-visible {
 
   .recording-dock {
     left: auto;
-    width: min(460px, calc(100% - 24px));
+    width: min(680px, calc(100% - 24px));
     align-items: center;
     flex-direction: row;
   }

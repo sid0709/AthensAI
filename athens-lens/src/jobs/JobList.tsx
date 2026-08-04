@@ -1,7 +1,8 @@
-import { BriefcaseBusiness, MapPin } from "lucide-react";
+import { MapPin } from "lucide-react";
 import { WorkspaceSidebar } from "../navigation/WorkspaceSidebar";
 import type { WorkspaceView } from "../navigation/routes";
 import type { Job, Session } from "../types";
+import { CompanyLogo } from "./CompanyLogo";
 
 interface JobListProps {
   jobs: readonly Job[];
@@ -45,9 +46,7 @@ export function JobList({
               aria-current={isSelected ? "page" : undefined}
               onClick={() => onSelect(job.id)}
             >
-              <span className="job-list-icon" aria-hidden="true">
-                <BriefcaseBusiness size={16} />
-              </span>
+              <CompanyLogo company={job.company} logoUrl={job.companyLogoUrl} size="list" />
               <span className="job-list-copy">
                 <strong>{job.title}</strong>
                 <span>{job.company}</span>

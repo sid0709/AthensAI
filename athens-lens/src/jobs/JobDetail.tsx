@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Job } from "../types";
+import { CompanyLogo } from "./CompanyLogo";
 
 interface JobDetailProps {
   job: Job;
@@ -57,7 +58,7 @@ export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDet
       <div className="detail-scroll">
         <div className="detail-content">
           <section className="detail-hero">
-            <div className="company-mark" aria-hidden="true">{job.company.charAt(0)}</div>
+            <CompanyLogo company={job.company} logoUrl={job.companyLogoUrl} size="detail" />
             <div className="detail-title-group">
               <p className="company-name">{job.company}</p>
               <h1 id="job-detail-title">{job.title}</h1>
@@ -76,10 +77,14 @@ export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDet
                   {job.experience ? <JobChip>{job.experience}</JobChip> : null}
                   {job.salary ? <JobChip icon={<Banknote size={12} aria-hidden="true" />}>{job.salary}</JobChip> : null}
                   {job.applicantsText ? <JobChip icon={<Users size={12} aria-hidden="true" />}>{job.applicantsText}</JobChip> : null}
-                  {job.postedAt ? <JobChip icon={<CalendarDays size={12} aria-hidden="true" />}>{formatPostedAt(job.postedAt)}</JobChip> : null}
                   {job.tags.map((tag) => <JobChip key={tag} icon={<Tag size={12} aria-hidden="true" />}>{tag}</JobChip>)}
                 </div>
               </div>
+              {job.postedAt ? (
+                <p className="job-posted-date">
+                  <CalendarDays size={14} aria-hidden="true" />Posted {formatPostedAt(job.postedAt)}
+                </p>
+              ) : null}
             </div>
           </section>
 

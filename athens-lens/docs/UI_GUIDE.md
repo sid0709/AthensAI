@@ -43,7 +43,8 @@ One-off layout geometry may be local when it has no reusable semantic meaning. N
 - Job headers show data-backed skill and metadata chips instead of description excerpts. Skill chips may use the subtle Athens-blue token pair; location, work mode, employment type, seniority, salary, and other job tags remain neutral.
 - Every interactive element needs default, hover, active where useful, disabled where applicable, and `:focus-visible` states.
 - Loading, empty, and error states use concise language and the same neutral surface hierarchy.
-- Mock recording uses a persistent neutral dock with a single red status dot. Confirmation and AI assistance use white modal or drawer surfaces, not colored dashboards.
+- Recording uses a persistent neutral dock with a single red status dot and identifies the active company and role. Confirmation and AI assistance use white modal or drawer surfaces, not colored dashboards.
+- Gmail messages use sender initials or a security-key icon, preserve the real text structure, and never inject remote email HTML into the extension page.
 
 ## Typography and icons
 

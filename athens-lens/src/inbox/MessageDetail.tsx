@@ -1,6 +1,7 @@
-import { ArrowLeft, Check, Copy, KeyRound, Mail } from "lucide-react";
+import { ArrowLeft, Check, Copy } from "lucide-react";
 import { useState } from "react";
 import type { InboxMessage } from "../types";
+import { MailSenderIcon } from "./MailSenderIcon";
 
 interface MessageDetailProps {
   message: InboxMessage;
@@ -38,9 +39,7 @@ export function MessageDetail({ message, onBack }: MessageDetailProps) {
       <div className="detail-scroll">
         <div className="detail-content message-content">
           <section className="message-heading">
-            <span className="message-icon" aria-hidden="true">
-              {message.kind === "security-code" ? <KeyRound size={20} /> : <Mail size={20} />}
-            </span>
+            <MailSenderIcon message={message} size="detail" />
             <div>
               <h1 id="message-detail-title">{message.subject}</h1>
               <p><strong>{message.sender}</strong> &lt;{message.senderEmail}&gt;</p>
@@ -62,9 +61,9 @@ export function MessageDetail({ message, onBack }: MessageDetailProps) {
           ) : null}
 
           <section className="message-body">
-            <p>Hi,</p>
-            {message.body.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-            <p>Thanks,<br />{message.sender}</p>
+            {message.body.length > 0
+              ? message.body.map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>)
+              : <p>No text content.</p>}
           </section>
         </div>
       </div>
