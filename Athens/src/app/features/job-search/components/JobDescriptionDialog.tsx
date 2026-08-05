@@ -185,9 +185,30 @@ export function JobDescriptionDialog({
             ) : null}
           </div>
 
-          {resumeRank?.recommendedResumeTechStack ? (
+          {j.recommendedResumeStack || j.useCustomizedResume ? (
+            <div className="mt-4 rounded-xl border border-primary/25 bg-primary/[0.07] px-4 py-3.5 shadow-sm">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-primary">
+                Recommended resume
+              </p>
+              <p className="mt-1 text-base font-bold leading-snug text-foreground">
+                {j.recommendedResumeStack
+                  ? j.recommendedResumeStack
+                  : "Customized resume"}
+              </p>
+              {j.recommendedResumeReason ? (
+                <p className="mt-1.5 text-sm leading-relaxed text-foreground/80">
+                  {j.recommendedResumeReason}
+                </p>
+              ) : null}
+              {j.recommendWarning ? (
+                <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300">
+                  {j.recommendWarning}
+                </p>
+              ) : null}
+            </div>
+          ) : resumeRank?.recommendedResumeTechStack ? (
             <p className="mt-3 text-xs text-muted-foreground">
-              Best fit:{" "}
+              Coverage best fit:{" "}
               <span className="font-semibold text-foreground">
                 {resumeRank.recommendedResumeTechStack}
               </span>{" "}
@@ -195,7 +216,12 @@ export function JobDescriptionDialog({
             </p>
           ) : resumeRankLoading ? (
             <p className="mt-3 text-xs text-muted-foreground">Finding best resume match…</p>
-          ) : null}
+          ) : (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Select jobs on Bid ready and click <span className="font-semibold">Recommend resumes</span>{" "}
+              to choose a Library stack.
+            </p>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 subtle-scroll space-y-6">

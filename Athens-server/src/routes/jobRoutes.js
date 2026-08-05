@@ -19,6 +19,7 @@ import {
 	getJobViewerStatus,
 	getJobSkillRadar,
 } from "../controllers/jobController.js";
+import { recommendResumesBulk } from "../controllers/recommendResumeController.js";
 import {
 	getSkillExtractStatus,
 	startSkillExtract,
@@ -42,6 +43,7 @@ router.post('/jobs/list', getJobsV3);
 router.post('/jobs/list/v3', getJobsV3);
 router.post('/jobs/list/v3/counts', getJobStatusCountsV3);
 router.post('/jobs/list/counts', getJobStatusCountsV3);
+router.post('/jobs/recommend-resumes', recommendResumesBulk);
 router.get('/jobs/skill-extract/status', getSkillExtractStatus);
 router.post('/jobs/skill-extract/start', startSkillExtract);
 router.post('/jobs/skill-extract/stop', stopSkillExtract);

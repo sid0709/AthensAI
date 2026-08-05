@@ -25,7 +25,9 @@ export function useJobDetail(job: Job | null, enabled: boolean) {
     if (!jobId || !job) return;
     const cached = cacheRef.current.get(jobId);
     if (cached?.jobDescription && cached.jobDescription.length > 120) {
-      setDetail(cached);
+      const merged = mergeListJobMetadata(job, cached);
+      cacheRef.current.set(jobId, merged);
+      setDetail(merged);
       return;
     }
 

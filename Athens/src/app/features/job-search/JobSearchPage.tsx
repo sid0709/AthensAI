@@ -17,6 +17,7 @@ import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { runWithConcurrency } from "./lib/run-with-concurrency";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
+import { useRecommendResumes } from "./hooks/useRecommendResumes";
 import { useJobsList } from "./hooks/useJobsList";
 import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
@@ -108,6 +109,7 @@ function JobSearchPageContent() {
     removalStopping,
     bulkProgress,
   } = useJobResumeGeneration(jobs);
+  const { recommendBulk, recommendRunning, recommendProgress } = useRecommendResumes(patchJob);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
 
@@ -356,12 +358,17 @@ function JobSearchPageContent() {
         onRemoveResumes={() => {
           void removeBulkResumes(selectedJobs);
         }}
+        onRecommendResumes={() => {
+          void recommendBulk(selectedJobs);
+        }}
         resumeGenerating={bulkRunning}
         resumeStopping={bulkStopping}
         resumeRemoving={bulkRemoving}
         resumeRemovalStopping={removalStopping}
+        recommendRunning={recommendRunning}
         hasSelectedResumes={hasSelectedResumes}
         resumeProgress={bulkProgress ?? undefined}
+        recommendProgress={recommendProgress ?? undefined}
         page={page}
         pageSize={pageSize}
         total={total}

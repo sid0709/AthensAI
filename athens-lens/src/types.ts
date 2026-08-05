@@ -39,6 +39,12 @@ export interface Job {
   responsibilities: readonly string[];
   qualifications: readonly string[];
   applyUrl: string;
+  bidReadyAt?: string;
+  recommendedResumeStack?: string | null;
+  recommendedResumeReason?: string | null;
+  useCustomizedResume?: boolean;
+  recommendWarning?: string | null;
+  recommendedAt?: string | null;
 }
 
 export interface JobsRepository {

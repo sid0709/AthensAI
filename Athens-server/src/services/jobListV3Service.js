@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { FieldPath } from 'firebase-admin/firestore';
 import { JobSourceTitles } from '../config/jobSources.js';
 import { isExtensionV2Job } from '../config/jobMarketSchema.js';
-import { jobsCollection } from '../db/dataStore.js';
+import { jobsCollection, getVendorTasksCollection } from '../db/dataStore.js';
 import { getFirestoreDb } from './firebase/firebaseAdmin.js';
 import { resolveApplierContext } from './jobListQuery.js';
 import { getProfileJobStatusIndex } from './jobStatusIndexService.js';
@@ -613,6 +613,58 @@ function totalForTab(tab, statusCounts) {
 	return Number(statusCounts[tab] || 0);
 }
 
+/** Attach Library recommend fields from vendor_tasks onto list rows. */
+async function attachRecommendFields(jobs, applierName) {
+	const name = String(applierName || '').trim();
+	const rows = Array.isArray(jobs) ? jobs : [];
+	if (!name || !rows.length) return rows;
+	const collection = getVendorTasksCollection();
+	if (!collection) return rows;
+
+	const jobIds = [...new Set(rows.map((job) => String(job?._id || '').trim()).filter(Boolean))];
+	if (!jobIds.length) return rows;
+
+	const tasks = await collection
+		.find(
+			{ applierName: name, jobId: { $in: jobIds } },
+			{
+				projection: {
+					jobId: 1,
+					recommendedResumeStack: 1,
+					recommendedResumeReason: 1,
+					useCustomizedResume: 1,
+					recommendWarning: 1,
+					recommendedAt: 1,
+				},
+			},
+		)
+		.toArray();
+
+	const byJobId = new Map();
+	for (const task of tasks) {
+		const jobId = String(task.jobId || '').trim();
+		if (!jobId) continue;
+		byJobId.set(jobId, task);
+	}
+	if (!byJobId.size) return rows;
+
+	return rows.map((job) => {
+		const task = byJobId.get(String(job?._id || '').trim());
+		if (!task) return job;
+		return {
+			...job,
+			recommendedResumeStack: task.recommendedResumeStack || null,
+			recommendedResumeReason: task.recommendedResumeReason || null,
+			useCustomizedResume: Boolean(task.useCustomizedResume),
+			recommendWarning: task.recommendWarning || null,
+			recommendedAt:
+				task.recommendedAt instanceof Date
+					? task.recommendedAt.toISOString()
+					: task.recommendedAt || null,
+		};
+	});
+}
+
 export async function listJobsV3(body = {}) {
 	const requestedSort = String(body.sort || 'newest');
 	if (!['newest', 'postedAt_desc'].includes(requestedSort)) {
@@ -651,7 +703,7 @@ export async function listJobsV3(body = {}) {
 		attachCompanyCounts(page.data, isBeta),
 		getJobStatusCountsV3(body),
 	]);
-	page.data = withCompanyCounts;
+	page.data = await attachRecommendFields(withCompanyCounts, body.applierName);
 	let totalJobs = totalForTab(tab, statusCounts);
 	// When sharded badges lag behind the list query, never advertise an empty
 	// page that still returned rows (Bid ready 0 + 3 cards).

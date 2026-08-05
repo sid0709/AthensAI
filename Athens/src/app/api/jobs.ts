@@ -441,3 +441,39 @@ export async function generateJobResume(params: {
   if (!res.ok || !data.success) throw new Error(data.error || `Résumé generation failed (${res.status})`);
   return parseGeneratedJobResume(data, params.applierName);
 }
+
+export type RecommendResumeResultRow = {
+  jobId: string;
+  ok: boolean;
+  error?: string;
+  recommendedResumeStack?: string | null;
+  recommendedResumeReason?: string | null;
+  warning?: string | null;
+  mode?: string | null;
+  useCustomizedResume?: boolean;
+};
+
+export type RecommendResumesResponse = {
+  success?: boolean;
+  error?: string;
+  total?: number;
+  succeeded?: number;
+  failed?: number;
+  results?: RecommendResumeResultRow[];
+};
+
+/** Recommend Library resume stacks for Bid Ready jobs from stored JDs. */
+export async function recommendResumesFromLibrary(params: {
+  applierName: string;
+  jobIds: string[];
+}): Promise<RecommendResumesResponse> {
+  const res = await fetch(`${API_BASE}/jobs/recommend-resumes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      applierName: params.applierName,
+      jobIds: params.jobIds,
+    }),
+  });
+  return parseJson(res);
+}
