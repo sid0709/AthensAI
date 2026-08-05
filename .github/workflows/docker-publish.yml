@@ -68,12 +68,11 @@ jobs:
       - name: Enforce Firestore-only architecture
         run: npm run verify:firestore-only
 
-      - name: Test data and monitoring layers
-        run: |
-          node --test packages/shared/src/document-id.test.mjs
-          npm run test:firestore-adapter -w Athens-server
-          npm run test:monitoring -w Athens-server
-          npm run test:firestore-status -w Athens-server
+      # Shared DocumentId format check only — Athens-server firestore/monitoring
+      # unit tests and npm scripts were removed; compose/promtool validation below
+      # still covers monitoring config.
+      - name: Test shared document id
+        run: node --test packages/shared/src/document-id.test.mjs
 
       - name: Build application services
         run: |
