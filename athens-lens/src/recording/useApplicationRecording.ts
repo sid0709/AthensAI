@@ -1,36 +1,39 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Job, Session } from "../types";
 import type { FormAnswer, PageContext } from "./askAi";
 import { finishAthensLensBid, startAthensLensBid } from "./bidPersist";
+import {
+  createIdleSession,
+  selectRecordingJobIds,
+  toApplicationRecordingState,
+  useRecordingSessionsStore,
+  type ApplicationRecordingState,
+  type RecordingStatus,
+  type TabRecordingSession,
+} from "./recordingSessionsStore";
 
-export type RecordingStatus = "idle" | "recording" | "review" | "saving";
+export type { ApplicationRecordingState, RecordingStatus };
+export { selectRecordingJobIds };
 
-export interface ApplicationRecordingState {
-  status: RecordingStatus;
-  job: Job | null;
-  sessionId: string | null;
-  tabId: number | null;
-  elapsedSeconds: number;
-  restartCount: number;
-  lastOutcome: "submitted" | "not-submitted" | null;
-  error: string | null;
-  savedFilename: string | null;
-  recordedStartAt: string | null;
-  recordedEndAt: string | null;
-}
-
-const INITIAL_STATE: ApplicationRecordingState = {
-  status: "idle",
-  job: null,
-  sessionId: null,
-  tabId: null,
-  elapsedSeconds: 0,
-  restartCount: 0,
-  lastOutcome: null,
-  error: null,
-  savedFilename: null,
-  recordedStartAt: null,
-  recordedEndAt: null,
+type JobSnapshot = {
+  id: string;
+  title: string;
+  company: string;
+  applyUrl: string;
+  companyLogoUrl?: string;
+  location?: string;
+  workMode?: Job["workMode"];
+  employmentType?: string;
+  seniority?: string;
+  salary?: string;
+  experience?: string;
+  postedAt?: string;
+  skills?: readonly string[];
+  tags?: readonly string[];
+  applicantsText?: string;
+  description?: string;
+  responsibilities?: readonly string[];
+  qualifications?: readonly string[];
 };
 
 type StartResponse =
@@ -41,6 +44,13 @@ type StopResponse =
   | { ok: true; tabId: number | null; filename?: string; mimeType?: string; byteLength?: number }
   | { ok: false; tabId?: number | null; error?: string };
 
+type LiveSessionResponse = {
+  sessionId: string;
+  tabId: number;
+  job: JobSnapshot | null;
+  startedAt: number;
+};
+
 function extensionApi() {
   const root = globalThis as typeof globalThis & {
     chrome?: typeof chrome;
@@ -49,12 +59,63 @@ function extensionApi() {
   return root.chrome ?? root.browser ?? null;
 }
 
+function jobSnapshot(job: Job): JobSnapshot {
+  return {
+    id: job.id,
+    title: job.title,
+    company: job.company,
+    applyUrl: job.applyUrl,
+    companyLogoUrl: job.companyLogoUrl,
+    location: job.location,
+    workMode: job.workMode,
+    employmentType: job.employmentType,
+    seniority: job.seniority,
+    salary: job.salary,
+    experience: job.experience,
+    postedAt: job.postedAt,
+    skills: job.skills,
+    tags: job.tags,
+    applicantsText: job.applicantsText,
+    description: job.description,
+    responsibilities: job.responsibilities,
+    qualifications: job.qualifications,
+  };
+}
+
+function jobFromSnapshot(snapshot: JobSnapshot): Job {
+  return {
+    id: snapshot.id,
+    title: snapshot.title,
+    company: snapshot.company,
+    applyUrl: snapshot.applyUrl,
+    companyLogoUrl: snapshot.companyLogoUrl ?? "",
+    location: snapshot.location ?? "",
+    workMode: snapshot.workMode ?? "Remote",
+    employmentType: snapshot.employmentType ?? "",
+    seniority: snapshot.seniority ?? "",
+    salary: snapshot.salary ?? "",
+    experience: snapshot.experience ?? "",
+    postedAt: snapshot.postedAt ?? "",
+    skills: snapshot.skills ?? [],
+    tags: snapshot.tags ?? [],
+    applicantsText: snapshot.applicantsText ?? "",
+    description: snapshot.description ?? "",
+    responsibilities: snapshot.responsibilities ?? [],
+    qualifications: snapshot.qualifications ?? [],
+  };
+}
+
 /**
  * Send the start request immediately from the click turn so Chrome preserves
  * the user gesture for tabCapture in the service worker. The worker captures
- * the tab Athens Lens was opened on, then navigates it to the apply URL.
+ * the preferred (or last invoked) capture-ready tab, then navigates it.
  */
-function startTabRecording(applyUrl: string, sessionId: string): Promise<StartResponse> {
+function startTabRecording(
+  applyUrl: string,
+  sessionId: string,
+  preferredTabId: number | null,
+  job: Job,
+): Promise<StartResponse> {
   const api = extensionApi();
   if (!api?.runtime?.sendMessage) {
     return Promise.resolve({
@@ -69,6 +130,8 @@ function startTabRecording(applyUrl: string, sessionId: string): Promise<StartRe
         type: "ATHENS_LENS_START_RECORDING",
         applyUrl,
         sessionId,
+        preferredTabId,
+        job: jobSnapshot(job),
       }) as Promise<StartResponse | undefined>,
     ).then((response) => {
       if (response?.ok && response.tabId != null) {
@@ -113,8 +176,57 @@ async function stopTabRecording(sessionId: string): Promise<StopResponse> {
   }
 }
 
+async function listLiveSessions(): Promise<LiveSessionResponse[]> {
+  const api = extensionApi();
+  if (!api?.runtime?.sendMessage) return [];
+  try {
+    const response = await api.runtime.sendMessage({
+      type: "ATHENS_LENS_LIST_SESSIONS",
+    }) as { ok?: boolean; sessions?: LiveSessionResponse[] } | undefined;
+    return response?.ok && Array.isArray(response.sessions) ? response.sessions : [];
+  } catch {
+    return [];
+  }
+}
+
+async function queryActiveTabId(): Promise<number | null> {
+  const api = extensionApi();
+  if (!api?.tabs?.query) return null;
+  try {
+    const tabs = await new Promise<chrome.tabs.Tab[]>((resolve, reject) => {
+      api.tabs.query({ active: true, lastFocusedWindow: true }, (result) => {
+        const error = api.runtime?.lastError?.message;
+        if (error) reject(new Error(error));
+        else resolve(result || []);
+      });
+    });
+    const tabId = tabs[0]?.id;
+    return typeof tabId === "number" ? tabId : null;
+  } catch {
+    return null;
+  }
+}
+
 function createSessionId(jobId: string) {
   return `lens-${jobId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function selectUiSession(
+  focusedTabId: number | null,
+  sessionsByTabId: Record<number, TabRecordingSession>,
+): TabRecordingSession | null {
+  const sessions = Object.values(sessionsByTabId);
+  const review = sessions.find((session) => session.status === "review" || session.status === "saving");
+  if (review) return review;
+
+  if (focusedTabId != null && sessionsByTabId[focusedTabId]) {
+    return sessionsByTabId[focusedTabId]!;
+  }
+
+  const recording = sessions.find((session) => session.status === "recording");
+  if (recording) return recording;
+
+  return sessions.find((session) => session.lastOutcome || session.error) ?? null;
 }
 
 export interface FinishBidContext {
@@ -126,45 +238,120 @@ export interface FinishBidContext {
 }
 
 export function useApplicationRecording() {
-  const [state, setState] = useState<ApplicationRecordingState>(INITIAL_STATE);
+  const focusedTabId = useRecordingSessionsStore((state) => state.focusedTabId);
+  const sessionsByTabId = useRecordingSessionsStore((state) => state.sessionsByTabId);
+  const recordingJobIds = useMemo(
+    () => Object.values(sessionsByTabId)
+      .filter((session) => session.status === "recording" && session.job?.id)
+      .map((session) => session.job!.id),
+    [sessionsByTabId],
+  );
+  const activeRecordingCount = useMemo(
+    () => Object.values(sessionsByTabId).filter((session) => session.status === "recording").length,
+    [sessionsByTabId],
+  );
+  const hasLiveRecording = activeRecordingCount > 0;
+
+  const uiSession = useMemo(
+    () => selectUiSession(focusedTabId, sessionsByTabId),
+    [focusedTabId, sessionsByTabId],
+  );
+  const state = useMemo(() => toApplicationRecordingState(uiSession), [uiSession]);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const uiTabIdRef = useRef<number | null>(uiSession?.tabId ?? null);
+  uiTabIdRef.current = uiSession?.tabId ?? null;
 
   useEffect(() => {
-    if (state.status !== "recording") return;
+    const api = extensionApi();
+    let cancelled = false;
+
+    const syncFocus = async () => {
+      const tabId = await queryActiveTabId();
+      if (!cancelled && tabId != null) {
+        const current = useRecordingSessionsStore.getState().focusedTabId;
+        if (current !== tabId) {
+          useRecordingSessionsStore.getState().setFocusedTabId(tabId);
+        }
+      }
+    };
+
+    void syncFocus();
+    void listLiveSessions().then((sessions) => {
+      if (cancelled) return;
+      const store = useRecordingSessionsStore.getState();
+      for (const live of sessions) {
+        const existing = store.sessionsByTabId[live.tabId];
+        if (existing?.status === "recording" || existing?.status === "review" || existing?.status === "saving") {
+          continue;
+        }
+        store.replaceSession(live.tabId, createIdleSession(live.tabId, {
+          status: "recording",
+          job: live.job ? jobFromSnapshot(live.job) : null,
+          sessionId: live.sessionId,
+          elapsedSeconds: Math.max(0, Math.floor((Date.now() - live.startedAt) / 1000)),
+          recordedStartAt: new Date(live.startedAt).toISOString(),
+        }));
+      }
+    });
+
+    const onActivated = (activeInfo: { tabId: number }) => {
+      useRecordingSessionsStore.getState().setFocusedTabId(activeInfo.tabId);
+    };
+    const onRemoved = (tabId: number) => {
+      useRecordingSessionsStore.getState().removeSession(tabId);
+    };
+
+    api?.tabs?.onActivated?.addListener?.(onActivated);
+    api?.tabs?.onRemoved?.addListener?.(onRemoved);
+
+    return () => {
+      cancelled = true;
+      api?.tabs?.onActivated?.removeListener?.(onActivated);
+      api?.tabs?.onRemoved?.removeListener?.(onRemoved);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasLiveRecording) return;
     const interval = window.setInterval(() => {
-      setState((current) => ({ ...current, elapsedSeconds: current.elapsedSeconds + 1 }));
+      useRecordingSessionsStore.getState().tickElapsed();
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [state.status]);
+  }, [hasLiveRecording]);
 
   return {
     state,
+    recordingJobIds,
+    activeRecordingCount,
     async start(job: Job, session: Session) {
       if (!job.applyUrl) {
-        setState({
-          ...INITIAL_STATE,
-          job,
-          error: "This job does not have an application link to record.",
-        });
+        const store = useRecordingSessionsStore.getState();
+        const tabId = store.focusedTabId ?? (await queryActiveTabId());
+        if (tabId != null) {
+          store.replaceSession(tabId, createIdleSession(tabId, {
+            job,
+            error: "This job does not have an application link to record.",
+          }));
+          store.setFocusedTabId(tabId);
+        }
         return;
+      }
+
+      const store = useRecordingSessionsStore.getState();
+      const preferredTabId = store.focusedTabId ?? (await queryActiveTabId());
+      if (preferredTabId != null) {
+        const existing = store.sessionsByTabId[preferredTabId];
+        if (existing?.status === "recording") {
+          store.patchSession(preferredTabId, {
+            error: "This tab is already recording. Complete that bid first, or switch to another capture-ready tab.",
+          });
+          return;
+        }
       }
 
       const sessionId = createSessionId(job.id);
       const recordedStartAt = new Date().toISOString();
-      setState({
-        status: "recording",
-        job,
-        sessionId,
-        tabId: null,
-        elapsedSeconds: 0,
-        restartCount: 0,
-        lastOutcome: null,
-        error: null,
-        savedFilename: null,
-        recordedStartAt,
-        recordedEndAt: null,
-      });
 
       try {
         void startAthensLensBid(session, {
@@ -175,31 +362,53 @@ export function useApplicationRecording() {
           console.warn("Athens Lens: bid start failed", error);
         });
 
-        const response = await startTabRecording(job.applyUrl, sessionId);
+        const response = await startTabRecording(job.applyUrl, sessionId, preferredTabId, job);
         if (!response?.ok) {
-          setState({
-            ...INITIAL_STATE,
-            job,
-            tabId: response?.tabId ?? null,
-            error: response?.error || "Could not start tab recording.",
-          });
+          const errorTabId = response?.tabId ?? preferredTabId;
+          if (errorTabId != null) {
+            useRecordingSessionsStore.getState().replaceSession(
+              errorTabId,
+              createIdleSession(errorTabId, {
+                job,
+                error: response?.error || "Could not start tab recording.",
+              }),
+            );
+            useRecordingSessionsStore.getState().setFocusedTabId(errorTabId);
+          }
           return;
         }
 
-        setState((current) => current.sessionId === sessionId
-          ? { ...current, tabId: response.tabId, error: null }
-          : current);
-      } catch (error) {
-        setState({
-          ...INITIAL_STATE,
+        const nextStore = useRecordingSessionsStore.getState();
+        if (preferredTabId != null && preferredTabId !== response.tabId) {
+          nextStore.removeSession(preferredTabId);
+        }
+        nextStore.setFocusedTabId(response.tabId);
+        nextStore.replaceSession(response.tabId, createIdleSession(response.tabId, {
+          status: "recording",
           job,
-          error: error instanceof Error ? error.message : "Could not start tab recording.",
-        });
+          sessionId,
+          elapsedSeconds: 0,
+          restartCount: 0,
+          recordedStartAt,
+        }));
+      } catch (error) {
+        const errorTabId = preferredTabId;
+        if (errorTabId != null) {
+          useRecordingSessionsStore.getState().replaceSession(
+            errorTabId,
+            createIdleSession(errorTabId, {
+              job,
+              error: error instanceof Error ? error.message : "Could not start tab recording.",
+            }),
+          );
+        }
       }
     },
     async restart(session: Session) {
       const current = stateRef.current;
-      if (!current.job?.applyUrl) return;
+      const tabId = current.tabId ?? uiTabIdRef.current;
+      if (!current.job?.applyUrl || tabId == null) return;
+
       if (current.sessionId) {
         try {
           await stopTabRecording(current.sessionId);
@@ -207,21 +416,18 @@ export function useApplicationRecording() {
           // Best-effort stop before restarting.
         }
       }
+
       const sessionId = createSessionId(current.job.id);
       const recordedStartAt = new Date().toISOString();
-      setState({
-        ...current,
+      const restartCount = current.restartCount + 1;
+      useRecordingSessionsStore.getState().replaceSession(tabId, createIdleSession(tabId, {
         status: "recording",
+        job: current.job,
         sessionId,
-        tabId: null,
-        elapsedSeconds: 0,
-        restartCount: current.restartCount + 1,
-        error: null,
-        savedFilename: null,
-        lastOutcome: null,
+        restartCount,
         recordedStartAt,
-        recordedEndAt: null,
-      });
+      }));
+
       try {
         void startAthensLensBid(session, {
           jobId: current.job.id,
@@ -230,55 +436,67 @@ export function useApplicationRecording() {
         }).catch((error: unknown) => {
           console.warn("Athens Lens: bid restart start failed", error);
         });
-        const response = await startTabRecording(current.job.applyUrl, sessionId);
+        const response = await startTabRecording(
+          current.job.applyUrl,
+          sessionId,
+          tabId,
+          current.job,
+        );
         if (!response?.ok) {
-          setState({
-            ...INITIAL_STATE,
-            job: current.job,
-            tabId: response?.tabId ?? null,
-            restartCount: current.restartCount + 1,
-            error: response?.error || "Could not restart tab recording.",
-          });
+          useRecordingSessionsStore.getState().replaceSession(
+            tabId,
+            createIdleSession(tabId, {
+              job: current.job,
+              restartCount,
+              error: response?.error || "Could not restart tab recording.",
+            }),
+          );
           return;
         }
-        setState((next) => next.sessionId === sessionId
-          ? { ...next, tabId: response.tabId, error: null }
-          : next);
+        if (response.tabId !== tabId) {
+          useRecordingSessionsStore.getState().removeSession(tabId);
+        }
+        useRecordingSessionsStore.getState().setFocusedTabId(response.tabId);
+        useRecordingSessionsStore.getState().replaceSession(
+          response.tabId,
+          createIdleSession(response.tabId, {
+            status: "recording",
+            job: current.job,
+            sessionId,
+            restartCount,
+            recordedStartAt,
+          }),
+        );
       } catch (error) {
-        setState({
-          ...INITIAL_STATE,
-          job: current.job,
-          restartCount: current.restartCount + 1,
-          error: error instanceof Error ? error.message : "Could not restart tab recording.",
-        });
+        useRecordingSessionsStore.getState().replaceSession(
+          tabId,
+          createIdleSession(tabId, {
+            job: current.job,
+            restartCount,
+            error: error instanceof Error ? error.message : "Could not restart tab recording.",
+          }),
+        );
       }
     },
     async complete() {
       const current = stateRef.current;
-      if (!current.job || !current.sessionId) return;
+      const tabId = current.tabId ?? uiTabIdRef.current;
+      if (!current.job || !current.sessionId || tabId == null) return;
+
       try {
         const response = await stopTabRecording(current.sessionId);
         const recordedEndAt = new Date().toISOString();
-        if (!response?.ok) {
-          setState({
-            ...current,
-            status: "review",
-            recordedEndAt,
-            error: response?.error || "Recording stopped, but the file could not be saved.",
-          });
-          return;
-        }
-        setState({
+        useRecordingSessionsStore.getState().replaceSession(tabId, {
+          ...createIdleSession(tabId),
           ...current,
+          tabId,
           status: "review",
-          // Keep sessionId so submit can upload the pending offscreen blob.
-          error: null,
-          savedFilename: response.filename || null,
           recordedEndAt,
+          error: response?.ok ? null : (response?.error || "Recording stopped, but the file could not be saved."),
+          savedFilename: response?.ok ? (response.filename || null) : current.savedFilename,
         });
       } catch (error) {
-        setState({
-          ...current,
+        useRecordingSessionsStore.getState().patchSession(tabId, {
           status: "review",
           recordedEndAt: new Date().toISOString(),
           error: error instanceof Error ? error.message : "Could not finish the recording.",
@@ -286,22 +504,29 @@ export function useApplicationRecording() {
       }
     },
     resume() {
-      setState((current) => current.job
-        ? { ...current, status: "recording", error: null }
-        : current);
+      const tabId = uiTabIdRef.current;
+      if (tabId == null) return;
+      useRecordingSessionsStore.getState().patchSession(tabId, {
+        status: "recording",
+        error: null,
+      });
     },
     async finish(submitted: boolean, context: FinishBidContext) {
       const current = stateRef.current;
-      if (!current.job) {
-        setState({
-          ...INITIAL_STATE,
-          lastOutcome: submitted ? "submitted" : "not-submitted",
-        });
+      const tabId = current.tabId ?? uiTabIdRef.current;
+      if (!current.job || tabId == null) {
+        if (tabId != null) {
+          useRecordingSessionsStore.getState().replaceSession(
+            tabId,
+            createIdleSession(tabId, {
+              lastOutcome: submitted ? "submitted" : "not-submitted",
+            }),
+          );
+        }
         return;
       }
 
-      setState({
-        ...current,
+      useRecordingSessionsStore.getState().patchSession(tabId, {
         status: "saving",
         error: null,
       });
@@ -322,29 +547,34 @@ export function useApplicationRecording() {
           mode: context.mode,
         });
 
-        setState({
-          ...INITIAL_STATE,
-          lastOutcome: submitted ? "submitted" : "not-submitted",
-          job: current.job,
-          error: result.uploadError || null,
-        });
+        useRecordingSessionsStore.getState().replaceSession(
+          tabId,
+          createIdleSession(tabId, {
+            lastOutcome: submitted ? "submitted" : "not-submitted",
+            job: current.job,
+            error: result.uploadError || null,
+          }),
+        );
       } catch (error) {
-        setState({
-          ...current,
+        useRecordingSessionsStore.getState().patchSession(tabId, {
           status: "review",
           error: error instanceof Error ? error.message : "Could not save this bid to Athens.",
         });
       }
     },
     clearOutcome() {
-      setState((current) => ({ ...current, job: null, lastOutcome: null, error: null }));
+      const tabId = uiTabIdRef.current ?? stateRef.current.tabId;
+      if (tabId == null) return;
+      useRecordingSessionsStore.getState().removeSession(tabId);
     },
     reset() {
-      const current = stateRef.current;
-      if (current.sessionId) {
-        void stopTabRecording(current.sessionId).catch(() => undefined);
+      const store = useRecordingSessionsStore.getState();
+      for (const session of Object.values(store.sessionsByTabId)) {
+        if (session.sessionId) {
+          void stopTabRecording(session.sessionId).catch(() => undefined);
+        }
       }
-      setState(INITIAL_STATE);
+      store.clearAll();
     },
   };
 }

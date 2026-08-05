@@ -34,12 +34,13 @@ declare namespace chrome {
     function get(tabId: number, callback: (tab: Tab) => void): void;
     function get(tabId: number): Promise<Tab>;
     function query(
-      queryInfo: { active?: boolean; lastFocusedWindow?: boolean },
+      queryInfo: { active?: boolean; lastFocusedWindow?: boolean; currentWindow?: boolean },
       callback: (tabs: Tab[]) => void,
     ): void;
     function query(queryInfo: {
       active?: boolean;
       lastFocusedWindow?: boolean;
+      currentWindow?: boolean;
     }): Promise<Tab[]>;
     function update(
       tabId: number,
@@ -48,6 +49,13 @@ declare namespace chrome {
     ): void;
     const onActivated: {
       addListener(callback: (activeInfo: { tabId: number; windowId: number }) => void): void;
+      removeListener?(callback: (activeInfo: { tabId: number; windowId: number }) => void): void;
+    };
+    const onRemoved: {
+      addListener(callback: (tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) => void): void;
+      removeListener?(
+        callback: (tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) => void,
+      ): void;
     };
   }
 

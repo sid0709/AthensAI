@@ -1,14 +1,41 @@
 import { stripStylesheetNoise } from "../src/recording/pageTextSanitize";
 
+type JobSnapshot = {
+  id: string;
+  title: string;
+  company: string;
+  applyUrl: string;
+  companyLogoUrl?: string;
+  location?: string;
+  workMode?: string;
+  employmentType?: string;
+  seniority?: string;
+  salary?: string;
+  experience?: string;
+  postedAt?: string;
+  skills?: readonly string[];
+  tags?: readonly string[];
+  applicantsText?: string;
+  description?: string;
+  responsibilities?: readonly string[];
+  qualifications?: readonly string[];
+};
+
 type StartRecordingMessage = {
   type: "ATHENS_LENS_START_RECORDING";
   sessionId: string;
   applyUrl: string;
+  preferredTabId?: number | null;
+  job?: JobSnapshot | null;
 };
 
 type StopRecordingMessage = {
   type: "ATHENS_LENS_STOP_RECORDING";
   sessionId: string;
+};
+
+type ListSessionsMessage = {
+  type: "ATHENS_LENS_LIST_SESSIONS";
 };
 
 type ReadPageTextMessage = {
@@ -35,10 +62,18 @@ type DiscardRecordingMessage = {
 type RuntimeMessage =
   | StartRecordingMessage
   | StopRecordingMessage
+  | ListSessionsMessage
   | ReadPageTextMessage
   | RecordingDigestMessage
   | PutRecordingMessage
   | DiscardRecordingMessage;
+
+type LiveRecordingSession = {
+  sessionId: string;
+  tabId: number;
+  job: JobSnapshot | null;
+  startedAt: number;
+};
 
 type PageTextFrame = {
   url: string;
@@ -56,13 +91,15 @@ type PageTextFrame = {
 };
 
 const recordingTabs = new Map<string, number>();
+const liveSessions = new Map<string, LiveRecordingSession>();
 
 /**
- * tabCapture only works for the tab where the user invoked the extension
- * (activeTab). Newly created tabs cannot be captured. We capture this tab,
- * then navigate it to the apply URL — capture continues across navigations.
+ * tabCapture only works for tabs where the user invoked the extension
+ * (activeTab). Multiple tabs can be capture-ready after clicking the Lens
+ * icon on each. Capture the chosen tab, then navigate it to the apply URL.
  */
-let invokedTabId: number | null = null;
+const captureReadyTabs = new Set<number>();
+let lastInvokedTabId: number | null = null;
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -93,6 +130,7 @@ function tabsGet(tabId: number): Promise<chrome.tabs.Tab> {
 function tabsQuery(queryInfo: {
   active?: boolean;
   lastFocusedWindow?: boolean;
+  currentWindow?: boolean;
 }): Promise<chrome.tabs.Tab[]> {
   return new Promise((resolve, reject) => {
     chrome.tabs.query(queryInfo, (tabs) => {
@@ -121,7 +159,42 @@ function tabsUpdate(tabId: number, url: string): Promise<chrome.tabs.Tab> {
 
 function rememberInvokedTab(tabId: number | undefined | null) {
   const id = asTabId(tabId);
-  if (id != null) invokedTabId = id;
+  if (id == null) return;
+  captureReadyTabs.add(id);
+  lastInvokedTabId = id;
+}
+
+function sessionIdForTab(tabId: number): string | null {
+  for (const [sessionId, recordedTabId] of recordingTabs) {
+    if (recordedTabId === tabId) return sessionId;
+  }
+  return null;
+}
+
+function resolveCaptureTabId(preferredTabId?: number | null): number | null {
+  const preferred = asTabId(preferredTabId);
+  if (preferred != null && captureReadyTabs.has(preferred)) return preferred;
+  if (lastInvokedTabId != null && captureReadyTabs.has(lastInvokedTabId)) {
+    return lastInvokedTabId;
+  }
+  if (captureReadyTabs.size === 1) {
+    return captureReadyTabs.values().next().value ?? null;
+  }
+  return null;
+}
+
+function forgetTab(tabId: number) {
+  captureReadyTabs.delete(tabId);
+  if (lastInvokedTabId === tabId) lastInvokedTabId = null;
+  const sessionId = sessionIdForTab(tabId);
+  if (sessionId) {
+    recordingTabs.delete(sessionId);
+    liveSessions.delete(sessionId);
+  }
+}
+
+function listLiveSessions(): LiveRecordingSession[] {
+  return Array.from(liveSessions.values());
 }
 
 function getMediaStreamIdSync(
@@ -182,6 +255,19 @@ async function beginOffscreenRecording(
   recordingTabs.set(sessionId, tabId);
   await tabsUpdate(tabId, applyUrl);
   return tabId;
+}
+
+function rememberLiveSession(
+  sessionId: string,
+  tabId: number,
+  job: JobSnapshot | null | undefined,
+) {
+  liveSessions.set(sessionId, {
+    sessionId,
+    tabId,
+    job: job ?? null,
+    startedAt: Date.now(),
+  });
 }
 
 const MAX_VISIBLE_TEXT_CHARS = 60_000;
@@ -555,7 +641,7 @@ async function readTabPageText(tabId: number) {
 }
 
 async function resolveReadableTabId(preferredTabId?: number | null) {
-  const preferred = asTabId(preferredTabId) ?? invokedTabId;
+  const preferred = asTabId(preferredTabId) ?? lastInvokedTabId;
 
   // Prefer the recording / invoked application tab when available — side panel
   // clicks can make "focused" resolution flaky.
@@ -586,13 +672,26 @@ export default defineBackground(() => {
     });
   });
 
+  chrome.tabs.onRemoved?.addListener((tabId) => {
+    forgetTab(tabId);
+  });
+
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
-      const tabId = invokedTabId;
+      const tabId = resolveCaptureTabId(message.preferredTabId);
       if (tabId == null) {
         sendResponse({
           ok: false,
-          error: "Click the Athens Lens icon on a normal web page, then try Apply & record again.",
+          error: "Click the Athens Lens icon on the browser tab you want to record, then try Apply & record again.",
+        });
+        return false;
+      }
+
+      if (sessionIdForTab(tabId)) {
+        sendResponse({
+          ok: false,
+          tabId,
+          error: "This tab is already recording. Complete that bid, or open another tab and click the Lens icon there.",
         });
         return false;
       }
@@ -616,7 +715,10 @@ export default defineBackground(() => {
           capture.streamId,
           message.applyUrl,
         )
-          .then((recordedTabId) => sendResponse({ ok: true, tabId: recordedTabId }))
+          .then((recordedTabId) => {
+            rememberLiveSession(message.sessionId, recordedTabId, message.job);
+            sendResponse({ ok: true, tabId: recordedTabId });
+          })
           .catch((error: unknown) => {
             sendResponse({
               ok: false,
@@ -628,6 +730,11 @@ export default defineBackground(() => {
       return true;
     }
 
+    if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
+      sendResponse({ ok: true, sessions: listLiveSessions() });
+      return false;
+    }
+
     if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
       void (async () => {
         await ensureOffscreenDocument();
@@ -637,6 +744,7 @@ export default defineBackground(() => {
         });
         const tabId = recordingTabs.get(message.sessionId) ?? null;
         recordingTabs.delete(message.sessionId);
+        liveSessions.delete(message.sessionId);
         if (!response?.ok) {
           sendResponse({ ok: false, tabId, error: response?.error || "Could not stop recording." });
           return;

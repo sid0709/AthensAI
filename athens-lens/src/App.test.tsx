@@ -5,6 +5,7 @@ import { App } from "./App";
 import { mockInboxRepository } from "./inbox/inboxRepository";
 import { MOCK_INBOX_MESSAGES, MOCK_UNREAD_COUNT } from "./inbox/mockInbox";
 import { MOCK_JOBS } from "./jobs/mockJobs";
+import { useRecordingSessionsStore } from "./recording/recordingSessionsStore";
 import { resetWorkspaceCacheForTests, useWorkspaceCache } from "./state/workspaceCache";
 import type { AuthStore, Credentials, InboxRepository, JobsRepository, Session } from "./types";
 
@@ -40,6 +41,7 @@ const jobsRepository: JobsRepository = {
 describe("Athens Lens app", () => {
   beforeEach(async () => {
     await resetWorkspaceCacheForTests();
+    useRecordingSessionsStore.getState().clearAll();
     window.location.hash = "#jobs";
     vi.stubGlobal("chrome", {
       runtime: {
@@ -49,6 +51,9 @@ describe("Athens Lens app", () => {
           }
           if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
             return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
+          }
+          if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
+            return { ok: true, sessions: [] };
           }
           if (message?.type === "ATHENS_LENS_RECORDING_DIGEST") {
             return { ok: false, error: "No pending recording in tests." };
@@ -74,6 +79,13 @@ describe("Athens Lens app", () => {
           return { ok: false, error: `Unhandled message ${message?.type || ""}` };
         }),
         lastError: undefined,
+      },
+      tabs: {
+        query: vi.fn((_query: unknown, callback: (tabs: Array<{ id: number }>) => void) => {
+          callback([{ id: 42 }]);
+        }),
+        onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
+        onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
       },
     });
   });
@@ -285,6 +297,71 @@ describe("Athens Lens app", () => {
     await user.click(screen.getByRole("button", { name: "Yes, submitted" }));
     expect(await screen.findByText("Bid marked as submitted")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/athens-lens/bids/"))).toBe(true);
+  });
+
+  it("tracks concurrent recordings on separate browser tabs", async () => {
+    const user = userEvent.setup();
+    let startCount = 0;
+    const sendMessage = vi.fn(async (message: { type?: string; preferredTabId?: number | null }) => {
+      if (message?.type === "ATHENS_LENS_START_RECORDING") {
+        startCount += 1;
+        const tabId = message.preferredTabId === 43 ? 43 : 42;
+        return { ok: true, tabId };
+      }
+      if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
+        return { ok: true, sessions: [] };
+      }
+      if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
+        return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
+      }
+      return { ok: false, error: `Unhandled ${message?.type || ""}` };
+    });
+    let activeTabId = 42;
+    vi.stubGlobal("chrome", {
+      runtime: { sendMessage, lastError: undefined },
+      tabs: {
+        query: vi.fn((_query: unknown, callback: (tabs: Array<{ id: number }>) => void) => {
+          callback([{ id: activeTabId }]);
+        }),
+        onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
+        onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
+      },
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/athens-lens/bids/")) {
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ success: false }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <App
+        authStore={makeAuthStore(makeSession())}
+        jobsRepository={jobsRepository}
+        inboxRepository={mockInboxRepository}
+      />
+    );
+
+    await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
+    await user.click(screen.getByRole("button", { name: "Apply & record" }));
+    expect(await screen.findByText(`Recording application (${MOCK_JOBS[0].company})`)).toBeInTheDocument();
+
+    activeTabId = 43;
+    useRecordingSessionsStore.getState().setFocusedTabId(43);
+    await user.click(screen.getByRole("button", { name: new RegExp(MOCK_JOBS[1].title) }));
+    await user.click(screen.getByRole("button", { name: "Apply & record" }));
+
+    expect(await screen.findByText(`Recording application (${MOCK_JOBS[1].company})`)).toBeInTheDocument();
+    expect(screen.getByText(/1 other tab also recording/)).toBeInTheDocument();
+    expect(startCount).toBe(2);
+    expect(useRecordingSessionsStore.getState().sessionsByTabId[42]?.job?.id).toBe(MOCK_JOBS[0].id);
+    expect(useRecordingSessionsStore.getState().sessionsByTabId[43]?.job?.id).toBe(MOCK_JOBS[1].id);
   });
 
   it("shows an empty state and retries a failed job load", async () => {

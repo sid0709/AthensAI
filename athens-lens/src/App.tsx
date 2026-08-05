@@ -132,7 +132,7 @@ export function App({
       jobsRepository={jobsRepository}
       route={route}
       inboxUnreadCount={inboxUnreadCount}
-      recordingJobId={recording.state.status === "recording" ? recording.state.job?.id ?? null : null}
+      recordingJobIds={recording.recordingJobIds}
       onNavigate={navigate}
       onNavigateView={navigateView}
       onApply={(job) => {
@@ -150,6 +150,7 @@ export function App({
       {workspace}
       <RecordingDock
         state={recording.state}
+        activeRecordingCount={recording.activeRecordingCount}
         onRestart={() => void recording.restart(session)}
         onComplete={() => void recording.complete()}
         onAskAi={setAiJob}

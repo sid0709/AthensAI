@@ -6,13 +6,21 @@ import { formatRecordingTime, type ApplicationRecordingState } from "./useApplic
 
 interface RecordingDockProps {
   state: ApplicationRecordingState;
+  activeRecordingCount?: number;
   onRestart(): void;
   onComplete(): void;
   onAskAi(job: Job): void;
 }
 
-export function RecordingDock({ state, onRestart, onComplete, onAskAi }: RecordingDockProps) {
+export function RecordingDock({
+  state,
+  activeRecordingCount = 1,
+  onRestart,
+  onComplete,
+  onAskAi,
+}: RecordingDockProps) {
   if (state.status !== "recording" || !state.job) return null;
+  const otherCount = Math.max(0, activeRecordingCount - 1);
 
   return (
     <aside className="recording-dock" aria-label="Application recording">
@@ -22,6 +30,13 @@ export function RecordingDock({ state, onRestart, onComplete, onAskAi }: Recordi
           <strong>Recording application ({state.job.company})</strong>
           <small>Role · {state.job.title}</small>
           <small>Live tab capture · {formatRecordingTime(state.elapsedSeconds)}</small>
+          {otherCount > 0 ? (
+            <small>
+              {otherCount === 1
+                ? "1 other tab also recording — switch browser tabs to manage it"
+                : `${otherCount} other tabs also recording — switch browser tabs to manage them`}
+            </small>
+          ) : null}
         </span>
       </div>
       <div className="recording-actions">
