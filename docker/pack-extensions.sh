@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
-# Pack Bid Monitor + Avalon Chrome extensions into Athens/dist/downloads/
-# for the Apps & Plugins page. Invoked from the Docker image build.
+# Pack Chrome extensions into Athens/dist/downloads/ for the Apps & Plugins page.
+# Invoked from the Docker image build.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${EXTENSION_OUTPUT_DIR:-${ROOT}/Athens/dist/downloads}"
-BID_ZIP_NAME="bid-monitor-extension.zip"
 AVALON_ZIP_NAME="avalon-extension.zip"
 
 PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-}"
-if [[ -z "${PUBLIC_ORIGIN}" && -z "${WXT_AVALON_RELAY_URL:-}" && -z "${WXT_API_URL:-}" && -z "${ATHENS_API_URL:-}" ]]; then
+if [[ -z "${PUBLIC_ORIGIN}" && -z "${WXT_AVALON_RELAY_URL:-}" && -z "${WXT_API_URL:-}" ]]; then
   echo "error: set PUBLIC_ORIGIN (or WXT_*/ATHENS_API_URL) before packing extensions" >&2
   exit 1
 fi
 WXT_AVALON_RELAY_URL="${WXT_AVALON_RELAY_URL:-${PUBLIC_ORIGIN%/}}"
 WXT_API_URL="${WXT_API_URL:-${PUBLIC_ORIGIN%/}/api}"
-ATHENS_API_URL="${ATHENS_API_URL:-${PUBLIC_ORIGIN%/}/api}"
 FIREBASE_WEB_API_KEY="${FIREBASE_WEB_API_KEY:-}"
 
 ENCODE_PY="${ROOT}/docker/encode-endpoint.py"
@@ -25,13 +23,6 @@ WXT_AVALON_RELAY_ENC="enc:$(python3 "${ENCODE_PY}" "${WXT_AVALON_RELAY_URL}")"
 WXT_API_ENC="enc:$(python3 "${ENCODE_PY}" "${WXT_API_URL}")"
 
 mkdir -p "${OUT_DIR}"
-
-echo "==> Packing Bid Monitor extension (endpoint encoded)"
-PUBLIC_ORIGIN="${PUBLIC_ORIGIN}" \
-ATHENS_API_URL="${ATHENS_API_URL}" \
-  bash "${ROOT}/Bid-Monitor/pack-extension.sh"
-cp -f "${ROOT}/Bid-Monitor/dist/${BID_ZIP_NAME}" "${OUT_DIR}/${BID_ZIP_NAME}"
-BID_VERSION="$(python3 -c "import json; print(json.load(open('${ROOT}/Bid-Monitor/manifest.json'))['version'])")"
 
 echo "==> Building & zipping Avalon extension (endpoints encoded)"
 cd "${ROOT}/project-avalon"
@@ -53,13 +44,6 @@ from pathlib import Path
 manifest = {
   "builtAt": "${BUILT_AT}",
   "extensions": [
-    {
-      "id": "bid-monitor",
-      "name": "Bid Monitor",
-      "version": "${BID_VERSION}",
-      "file": "${BID_ZIP_NAME}",
-      "downloadUrl": "/downloads/${BID_ZIP_NAME}",
-    },
     {
       "id": "avalon",
       "name": "Project Avalon",

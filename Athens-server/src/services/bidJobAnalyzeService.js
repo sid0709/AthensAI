@@ -1,5 +1,5 @@
 /**
- * Bid job page + Remote/Clearance analysis for Bid-Monitor.
+ * Bid job page + Remote/Clearance analysis for Athens Lens.
  * AI reads full page innerText (+ optional form hints) and profile JSON — no hardcoded answers.
  */
 import { accountInfoCollection } from "../db/dataStore.js";

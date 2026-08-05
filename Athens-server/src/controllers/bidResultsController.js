@@ -19,7 +19,6 @@ import {
 	upsertJobBidStatus,
 } from "../services/jobBidStatusService.js";
 import {
-	uploadBidRecordingObject,
 	beginBidRecordingResumableUpload,
 	completeBidRecordingResumableUpload,
 } from "../services/firebase/bidRecordingUpload.js";
@@ -897,7 +896,7 @@ export async function markFixedBidResult(req, res) {
 
 /**
  * POST /bid-results/start
- * Mark a Bid Ready job as in-process when Bid-Monitor Apply starts.
+ * Mark a Bid Ready job as in-process when Athens Lens Apply starts.
  */
 export async function startBidResult(req, res) {
 	try {
@@ -1116,151 +1115,6 @@ export async function completeBidRecordingUpload(req, res) {
 	}
 }
 
-/**
- * Legacy base64 endpoint. Disabled in production after direct uploads ship.
- * POST /bid-recordings/upload
- */
-export async function uploadBidRecording(req, res) {
-	try {
-		if (process.env.NODE_ENV === "production" && process.env.ALLOW_LEGACY_BASE64_UPLOAD !== "true") {
-			return res.status(410).json({ success: false, error: "Use the resumable recording upload API." });
-		}
-		const applierName = String(req.body?.applierName ?? "").trim();
-		const jobId = String(req.body?.jobId ?? "").trim();
-		const sessionId = String(req.body?.sessionId ?? "").trim() || `sess-${Date.now()}`;
-		const applyUrl = String(req.body?.applyUrl ?? "").trim() || null;
-		const bidderName = String(req.body?.bidderName ?? "").trim() || null;
-		const contentType = String(req.body?.contentType ?? "video/webm").trim();
-		const fileName = String(req.body?.fileName ?? "").trim();
-		const videoBase64 = String(req.body?.videoBase64 ?? "").trim();
-		const markCompleted = Boolean(req.body?.markCompleted);
-		const durationSec =
-			typeof req.body?.durationSec === "number" && Number.isFinite(req.body.durationSec)
-				? Math.max(0, Math.round(req.body.durationSec))
-				: null;
-		const parseDate = (value) => {
-			if (!value) return null;
-			const d = new Date(value);
-			return Number.isNaN(d.getTime()) ? null : d;
-		};
-		const recordingStartedAt = parseDate(req.body?.recordedStartAt);
-		const recordingEndedAt = parseDate(req.body?.recordedEndAt);
-
-		if (!applierName || !jobId) {
-			return res
-				.status(400)
-				.json({ success: false, error: "applierName and jobId are required." });
-		}
-		if (!videoBase64) {
-			return res.status(400).json({ success: false, error: "videoBase64 is required." });
-		}
-
-		let buffer;
-		try {
-			buffer = Buffer.from(videoBase64, "base64");
-		} catch {
-			return res.status(400).json({ success: false, error: "Invalid videoBase64." });
-		}
-		if (!buffer.length) {
-			return res.status(400).json({ success: false, error: "Empty video payload." });
-		}
-
-		const uploaded = await uploadBidRecordingObject({
-			applierName,
-			sessionId,
-			buffer,
-			contentType,
-			fileName,
-		});
-
-		const collection = getVendorTasksCollection();
-		const existing = collection
-			? await collection.findOne({ applierName, jobId: String(jobId) })
-			: null;
-
-		const now = new Date();
-		const recordingEntry = {
-			storagePath: uploaded.storagePath,
-			contentType: uploaded.contentType || "video/webm",
-			sizeBytes: Number(uploaded.sizeBytes || 0) || 0,
-			sessionId: sessionId || null,
-			durationSec,
-			recordedStartAt: recordingStartedAt || null,
-			recordedEndAt: recordingEndedAt || null,
-			uploadedAt: now,
-		};
-		const recordings = appendRecordingToTask(existing, recordingEntry);
-		const fields = {
-			bidderName: bidderName || undefined,
-			bidSessionId: sessionId,
-			recordingPath: uploaded.storagePath,
-			recordingContentType: uploaded.contentType,
-			recordingSize: uploaded.sizeBytes,
-			recordingDurationSec: durationSec,
-			recordingStartedAt: recordingStartedAt || undefined,
-			recordingEndedAt: recordingEndedAt || undefined,
-			recordings,
-		};
-		if (applyUrl) fields.applyUrl = applyUrl;
-		if (markCompleted) {
-			fields.status = "done";
-			fields.completedAt = now;
-			fields.bidderInProcess = false;
-			fields.reviewStatus = "submitted";
-			fields.biddingDurationSec = computeBiddingDurationSec(existing, now);
-		} else {
-			fields.bidderInProcess = true;
-			fields.status = "pending";
-		}
-
-		const readyAt = await getJobBidReadyDate(applierName, jobId);
-		if (readyAt) fields.bidReadyDate = readyAt;
-
-		const doc = await upsertVendorTaskRecording(applierName, jobId, fields);
-		if (markCompleted) {
-			await upsertJobBidStatus(applierName, jobId, { bidCompleted: true });
-			await appendBidReviewEvent({
-				taskId: doc?._id ? String(doc._id) : null,
-				jobId,
-				applierName,
-				eventType: "submit",
-				fromStatus: "in_process",
-				toStatus: "submitted",
-				actorType: "vendor",
-				actorName: bidderName,
-				meta: {
-					biddingDurationSec: fields.biddingDurationSec ?? null,
-				},
-			});
-		} else {
-			await upsertJobBidStatus(applierName, jobId, { bidReady: true });
-		}
-
-		const task = await withStableBidReadyDate(serializeTask(doc), applierName);
-		return res.json({
-			success: true,
-			recording: {
-				storagePath: uploaded.storagePath,
-				contentType: uploaded.contentType,
-				sizeBytes: uploaded.sizeBytes,
-				sessionId,
-			},
-			task,
-			result: mapTaskToBidResult(task),
-		});
-	} catch (err) {
-		console.error("[bid-recordings] upload failed", err);
-		return res.status(500).json({
-			success: false,
-			error: err.message || "Failed to upload recording.",
-		});
-	}
-}
-
-/**
- * POST /bid-results/complete
- * body: { applierName, jobId, bidderName?, biddingDurationSec? }
- */
 export async function completeBidResult(req, res) {
 	try {
 		const applierName = String(req.body?.applierName ?? "").trim();
@@ -1315,67 +1169,6 @@ export async function completeBidResult(req, res) {
 		return res.status(500).json({
 			success: false,
 			error: err.message || "Failed to complete bid.",
-		});
-	}
-}
-
-/**
- * POST /bid-results/flags
- */
-export async function saveBidResultFlags(req, res) {
-	try {
-		const applierName = String(req.body?.applierName ?? "").trim();
-		const jobId = String(req.body?.jobId ?? "").trim();
-		if (!applierName || !jobId) {
-			return res
-				.status(400)
-				.json({ success: false, error: "applierName and jobId are required." });
-		}
-
-		const flagsIn = req.body?.flags && typeof req.body.flags === "object" ? req.body.flags : {};
-		const normalizeVerdict = (v) => {
-			if (!v || typeof v !== "object") return null;
-			const status = v.status === "red" || v.status === "green" ? v.status : null;
-			if (!status) return null;
-			return {
-				status,
-				explanation: typeof v.explanation === "string" ? v.explanation : "",
-			};
-		};
-		const flags = {
-			remote: normalizeVerdict(flagsIn.remote),
-			clearance: normalizeVerdict(flagsIn.clearance),
-		};
-		const summary =
-			typeof req.body?.summary === "string" ? req.body.summary.trim().slice(0, 4000) : undefined;
-
-		const fields = { flags };
-		if (summary !== undefined) fields.analysisSummary = summary || null;
-
-		const doc = await upsertVendorTaskRecording(applierName, jobId, fields);
-
-		await appendBidReviewEvent({
-			taskId: doc?._id ? String(doc._id) : null,
-			jobId,
-			applierName,
-			eventType: "analyze",
-			fromStatus: null,
-			toStatus: null,
-			actorType: "vendor",
-			actorName: applierName,
-			meta: {
-				flags,
-				summary: fields.analysisSummary ?? null,
-			},
-		});
-
-		const task = serializeTask(doc);
-		return res.json({ success: true, task, result: mapTaskToBidResult(task) });
-	} catch (err) {
-		console.error("[bid-results] flags failed", err);
-		return res.status(500).json({
-			success: false,
-			error: err.message || "Failed to save flags.",
 		});
 	}
 }
@@ -1593,52 +1386,6 @@ export async function saveResumeAudit(req, res) {
 		return res.status(500).json({
 			success: false,
 			error: err.message || "Failed to save resume audit.",
-		});
-	}
-}
-
-/**
- * GET/POST /bid-results/resumes.zip
- * Bulk zip of generated résumés with flat canonical filenames (Windows-safe).
- * Prefer POST body `{ applierName, jobIds }` — long GET query strings break on Windows.
- */
-export async function downloadBidResumesZip(req, res) {
-	try {
-		const body = req.body && typeof req.body === "object" ? req.body : {};
-		const applierName = String(
-			body.applierName ?? req.query.applierName ?? "",
-		).trim();
-		if (!applierName) {
-			return res.status(400).json({ success: false, error: "applierName is required." });
-		}
-
-		let jobIds = [];
-		if (Array.isArray(body.jobIds)) {
-			jobIds = body.jobIds.map(String).filter(Boolean);
-		} else {
-			const jobIdsRaw = String(req.query.jobIds ?? "").trim();
-			jobIds = jobIdsRaw
-				? jobIdsRaw.split(",").map((s) => s.trim()).filter(Boolean)
-				: [];
-		}
-
-		const { buildBidResumesZip } = await import("../services/bidResumesZipService.js");
-		const built = await buildBidResumesZip({ applierName, jobIds });
-		if (!built.ok) {
-			return res.status(built.status || 400).json({ success: false, error: built.error });
-		}
-
-		const fileName = built.fileName.replace(/"/g, "");
-		res.setHeader("Content-Type", "application/zip");
-		res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-		res.setHeader("Content-Length", String(built.buffer.length));
-		res.setHeader("Cache-Control", "no-store");
-		return res.end(built.buffer);
-	} catch (err) {
-		console.error("[bid-results] resumes.zip failed", err);
-		return res.status(500).json({
-			success: false,
-			error: err.message || "Failed to build resumes zip.",
 		});
 	}
 }

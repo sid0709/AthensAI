@@ -1,12 +1,12 @@
 ---
-description: Shared Athens Bid Ready visual language (ember/teal, Figtree/Bricolage) for Bid Management + Bid Monitor
-globs: "{Athens/src/app/features/bid-management/**/*,Bid-Monitor/**/*}"
+description: Shared Athens Bid Ready visual language (ember/teal, Figtree/Bricolage) for Bid Management + Athens Lens
+globs: "{Athens/src/app/features/bid-management/**/*,athens-lens/**/*}"
 alwaysApply: false
 ---
 
 # Athens Bid Ready design language
 
-Applies to **Athens Bid Management** and **Bid Monitor**. They are one product surface.
+Applies to **Athens Bid Management** and **Athens Lens**. They are one product surface.
 
 ## Visual identity
 
@@ -18,9 +18,9 @@ Applies to **Athens Bid Management** and **Bid Monitor**. They are one product s
 
 ## Frontend updates
 
-When editing Bid Ready UI (Athens feature or Bid-Monitor extension):
+When editing Bid Ready UI (Athens feature or Athens Lens extension):
 
-1. Reuse `--bm-*` tokens (Athens `bid-management.css` or Bid-Monitor `tokens.css`)
+1. Reuse `--bm-*` tokens (Athens `bid-management.css` or Athens Lens side-panel tokens)
 2. Keep status language consistent: Pending → In process → Submitted / Skipped
 3. Prefer frosted/soft panels and 12–16px radii over heavy card shadows
 4. Do not restyle Bid Ready toward the violet Settings/Dashboard theme unless explicitly requested
@@ -29,5 +29,4 @@ When editing Bid Ready UI (Athens feature or Bid-Monitor extension):
 
 - `Athens/src/app/features/bid-management/bid-management.css`
 - `Athens/src/styles/fonts.css`
-- `Bid-Monitor/sidepanel/tokens.css`
-- `.cursor/rules/bid-monitor-ui.mdc`
+- `athens-lens/` side-panel styles

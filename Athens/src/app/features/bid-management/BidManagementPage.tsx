@@ -548,12 +548,12 @@ export function BidManagementPage() {
         ) : pendingCount === 0 && allResults.length === 0 ? (
           <div className="bm-info-banner">
             No Bid ready jobs for this profile. Mark jobs as Bid ready in{" "}
-            <Link to={PATHS.jobs}>Job Search</Link>, then Apply from Bid-Monitor.
+            <Link to={PATHS.jobs}>Job Search</Link>, then Apply from Athens Lens.
           </div>
         ) : pendingCount === 0 ? (
           <div className="bm-info-banner">
             No Pending (Bid ready) jobs right now. Mark more in{" "}
-            <Link to={PATHS.jobs}>Job Search</Link> or finish In-Process tickets in Bid-Monitor.
+            <Link to={PATHS.jobs}>Job Search</Link> or finish In-Process tickets in Athens Lens.
           </div>
         ) : null}
 

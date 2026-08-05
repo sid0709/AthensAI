@@ -316,7 +316,7 @@ export function BidDetailPane({
   const editable = result ? isEditableStatus(result.status) : false;
   const rejectable = result ? isRejectableStatus(result.status) : false;
   const detail = preview.jobDetail || result?.jobDetail;
-  // Prefer Bid-Monitor Library recommendation over job-preview stack.
+  // Prefer Athens Lens library recommendation over job-preview stack.
   const recommended = result?.recommendedResume || preview.recommendedResume;
   const submission = result?.submissionResume;
   const aiResultEvents = events.filter((event) => AI_RESULT_EVENT_TYPES.has(event.eventType));

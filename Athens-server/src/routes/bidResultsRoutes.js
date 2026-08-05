@@ -8,37 +8,19 @@ import {
 	getBidRecordingUrl,
 	updateBidResultStatus,
 	markFixedBidResult,
-	startBidResult,
-	completeBidResult,
-	skipBidResult,
-	saveBidResultFlags,
-	saveResumeAudit,
-	downloadBidResumesZip,
-	uploadBidRecording,
-	beginBidRecordingUpload,
-	completeBidRecordingUpload,
 } from "../controllers/bidResultsController.js";
 
 const router = express.Router();
 
-// Static paths before :id
+// Bid Management + shared read/review APIs.
+// Write/upload paths for bidding live under /athens-lens/bids/* (Athens Lens).
 router.get("/bid-results", listBidResults);
 router.get("/bid-results/rejected", listRejectedBidResults);
 router.get("/bid-results/stats", getBidResultStats);
 router.get("/bid-results/recording-url", getBidRecordingUrl);
-router.get("/bid-results/resumes.zip", downloadBidResumesZip);
-router.post("/bid-results/resumes.zip", downloadBidResumesZip);
 router.get("/bid-results/:id/events", getBidResultEvents);
 router.get("/bid-results/:id/ai-usage", getBidResultAiUsage);
 router.patch("/bid-results/:id", updateBidResultStatus);
 router.post("/bid-results/mark-fixed", markFixedBidResult);
-router.post("/bid-results/start", startBidResult);
-router.post("/bid-results/complete", completeBidResult);
-router.post("/bid-results/skip", skipBidResult);
-router.post("/bid-results/flags", saveBidResultFlags);
-router.post("/bid-results/resume-audit", saveResumeAudit);
-router.post("/bid-recordings/upload", uploadBidRecording);
-router.post("/bid-recordings/uploads", beginBidRecordingUpload);
-router.post("/bid-recordings/uploads/:uploadId/complete", completeBidRecordingUpload);
 
 export default router;

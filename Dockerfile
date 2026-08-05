@@ -13,7 +13,7 @@ ENV npm_config_fetch_retries=5 \
     PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_SKIP_CHROME_DOWNLOAD=1
 
-# zip/rsync: pack Bid Monitor + Avalon extension downloads for the Apps page.
+# zip/rsync: pack Avalon extension downloads for the Apps page.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends zip rsync \
  && rm -rf /var/lib/apt/lists/*

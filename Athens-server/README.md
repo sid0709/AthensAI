@@ -14,7 +14,7 @@ Backend for **Athens** (NextOffer job search, resume analysis, skill graph, and 
 
 ## Athens Lens API
 
-Athens Lens uses a separate session boundary from Firebase owner auth and the legacy Bid Monitor routes:
+Athens Lens uses a separate session boundary from Firebase owner auth:
 
 - `POST /api/athens-lens/auth/signin` with `{ "username", "password" }` validates the profile username, `vendorAllowed`, and the bcrypt vendor access password. It returns an opaque expiring bearer session.
 - `GET /api/athens-lens/jobs` with `Authorization: Bearer <token>` returns only that session profile's current Bid Ready jobs.

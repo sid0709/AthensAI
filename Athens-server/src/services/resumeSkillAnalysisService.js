@@ -79,7 +79,7 @@ function buildCatalogSkillListFromResumes(resumes) {
 
 /**
  * Sync the *detailed* analyzed resume skills into account_info so that
- * Bid-Monitor / recommend-resume can rank using the same signal as the
+ * Recommend-resume can rank using the same signal as the
  * Athens "Analysis" tab.
  *
  * Writes:

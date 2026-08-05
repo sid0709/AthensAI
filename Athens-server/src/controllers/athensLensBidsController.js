@@ -53,7 +53,7 @@ export async function beginAthensLensRecordingUpload(req, res) {
 	if (!withSessionApplier(req)) {
 		return res.status(401).json({ success: false, message: "Not signed in." });
 	}
-	// Reuse Bid-Monitor resumable upload; owner uid optional for Lens sessions.
+	// Reuse resumable upload; owner uid optional for Lens sessions.
 	req.auth = { ...(req.auth || {}), uid: req.athensLensSession?.accountId || "" };
 	return beginBidRecordingUpload(req, res);
 }
@@ -126,7 +126,7 @@ export async function saveAthensLensBidAnalysis(req, res) {
 
 /**
  * POST /athens-lens/bids/resume-audit
- * Same vendor_tasks resume* fields Bid-Monitor writes via /bid-results/resume-audit.
+ * Same vendor_tasks resume* fields written via /athens-lens/bids/resume-audit.
  */
 export async function saveAthensLensResumeAudit(req, res) {
 	if (!withSessionApplier(req)) {

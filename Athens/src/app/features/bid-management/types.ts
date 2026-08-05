@@ -155,9 +155,9 @@ export type BidResult = {
     auditKey?: string | null;
     recordedAt?: string | null;
   }>;
-  /** JD page summary from Bid-Monitor Analyze. */
+  /** JD page summary from Athens Lens Ask AI. */
   analysisSummary?: string | null;
-  /** Latest complete answer set returned by Bid-Monitor Analyze. */
+  /** Latest complete answer set returned by Athens Lens Ask AI. */
   analysisFormAnswers?: BidFormAnswer[];
   analysisMode?: BidAiMode | null;
   analysisPageUrl?: string | null;
@@ -169,7 +169,7 @@ export type BidResult = {
   flagAnalysisUsage?: BidAiCallUsage | null;
   flagAnalysisRequestId?: string | null;
   flagAnalyzedAt?: string | null;
-  /** Library stack recommended by Bid-Monitor Recommend resume. */
+  /** Library stack recommended during bidding (Athens Lens). */
   recommendedResumeStack?: string | null;
   recommendedResumeReason?: string | null;
   useCustomizedResume?: boolean;

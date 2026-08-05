@@ -37,8 +37,6 @@ Extension
 # Archives & large artifacts (extension zips are built inside the image)
 *.zip
 vender-server/new-server.zip
-Bid-Monitor/dist
-
 # Test & coverage
 coverage
 .nyc_output

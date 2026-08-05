@@ -1,6 +1,6 @@
 ---
-description: Bump browser extension versions on every functional change; Avalon Scrapper / Bid Monitor / project-avalon
-globs: Extension/**,Bid-Monitor/**,project-avalon/packages/extension/**
+description: Bump browser extension versions on every functional change; Avalon Scrapper / Athens Lens / project-avalon
+globs: Extension/**,athens-lens/**,project-avalon/packages/extension/**
 alwaysApply: false
 ---
 
@@ -13,7 +13,7 @@ Whenever you change functional code in any browser extension, bump its version i
 | Extension | Display name | File | Field | Notes |
 |-----------|--------------|------|-------|-------|
 | `Extension/` | **Avalon Scrapper** | `Extension/manifest.json` | `version` | Source of truth. Copied into `dist/` on build. Also keep `Extension/package.json` `version` in sync. |
-| Bid Monitor | Bid Monitor | `Bid-Monitor/manifest.json` | `version` | Source of truth. `pack-extension.sh` reads it. |
+| Athens Lens | Athens Lens | `athens-lens/package.json` + `athens-lens/wxt.config.ts` | `version` | Keep both in sync; WXT embeds the package version. |
 | Project Avalon | Avalon | `project-avalon/packages/extension/package.json` | `version` | WXT derives the manifest version from this. |
 
 ## Display name
@@ -26,7 +26,7 @@ Whenever you change functional code in any browser extension, bump its version i
 
 - Use semver (`MAJOR.MINOR.PATCH`). Bump exactly one segment per change (patch for fixes, minor for features, major for breaking changes).
 - **Avalon Scrapper** (`Extension/`): bump `manifest.json` (and matching `package.json`) on every functional change, then rebuild so `dist/manifest.json` matches.
-- **Bid Monitor** already bumps regularly (e.g. `2.18.5`). Keep incrementing it.
+- **Athens Lens**: bump `package.json` and `wxt.config.ts` together on every functional change.
 - **Project Avalon**: bump on every extension change (do not leave a stale `0.1.0` after modifying it).
 - If a change spans multiple extensions, bump each affected one.
 - After bumping Avalon Scrapper, rebuild (`npm run build` in `Extension/`) so `dist/manifest.json` matches.
@@ -39,6 +39,6 @@ Background/service worker, content scripts, side panel / popup UI (JS/HTML/CSS),
 ## Do not
 
 - Do not leave `Extension/manifest.json` at a stale version after Tracker/Scrap/content-script fixes.
-- Do not leave `project-avalon` at a stale version after modifying its extension.
-- Do not edit `Bid-Monitor/dist/**` or `Extension/dist/**` versions by hand — bump the source of truth and rebuild/repack.
+- Do not leave `project-avalon` or `athens-lens` at a stale version after modifying those extensions.
+- Do not edit `Extension/dist/**` versions by hand — bump the source of truth and rebuild/repack.
 - Do not hard-code the version in extra places beyond the source of truth files above.

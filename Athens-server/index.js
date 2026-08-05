@@ -40,7 +40,6 @@ import reportRoutes from "./src/routes/reportRoutes.js";
 import accountInfoRoutes from "./src/routes/accountInfoRoutes.js";
 import foxRoutes from "./src/routes/foxRoutes.js";
 import ruleRoutes from "./src/routes/ruleRoutes.js";
-import vendorMonitorRoutes from "./src/routes/vendorMonitorRoutes.js";
 import mailRoutes from "./src/routes/mailRoutes.js";
 import settingsRoutes from "./src/routes/settingsRoutes.js";
 import notionRoutes from "./src/routes/notionRoutes.js";
@@ -49,7 +48,6 @@ import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
 import firebaseRoutes from "./src/routes/firebaseRoutes.js";
 import bidResultsRoutes from "./src/routes/bidResultsRoutes.js";
-import jobAnalyzeRoutes from "./src/routes/jobAnalyzeRoutes.js";
 import backgroundTaskRoutes from "./src/routes/backgroundTaskRoutes.js";
 import athensLensRoutes from "./src/routes/athensLensRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
@@ -178,8 +176,7 @@ function createApp() {
 		});
 	});
 	app.use("/internal/tasks", internalTaskRoutes);
-	// Athens Lens has a separate vendor-password session boundary. Keep these
-	// routes independent from both Firebase owner auth and legacy Bid Monitor.
+	// Athens Lens uses a vendor-password session boundary, separate from Firebase owner auth.
 	app.use("/api", athensLensRoutes);
 
 	app.use(requireFirebaseAuth);
@@ -194,7 +191,6 @@ function createApp() {
 	app.use("/api", accountInfoRoutes);
 	app.use("/api", foxRoutes);
 	app.use("/api", ruleRoutes);
-	app.use("/api", vendorMonitorRoutes);
 	app.use("/api", mailRoutes);
 	app.use("/api", settingsRoutes);
 	app.use("/api", notionRoutes);
@@ -203,7 +199,6 @@ function createApp() {
 	app.use("/api", aiUsageRoutes);
 	app.use("/api", firebaseRoutes);
 	app.use("/api", bidResultsRoutes);
-	app.use("/api", jobAnalyzeRoutes);
 	app.use("/api", backgroundTaskRoutes);
 	app.use("/api", statusRoutes);
 	app.use("/api", statusAdminRoutes);
