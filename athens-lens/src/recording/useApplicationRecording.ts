@@ -15,6 +15,7 @@ import {
   type RecordingStatus,
   type TabRecordingSession,
 } from "./recordingSessionsStore";
+import { useTabWorkspaceStore } from "../state/tabWorkspaceStore";
 
 export type { ApplicationRecordingState, RecordingStatus };
 export { selectRecordingJobIds };
@@ -109,61 +110,170 @@ function jobFromSnapshot(snapshot: JobSnapshot): Job {
   };
 }
 
+function isHttpTabUrl(url: string | undefined | null) {
+  return /^https?:/i.test(url || "");
+}
+
+function normalizeApplyUrl(url: string | undefined | null): string | null {
+  const raw = String(url || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw.startsWith("//") ? `https:${raw}` : raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+
+function isActiveTabCaptureError(message: string | undefined | null) {
+  return /activeTab|invoked for the current page|Chrome pages cannot be captured/i.test(
+    message || "",
+  );
+}
+
+function friendlyCaptureError(message: string | undefined | null) {
+  if (isActiveTabCaptureError(message)) {
+    return "Click the Athens Lens icon on this tab to start recording.";
+  }
+  return message || "Could not capture this tab.";
+}
+
 /**
- * Send the start request immediately from the click turn so Chrome preserves
- * the user gesture for tabCapture in the service worker. The worker captures
- * the preferred (or last invoked) capture-ready tab, then navigates it.
+ * Open the job apply URL in a new focused tab. Does not start recording.
  */
-function startTabRecording(
+function openApplyTab(
+  api: NonNullable<ReturnType<typeof extensionApi>>,
   applyUrl: string,
-  sessionId: string,
-  preferredTabId: number | null,
-  job: Job,
-  session: Session,
-): Promise<StartResponse> {
-  const api = extensionApi();
-  if (!api?.runtime?.sendMessage) {
+): Promise<{ ok: true; tabId: number } | { ok: false; error: string }> {
+  if (!api.tabs?.create) {
+    return Promise.resolve({
+      ok: false,
+      error: "Opening apply links requires the Athens Lens Chrome extension.",
+    });
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: { ok: true; tabId: number } | { ok: false; error: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const onTabCreated = (tab: chrome.tabs.Tab | undefined) => {
+      const createError = api.runtime?.lastError?.message;
+      if (createError || tab?.id == null) {
+        finish({ ok: false, error: createError || "Could not open the application page." });
+        return;
+      }
+      const tabId = tab.id;
+      const openedUrl = String(tab.url || "");
+      if (!isHttpTabUrl(openedUrl) && api.tabs.update) {
+        api.tabs.update(tabId, { url: applyUrl, active: true }, () => {
+          void api.runtime?.lastError;
+          finish({ ok: true, tabId });
+        });
+        return;
+      }
+      finish({ ok: true, tabId });
+    };
+
+    try {
+      const created = api.tabs.create(
+        { url: applyUrl, active: true },
+        onTabCreated,
+      ) as unknown as Promise<chrome.tabs.Tab> | void;
+      if (created && typeof (created as Promise<chrome.tabs.Tab>).then === "function") {
+        void (created as Promise<chrome.tabs.Tab>)
+          .then((tab) => onTabCreated(tab))
+          .catch((error: unknown) => {
+            finish({
+              ok: false,
+              error: error instanceof Error ? error.message : "Could not open the application page.",
+            });
+          });
+      }
+    } catch (error) {
+      finish({
+        ok: false,
+        error: error instanceof Error ? error.message : "Could not open the application page.",
+      });
+    }
+  });
+}
+
+/**
+ * Capture an existing focused tab in the click turn (Bid-Monitor style).
+ * Must run before any await that would drop the user gesture.
+ */
+function captureTabStream(
+  api: NonNullable<ReturnType<typeof extensionApi>>,
+  tabId: number,
+): Promise<{ ok: true; streamId: string } | { ok: false; error: string }> {
+  if (!api.tabCapture?.getMediaStreamId) {
     return Promise.resolve({
       ok: false,
       error: "Tab recording is only available in the Athens Lens Chrome extension.",
     });
   }
 
+  return new Promise((resolve) => {
+    api.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+      const captureError = api.runtime?.lastError?.message;
+      if (captureError || !streamId) {
+        resolve({
+          ok: false,
+          error: captureError || "Could not capture this tab. Focus a normal http(s) page and try Record again.",
+        });
+        return;
+      }
+      resolve({ ok: true, streamId });
+    });
+  });
+}
+
+function normalizeStartResponse(response: StartResponse | undefined): StartResponse {
+  if (response?.ok && response.tabId != null) {
+    return { ok: true, tabId: response.tabId };
+  }
+  return {
+    ok: false,
+    tabId: response && "tabId" in response ? response.tabId : undefined,
+    error: (!response?.ok && response?.error) || "Could not start the recorder.",
+  };
+}
+
+function sendStartRecording(
+  api: NonNullable<ReturnType<typeof extensionApi>>,
+  applyUrl: string,
+  sessionId: string,
+  job: Job,
+  session: Session,
+  payload: Record<string, unknown>,
+): Promise<StartResponse> {
   const bidderName = session.displayName || session.username;
   const expectedResumeName = buildProfileResumeFileName(bidderName, ".pdf");
   const resumeSetFolder = profileNameToFileBase(bidderName) || "";
 
-  try {
-    return Promise.resolve(
-      api.runtime.sendMessage({
-        type: "ATHENS_LENS_START_RECORDING",
-        applyUrl,
-        sessionId,
-        preferredTabId,
-        job: jobSnapshot(job),
-        expectedResumeName,
-        resumeSetFolder,
-        bidderName,
-      }) as Promise<StartResponse | undefined>,
-    ).then((response) => {
-      if (response?.ok && response.tabId != null) {
-        return { ok: true as const, tabId: response.tabId };
-      }
-      return {
-        ok: false as const,
-        tabId: response && "tabId" in response ? response.tabId : undefined,
-        error: (!response?.ok && response?.error) || "Could not start the recorder.",
-      };
-    }).catch((error: unknown) => ({
+  return Promise.resolve(
+    api.runtime.sendMessage({
+      type: "ATHENS_LENS_START_RECORDING",
+      applyUrl,
+      sessionId,
+      job: jobSnapshot(job),
+      expectedResumeName,
+      resumeSetFolder,
+      bidderName,
+      ...payload,
+    }) as Promise<StartResponse | undefined>,
+  )
+    .then(normalizeStartResponse)
+    .catch((error: unknown) => ({
       ok: false as const,
       error: error instanceof Error ? error.message : "Could not start the recorder.",
     }));
-  } catch (error) {
-    return Promise.resolve({
-      ok: false,
-      error: error instanceof Error ? error.message : "Could not start the recorder.",
-    });
-  }
 }
 
 async function stopTabRecording(sessionId: string): Promise<StopResponse> {
@@ -201,7 +311,7 @@ async function listLiveSessions(): Promise<LiveSessionResponse[]> {
   }
 }
 
-async function queryActiveTabId(): Promise<number | null> {
+async function queryActiveTab(): Promise<{ id: number; url?: string } | null> {
   const api = extensionApi();
   if (!api?.tabs?.query) return null;
   try {
@@ -212,11 +322,17 @@ async function queryActiveTabId(): Promise<number | null> {
         else resolve(result || []);
       });
     });
-    const tabId = tabs[0]?.id;
-    return typeof tabId === "number" ? tabId : null;
+    const tab = tabs[0];
+    if (tab?.id == null) return null;
+    return { id: tab.id, url: tab.url };
   } catch {
     return null;
   }
+}
+
+async function queryActiveTabId(): Promise<number | null> {
+  const tab = await queryActiveTab();
+  return tab?.id ?? null;
 }
 
 function createSessionId(jobId: string) {
@@ -227,18 +343,9 @@ function selectUiSession(
   focusedTabId: number | null,
   sessionsByTabId: Record<number, TabRecordingSession>,
 ): TabRecordingSession | null {
-  const sessions = Object.values(sessionsByTabId);
-  const review = sessions.find((session) => session.status === "review" || session.status === "saving");
-  if (review) return review;
-
-  if (focusedTabId != null && sessionsByTabId[focusedTabId]) {
-    return sessionsByTabId[focusedTabId]!;
-  }
-
-  const recording = sessions.find((session) => session.status === "recording");
-  if (recording) return recording;
-
-  return sessions.find((session) => session.lastOutcome || session.error) ?? null;
+  // Strict per-tab UI: never show another tab's bid chrome on this tab.
+  if (focusedTabId == null) return null;
+  return sessionsByTabId[focusedTabId] ?? null;
 }
 
 export interface FinishBidContext {
@@ -252,6 +359,7 @@ export interface FinishBidContext {
 export function useApplicationRecording() {
   const focusedTabId = useRecordingSessionsStore((state) => state.focusedTabId);
   const sessionsByTabId = useRecordingSessionsStore((state) => state.sessionsByTabId);
+  const panelError = useRecordingSessionsStore((state) => state.panelError);
   const recordingJobIds = useMemo(
     () => Object.values(sessionsByTabId)
       .filter((session) => session.status === "recording" && session.job?.id)
@@ -317,6 +425,42 @@ export function useApplicationRecording() {
     api?.tabs?.onActivated?.addListener?.(onActivated);
     api?.tabs?.onRemoved?.addListener?.(onRemoved);
 
+    const onRecordingLifecycle = (message: {
+      type?: string;
+      tabId?: number | null;
+      sessionId?: string | null;
+      job?: JobSnapshot | null;
+      startedAt?: number;
+      error?: string | null;
+    }) => {
+      if (message?.type === "ATHENS_LENS_RECORDING_STARTED") {
+        const tabId = typeof message.tabId === "number" ? message.tabId : null;
+        const sessionId = String(message.sessionId || "");
+        if (tabId == null || !sessionId) return;
+        const store = useRecordingSessionsStore.getState();
+        store.setPanelError(null);
+        store.setFocusedTabId(tabId);
+        store.replaceSession(tabId, createIdleSession(tabId, {
+          status: "recording",
+          job: message.job ? jobFromSnapshot(message.job) : null,
+          sessionId,
+          elapsedSeconds: Math.max(0, Math.floor((Date.now() - (message.startedAt || Date.now())) / 1000)),
+          recordedStartAt: new Date(message.startedAt || Date.now()).toISOString(),
+        }));
+        return;
+      }
+      if (message?.type === "ATHENS_LENS_PENDING_RECORD_FAILED") {
+        const error = String(message.error || "Could not start recording.");
+        const store = useRecordingSessionsStore.getState();
+        store.setPanelError(error);
+        const tabId = typeof message.tabId === "number" ? message.tabId : store.focusedTabId;
+        if (tabId != null) {
+          store.patchSession(tabId, { error });
+        }
+      }
+    };
+    api?.runtime?.onMessage?.addListener?.(onRecordingLifecycle);
+
     const onResumeAudit = (message: {
       type?: string;
       tabId?: number | null;
@@ -361,6 +505,7 @@ export function useApplicationRecording() {
       cancelled = true;
       api?.tabs?.onActivated?.removeListener?.(onActivated);
       api?.tabs?.onRemoved?.removeListener?.(onRemoved);
+      api?.runtime?.onMessage?.removeListener?.(onRecordingLifecycle);
       api?.runtime?.onMessage?.removeListener?.(onResumeAudit);
     };
   }, []);
@@ -375,66 +520,140 @@ export function useApplicationRecording() {
 
   return {
     state,
+    panelError,
     recordingJobIds,
     activeRecordingCount,
-    async start(job: Job, session: Session) {
-      if (!job.applyUrl) {
-        const store = useRecordingSessionsStore.getState();
-        const tabId = store.focusedTabId ?? (await queryActiveTabId());
-        if (tabId != null) {
-          store.replaceSession(tabId, createIdleSession(tabId, {
-            job,
-            error: "This job does not have an application link to record.",
-          }));
-          store.setFocusedTabId(tabId);
-        }
+    async openApply(job: Job) {
+      const store = useRecordingSessionsStore.getState();
+      store.setPanelError(null);
+
+      const applyUrl = normalizeApplyUrl(job.applyUrl);
+      if (!applyUrl) {
+        store.setPanelError("This job does not have an application link.");
         return;
       }
 
-      const store = useRecordingSessionsStore.getState();
-      const preferredTabId = store.focusedTabId ?? (await queryActiveTabId());
-      if (preferredTabId != null) {
-        const existing = store.sessionsByTabId[preferredTabId];
-        if (existing?.status === "recording") {
-          store.patchSession(preferredTabId, {
-            error: "This tab is already recording. Complete that bid first, or switch to another capture-ready tab.",
-          });
-          return;
-        }
+      const api = extensionApi();
+      if (!api) {
+        store.setPanelError("Opening apply links requires the Athens Lens Chrome extension.");
+        return;
       }
 
+      const opened = await openApplyTab(api, applyUrl);
+      if (!opened.ok) {
+        store.setPanelError(opened.error);
+        return;
+      }
+
+      // Keep this job's detail open on the apply tab so Record stays tied to
+      // the same role. Unrelated tabs still default to the jobs list.
+      useTabWorkspaceStore.getState().setRoute(opened.tabId, {
+        view: "jobs",
+        itemId: job.id,
+      });
+      store.setFocusedTabId(opened.tabId);
+    },
+
+    async startRecording(job: Job, session: Session) {
+      const store = useRecordingSessionsStore.getState();
+      store.setPanelError(null);
+
+      const api = extensionApi();
+      if (!api?.runtime?.sendMessage) {
+        store.setPanelError("Tab recording is only available in the Athens Lens Chrome extension.");
+        return;
+      }
+
+      // Prefer the already-tracked focused tab so capture can start in this click turn.
+      const tabId = store.focusedTabId;
+      if (tabId == null) {
+        store.setPanelError("Focus a normal web page tab, then click Record.");
+        return;
+      }
+
+      const existing = store.sessionsByTabId[tabId];
+      if (existing?.status === "recording") {
+        const message = "This tab is already recording. Complete that bid first, or switch tabs.";
+        store.setPanelError(message);
+        store.patchSession(tabId, { error: message });
+        return;
+      }
+
+      // Capture immediately — before any await — to preserve the user gesture.
+      const capturePromise = captureTabStream(api, tabId);
+
+      const applyUrl = normalizeApplyUrl(job.applyUrl) || job.applyUrl || "";
       const sessionId = createSessionId(job.id);
       const recordedStartAt = new Date().toISOString();
 
+      const showStartError = (message: string) => {
+        const next = useRecordingSessionsStore.getState();
+        next.setPanelError(message);
+        next.replaceSession(tabId, createIdleSession(tabId, { job, error: message }));
+      };
+
       try {
+        const activeTab = await queryActiveTab();
+        if (activeTab?.id === tabId && activeTab.url && !isHttpTabUrl(activeTab.url)) {
+          showStartError("Switch to a normal http(s) page (not New Tab), then click Record.");
+          return;
+        }
+
+        const captured = await capturePromise;
+        if (!captured.ok) {
+          // Side-panel clicks usually cannot grant tabCapture — queue a pending
+          // record and ask for one toolbar icon click (Bid-Monitor pattern).
+          if (isActiveTabCaptureError(captured.error)) {
+            const bidderName = session.displayName || session.username;
+            const expectedResumeName = buildProfileResumeFileName(bidderName, ".pdf");
+            const resumeSetFolder = profileNameToFileBase(bidderName) || "";
+            try {
+              await api.runtime.sendMessage({
+                type: "ATHENS_LENS_PENDING_RECORD",
+                tabId,
+                sessionId,
+                applyUrl,
+                job: jobSnapshot(job),
+                expectedResumeName,
+                resumeSetFolder,
+                bidderName,
+              });
+            } catch {
+              // Still show the toolbar hint.
+            }
+            void startAthensLensBid(session, {
+              jobId: job.id,
+              sessionId,
+              applyUrl: applyUrl || undefined,
+            }).catch((error: unknown) => {
+              console.warn("Athens Lens: bid start failed", error);
+            });
+            showStartError(friendlyCaptureError(captured.error));
+            return;
+          }
+          showStartError(friendlyCaptureError(captured.error));
+          return;
+        }
+
         void startAthensLensBid(session, {
           jobId: job.id,
           sessionId,
-          applyUrl: job.applyUrl,
+          applyUrl: applyUrl || undefined,
         }).catch((error: unknown) => {
           console.warn("Athens Lens: bid start failed", error);
         });
 
-        const response = await startTabRecording(job.applyUrl, sessionId, preferredTabId, job, session);
+        const response = await sendStartRecording(api, applyUrl, sessionId, job, session, {
+          tabId,
+          streamId: captured.streamId,
+        });
         if (!response?.ok) {
-          const errorTabId = response?.tabId ?? preferredTabId;
-          if (errorTabId != null) {
-            useRecordingSessionsStore.getState().replaceSession(
-              errorTabId,
-              createIdleSession(errorTabId, {
-                job,
-                error: response?.error || "Could not start tab recording.",
-              }),
-            );
-            useRecordingSessionsStore.getState().setFocusedTabId(errorTabId);
-          }
+          showStartError(response?.error || "Could not start tab recording.");
           return;
         }
 
         const nextStore = useRecordingSessionsStore.getState();
-        if (preferredTabId != null && preferredTabId !== response.tabId) {
-          nextStore.removeSession(preferredTabId);
-        }
+        nextStore.setPanelError(null);
         nextStore.setFocusedTabId(response.tabId);
         nextStore.replaceSession(response.tabId, createIdleSession(response.tabId, {
           status: "recording",
@@ -445,22 +664,19 @@ export function useApplicationRecording() {
           recordedStartAt,
         }));
       } catch (error) {
-        const errorTabId = preferredTabId;
-        if (errorTabId != null) {
-          useRecordingSessionsStore.getState().replaceSession(
-            errorTabId,
-            createIdleSession(errorTabId, {
-              job,
-              error: error instanceof Error ? error.message : "Could not start tab recording.",
-            }),
-          );
-        }
+        showStartError(
+          error instanceof Error ? error.message : "Could not start tab recording.",
+        );
       }
     },
+
     async restart(session: Session) {
       const current = stateRef.current;
       const tabId = current.tabId ?? uiTabIdRef.current;
-      if (!current.job?.applyUrl || tabId == null) return;
+      if (!current.job || tabId == null) return;
+
+      const api = extensionApi();
+      if (!api?.runtime?.sendMessage) return;
 
       if (current.sessionId) {
         try {
@@ -470,6 +686,9 @@ export function useApplicationRecording() {
         }
       }
 
+      // Capture the same tab again in this click turn.
+      const capturePromise = captureTabStream(api, tabId);
+      const applyUrl = normalizeApplyUrl(current.job.applyUrl) || current.job.applyUrl || "";
       const sessionId = createSessionId(current.job.id);
       const recordedStartAt = new Date().toISOString();
       const restartCount = current.restartCount + 1;
@@ -482,19 +701,53 @@ export function useApplicationRecording() {
       }));
 
       try {
+        const captured = await capturePromise;
+        if (!captured.ok) {
+          const message = friendlyCaptureError(captured.error);
+          if (isActiveTabCaptureError(captured.error)) {
+            const bidderName = session.displayName || session.username;
+            try {
+              await api.runtime.sendMessage({
+                type: "ATHENS_LENS_PENDING_RECORD",
+                tabId,
+                sessionId,
+                applyUrl,
+                job: jobSnapshot(current.job),
+                expectedResumeName: buildProfileResumeFileName(bidderName, ".pdf"),
+                resumeSetFolder: profileNameToFileBase(bidderName) || "",
+                bidderName,
+              });
+            } catch {
+              // Still show the toolbar hint.
+            }
+          }
+          useRecordingSessionsStore.getState().replaceSession(
+            tabId,
+            createIdleSession(tabId, {
+              job: current.job,
+              restartCount,
+              error: message,
+            }),
+          );
+          useRecordingSessionsStore.getState().setPanelError(message);
+          return;
+        }
+
         void startAthensLensBid(session, {
           jobId: current.job.id,
           sessionId,
-          applyUrl: current.job.applyUrl,
+          applyUrl: applyUrl || undefined,
         }).catch((error: unknown) => {
           console.warn("Athens Lens: bid restart start failed", error);
         });
-        const response = await startTabRecording(
-          current.job.applyUrl,
+
+        const response = await sendStartRecording(
+          api,
+          applyUrl,
           sessionId,
-          tabId,
           current.job,
           session,
+          { tabId, streamId: captured.streamId },
         );
         if (!response?.ok) {
           useRecordingSessionsStore.getState().replaceSession(
@@ -506,9 +759,6 @@ export function useApplicationRecording() {
             }),
           );
           return;
-        }
-        if (response.tabId !== tabId) {
-          useRecordingSessionsStore.getState().removeSession(tabId);
         }
         useRecordingSessionsStore.getState().setFocusedTabId(response.tabId);
         useRecordingSessionsStore.getState().replaceSession(
@@ -532,6 +782,7 @@ export function useApplicationRecording() {
         );
       }
     },
+
     async complete() {
       const current = stateRef.current;
       const tabId = current.tabId ?? uiTabIdRef.current;
@@ -580,20 +831,58 @@ export function useApplicationRecording() {
         return;
       }
 
-      useRecordingSessionsStore.getState().patchSession(tabId, {
+      const jobId = current.job.id;
+      const store = useRecordingSessionsStore.getState();
+      store.patchSession(tabId, {
         status: "saving",
         error: null,
       });
 
+      // Gather every tab session for this job so multi-tab Workday clips upload together.
+      const related = Object.values(store.sessionsByTabId).filter(
+        (session) => session.job?.id === jobId && session.sessionId,
+      );
+
+      for (const session of related) {
+        if (session.status === "recording" && session.sessionId) {
+          try {
+            const stopped = await stopTabRecording(session.sessionId);
+            const recordedEndAt = new Date().toISOString();
+            useRecordingSessionsStore.getState().replaceSession(session.tabId, {
+              ...session,
+              status: "review",
+              recordedEndAt,
+              error: stopped?.ok ? null : (stopped?.error || session.error),
+              savedFilename: stopped?.ok
+                ? (stopped.filename || session.savedFilename)
+                : session.savedFilename,
+            });
+          } catch {
+            // Best-effort stop; upload may still find a digest.
+          }
+        } else if (session.tabId !== tabId) {
+          useRecordingSessionsStore.getState().patchSession(session.tabId, {
+            status: "saving",
+            error: null,
+          });
+        }
+      }
+
+      const freshRelated = Object.values(useRecordingSessionsStore.getState().sessionsByTabId)
+        .filter((session) => session.job?.id === jobId && session.sessionId);
+      const recordingSessions = freshRelated.map((session) => ({
+        recordingSessionId: session.sessionId!,
+        durationSec: session.elapsedSeconds,
+        recordedStartAt: session.recordedStartAt,
+        recordedEndAt: session.recordedEndAt || new Date().toISOString(),
+      }));
+
       try {
         const result = await finishAthensLensBid({
           session: context.session,
-          jobId: current.job.id,
+          jobId,
           applyUrl: current.job.applyUrl,
-          recordingSessionId: current.sessionId,
-          durationSec: current.elapsedSeconds,
-          recordedStartAt: current.recordedStartAt,
-          recordedEndAt: current.recordedEndAt || new Date().toISOString(),
+          recordingSessions,
           submitted,
           answers: context.answers,
           summary: context.summary,
@@ -601,14 +890,17 @@ export function useApplicationRecording() {
           mode: context.mode,
         });
 
-        useRecordingSessionsStore.getState().replaceSession(
-          tabId,
-          createIdleSession(tabId, {
-            lastOutcome: submitted ? "submitted" : "not-submitted",
-            job: current.job,
-            error: result.uploadError || null,
-          }),
-        );
+        const nextStore = useRecordingSessionsStore.getState();
+        for (const session of freshRelated) {
+          nextStore.replaceSession(
+            session.tabId,
+            createIdleSession(session.tabId, {
+              lastOutcome: submitted ? "submitted" : "not-submitted",
+              job: current.job,
+              error: session.tabId === tabId ? (result.uploadError || null) : null,
+            }),
+          );
+        }
       } catch (error) {
         useRecordingSessionsStore.getState().patchSession(tabId, {
           status: "review",
@@ -618,8 +910,12 @@ export function useApplicationRecording() {
     },
     clearOutcome() {
       const tabId = uiTabIdRef.current ?? stateRef.current.tabId;
+      useRecordingSessionsStore.getState().setPanelError(null);
       if (tabId == null) return;
       useRecordingSessionsStore.getState().removeSession(tabId);
+    },
+    clearPanelError() {
+      useRecordingSessionsStore.getState().setPanelError(null);
     },
     reset() {
       const store = useRecordingSessionsStore.getState();

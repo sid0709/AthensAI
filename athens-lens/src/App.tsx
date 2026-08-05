@@ -5,9 +5,13 @@ import { InboxWorkspace } from "./inbox/InboxWorkspace";
 import { athensInboxRepository } from "./inbox/inboxRepository";
 import { JobsWorkspace } from "./jobs/JobsWorkspace";
 import { athensJobsRepository } from "./jobs/jobsRepository";
-import { useWorkspaceRoute } from "./navigation/routes";
-import { useWorkspaceCache } from "./state/workspaceCache";
-import { invalidateWorkspaceRequests, refreshJobs, warmWorkspaceLists } from "./state/workspaceData";
+import {
+  formatWorkspaceRoute,
+  parseWorkspaceRoute,
+  type WorkspaceRoute,
+  type WorkspaceView,
+} from "./navigation/routes";
+import { useRecordingSessionsStore } from "./recording/recordingSessionsStore";
 import {
   AiAnswerPanel,
   BidOutcomeToast,
@@ -17,6 +21,9 @@ import {
 } from "./recording/RecordingExperience";
 import type { FormAnswer, PageContext } from "./recording/askAi";
 import { useApplicationRecording } from "./recording/useApplicationRecording";
+import { useTabWorkspaceStore } from "./state/tabWorkspaceStore";
+import { useWorkspaceCache } from "./state/workspaceCache";
+import { invalidateWorkspaceRequests, refreshJobs, warmWorkspaceLists } from "./state/workspaceData";
 import type { AuthStore, Credentials, InboxRepository, Job, JobsRepository, Session } from "./types";
 
 interface AppProps {
@@ -43,13 +50,53 @@ export function App({
   inboxRepository = athensInboxRepository
 }: AppProps) {
   const [sessionState, setSessionState] = useState<SessionState>({ status: "restoring" });
-  const [aiJob, setAiJob] = useState<Job | null>(null);
   const [aiAnswersByJob, setAiAnswersByJob] = useState<Record<string, StoredAiAnswers>>({});
-  const { route, navigate } = useWorkspaceRoute();
+  const focusedTabId = useRecordingSessionsStore((state) => state.focusedTabId);
+  const tabWorkspace = useTabWorkspaceStore((state) => (
+    focusedTabId == null ? null : state.byTabId[focusedTabId] ?? null
+  ));
+  const route = tabWorkspace?.route ?? parseWorkspaceRoute(window.location.hash);
+  const aiJob = tabWorkspace?.aiJob ?? null;
   const recording = useApplicationRecording();
 
   const rememberAiAnswers = useCallback((payload: StoredAiAnswers) => {
     setAiAnswersByJob((current) => ({ ...current, [payload.jobId]: payload }));
+  }, []);
+
+  const navigate = useCallback((nextRoute: WorkspaceRoute) => {
+    const tabId = useRecordingSessionsStore.getState().focusedTabId;
+    if (tabId != null) {
+      useTabWorkspaceStore.getState().setRoute(tabId, nextRoute);
+    }
+    const nextHash = formatWorkspaceRoute(nextRoute);
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash;
+    }
+  }, []);
+
+  const setAiJobForFocusedTab = useCallback((job: Job | null) => {
+    const tabId = useRecordingSessionsStore.getState().focusedTabId;
+    if (tabId == null) return;
+    useTabWorkspaceStore.getState().setAiJob(tabId, job);
+  }, []);
+
+  // Keep each browser tab's Lens viewpoint independent.
+  useEffect(() => {
+    if (focusedTabId == null) return;
+    const workspace = useTabWorkspaceStore.getState().ensureTab(focusedTabId);
+    const nextHash = formatWorkspaceRoute(workspace.route);
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash;
+    }
+  }, [focusedTabId]);
+
+  useEffect(() => {
+    const onRemoved = (tabId: number) => {
+      useTabWorkspaceStore.getState().removeTab(tabId);
+    };
+    const api = (globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome;
+    api?.tabs?.onRemoved?.addListener?.(onRemoved);
+    return () => api?.tabs?.onRemoved?.removeListener?.(onRemoved);
   }, []);
 
   useEffect(() => {
@@ -109,13 +156,21 @@ export function App({
     invalidateWorkspaceRequests(profileId);
     await authStore.signOut();
     useWorkspaceCache.getState().clearProfile(profileId);
+    useTabWorkspaceStore.getState().clearAll();
     recording.reset();
-    setAiJob(null);
     setAiAnswersByJob({});
     setSessionState({ status: "ready", session: null });
   };
 
-  const navigateView = (view: "jobs" | "inbox") => navigate({ view });
+  const navigateView = (view: WorkspaceView) => navigate({ view });
+  const focusedHasBidUi = recording.state.status === "recording"
+    || recording.state.status === "review"
+    || recording.state.status === "saving";
+  const otherRecordingCount = Math.max(
+    0,
+    recording.activeRecordingCount - (recording.state.status === "recording" ? 1 : 0),
+  );
+
   const workspace = route.view === "inbox" ? (
       <InboxWorkspace
         session={session}
@@ -132,13 +187,16 @@ export function App({
       jobsRepository={jobsRepository}
       route={route}
       inboxUnreadCount={inboxUnreadCount}
-      recordingJobIds={recording.recordingJobIds}
+      isTabRecording={recording.state.status === "recording"}
       onNavigate={navigate}
       onNavigateView={navigateView}
       onApply={(job) => {
-        void recording.start(job, session);
+        void recording.openApply(job);
       }}
-      onAskAi={setAiJob}
+      onRecord={(job) => {
+        void recording.startRecording(job, session);
+      }}
+      onAskAi={setAiJobForFocusedTab}
       onLogout={logout}
     />
   );
@@ -147,13 +205,20 @@ export function App({
 
   return (
     <>
+      {!focusedHasBidUi && otherRecordingCount > 0 ? (
+        <aside className="other-tabs-recording" role="status">
+          {otherRecordingCount === 1
+            ? "1 bid is recording on another tab — switch to that tab to manage it."
+            : `${otherRecordingCount} bids are recording on other tabs — switch tabs to manage them.`}
+        </aside>
+      ) : null}
       {workspace}
       <RecordingDock
         state={recording.state}
         activeRecordingCount={recording.activeRecordingCount}
         onRestart={() => void recording.restart(session)}
         onComplete={() => void recording.complete()}
-        onAskAi={setAiJob}
+        onAskAi={setAiJobForFocusedTab}
       />
       <SubmissionDialog
         state={recording.state}
@@ -174,6 +239,11 @@ export function App({
               return next;
             });
           }
+          if (focusedTabId != null) {
+            useTabWorkspaceStore.getState().setAiJob(focusedTabId, null);
+            useTabWorkspaceStore.getState().setRoute(focusedTabId, { view: "jobs" });
+            navigate({ view: "jobs" });
+          }
           // Bid-complete jobs drop out of Bid Ready — refresh the Lens jobs list.
           invalidateWorkspaceRequests(session.profileId);
           void refreshJobs(session, jobsRepository).catch(() => undefined);
@@ -182,14 +252,20 @@ export function App({
       <AiAnswerPanel
         job={aiJob}
         session={session}
-        tabId={recording.state.tabId}
+        tabId={recording.state.tabId ?? focusedTabId}
         onAnswers={rememberAiAnswers}
-        onClose={() => setAiJob(null)}
+        onClose={() => setAiJobForFocusedTab(null)}
       />
       <BidOutcomeToast state={recording.state} onDismiss={recording.clearOutcome} />
       <RecordingErrorToast
-        message={recording.state.status === "idle" ? recording.state.error : null}
-        onDismiss={() => recording.clearOutcome()}
+        message={
+          recording.panelError
+          || (recording.state.status === "idle" ? recording.state.error : null)
+        }
+        onDismiss={() => {
+          recording.clearPanelError();
+          recording.clearOutcome();
+        }}
       />
     </>
   );

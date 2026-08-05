@@ -49,7 +49,10 @@ interface RecordingSessionsState {
   focusedTabId: number | null;
   /** Live / review / saving sessions keyed by capture tab id. */
   sessionsByTabId: Record<number, TabRecordingSession>;
+  /** Apply/start errors that must show even when no tab session exists. */
+  panelError: string | null;
   setFocusedTabId(tabId: number | null): void;
+  setPanelError(message: string | null): void;
   replaceSession(tabId: number, session: TabRecordingSession): void;
   patchSession(tabId: number, patch: Partial<TabRecordingSession>): void;
   removeSession(tabId: number): void;
@@ -60,9 +63,14 @@ interface RecordingSessionsState {
 export const useRecordingSessionsStore = create<RecordingSessionsState>((set, get) => ({
   focusedTabId: null,
   sessionsByTabId: {},
+  panelError: null,
 
   setFocusedTabId(tabId) {
     set({ focusedTabId: tabId });
+  },
+
+  setPanelError(message) {
+    set({ panelError: message });
   },
 
   replaceSession(tabId, session) {
@@ -71,6 +79,7 @@ export const useRecordingSessionsStore = create<RecordingSessionsState>((set, ge
         ...state.sessionsByTabId,
         [tabId]: { ...session, tabId },
       },
+      panelError: session.error && session.status === "idle" ? null : state.panelError,
     }));
   },
 
@@ -94,7 +103,7 @@ export const useRecordingSessionsStore = create<RecordingSessionsState>((set, ge
   },
 
   clearAll() {
-    set({ sessionsByTabId: {}, focusedTabId: null });
+    set({ sessionsByTabId: {}, focusedTabId: null, panelError: null });
   },
 
   tickElapsed() {

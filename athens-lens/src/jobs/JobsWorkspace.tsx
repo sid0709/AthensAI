@@ -13,10 +13,11 @@ interface JobsWorkspaceProps {
   jobsRepository: JobsRepository;
   route: WorkspaceRoute;
   inboxUnreadCount: number;
-  recordingJobIds: readonly string[];
+  isTabRecording: boolean;
   onNavigate(route: WorkspaceRoute): void;
   onNavigateView(view: WorkspaceView): void;
   onApply(job: Job): void;
+  onRecord(job: Job): void;
   onAskAi(job: Job): void;
   onLogout(): Promise<void>;
 }
@@ -26,10 +27,11 @@ export function JobsWorkspace({
   jobsRepository,
   route,
   inboxUnreadCount,
-  recordingJobIds,
+  isTabRecording,
   onNavigate,
   onNavigateView,
   onApply,
+  onRecord,
   onAskAi,
   onLogout
 }: JobsWorkspaceProps) {
@@ -113,9 +115,10 @@ export function JobsWorkspace({
       {selectedJob ? (
         <JobDetail
           job={selectedJob}
-          isRecording={recordingJobIds.includes(selectedJob.id)}
+          isRecording={isTabRecording}
           onBack={() => onNavigate({ view: "jobs" })}
           onApply={onApply}
+          onRecord={onRecord}
           onAskAi={onAskAi}
         />
       ) : null}

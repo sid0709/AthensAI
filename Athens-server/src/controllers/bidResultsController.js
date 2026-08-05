@@ -204,6 +204,8 @@ function mapTaskToBidResult(task) {
 				? task.resumeStackMatch
 				: null,
 		recording,
+		recordings: Array.isArray(task.recordings) ? task.recordings : recording ? [recording] : [],
+		resumeAudits: Array.isArray(task.resumeAudits) ? task.resumeAudits : [],
 		notes:
 			status === "pending"
 				? "Bid ready — waiting for bidder"
@@ -229,6 +231,68 @@ function mapTaskToBidResult(task) {
 		resumeRenamed: Boolean(task.resumeRenamed),
 		resumeMismatch: Boolean(task.resumeMismatch),
 	};
+}
+
+function appendRecordingToTask(existing, entry) {
+	const list = Array.isArray(existing?.recordings) ? [...existing.recordings] : [];
+	if (list.length === 0 && existing?.recordingPath) {
+		list.push({
+			storagePath: String(existing.recordingPath),
+			contentType: existing.recordingContentType || "video/webm",
+			sizeBytes: Number(existing.recordingSize || 0) || 0,
+			sessionId: existing.bidSessionId || null,
+			durationSec:
+				typeof existing.recordingDurationSec === "number"
+					? existing.recordingDurationSec
+					: null,
+			recordedStartAt: existing.recordingStartedAt || null,
+			recordedEndAt: existing.recordingEndedAt || null,
+			uploadedAt: null,
+		});
+	}
+	const sessionId = entry.sessionId ? String(entry.sessionId) : "";
+	const idx = sessionId
+		? list.findIndex((item) => String(item?.sessionId || "") === sessionId)
+		: -1;
+	if (idx >= 0) list[idx] = entry;
+	else list.push(entry);
+	return list;
+}
+
+function appendResumeAuditToTask(existing, entry) {
+	const list = Array.isArray(existing?.resumeAudits) ? [...existing.resumeAudits] : [];
+	if (list.length === 0 && existing?.resumeOriginalName) {
+		list.push({
+			originalName: String(existing.resumeOriginalName),
+			expectedName: existing.resumeExpectedName || null,
+			cleanedName: existing.resumeCleanedName || null,
+			renamed: Boolean(existing.resumeRenamed),
+			mismatch: Boolean(existing.resumeMismatch),
+			sessionId: existing.resumeAuditSessionId || null,
+			source: existing.resumeAuditSource || null,
+			fileSize:
+				typeof existing.resumeAuditFileSize === "number"
+					? existing.resumeAuditFileSize
+					: null,
+			mimeType: existing.resumeAuditMimeType || null,
+			auditKey: existing.resumeAuditKey || null,
+			recordedAt: existing.resumeAuditRecordedAt || null,
+		});
+	}
+	const auditKey = entry.auditKey ? String(entry.auditKey) : "";
+	const idx = auditKey
+		? list.findIndex((item) => String(item?.auditKey || "") === auditKey)
+		: -1;
+	if (idx >= 0) list[idx] = entry;
+	else list.push(entry);
+	return list;
+}
+
+function taskOwnsRecordingPath(doc, storagePath) {
+	if (!doc || !storagePath) return false;
+	if (String(doc.recordingPath || "") === storagePath) return true;
+	if (!Array.isArray(doc.recordings)) return false;
+	return doc.recordings.some((entry) => String(entry?.storagePath || "") === storagePath);
 }
 
 function serializeAiUsageRow(doc) {
@@ -584,9 +648,12 @@ export async function getBidRecordingUrl(req, res) {
 
 		const doc = await collection.findOne({
 			applierName,
-			recordingPath: storagePath,
+			$or: [
+				{ recordingPath: storagePath },
+				{ "recordings.storagePath": storagePath },
+			],
 		});
-		if (!doc) {
+		if (!doc || !taskOwnsRecordingPath(doc, storagePath)) {
 			return res.status(404).json({ success: false, error: "Recording was not found for this profile." });
 		}
 
@@ -919,6 +986,19 @@ async function persistBidRecordingMetadata({
 	const collection = getVendorTasksCollection();
 	const existing = collection ? await collection.findOne({ applierName, jobId: String(jobId) }) : null;
 	const now = new Date();
+	const recordingEntry = {
+		storagePath: uploaded.storagePath,
+		contentType: uploaded.contentType || "video/webm",
+		sizeBytes: Number(uploaded.sizeBytes || 0) || 0,
+		sessionId: sessionId || null,
+		sha256: uploaded.sha256 || null,
+		generation: uploaded.generation || null,
+		durationSec,
+		recordedStartAt: optionalDate(recordedStartAt) || null,
+		recordedEndAt: optionalDate(recordedEndAt) || null,
+		uploadedAt: now,
+	};
+	const recordings = appendRecordingToTask(existing, recordingEntry);
 	const fields = {
 		bidderName: bidderName || undefined,
 		bidSessionId: sessionId,
@@ -930,6 +1010,7 @@ async function persistBidRecordingMetadata({
 		recordingDurationSec: durationSec,
 		recordingStartedAt: optionalDate(recordedStartAt) || undefined,
 		recordingEndedAt: optionalDate(recordedEndAt) || undefined,
+		recordings,
 	};
 	if (applyUrl) fields.applyUrl = applyUrl;
 	if (markCompleted) {
@@ -956,7 +1037,10 @@ async function persistBidRecordingMetadata({
 			toStatus: "submitted",
 			actorType: "vendor",
 			actorName: bidderName,
-			meta: { biddingDurationSec: fields.biddingDurationSec ?? null },
+			meta: {
+				biddingDurationSec: fields.biddingDurationSec ?? null,
+				recordingCount: recordings.length,
+			},
 		});
 	} else {
 		await upsertJobBidStatus(applierName, jobId, { bidReady: true });
@@ -1095,6 +1179,17 @@ export async function uploadBidRecording(req, res) {
 			: null;
 
 		const now = new Date();
+		const recordingEntry = {
+			storagePath: uploaded.storagePath,
+			contentType: uploaded.contentType || "video/webm",
+			sizeBytes: Number(uploaded.sizeBytes || 0) || 0,
+			sessionId: sessionId || null,
+			durationSec,
+			recordedStartAt: recordingStartedAt || null,
+			recordedEndAt: recordingEndedAt || null,
+			uploadedAt: now,
+		};
+		const recordings = appendRecordingToTask(existing, recordingEntry);
 		const fields = {
 			bidderName: bidderName || undefined,
 			bidSessionId: sessionId,
@@ -1104,6 +1199,7 @@ export async function uploadBidRecording(req, res) {
 			recordingDurationSec: durationSec,
 			recordingStartedAt: recordingStartedAt || undefined,
 			recordingEndedAt: recordingEndedAt || undefined,
+			recordings,
 		};
 		if (applyUrl) fields.applyUrl = applyUrl;
 		if (markCompleted) {
@@ -1408,6 +1504,21 @@ export async function saveResumeAudit(req, res) {
 			auditMimeType,
 		].join("|");
 		const duplicateAudit = Boolean(auditKey && existing?.resumeAuditKey === auditKey);
+		const resumeAuditEntry = {
+			originalName,
+			expectedName,
+			cleanedName,
+			renamed,
+			mismatch,
+			sessionId: auditSessionId || null,
+			source: auditSource || null,
+			fileSize,
+			lastModified,
+			mimeType: auditMimeType || null,
+			auditKey,
+			recordedAt: new Date(),
+		};
+		const resumeAudits = appendResumeAuditToTask(existing, resumeAuditEntry);
 
 		const doc = await upsertVendorTaskRecording(applierName, jobId, {
 			resumeOriginalName: originalName,
@@ -1424,6 +1535,7 @@ export async function saveResumeAudit(req, res) {
 			resumeAuditKey: auditKey,
 			resumeAuditClientKey: suppliedAuditKey || undefined,
 			resumeAuditRecordedAt: new Date(),
+			resumeAudits,
 			title: existing?.title || title,
 			company: existing?.company || company,
 		});

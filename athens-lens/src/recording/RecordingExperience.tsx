@@ -152,8 +152,6 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [phase, setPhase] = useState<AskPhase>("reading");
   const [error, setError] = useState<string | null>(null);
-  const [pageContext, setPageContext] = useState<PageContext | null>(null);
-  const [readTabId, setReadTabId] = useState<number | null>(null);
   const [summary, setSummary] = useState("");
   const [answers, setAnswers] = useState<FormAnswer[]>([]);
 
@@ -162,8 +160,6 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
     let cancelled = false;
     setPhase("reading");
     setError(null);
-    setPageContext(null);
-    setReadTabId(null);
     setAnswers([]);
     setSummary("");
 
@@ -171,12 +167,10 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
       try {
         const read = await readOpenPageText(tabId);
         if (cancelled) return;
-        setPageContext(read.pageContext);
-        setReadTabId(read.tabId);
 
         const visibleText = String(read.pageContext.visibleText || "").trim();
         if (!visibleText) {
-          setError("No readable text on the focused tab (see innerText above). Click the application form page, then try Ask AI again.");
+          setError("No readable text on the focused tab. Click the application form page, then try Ask AI again.");
           setPhase("done");
           return;
         }
@@ -194,7 +188,7 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
           mode: result.mode,
         });
         if (!result.answers.length) {
-          setError("AI returned no form answers from the innerText above.");
+          setError("AI returned no form answers for this page.");
         }
         setPhase("done");
       } catch (loadError) {
@@ -216,10 +210,6 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
     setCopiedId(id);
     window.setTimeout(() => setCopiedId(null), 1600);
   }
-
-  const innerText = pageContext?.visibleText ?? "";
-  const innerTextReady = pageContext != null;
-  const meta = pageContext?.readMeta;
 
   return (
     <div className="assistant-backdrop" role="presentation">
@@ -243,33 +233,16 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
             </p>
           </div>
 
-          <section className="ai-debug-block" aria-label="Focused tab innerText">
-            <p className="ai-section-label">innerText</p>
-            {phase === "reading" && !innerTextReady ? (
-              <div className="ai-loading" role="status">
-                <Loader2 size={18} className="spin" aria-hidden="true" />
-                <span>Reading focused tab innerText…</span>
-              </div>
-            ) : (
-              <>
-                <p className="ai-debug-meta">
-                  {readTabId != null ? `tab ${readTabId}` : "tab ?"}
-                  {pageContext?.url ? ` · ${pageContext.url}` : ""}
-                  {meta ? ` · ${meta.charCount ?? innerText.length} chars` : ` · ${innerText.length} chars`}
-                  {meta?.formCount != null ? ` · ${meta.formCount} fields` : ""}
-                  {meta?.note ? ` · ${meta.note}` : ""}
-                </p>
-                <pre className="ai-debug-pre">{innerText.trim() ? innerText : "(empty)"}</pre>
-              </>
-            )}
-          </section>
-
           <section className="ai-debug-block" aria-label="AI response">
             <p className="ai-section-label">AI response</p>
-            {phase === "asking" ? (
+            {phase === "reading" || phase === "asking" ? (
               <div className="ai-loading" role="status">
                 <Loader2 size={18} className="spin" aria-hidden="true" />
-                <span>Generating answers from innerText + profile…</span>
+                <span>
+                  {phase === "reading"
+                    ? "Reading the focused tab…"
+                    : "Generating answers from the page + profile…"}
+                </span>
               </div>
             ) : null}
 

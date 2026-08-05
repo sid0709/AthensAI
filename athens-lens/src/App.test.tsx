@@ -6,6 +6,7 @@ import { mockInboxRepository } from "./inbox/inboxRepository";
 import { MOCK_INBOX_MESSAGES, MOCK_UNREAD_COUNT } from "./inbox/mockInbox";
 import { MOCK_JOBS } from "./jobs/mockJobs";
 import { useRecordingSessionsStore } from "./recording/recordingSessionsStore";
+import { useTabWorkspaceStore } from "./state/tabWorkspaceStore";
 import { resetWorkspaceCacheForTests, useWorkspaceCache } from "./state/workspaceCache";
 import type { AuthStore, Credentials, InboxRepository, JobsRepository, Session } from "./types";
 
@@ -38,60 +39,122 @@ const jobsRepository: JobsRepository = {
   listJobs: vi.fn(async () => MOCK_JOBS)
 };
 
+function installChromeStub(overrides?: {
+  sendMessage?: (message: { type?: string; tabId?: number; preferredTabId?: number | null; streamId?: string }) => unknown | Promise<unknown>;
+  activeTab?: { id: number; url?: string } | (() => { id: number; url?: string });
+  createTabId?: number | (() => number);
+  streamId?: string | null;
+  captureError?: string;
+}) {
+  let createCalls = 0;
+  const resolveActiveTab = () => {
+    if (typeof overrides?.activeTab === "function") return overrides.activeTab();
+    return overrides?.activeTab ?? { id: 42, url: "https://example.com/page" };
+  };
+  const resolveCreateTabId = () => {
+    createCalls += 1;
+    if (typeof overrides?.createTabId === "function") return overrides.createTabId();
+    return overrides?.createTabId ?? 42;
+  };
+
+  const defaultSendMessage = async (message: {
+    type?: string;
+    tabId?: number;
+    preferredTabId?: number | null;
+  }) => {
+    if (message?.type === "ATHENS_LENS_START_RECORDING") {
+      return { ok: true, tabId: message.tabId ?? message.preferredTabId ?? 42 };
+    }
+    if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
+      return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
+    }
+    if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
+      return { ok: true, sessions: [] };
+    }
+    if (message?.type === "ATHENS_LENS_RECORDING_DIGEST") {
+      return { ok: false, error: "No pending recording in tests." };
+    }
+    if (message?.type === "ATHENS_LENS_PUT_RECORDING") {
+      return { ok: false, error: "No pending recording in tests." };
+    }
+    if (message?.type === "ATHENS_LENS_DISCARD_RECORDING") {
+      return { ok: true };
+    }
+    if (message?.type === "ATHENS_LENS_READ_PAGE_TEXT") {
+      return {
+        ok: true,
+        tabId: 42,
+        pageContext: {
+          url: "https://example.com/apply",
+          title: "Application",
+          metaDescription: "",
+          visibleText: "Why are you interested in this role?\nWhat is your availability?",
+        },
+      };
+    }
+    return { ok: false, error: `Unhandled message ${message?.type || ""}` };
+  };
+
+  const sendMessage = overrides?.sendMessage
+    ? vi.fn(async (message: { type?: string; tabId?: number; preferredTabId?: number | null; streamId?: string }) => {
+        const handled = await overrides.sendMessage!(message);
+        if (handled !== undefined) return handled;
+        return defaultSendMessage(message);
+      })
+    : vi.fn(defaultSendMessage);
+
+  const chromeApi = {
+    runtime: {
+      sendMessage,
+      onMessage: {
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+      },
+      lastError: undefined as { message?: string } | undefined,
+    },
+    tabs: {
+      query: vi.fn((_query: unknown, callback: (tabs: Array<{ id: number; url?: string }>) => void) => {
+        callback([resolveActiveTab()]);
+      }),
+      create: vi.fn((
+        createProperties: { url: string; active?: boolean },
+        callback?: (tab: { id: number; url: string }) => void,
+      ) => {
+        callback?.({ id: resolveCreateTabId(), url: createProperties.url });
+      }),
+      remove: vi.fn(),
+      onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
+      onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
+    tabCapture: {
+      getMediaStreamId: vi.fn((
+        _options: { targetTabId: number },
+        callback: (streamId: string) => void,
+      ) => {
+        if (overrides?.captureError || overrides?.streamId === null) {
+          chromeApi.runtime.lastError = {
+            message: overrides?.captureError || "Could not capture this tab. Focus a normal http(s) page and try Record again.",
+          };
+          callback("");
+          chromeApi.runtime.lastError = undefined;
+          return;
+        }
+        callback(overrides?.streamId ?? "mock-stream-id");
+      }),
+    },
+  };
+
+  vi.stubGlobal("chrome", chromeApi);
+  return chromeApi;
+}
+
 describe("Athens Lens app", () => {
   beforeEach(async () => {
     await resetWorkspaceCacheForTests();
     useRecordingSessionsStore.getState().clearAll();
+    useTabWorkspaceStore.getState().clearAll();
     window.location.hash = "#jobs";
-    vi.stubGlobal("chrome", {
-      runtime: {
-        sendMessage: vi.fn(async (message: { type?: string; tabId?: number }) => {
-          if (message?.type === "ATHENS_LENS_START_RECORDING") {
-            return { ok: true, tabId: 42 };
-          }
-          if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
-            return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
-          }
-          if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
-            return { ok: true, sessions: [] };
-          }
-          if (message?.type === "ATHENS_LENS_RECORDING_DIGEST") {
-            return { ok: false, error: "No pending recording in tests." };
-          }
-          if (message?.type === "ATHENS_LENS_PUT_RECORDING") {
-            return { ok: false, error: "No pending recording in tests." };
-          }
-          if (message?.type === "ATHENS_LENS_DISCARD_RECORDING") {
-            return { ok: true };
-          }
-          if (message?.type === "ATHENS_LENS_READ_PAGE_TEXT") {
-            return {
-              ok: true,
-              tabId: 42,
-              pageContext: {
-                url: "https://example.com/apply",
-                title: "Application",
-                metaDescription: "",
-                visibleText: "Why are you interested in this role?\nWhat is your availability?",
-              },
-            };
-          }
-          return { ok: false, error: `Unhandled message ${message?.type || ""}` };
-        }),
-        onMessage: {
-          addListener: vi.fn(),
-          removeListener: vi.fn(),
-        },
-        lastError: undefined,
-      },
-      tabs: {
-        query: vi.fn((_query: unknown, callback: (tabs: Array<{ id: number }>) => void) => {
-          callback([{ id: 42 }]);
-        }),
-        onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
-        onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
-      },
-    });
+    installChromeStub();
   });
 
   it("shows validation, signs in, navigates jobs, and logs out", async () => {
@@ -121,7 +184,8 @@ describe("Athens Lens app", () => {
 
     await user.click(screen.getByRole("button", { name: new RegExp(MOCK_JOBS[1].title) }));
     expect(screen.getByRole("heading", { name: MOCK_JOBS[1].title })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Apply & record" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
     expect(container.querySelector(".workspace")).toHaveClass("workspace--detail");
 
     await user.click(screen.getByRole("button", { name: "All jobs" }));
@@ -194,7 +258,7 @@ describe("Athens Lens app", () => {
   });
 
   it("renders Gmail envelopes before asynchronously loaded message bodies", async () => {
-    window.location.hash = "#inbox";
+    const user = userEvent.setup();
     const envelopes = MOCK_INBOX_MESSAGES.map((message) => ({
       ...message,
       preview: "",
@@ -226,6 +290,8 @@ describe("Athens Lens app", () => {
       />
     );
 
+    await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
+    await user.click(screen.getByRole("button", { name: /Gmail inbox/ }));
     expect(await screen.findByRole("heading", { name: MOCK_INBOX_MESSAGES[0].subject })).toBeInTheDocument();
     expect(screen.getByText("Loading message…")).toBeInTheDocument();
     resolveSelectedBody?.([MOCK_INBOX_MESSAGES[0]]);
@@ -275,7 +341,7 @@ describe("Athens Lens app", () => {
     );
 
     await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
-    await user.click(screen.getByRole("button", { name: "Apply & record" }));
+    await user.click(screen.getByRole("button", { name: "Record" }));
 
     expect(screen.getByRole("complementary", { name: "Application recording" })).toBeInTheDocument();
     expect(screen.getByText("Live tab capture · 00:00")).toBeInTheDocument();
@@ -283,12 +349,9 @@ describe("Athens Lens app", () => {
     await user.click(screen.getByRole("button", { name: "Restart" }));
     await user.click(screen.getAllByRole("button", { name: "Ask AI" })[0]!);
     expect(screen.getByRole("dialog", { name: "Form answers" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Focused tab innerText")).toBeInTheDocument();
     expect(screen.getByLabelText("AI response")).toBeInTheDocument();
     expect(await screen.findByText(/\d+ answers ready to copy/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Focused tab innerText").textContent).toMatch(
-      /Why are you interested in this role\?/,
-    );
+    expect(screen.queryByLabelText("Focused tab innerText")).not.toBeInTheDocument();
     expect(screen.getByText("I am interested because the work matches my background.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close AI answers" }));
 
@@ -306,29 +369,15 @@ describe("Athens Lens app", () => {
   it("tracks concurrent recordings on separate browser tabs", async () => {
     const user = userEvent.setup();
     let startCount = 0;
-    const sendMessage = vi.fn(async (message: { type?: string; preferredTabId?: number | null }) => {
-      if (message?.type === "ATHENS_LENS_START_RECORDING") {
-        startCount += 1;
-        const tabId = message.preferredTabId === 43 ? 43 : 42;
-        return { ok: true, tabId };
-      }
-      if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
-        return { ok: true, sessions: [] };
-      }
-      if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
-        return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
-      }
-      return { ok: false, error: `Unhandled ${message?.type || ""}` };
-    });
     let activeTabId = 42;
-    vi.stubGlobal("chrome", {
-      runtime: { sendMessage, lastError: undefined },
-      tabs: {
-        query: vi.fn((_query: unknown, callback: (tabs: Array<{ id: number }>) => void) => {
-          callback([{ id: activeTabId }]);
-        }),
-        onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
-        onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
+    const chromeApi = installChromeStub({
+      activeTab: () => ({ id: activeTabId, url: `https://example.com/tab-${activeTabId}` }),
+      sendMessage: async (message) => {
+        if (message?.type === "ATHENS_LENS_START_RECORDING") {
+          startCount += 1;
+          return { ok: true, tabId: message.tabId ?? activeTabId };
+        }
+        return undefined;
       },
     });
 
@@ -353,13 +402,43 @@ describe("Athens Lens app", () => {
     );
 
     await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
-    await user.click(screen.getByRole("button", { name: "Apply & record" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(chromeApi.tabs.create).toHaveBeenCalledWith(
+      expect.objectContaining({ url: MOCK_JOBS[0].applyUrl, active: true }),
+      expect.any(Function),
+    );
+    // Apply tab keeps this job's detail — not the default jobs list.
+    expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();
+    expect(useTabWorkspaceStore.getState().byTabId[42]?.route).toEqual({
+      view: "jobs",
+      itemId: MOCK_JOBS[0].id,
+    });
+    expect(screen.queryByRole("complementary", { name: "Application recording" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Record" }));
     expect(await screen.findByText(`Recording application (${MOCK_JOBS[0].company})`)).toBeInTheDocument();
+    expect(chromeApi.tabCapture.getMediaStreamId).toHaveBeenCalledWith(
+      { targetTabId: 42 },
+      expect.any(Function),
+    );
+    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "ATHENS_LENS_START_RECORDING",
+        tabId: 42,
+        streamId: "mock-stream-id",
+      }),
+    );
+
+    // Switching to a browser tab with no bid restores the jobs list viewpoint.
+    activeTabId = 99;
+    useRecordingSessionsStore.getState().setFocusedTabId(99);
+    expect(await screen.findByText(/1 bid is recording on another tab/)).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Application recording" })).not.toBeInTheDocument();
 
     activeTabId = 43;
     useRecordingSessionsStore.getState().setFocusedTabId(43);
     await user.click(screen.getByRole("button", { name: new RegExp(MOCK_JOBS[1].title) }));
-    await user.click(screen.getByRole("button", { name: "Apply & record" }));
+    await user.click(screen.getByRole("button", { name: "Record" }));
 
     expect(await screen.findByText(`Recording application (${MOCK_JOBS[1].company})`)).toBeInTheDocument();
     expect(screen.getByText(/1 other tab also recording/)).toBeInTheDocument();
@@ -371,28 +450,9 @@ describe("Athens Lens app", () => {
   it("shows the original résumé filename after an upload audit", async () => {
     const user = userEvent.setup();
     const listeners: Array<(message: unknown) => void> = [];
-    vi.stubGlobal("chrome", {
-      runtime: {
-        sendMessage: vi.fn(async (message: { type?: string }) => {
-          if (message?.type === "ATHENS_LENS_START_RECORDING") return { ok: true, tabId: 42 };
-          if (message?.type === "ATHENS_LENS_LIST_SESSIONS") return { ok: true, sessions: [] };
-          return { ok: false };
-        }),
-        onMessage: {
-          addListener: vi.fn((listener: (message: unknown) => void) => {
-            listeners.push(listener);
-          }),
-          removeListener: vi.fn(),
-        },
-        lastError: undefined,
-      },
-      tabs: {
-        query: vi.fn((_query: unknown, callback: (tabs: Array<{ id: number }>) => void) => {
-          callback([{ id: 42 }]);
-        }),
-        onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
-        onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
-      },
+    const chromeApi = installChromeStub();
+    chromeApi.runtime.onMessage.addListener = vi.fn((listener: (message: unknown) => void) => {
+      listeners.push(listener);
     });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/athens-lens/bids/")) {
@@ -413,7 +473,7 @@ describe("Athens Lens app", () => {
     );
 
     await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
-    await user.click(screen.getByRole("button", { name: "Apply & record" }));
+    await user.click(screen.getByRole("button", { name: "Record" }));
     expect(await screen.findByText("Waiting for résumé upload…")).toBeInTheDocument();
 
     for (const listener of listeners) {
@@ -431,6 +491,50 @@ describe("Athens Lens app", () => {
 
     expect(await screen.findByLabelText("Uploaded résumé")).toHaveTextContent(
       "Résumé · Backend.pdf → Alex Taylor.pdf",
+    );
+  });
+
+  it("shows an error toast when Record cannot capture the focused tab", async () => {
+    const user = userEvent.setup();
+    const chromeApi = installChromeStub({
+      activeTab: { id: 99, url: "https://example.com/apply" },
+      streamId: null,
+      captureError: "Extension has not been invoked for the current page (see activeTab permission). Chrome pages cannot be captured.",
+      sendMessage: async (message) => {
+        if (message?.type === "ATHENS_LENS_PENDING_RECORD") {
+          return {
+            ok: true,
+            tabId: 99,
+            pending: true,
+            message: "Click the Athens Lens icon on this tab to start recording.",
+          };
+        }
+        return undefined;
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+
+    render(
+      <App
+        authStore={makeAuthStore(makeSession())}
+        jobsRepository={jobsRepository}
+        inboxRepository={mockInboxRepository}
+      />
+    );
+
+    await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
+    await waitFor(() => {
+      expect(useRecordingSessionsStore.getState().focusedTabId).toBe(99);
+    });
+    await user.click(screen.getByRole("button", { name: "Record" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Click the Athens Lens icon on this tab to start recording/,
+    );
+    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "ATHENS_LENS_PENDING_RECORD", tabId: 99 }),
     );
   });
 

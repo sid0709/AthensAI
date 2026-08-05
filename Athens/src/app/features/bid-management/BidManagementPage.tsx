@@ -393,6 +393,7 @@ export function BidManagementPage() {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [playingPath, setPlayingPath] = useState<string | null>(null);
 
   const moveStatus = (id: string, next: BidResultStatus) => {
     const current = allResults.find((r) => r.id === id);
@@ -440,12 +441,17 @@ export function BidManagementPage() {
   const selected = dayResults.find((r) => r.id === selectedId) ?? null;
   const playingResult = playing ? selected : null;
   const activeFolder = folders.find((f) => f.dayKey === selectedDay) ?? null;
+  const resolvedPlayingPath =
+    playingPath
+    || playingResult?.recording?.storagePath
+    || playingResult?.recordings?.[0]?.storagePath
+    || null;
   const {
     url: playingUrl,
     loading: playingUrlLoading,
     error: playingUrlError,
   } = useRecordingUrl(
-    playing ? playingResult?.recording?.storagePath || null : null,
+    playing ? resolvedPlayingPath : null,
     applier?.name || null,
   );
 
@@ -454,12 +460,14 @@ export function BidManagementPage() {
     setSelectedId(null);
     setQuery("");
     setPlaying(false);
+    setPlayingPath(null);
   };
 
   const backToFolders = () => {
     setSelectedDay(null);
     setSelectedId(null);
     setPlaying(false);
+    setPlayingPath(null);
   };
 
   return (
@@ -648,8 +656,17 @@ export function BidManagementPage() {
                 onClose={() => {
                   setSelectedId(null);
                   setPlaying(false);
+                  setPlayingPath(null);
                 }}
-                onWatch={() => setPlaying(true)}
+                onWatch={(storagePath) => {
+                  setPlayingPath(
+                    storagePath
+                    || selected?.recording?.storagePath
+                    || selected?.recordings?.[0]?.storagePath
+                    || null,
+                  );
+                  setPlaying(true);
+                }}
                 onChangeStatus={(id, status, options) => {
                   void setStatus(id, status, options);
                 }}
@@ -661,7 +678,7 @@ export function BidManagementPage() {
       </div>
 
       <MediaPlayerModal
-        open={Boolean(playing && playingResult?.recording?.storagePath)}
+        open={Boolean(playing && resolvedPlayingPath)}
         title={playingResult?.job.title ?? "Recording"}
         subtitle={
           playingResult ? `${playingResult.bidder.name} · ${playingResult.job.company}` : undefined
@@ -669,8 +686,11 @@ export function BidManagementPage() {
         src={playingUrl}
         loading={playingUrlLoading}
         error={playingUrlError}
-        pathHint={playingResult?.recording?.storagePath}
-        onClose={() => setPlaying(false)}
+        pathHint={resolvedPlayingPath}
+        onClose={() => {
+          setPlaying(false);
+          setPlayingPath(null);
+        }}
       />
     </PageShell>
   );

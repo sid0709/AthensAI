@@ -26,18 +26,28 @@ declare namespace chrome {
   }
 
   namespace storage {
-    namespace local {
-      function get(
-        keys: string | string[] | null,
-        callback: (items: Record<string, any>) => void,
-      ): void;
-      function get(keys?: string | string[] | null): Promise<Record<string, any>>;
-      function set(items: Record<string, any>, callback?: () => void): void;
-      function set(items: Record<string, any>): Promise<void>;
-      function remove(keys: string | string[], callback?: () => void): void;
-      function remove(keys: string | string[]): Promise<void>;
-    }
+    namespace session {
+    function get(
+      keys: string | string[] | null,
+      callback: (items: Record<string, any>) => void,
+    ): void;
+    function get(keys?: string | string[] | null): Promise<Record<string, any>>;
+    function set(items: Record<string, any>, callback?: () => void): void;
+    function set(items: Record<string, any>): Promise<void>;
   }
+
+  namespace local {
+    function get(
+      keys: string | string[] | null,
+      callback: (items: Record<string, any>) => void,
+    ): void;
+    function get(keys?: string | string[] | null): Promise<Record<string, any>>;
+    function set(items: Record<string, any>, callback?: () => void): void;
+    function set(items: Record<string, any>): Promise<void>;
+    function remove(keys: string | string[], callback?: () => void): void;
+    function remove(keys: string | string[]): Promise<void>;
+  }
+}
 
   namespace tabs {
     interface Tab {
@@ -68,6 +78,8 @@ declare namespace chrome {
       updateProperties: { url?: string; active?: boolean },
       callback?: (tab: Tab) => void,
     ): void;
+    function remove(tabId: number | number[], callback?: () => void): void;
+    function remove(tabId: number | number[]): Promise<void>;
     const onActivated: {
       addListener(callback: (activeInfo: { tabId: number; windowId: number }) => void): void;
       removeListener?(callback: (activeInfo: { tabId: number; windowId: number }) => void): void;

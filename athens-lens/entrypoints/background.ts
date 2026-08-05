@@ -1,4 +1,5 @@
 import { stripStylesheetNoise } from "../src/recording/pageTextSanitize";
+import { createCaptureReadyTracker } from "../src/recording/captureReadyTabs";
 import {
   armResumeSessionOnTab,
   disarmResumeSessionOnTab,
@@ -34,6 +35,9 @@ type StartRecordingMessage = {
   type: "ATHENS_LENS_START_RECORDING";
   sessionId: string;
   applyUrl: string;
+  /** Pre-captured from the side panel click turn (open new tab → getMediaStreamId). */
+  tabId?: number | null;
+  streamId?: string | null;
   preferredTabId?: number | null;
   job?: JobSnapshot | null;
   expectedResumeName?: string | null;
@@ -86,6 +90,18 @@ type ShowToastMessage = {
   message: string;
 };
 
+/** Side panel queued a Record; toolbar icon click supplies the capture gesture. */
+type PendingRecordMessage = {
+  type: "ATHENS_LENS_PENDING_RECORD";
+  sessionId: string;
+  applyUrl: string;
+  tabId: number;
+  job?: JobSnapshot | null;
+  expectedResumeName?: string | null;
+  resumeSetFolder?: string | null;
+  bidderName?: string | null;
+};
+
 type RuntimeMessage =
   | StartRecordingMessage
   | StopRecordingMessage
@@ -96,7 +112,8 @@ type RuntimeMessage =
   | DiscardRecordingMessage
   | ResumeSelectedMessage
   | GetResumeSessionMessage
-  | ShowToastMessage;
+  | ShowToastMessage
+  | PendingRecordMessage;
 
 type LiveRecordingSession = {
   sessionId: string;
@@ -105,6 +122,15 @@ type LiveRecordingSession = {
   expectedResumeName: string;
   resumeSetFolder: string;
   startedAt: number;
+};
+
+type PendingRecord = {
+  sessionId: string;
+  tabId: number;
+  applyUrl: string;
+  job: JobSnapshot | null;
+  expectedResumeName: string;
+  resumeSetFolder: string;
 };
 
 type PageTextFrame = {
@@ -124,14 +150,32 @@ type PageTextFrame = {
 
 const recordingTabs = new Map<string, number>();
 const liveSessions = new Map<string, LiveRecordingSession>();
+const captureReady = createCaptureReadyTracker();
+/** Queued when side-panel Record cannot capture (needs toolbar gesture). */
+let pendingRecord: PendingRecord | null = null;
+const CAPTURE_READY_STORAGE_KEY = "athensLensCaptureReadyTabs";
+
+function isActiveTabCaptureError(message: string | undefined | null) {
+  return /activeTab|invoked for the current page|Chrome pages cannot be captured/i.test(
+    message || "",
+  );
+}
+
+function notifyRecordingStarted(session: LiveRecordingSession) {
+  void chrome.runtime.sendMessage({
+    type: "ATHENS_LENS_RECORDING_STARTED",
+    sessionId: session.sessionId,
+    tabId: session.tabId,
+    job: session.job,
+    startedAt: session.startedAt,
+  }).catch(() => undefined);
+}
 
 /**
  * tabCapture only works for tabs where the user invoked the extension
- * (activeTab). Multiple tabs can be capture-ready after clicking the Lens
- * icon on each. Capture the chosen tab, then navigate it to the apply URL.
+ * (activeTab) on a normal http(s) page. Persist ready tab ids so a service
+ * worker restart does not wipe them mid-session.
  */
-const captureReadyTabs = new Set<number>();
-let lastInvokedTabId: number | null = null;
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -189,11 +233,64 @@ function tabsUpdate(tabId: number, url: string): Promise<chrome.tabs.Tab> {
   });
 }
 
-function rememberInvokedTab(tabId: number | undefined | null) {
-  const id = asTabId(tabId);
+function persistCaptureReady() {
+  const snapshot = captureReady.snapshot();
+  try {
+    void chrome.storage.session?.set?.({ [CAPTURE_READY_STORAGE_KEY]: snapshot });
+  } catch {
+    void chrome.storage.local.set({ [CAPTURE_READY_STORAGE_KEY]: snapshot });
+  }
+}
+
+function restoreCaptureReady() {
+  const apply = (items: Record<string, unknown>) => {
+    const snapshot = items[CAPTURE_READY_STORAGE_KEY] as {
+      tabIds?: number[];
+      lastInvokedTabId?: number | null;
+    } | undefined;
+    if (!snapshot) return;
+    captureReady.restore({
+      tabIds: Array.isArray(snapshot.tabIds) ? snapshot.tabIds : [],
+      lastInvokedTabId: snapshot.lastInvokedTabId ?? null,
+    });
+  };
+  try {
+    if (chrome.storage.session?.get) {
+      void chrome.storage.session.get(CAPTURE_READY_STORAGE_KEY).then(apply);
+      return;
+    }
+  } catch {
+    // Fall through to local.
+  }
+  void chrome.storage.local.get(CAPTURE_READY_STORAGE_KEY).then(apply);
+}
+
+function rememberInvokedTab(tab: { id?: number; url?: string } | number | undefined | null) {
+  if (tab == null) return;
+  if (typeof tab === "number") {
+    // Legacy path without URL — do not mark capture-ready without proving http(s).
+    return;
+  }
+  const id = asTabId(tab.id);
   if (id == null) return;
-  captureReadyTabs.add(id);
-  lastInvokedTabId = id;
+  if (captureReady.remember(id, tab.url)) {
+    persistCaptureReady();
+  }
+}
+
+async function rememberInvokedTabFromAction(tab: { id?: number; url?: string; windowId?: number }) {
+  let url = tab.url;
+  const id = asTabId(tab.id);
+  // action.onClicked sometimes omits url; resolve before deciding capture-ready.
+  if (id != null && !isCapturableUrl(url)) {
+    try {
+      const fresh = await tabsGet(id);
+      url = fresh.url;
+    } catch {
+      // Keep original.
+    }
+  }
+  rememberInvokedTab({ id: tab.id, url });
 }
 
 function sessionIdForTab(tabId: number): string | null {
@@ -204,20 +301,12 @@ function sessionIdForTab(tabId: number): string | null {
 }
 
 function resolveCaptureTabId(preferredTabId?: number | null): number | null {
-  const preferred = asTabId(preferredTabId);
-  if (preferred != null && captureReadyTabs.has(preferred)) return preferred;
-  if (lastInvokedTabId != null && captureReadyTabs.has(lastInvokedTabId)) {
-    return lastInvokedTabId;
-  }
-  if (captureReadyTabs.size === 1) {
-    return captureReadyTabs.values().next().value ?? null;
-  }
-  return null;
+  return captureReady.resolve(preferredTabId);
 }
 
 function forgetTab(tabId: number) {
-  captureReadyTabs.delete(tabId);
-  if (lastInvokedTabId === tabId) lastInvokedTabId = null;
+  captureReady.forget(tabId);
+  persistCaptureReady();
   const sessionId = sessionIdForTab(tabId);
   if (sessionId) {
     recordingTabs.delete(sessionId);
@@ -275,6 +364,7 @@ async function beginOffscreenRecording(
   tabId: number,
   streamId: string,
   applyUrl: string,
+  options?: { navigate?: boolean },
 ) {
   await ensureOffscreenDocument();
   const response = await sendOffscreenMessage({
@@ -286,8 +376,50 @@ async function beginOffscreenRecording(
     throw new Error(response?.error || "Could not start the recorder.");
   }
   recordingTabs.set(sessionId, tabId);
-  await tabsUpdate(tabId, applyUrl);
+  // Side panel already opened the tab at applyUrl — skip a second navigation.
+  if (options?.navigate !== false) {
+    await tabsUpdate(tabId, applyUrl);
+  }
   return tabId;
+}
+
+function finishStartRecording(
+  message: StartRecordingMessage,
+  tabId: number,
+  streamId: string,
+  options: { navigate: boolean },
+  sendResponse: (response: unknown) => void,
+) {
+  void beginOffscreenRecording(
+    message.sessionId,
+    tabId,
+    streamId,
+    message.applyUrl,
+    { navigate: options.navigate },
+  )
+    .then(async (recordedTabId) => {
+      captureReady.remember(recordedTabId, message.applyUrl);
+      persistCaptureReady();
+      rememberLiveSession(
+        message.sessionId,
+        recordedTabId,
+        message.job,
+        message.expectedResumeName,
+        message.resumeSetFolder,
+      );
+      const live = liveSessions.get(message.sessionId);
+      if (live) {
+        await armLiveSession(live);
+      }
+      sendResponse({ ok: true, tabId: recordedTabId });
+    })
+    .catch((error: unknown) => {
+      sendResponse({
+        ok: false,
+        tabId,
+        error: error instanceof Error ? error.message : "Could not start recording.",
+      });
+    });
 }
 
 function rememberLiveSession(
@@ -724,7 +856,7 @@ async function readTabPageText(tabId: number) {
 }
 
 async function resolveReadableTabId(preferredTabId?: number | null) {
-  const preferred = asTabId(preferredTabId) ?? lastInvokedTabId;
+  const preferred = asTabId(preferredTabId) ?? captureReady.snapshot().lastInvokedTabId;
 
   // Prefer the recording / invoked application tab when available — side panel
   // clicks can make "focused" resolution flaky.
@@ -747,15 +879,84 @@ async function resolveReadableTabId(preferredTabId?: number | null) {
 }
 
 export default defineBackground(() => {
+  restoreCaptureReady();
+
+  // Chrome only grants tabCapture after the extension is invoked for the page
+  // (toolbar icon). Side-panel Record alone is not enough — capture here when
+  // a pending Record is waiting for this tab.
   browser.action.onClicked.addListener((tab) => {
-    rememberInvokedTab(tab.id);
-    if (tab.windowId === undefined) return;
-    browser.sidePanel.open({ windowId: tab.windowId }).catch((error: unknown) => {
-      console.error("Unable to open the Athens Lens side panel", error);
+    if (tab?.windowId != null) {
+      browser.sidePanel.open({ windowId: tab.windowId }).catch((error: unknown) => {
+        console.error("Unable to open the Athens Lens side panel", error);
+      });
+    }
+    if (tab?.id == null) return;
+
+    chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+      const captureError = chrome.runtime.lastError?.message;
+      void handleLensActionClick(tab, captureError ? null : (streamId || null));
     });
   });
 
+  async function handleLensActionClick(
+    tab: { id?: number; url?: string; windowId?: number },
+    streamId: string | null,
+  ) {
+    await rememberInvokedTabFromAction(tab);
+    const tabId = asTabId(tab.id);
+    if (tabId == null) return;
+
+    if (sessionIdForTab(tabId)) {
+      // Already recording — panel is open for Complete / Ask AI.
+      return;
+    }
+
+    const pending = pendingRecord && pendingRecord.tabId === tabId ? pendingRecord : null;
+    if (!pending || !streamId) {
+      if (pending && !streamId) {
+        void chrome.runtime.sendMessage({
+          type: "ATHENS_LENS_PENDING_RECORD_FAILED",
+          tabId,
+          error: "Could not capture this tab. Stay on the application page and click the Athens Lens icon again.",
+        }).catch(() => undefined);
+      }
+      return;
+    }
+
+    pendingRecord = null;
+    try {
+      await beginOffscreenRecording(
+        pending.sessionId,
+        tabId,
+        streamId,
+        pending.applyUrl,
+        { navigate: false },
+      );
+      captureReady.remember(tabId, pending.applyUrl || tab.url);
+      persistCaptureReady();
+      rememberLiveSession(
+        pending.sessionId,
+        tabId,
+        pending.job,
+        pending.expectedResumeName,
+        pending.resumeSetFolder,
+      );
+      const live = liveSessions.get(pending.sessionId);
+      if (live) {
+        await armLiveSession(live);
+        notifyRecordingStarted(live);
+      }
+    } catch (error) {
+      void chrome.runtime.sendMessage({
+        type: "ATHENS_LENS_PENDING_RECORD_FAILED",
+        tabId,
+        error: error instanceof Error ? error.message : "Could not start recording.",
+      }).catch(() => undefined);
+    }
+  }
+
   chrome.tabs.onRemoved?.addListener((tabId) => {
+    if (pendingRecord?.tabId === tabId) pendingRecord = null;
     forgetTab(tabId);
   });
 
@@ -767,12 +968,68 @@ export default defineBackground(() => {
 
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
     const senderTabId = asTabId((sender as { tab?: { id?: number } } | null)?.tab?.id);
+    if (message?.type === "ATHENS_LENS_PENDING_RECORD") {
+      const tabId = asTabId(message.tabId);
+      if (tabId == null || !message.sessionId) {
+        sendResponse({ ok: false, error: "Missing tab for pending record." });
+        return false;
+      }
+      if (sessionIdForTab(tabId)) {
+        sendResponse({
+          ok: false,
+          tabId,
+          error: "This tab is already recording. Complete that bid first.",
+        });
+        return false;
+      }
+      pendingRecord = {
+        sessionId: String(message.sessionId),
+        tabId,
+        applyUrl: String(message.applyUrl || "").trim(),
+        job: message.job ?? null,
+        expectedResumeName: String(message.expectedResumeName || "").trim(),
+        resumeSetFolder: String(message.resumeSetFolder || "").trim(),
+      };
+      sendResponse({
+        ok: true,
+        tabId,
+        pending: true,
+        message: "Click the Athens Lens icon on this tab to start recording.",
+      });
+      return false;
+    }
+
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
+      const providedStreamId = typeof message.streamId === "string" ? message.streamId.trim() : "";
+      const providedTabId = asTabId(message.tabId);
+
+      // Preferred path: side panel opened apply URL and captured in the click turn.
+      if (providedStreamId && providedTabId != null) {
+        if (sessionIdForTab(providedTabId)) {
+          sendResponse({
+            ok: false,
+            tabId: providedTabId,
+            error: "This tab is already recording. Complete that bid first.",
+          });
+          return false;
+        }
+        if (pendingRecord?.tabId === providedTabId) pendingRecord = null;
+        finishStartRecording(
+          message,
+          providedTabId,
+          providedStreamId,
+          { navigate: false },
+          sendResponse,
+        );
+        return true;
+      }
+
+      // Fallback: capture a capture-ready tab from the service worker.
       const tabId = resolveCaptureTabId(message.preferredTabId);
       if (tabId == null) {
         sendResponse({
           ok: false,
-          error: "Click the Athens Lens icon on the browser tab you want to record, then try Apply & record again.",
+          error: "Could not open or capture an application tab. Focus the page and click Record, then the Athens Lens icon if prompted.",
         });
         return false;
       }
@@ -790,43 +1047,29 @@ export default defineBackground(() => {
       // rejects with the activeTab / "Chrome pages cannot be captured" error.
       getMediaStreamIdSync(tabId, (capture) => {
         if (!capture.streamId) {
+          const err = capture.error || "";
+          if (/activeTab|invoked for the current page|Chrome pages cannot be captured/i.test(err)) {
+            captureReady.forget(tabId);
+            persistCaptureReady();
+          }
           sendResponse({
             ok: false,
             tabId,
-            error: capture.error
-              || "Click the Athens Lens icon on this tab, then try Apply & record again.",
+            error: /activeTab|invoked for the current page|Chrome pages cannot be captured/i.test(err)
+              ? "Click the Athens Lens icon on this tab to start recording."
+              : (err || "Click the Athens Lens icon on this tab, then try Record again."),
           });
           return;
         }
 
-        void beginOffscreenRecording(
-          message.sessionId,
+        if (pendingRecord?.tabId === tabId) pendingRecord = null;
+        finishStartRecording(
+          message,
           tabId,
           capture.streamId,
-          message.applyUrl,
-        )
-          .then(async (recordedTabId) => {
-            rememberLiveSession(
-              message.sessionId,
-              recordedTabId,
-              message.job,
-              message.expectedResumeName,
-              message.resumeSetFolder,
-            );
-            const live = liveSessions.get(message.sessionId);
-            if (live) {
-              // Apply URL navigation may still be loading — arm now and again on complete.
-              await armLiveSession(live);
-            }
-            sendResponse({ ok: true, tabId: recordedTabId });
-          })
-          .catch((error: unknown) => {
-            sendResponse({
-              ok: false,
-              tabId,
-              error: error instanceof Error ? error.message : "Could not start recording.",
-            });
-          });
+          { navigate: true },
+          sendResponse,
+        );
       });
       return true;
     }

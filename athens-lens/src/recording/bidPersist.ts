@@ -6,6 +6,13 @@ export type BidPersistAnswers = Array<Pick<FormAnswer, "question" | "answer" | "
   suggestedAnswer?: string;
 }>;
 
+export type RecordingUploadPart = {
+  recordingSessionId: string;
+  durationSec?: number | null;
+  recordedStartAt?: string | null;
+  recordedEndAt?: string | null;
+};
+
 function extensionApi() {
   const root = globalThis as typeof globalThis & {
     chrome?: typeof chrome;
@@ -182,7 +189,9 @@ export async function finishAthensLensBid(input: {
   session: Session;
   jobId: string;
   applyUrl?: string | null;
-  recordingSessionId: string | null;
+  /** @deprecated Prefer recordingSessions for multi-tab uploads. */
+  recordingSessionId?: string | null;
+  recordingSessions?: RecordingUploadPart[];
   durationSec?: number | null;
   recordedStartAt?: string | null;
   recordedEndAt?: string | null;
@@ -193,6 +202,18 @@ export async function finishAthensLensBid(input: {
   mode?: string;
 }) {
   const { session, jobId, submitted } = input;
+
+  const parts: RecordingUploadPart[] = Array.isArray(input.recordingSessions)
+    && input.recordingSessions.length > 0
+    ? input.recordingSessions.filter((part) => part.recordingSessionId)
+    : input.recordingSessionId
+      ? [{
+          recordingSessionId: input.recordingSessionId,
+          durationSec: input.durationSec,
+          recordedStartAt: input.recordedStartAt,
+          recordedEndAt: input.recordedEndAt,
+        }]
+      : [];
 
   if (input.answers?.length) {
     try {
@@ -209,35 +230,64 @@ export async function finishAthensLensBid(input: {
   }
 
   if (!submitted) {
-    if (input.recordingSessionId) await discardRecording(input.recordingSessionId);
+    for (const part of parts) {
+      await discardRecording(part.recordingSessionId);
+    }
     await skipAthensLensBid(session, jobId);
-    return { outcome: "skipped" as const };
+    return { outcome: "skipped" as const, uploadedCount: 0 };
   }
 
-  if (input.recordingSessionId) {
-    try {
-      await uploadAthensLensRecording(session, {
-        jobId,
-        recordingSessionId: input.recordingSessionId,
-        applyUrl: input.applyUrl,
-        durationSec: input.durationSec,
-        recordedStartAt: input.recordedStartAt,
-        recordedEndAt: input.recordedEndAt,
-        markCompleted: true,
-      });
-      return { outcome: "submitted" as const, uploaded: true };
-    } catch (error) {
-      console.warn("Athens Lens: recording upload failed, completing without video", error);
+  if (parts.length > 0) {
+    let uploadedCount = 0;
+    let lastError: string | null = null;
+    let markedComplete = false;
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index]!;
+      const isLast = index === parts.length - 1;
+      try {
+        await uploadAthensLensRecording(session, {
+          jobId,
+          recordingSessionId: part.recordingSessionId,
+          applyUrl: input.applyUrl,
+          durationSec: part.durationSec,
+          recordedStartAt: part.recordedStartAt,
+          recordedEndAt: part.recordedEndAt,
+          // Mark the bid submitted only after the final clip lands.
+          markCompleted: isLast,
+        });
+        uploadedCount += 1;
+        if (isLast) markedComplete = true;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "Recording upload failed.";
+        console.warn("Athens Lens: recording upload failed", part.recordingSessionId, error);
+        await discardRecording(part.recordingSessionId);
+      }
+    }
+
+    if (uploadedCount === 0) {
       await completeAthensLensBidWithoutVideo(session, jobId);
-      if (input.recordingSessionId) await discardRecording(input.recordingSessionId);
       return {
         outcome: "submitted" as const,
         uploaded: false,
-        uploadError: error instanceof Error ? error.message : "Recording upload failed.",
+        uploadedCount: 0,
+        uploadError: lastError || "Recording upload failed.",
       };
     }
+
+    if (!markedComplete) {
+      await completeAthensLensBidWithoutVideo(session, jobId);
+    }
+
+    return {
+      outcome: "submitted" as const,
+      uploaded: true,
+      uploadedCount,
+      uploadError: uploadedCount < parts.length
+        ? (lastError || `Uploaded ${uploadedCount} of ${parts.length} recordings.`)
+        : null,
+    };
   }
 
   await completeAthensLensBidWithoutVideo(session, jobId);
-  return { outcome: "submitted" as const, uploaded: false };
+  return { outcome: "submitted" as const, uploaded: false, uploadedCount: 0 };
 }

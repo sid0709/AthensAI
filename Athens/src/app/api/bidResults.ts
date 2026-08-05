@@ -112,6 +112,8 @@ function normalizeBidResult(row: BidResult): BidResult {
       stackMatch === "unknown"
         ? stackMatch
         : null,
+    recordings: Array.isArray(row.recordings) ? row.recordings : undefined,
+    resumeAudits: Array.isArray(row.resumeAudits) ? row.resumeAudits : undefined,
   };
 }
 

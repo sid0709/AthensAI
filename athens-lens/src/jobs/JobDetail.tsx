@@ -21,6 +21,7 @@ interface JobDetailProps {
   isRecording: boolean;
   onBack(): void;
   onApply(job: Job): void;
+  onRecord(job: Job): void;
   onAskAi(job: Job): void;
 }
 
@@ -44,7 +45,7 @@ function JobChip({ children, icon, skill = false }: { children: ReactNode; icon?
   return <span className={`job-chip${skill ? " job-chip--skill" : ""}`}>{icon}{children}</span>;
 }
 
-export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDetailProps) {
+export function JobDetail({ job, isRecording, onBack, onApply, onRecord, onAskAi }: JobDetailProps) {
   return (
     <article className="job-detail" aria-labelledby="job-detail-title">
       <header className="detail-toolbar">
@@ -52,7 +53,18 @@ export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDet
           <ArrowLeft size={18} aria-hidden="true" />
           <span>All jobs</span>
         </button>
-        <span className="detail-toolbar-label">Job details</span>
+        <div className="detail-toolbar-actions">
+          <button
+            className="record-header-button"
+            type="button"
+            disabled={isRecording}
+            onClick={() => onRecord(job)}
+          >
+            <Video size={16} aria-hidden="true" />
+            <span>{isRecording ? "Recording" : "Record"}</span>
+          </button>
+          <span className="detail-toolbar-label">Job details</span>
+        </div>
       </header>
 
       <div className="detail-scroll">
@@ -121,11 +133,11 @@ export function JobDetail({ job, isRecording, onBack, onApply, onAskAi }: JobDet
         <button
           className="primary-button detail-action"
           type="button"
-          disabled={isRecording || !job.applyUrl}
+          disabled={!job.applyUrl}
           onClick={() => onApply(job)}
         >
-          {isRecording ? <Video size={18} aria-hidden="true" /> : <ArrowUpRight size={18} aria-hidden="true" />}
-          <span>{isRecording ? "Recording active" : job.applyUrl ? "Apply & record" : "Link unavailable"}</span>
+          <ArrowUpRight size={18} aria-hidden="true" />
+          <span>{job.applyUrl ? "Apply" : "Link unavailable"}</span>
         </button>
       </footer>
     </article>

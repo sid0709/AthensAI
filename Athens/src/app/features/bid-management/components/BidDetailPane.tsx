@@ -254,7 +254,7 @@ export function BidDetailPane({
 }: {
   result: BidResult | null;
   onClose: () => void;
-  onWatch: () => void;
+  onWatch: (storagePath?: string) => void;
   onChangeStatus: (
     id: string,
     status: BidResultStatus,
@@ -444,7 +444,25 @@ export function BidDetailPane({
                   ) : null}
                 </div>
 
-                {result.resumeOriginalName || result.resumeCleanedName ? (
+                {result.resumeAudits && result.resumeAudits.length > 0 ? (
+                  <div className="bm-detail-file-names bm-detail-file-names--stack">
+                    {result.resumeAudits.map((audit, index) => (
+                      <div key={audit.auditKey || `${audit.originalName}-${index}`}>
+                        <span>
+                          {result.resumeAudits!.length > 1
+                            ? `Upload ${index + 1}`
+                            : "Original → uploaded"}
+                        </span>
+                        <code title={audit.originalName}>
+                          {audit.originalName}
+                          {audit.cleanedName && audit.cleanedName !== audit.originalName
+                            ? ` → ${audit.cleanedName}`
+                            : ""}
+                        </code>
+                      </div>
+                    ))}
+                  </div>
+                ) : result.resumeOriginalName || result.resumeCleanedName ? (
                   <div className="bm-detail-file-names">
                     <div title={result.resumeOriginalName || undefined}>
                       <span>Original file</span>
@@ -918,17 +936,28 @@ export function BidDetailPane({
                 )}
 
                 <div className="bm-actions">
-                  {result.recording ? (
-                    <button type="button" className="bm-primary" onClick={onWatch}>
+                  {(result.recordings && result.recordings.length > 0
+                    ? result.recordings
+                    : result.recording
+                      ? [result.recording]
+                      : []
+                  ).map((clip, index, list) => (
+                    <button
+                      key={clip.storagePath}
+                      type="button"
+                      className="bm-primary"
+                      onClick={() => onWatch(clip.storagePath)}
+                    >
                       <Play className="w-4 h-4" fill="currentColor" />
-                      Watch recording
+                      {list.length > 1 ? `Watch clip ${index + 1}` : "Watch recording"}
                     </button>
-                  ) : (
+                  ))}
+                  {!(result.recordings?.length || result.recording) ? (
                     <button type="button" className="bm-primary" disabled>
                       <Play className="w-4 h-4" />
                       No recording yet
                     </button>
-                  )}
+                  ) : null}
                   <a
                     className="bm-secondary"
                     href={result.job.applyUrl}
@@ -940,9 +969,17 @@ export function BidDetailPane({
                   </a>
                 </div>
 
-                {result.recording ? (
-                  <div className="bm-storage-path">{result.recording.storagePath}</div>
-                ) : null}
+                {(result.recordings && result.recordings.length > 0
+                  ? result.recordings
+                  : result.recording
+                    ? [result.recording]
+                    : []
+                ).map((clip, index, list) => (
+                  <div key={`path-${clip.storagePath}`} className="bm-storage-path">
+                    {list.length > 1 ? `Clip ${index + 1}: ` : ""}
+                    {clip.storagePath}
+                  </div>
+                ))}
               </div>
             </motion.div>
           </AnimatePresence>
