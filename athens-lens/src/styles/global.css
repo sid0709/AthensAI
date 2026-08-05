@@ -733,6 +733,55 @@ a:focus-visible {
   line-height: var(--line-height-tight);
 }
 
+.recommended-resume-banner {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  margin: 0 0 var(--space-6);
+  padding: var(--space-5);
+  border-radius: 16px;
+  border: 1px solid var(--color-line, rgb(13 13 13 / 12%));
+  background: var(--color-panel, #f7f8f6);
+}
+
+.recommended-resume-banner--empty {
+  opacity: 0.85;
+}
+
+.recommended-resume-banner__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  color: var(--color-text-secondary, rgb(13 13 13 / 65%));
+  background: var(--color-bg, #eef3f0);
+  flex-shrink: 0;
+}
+
+.recommended-resume-banner__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.recommended-resume-banner__eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary, rgb(13 13 13 / 65%));
+}
+
+.recommended-resume-banner__title {
+  margin: 6px 0 0;
+  font-size: clamp(20px, 4.5vw, 26px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  color: var(--color-text, #0d0d0d);
+}
+
 .job-tag-groups {
   display: flex;
   flex-direction: column;

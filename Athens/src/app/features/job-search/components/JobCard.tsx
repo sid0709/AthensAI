@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   Bookmark,
+  BookMarked,
   Building2,
   CheckCircle2,
   ExternalLink,
@@ -176,6 +177,27 @@ export function JobCard({
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
                 <Badge v={STATUS_VARIANTS[job.status]}>{STATUS_LABELS[job.status]}</Badge>
+                {job.recommendedResumeStack ? (
+                  <span
+                    className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-primary/25 bg-primary/[0.08] px-2 py-0.5 text-[11px] font-semibold text-primary"
+                    title={
+                      job.recommendedResumeReason
+                        ? `${job.recommendedResumeStack} — ${job.recommendedResumeReason}`
+                        : `Recommended Library resume: ${job.recommendedResumeStack}`
+                    }
+                  >
+                    <BookMarked className="size-3 shrink-0" />
+                    <span className="truncate">{job.recommendedResumeStack}</span>
+                  </span>
+                ) : job.useCustomizedResume ? (
+                  <span
+                    className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
+                    title={job.recommendWarning || "No Library stack matched — use a customized résumé"}
+                  >
+                    <BookMarked className="size-3 shrink-0" />
+                    <span className="truncate">Customized</span>
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>

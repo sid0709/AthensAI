@@ -128,6 +128,23 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
         ? doc.version.trim()
         : null,
     catalog: isExternal ? "external" : "market",
+    recommendedResumeStack:
+      typeof doc.recommendedResumeStack === "string" && doc.recommendedResumeStack.trim()
+        ? doc.recommendedResumeStack.trim()
+        : null,
+    recommendedResumeReason:
+      typeof doc.recommendedResumeReason === "string" && doc.recommendedResumeReason.trim()
+        ? doc.recommendedResumeReason.trim()
+        : null,
+    useCustomizedResume: Boolean(doc.useCustomizedResume),
+    recommendWarning:
+      typeof doc.recommendWarning === "string" && doc.recommendWarning.trim()
+        ? doc.recommendWarning.trim()
+        : null,
+    recommendedAt:
+      typeof doc.recommendedAt === "string" && doc.recommendedAt.trim()
+        ? doc.recommendedAt.trim()
+        : null,
   };
 }
 
@@ -136,6 +153,16 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
   return {
     ...detailJob,
     aiSkills: detailJob.aiSkills?.length ? detailJob.aiSkills : listJob.aiSkills,
+    recommendedResumeStack:
+      detailJob.recommendedResumeStack || listJob.recommendedResumeStack || null,
+    recommendedResumeReason:
+      detailJob.recommendedResumeReason || listJob.recommendedResumeReason || null,
+    useCustomizedResume:
+      detailJob.recommendedResumeStack || detailJob.recommendedResumeReason
+        ? detailJob.useCustomizedResume
+        : listJob.useCustomizedResume,
+    recommendWarning: detailJob.recommendWarning || listJob.recommendWarning || null,
+    recommendedAt: detailJob.recommendedAt || listJob.recommendedAt || null,
   };
 }
 

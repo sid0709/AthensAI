@@ -4,6 +4,7 @@ import { PaginationBar } from "../../../components/shared/PaginationBar";
 import { cn } from "../../../lib/utils";
 import { JobBulkActionsBar } from "./JobBulkActionsBar";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
+import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
 
 type JobListStickyBarProps = {
   selectedOnPage: number;
@@ -21,12 +22,15 @@ type JobListStickyBarProps = {
   onStopGenerateResumes?: () => void;
   onRemoveResumes?: () => void;
   onStopRemoveResumes?: () => void;
+  onRecommendResumes?: () => void;
   resumeGenerating?: boolean;
   resumeStopping?: boolean;
   resumeRemoving?: boolean;
   resumeRemovalStopping?: boolean;
+  recommendRunning?: boolean;
   hasSelectedResumes?: boolean;
   resumeProgress?: JobResumeBulkProgress;
+  recommendProgress?: RecommendResumeBulkProgress;
   page: number;
   pageSize: number;
   total: number;
@@ -57,12 +61,15 @@ export function JobListStickyBar({
   onStopGenerateResumes,
   onRemoveResumes,
   onStopRemoveResumes,
+  onRecommendResumes,
   resumeGenerating,
   resumeStopping,
   resumeRemoving,
   resumeRemovalStopping,
+  recommendRunning,
   hasSelectedResumes,
   resumeProgress,
+  recommendProgress,
   page,
   pageSize,
   total,
@@ -95,12 +102,15 @@ export function JobListStickyBar({
           onStopGenerateResumes={onStopGenerateResumes}
           onRemoveResumes={onRemoveResumes}
           onStopRemoveResumes={onStopRemoveResumes}
+          onRecommendResumes={onRecommendResumes}
           resumeGenerating={resumeGenerating}
           resumeStopping={resumeStopping}
           resumeRemoving={resumeRemoving}
           resumeRemovalStopping={resumeRemovalStopping}
+          recommendRunning={recommendRunning}
           hasSelectedResumes={hasSelectedResumes}
           resumeProgress={resumeProgress}
+          recommendProgress={recommendProgress}
           loading={loading}
           embedded
         />

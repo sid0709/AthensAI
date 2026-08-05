@@ -1,5 +1,5 @@
 import { DocumentId } from "@nextoffer/shared/document-id";
-import { jobsCollection } from "../db/dataStore.js";
+import { jobsCollection, getVendorTasksCollection } from "../db/dataStore.js";
 import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
 import { resolveApplierId } from "./jobBidStatusService.js";
 import { statusRowFromProjection } from "./jobStatusProjectionService.js";
@@ -60,6 +60,8 @@ function plainText(value) {
 		.replace(/\n{3,}/g, "\n\n")
 		.trim();
 }
+
+export { plainText };
 
 function textList(value) {
 	if (!Array.isArray(value)) return [];
@@ -128,11 +130,22 @@ function httpUrl(value) {
 	}
 }
 
-export function mapAthensLensJob(job, queueJob) {
+export function mapAthensLensJob(job, queueJob, recommend = null) {
 	const details = job?.details && typeof job.details === "object" ? job.details : {};
 	const title = text(job?.title) || text(queueJob?.title) || "Untitled role";
 	const company = companyName(job) || text(queueJob?.company) || "Unknown company";
 	const description = plainText(job?.jobDescription || job?.description);
+
+	const recommendedResumeStack =
+		typeof recommend?.recommendedResumeStack === "string"
+			? text(recommend.recommendedResumeStack)
+			: "";
+	const recommendedResumeReason =
+		typeof recommend?.recommendedResumeReason === "string"
+			? text(recommend.recommendedResumeReason)
+			: "";
+	const recommendWarning =
+		typeof recommend?.recommendWarning === "string" ? text(recommend.recommendWarning) : "";
 
 	return {
 		id: String(job?._id || queueJob?.jobId || ""),
@@ -154,6 +167,11 @@ export function mapAthensLensJob(job, queueJob) {
 		qualifications: textList(job?.qualifications),
 		applyUrl: httpUrl(job?.applyLink || job?.jobLink || queueJob?.applyUrl),
 		bidReadyAt: isoDate(queueJob?.bidReadyDate),
+		recommendedResumeStack: recommendedResumeStack || null,
+		recommendedResumeReason: recommendedResumeReason || null,
+		useCustomizedResume: Boolean(recommend?.useCustomizedResume),
+		recommendWarning: recommendWarning || null,
+		recommendedAt: isoDate(recommend?.recommendedAt) || null,
 	};
 }
 
@@ -202,9 +220,44 @@ export async function listAthensLensJobs(applierName, { limit = 100 } = {}) {
 	const docs = await jobsCollection.find({ _id: { $in: ids } }, { projection: JOB_PROJECTION }).toArray();
 	const byId = new Map(docs.map((job) => [String(job._id), job]));
 
+	const vendorTasks = getVendorTasksCollection();
+	const recommendByJobId = new Map();
+	if (vendorTasks && statusEntries.length) {
+		const taskDocs = await vendorTasks
+			.find(
+				{
+					applierName: String(applierName).trim(),
+					jobId: { $in: statusEntries.map((entry) => entry.jobId) },
+				},
+				{
+					projection: {
+						jobId: 1,
+						recommendedResumeStack: 1,
+						recommendedResumeReason: 1,
+						useCustomizedResume: 1,
+						recommendWarning: 1,
+						recommendedAt: 1,
+					},
+				},
+			)
+			.toArray();
+		for (const task of taskDocs) {
+			const jobId = String(task.jobId || "").trim();
+			if (jobId) recommendByJobId.set(jobId, task);
+		}
+	}
+
 	return statusEntries.flatMap((entry) => {
 		const job = byId.get(entry.jobId);
-		return job ? [mapAthensLensJob(job, { jobId: entry.jobId, bidReadyDate: entry.bidReadyDate })] : [];
+		return job
+			? [
+				mapAthensLensJob(
+					job,
+					{ jobId: entry.jobId, bidReadyDate: entry.bidReadyDate },
+					recommendByJobId.get(entry.jobId) || null,
+				),
+			]
+			: [];
 	});
 }
 

@@ -1,18 +1,11 @@
 import {
   ArrowLeft,
   ArrowUpRight,
-  Banknote,
-  BriefcaseBusiness,
+  BookMarked,
   CalendarDays,
-  GraduationCap,
-  MapPin,
   Sparkles,
-  Tag,
-  Users,
-  Video,
-  Wifi
+  Video
 } from "lucide-react";
-import type { ReactNode } from "react";
 import type { Job } from "../types";
 import { CompanyLogo } from "./CompanyLogo";
 
@@ -37,15 +30,9 @@ function formatPostedAt(value: string): string {
   return value && !Number.isNaN(date.getTime()) ? DATE_FORMAT.format(date) : "Not listed";
 }
 
-function hasValue(value: string): boolean {
-  return Boolean(value && value !== "Not specified" && value !== "—");
-}
-
-function JobChip({ children, icon, skill = false }: { children: ReactNode; icon?: ReactNode; skill?: boolean }) {
-  return <span className={`job-chip${skill ? " job-chip--skill" : ""}`}>{icon}{children}</span>;
-}
-
 export function JobDetail({ job, isRecording, onBack, onApply, onRecord, onAskAi }: JobDetailProps) {
+  const hasRecommendation = Boolean(job.recommendedResumeStack) || Boolean(job.useCustomizedResume);
+
   return (
     <article className="job-detail" aria-labelledby="job-detail-title">
       <header className="detail-toolbar">
@@ -74,29 +61,28 @@ export function JobDetail({ job, isRecording, onBack, onApply, onRecord, onAskAi
             <div className="detail-title-group">
               <p className="company-name">{job.company}</p>
               <h1 id="job-detail-title">{job.title}</h1>
-              <div className="job-tag-groups">
-                {job.skills.length > 0 ? (
-                  <div className="job-chip-row" aria-label="Job skills">
-                    {job.skills.slice(0, 6).map((skill) => <JobChip key={skill} skill>{skill}</JobChip>)}
-                    {job.skills.length > 6 ? <JobChip skill>+{job.skills.length - 6} more</JobChip> : null}
-                  </div>
-                ) : null}
-                <div className="job-chip-row" aria-label="Job details">
-                  {hasValue(job.location) ? <JobChip icon={<MapPin size={12} aria-hidden="true" />}>{job.location}</JobChip> : null}
-                  {hasValue(job.workMode) ? <JobChip icon={<Wifi size={12} aria-hidden="true" />}>{job.workMode}</JobChip> : null}
-                  {hasValue(job.employmentType) ? <JobChip icon={<BriefcaseBusiness size={12} aria-hidden="true" />}>{job.employmentType}</JobChip> : null}
-                  {hasValue(job.seniority) ? <JobChip icon={<GraduationCap size={12} aria-hidden="true" />}>{job.seniority}</JobChip> : null}
-                  {job.experience ? <JobChip>{job.experience}</JobChip> : null}
-                  {job.salary ? <JobChip icon={<Banknote size={12} aria-hidden="true" />}>{job.salary}</JobChip> : null}
-                  {job.applicantsText ? <JobChip icon={<Users size={12} aria-hidden="true" />}>{job.applicantsText}</JobChip> : null}
-                  {job.tags.map((tag) => <JobChip key={tag} icon={<Tag size={12} aria-hidden="true" />}>{tag}</JobChip>)}
-                </div>
-              </div>
               {job.postedAt ? (
                 <p className="job-posted-date">
                   <CalendarDays size={14} aria-hidden="true" />Posted {formatPostedAt(job.postedAt)}
                 </p>
               ) : null}
+            </div>
+          </section>
+
+          <section
+            className={`recommended-resume-banner${hasRecommendation ? "" : " recommended-resume-banner--empty"}`}
+            aria-label="Recommended resume"
+          >
+            <div className="recommended-resume-banner__icon" aria-hidden="true">
+              <BookMarked size={22} />
+            </div>
+            <div className="recommended-resume-banner__body">
+              <p className="recommended-resume-banner__eyebrow">Recommended resume</p>
+              <h2 className="recommended-resume-banner__title">
+                {hasRecommendation
+                  ? job.recommendedResumeStack || "Customized resume"
+                  : "Not recommended yet"}
+              </h2>
             </div>
           </section>
 

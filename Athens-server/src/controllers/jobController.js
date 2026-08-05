@@ -920,9 +920,41 @@ export async function getJobById(req, res) {
 			}
 			const profileId = account?.id ? String(account.id) : null;
 			const projected = profileId ? await readProjectedJobStatuses(profileId, [id]) : new Map();
+			const jobPayload = jobForProfile({ ...doc, status: projected.get(id) || [] }, profileId);
+
+			if (applierName) {
+				const tasks = getVendorTasksCollection();
+				const task = tasks
+					? await tasks.findOne(
+						{ applierName, jobId: id },
+						{
+							projection: {
+								recommendedResumeStack: 1,
+								recommendedResumeReason: 1,
+								useCustomizedResume: 1,
+								recommendWarning: 1,
+								recommendedAt: 1,
+								recommendMode: 1,
+							},
+						},
+					)
+					: null;
+				if (task) {
+					jobPayload.recommendedResumeStack = task.recommendedResumeStack || null;
+					jobPayload.recommendedResumeReason = task.recommendedResumeReason || null;
+					jobPayload.useCustomizedResume = Boolean(task.useCustomizedResume);
+					jobPayload.recommendWarning = task.recommendWarning || null;
+					jobPayload.recommendedAt =
+						task.recommendedAt instanceof Date
+							? task.recommendedAt.toISOString()
+							: task.recommendedAt || null;
+					jobPayload.recommendMode = task.recommendMode || null;
+				}
+			}
+
 			return res.json({
 				success: true,
-				data: jobForProfile({ ...doc, status: projected.get(id) || [] }, profileId),
+				data: jobPayload,
 			});
 		}
 

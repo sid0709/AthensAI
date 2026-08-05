@@ -1,10 +1,11 @@
 import React from "react";
-import { ClipboardList, Download, FileX, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
+import { BookMarked, ClipboardList, Download, FileX, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { Progress } from "../../../components/ui/progress";
 import { cn } from "../../../lib/utils";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
+import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
 
 type JobBulkActionsBarProps = {
   selectedOnPage: number;
@@ -22,12 +23,15 @@ type JobBulkActionsBarProps = {
   onStopGenerateResumes?: () => void;
   onRemoveResumes?: () => void;
   onStopRemoveResumes?: () => void;
+  onRecommendResumes?: () => void;
   resumeGenerating?: boolean;
   resumeStopping?: boolean;
   resumeRemoving?: boolean;
   resumeRemovalStopping?: boolean;
+  recommendRunning?: boolean;
   hasSelectedResumes?: boolean;
   resumeProgress?: JobResumeBulkProgress;
+  recommendProgress?: RecommendResumeBulkProgress;
   loading?: boolean;
   embedded?: boolean;
   className?: string;
@@ -49,12 +53,15 @@ export function JobBulkActionsBar({
   onStopGenerateResumes,
   onRemoveResumes,
   onStopRemoveResumes,
+  onRecommendResumes,
   resumeGenerating = false,
   resumeStopping = false,
   resumeRemoving = false,
   resumeRemovalStopping = false,
+  recommendRunning = false,
   hasSelectedResumes = false,
   resumeProgress,
+  recommendProgress,
   loading = false,
   embedded = false,
   className,
@@ -65,13 +72,15 @@ export function JobBulkActionsBar({
       ? Math.round(
           ((resumeProgress.done + (resumeProgress.partial ?? 0)) / resumeProgress.total) * 100,
         )
-      : 0;
+      : recommendProgress && recommendProgress.total > 0
+        ? Math.round((recommendProgress.done / recommendProgress.total) * 100)
+        : 0;
   const hasSelection = totalSelected > 0;
 
   return (
     <div className={cn("space-y-0", className)}>
       <div
-        aria-busy={loading || resumeGenerating || resumeRemoving}
+        aria-busy={loading || resumeGenerating || resumeRemoving || recommendRunning}
         className={cn(
           "flex items-center gap-3 px-3 py-2.5",
           !embedded && "rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-sm",
@@ -148,6 +157,34 @@ export function JobBulkActionsBar({
                 <Undo2 className="w-3.5 h-3.5" />
               )}
               <span className="hidden sm:inline">Move to New</span>
+            </Button>
+          ) : null}
+          {onRecommendResumes ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onRecommendResumes}
+              disabled={
+                loading
+                || totalSelected === 0
+                || recommendRunning
+                || resumeGenerating
+                || resumeRemoving
+              }
+              title="Recommend Library resumes for selected Bid Ready jobs using each job description"
+            >
+              {recommendRunning ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              ) : (
+                <BookMarked className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">
+                {recommendRunning && recommendProgress
+                  ? `${recommendProgress.done}/${recommendProgress.total}`
+                  : "Recommend resumes"}
+              </span>
+              <span className="sm:hidden">Recommend</span>
             </Button>
           ) : null}
           {onGenerateResumes ? (

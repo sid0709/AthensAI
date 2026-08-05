@@ -19,7 +19,7 @@ export const APPS_CATALOG: AppPlugin[] = [
     tagline: "Bid Ready apply, record, and Ask AI",
     description:
       "Chrome side panel for Athens Bid Ready — apply, capture sessions, ask AI for form answers, and submit without leaving the tab.",
-    version: "0.3.14",
+    version: "0.3.15",
     downloadUrl: "/downloads/athens-lens-extension.zip",
     iconSrc: "/apps/athens-lens.png",
     accent: "indigo",
