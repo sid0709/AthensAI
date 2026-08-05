@@ -7,9 +7,6 @@ import {
 } from "../db/dataStore.js";
 import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
 import { inferJobSource, SOURCE_MAP_VERSION } from "../config/jobSources.js";
-import { attachStaticScoreFields } from "./jobListPipeline.js";
-import { indexJobInRedis } from "./matching/skillIndex.js";
-import { indexOneJobRanking } from "./matching/jobRankingIndex.js";
 import {
 	claimJobIdentity,
 	finalizeJobIdentityClaim,
@@ -107,7 +104,6 @@ export function mapExternalDocToMarketJob(externalDoc) {
 			...(externalDoc._id != null ? { id: String(externalDoc._id) } : {}),
 		},
 		aiSkillStatus: extracted ? "extracted" : "pending",
-		matchScoreStatus: "pending",
 		titleReview: { processingState: "pending" },
 	};
 
@@ -127,7 +123,6 @@ export function mapExternalDocToMarketJob(externalDoc) {
 		}
 	}
 
-	Object.assign(job, attachStaticScoreFields(job));
 	applyCompanyIdentity(job, deriveCompanyIdentity(job, { seed: externalDoc._id || externalDoc.jobID || applyLink }));
 	return job;
 }
@@ -270,14 +265,6 @@ export async function promoteExternalJobToMarket(externalDoc, {
 		console.warn('[job-identity] finalize external promotion failed:', error?.message || error);
 	});
 
-	if (marketJob.skillsNormalized || marketJob.skillTokens) {
-		void indexJobInRedis(
-			String(insertedId),
-			marketJob.skillsNormalized,
-			marketJob.skillTokens,
-		).catch(() => {});
-	}
-	void indexOneJobRanking({ ...marketJob, _id: insertedId }).catch(() => {});
 	if (marketJob.aiSkillStatus === 'pending') invalidatePendingExtractionCount();
 	void patchTitleReviewReadModel({
 		upsertRows: [mapTitleReviewDocument({ ...marketJob, _id: insertedId })],
@@ -304,7 +291,6 @@ async function markExternalSkippedDuplicate(collection, externalId) {
 		{
 			$set: {
 				aiSkillStatus: "skipped_duplicate",
-				matchScoreStatus: "scored",
 				updatedAt: new Date(),
 			},
 		},

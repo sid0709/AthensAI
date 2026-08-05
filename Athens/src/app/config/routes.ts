@@ -39,7 +39,7 @@ export const DEFAULT_TABS = {
 export type ResumesTab = "library" | "editor" | "history" | "analysis";
 export type CalendarTab = "month" | "week";
 export type ReportsTab = "postings" | "applications";
-export type SettingsTab = "profile" | "skills" | "notifications" | "integrations" | "security";
+export type SettingsTab = "profile" | "notifications" | "integrations" | "security";
 
 const VIEW_TO_BASE: Record<View, string> = {
   dashboard: PATHS.dashboard,

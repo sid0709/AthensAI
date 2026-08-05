@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { getRedis, isRedisReady } from '../../db/redis.js';
-import { backgroundTaskKeys } from './redisKeys.js';
+import { getBackgroundTask } from './taskStore.js';
+import { BACKGROUND_TASK_STATUS } from './taskTypes.js';
 
 const taskContext = new AsyncLocalStorage();
 
@@ -28,14 +28,10 @@ export async function assertBackgroundTaskActive(signal) {
 	if (signal?.aborted) throw cancellationError(signal);
 	const taskId = currentBackgroundTaskId();
 	if (!taskId) return;
-	if (!isRedisReady()) {
-		const error = new Error('Redis unavailable while checking background-task cancellation');
-		error.status = 503;
-		throw error;
-	}
-	const allowed = Number(await getRedis().eval(
-		"if redis.call('EXISTS', KEYS[1]) == 1 then return 0 else return 1 end",
-		{ keys: [backgroundTaskKeys.cancel(taskId)], arguments: [] },
-	));
-	if (!allowed) throw cancellationError(signal);
+	const task = await getBackgroundTask(taskId);
+	if (!task || [
+		BACKGROUND_TASK_STATUS.CANCELLING,
+		BACKGROUND_TASK_STATUS.CANCELLED,
+		BACKGROUND_TASK_STATUS.FAILED,
+	].includes(task.status)) throw cancellationError(signal);
 }

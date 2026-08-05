@@ -1,58 +1,54 @@
-import { createHash, randomUUID } from "node:crypto";
-import { DocumentId } from "@nextoffer/shared/document-id";
-import { FieldValue } from "firebase-admin/firestore";
+import { createHash, randomUUID } from 'node:crypto';
+import { DocumentId } from '@nextoffer/shared/document-id';
 import {
 	jobStatusContribution,
 	mergeJobStatusRows,
 	resolveJobStatusState,
-} from "@nextoffer/shared/job-status";
-import { accountInfoCollection, externalScrapedJobsCollection, jobsCollection } from "../db/dataStore.js";
-import { JobSourceTitles } from "../config/jobSources.js";
-import { buildJobsListQuery, JOB_LIST_PROJECTION, resolveApplierContext } from "./jobListQuery.js";
-import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
-import { bumpStatusRevision } from "./matching/rankingCache.js";
-import { getRedis, isRedisReady } from "../db/redis.js";
-import { isBetaTier } from "../lib/betaTier.js";
-import { isExtensionV2Job } from "../config/jobMarketSchema.js";
-import { readDateTailPage } from "./matching/jobRankingIndex.js";
-import { getJobRankingPoints } from "./vectorStore/qdrantClient.js";
-import { observeHistogram } from "./monitoring/metrics.js";
-import {
-	JOB_STATUS_STATES,
-	buildJobStatusCountsCache,
-	emptyJobStatusBaseline,
-	jobStatusAddedKey,
-	jobStatusBaselineCacheKey,
-	jobStatusCacheKey,
-	jobStatusCountsCacheKey,
-	jobStatusCountsPendingKey,
-	jobStatusRemovedKey,
-	parseJobStatusCountsCache,
-	serializeJobStatusBaseline,
-} from "./jobStatusCache.js";
+} from '@nextoffer/shared/job-status';
+import { FieldValue } from 'firebase-admin/firestore';
+import { accountInfoCollection, externalScrapedJobsCollection, jobsCollection } from '../db/dataStore.js';
+import { isExtensionV2Job } from '../config/jobMarketSchema.js';
+import { isBetaTier } from '../lib/betaTier.js';
+import { getFirestoreDb } from './firebase/firebaseAdmin.js';
+import { JOB_STATUS_STATES, emptyJobStatusBaseline } from './jobStatusModel.js';
 
-const STATUS_CACHE_TTL_SEC = 60 * 60;
-// Numeric counters are mutation-maintained and rebased onto the live catalog,
-// so they should survive normal Redis-backed app restarts instead of flashing
-// zero every minute while the legacy migration snapshot reloads.
-const STATUS_COUNTS_CACHE_TTL_SEC = 7 * 24 * 60 * 60;
-const STATUS_CACHE_EMPTY = '-';
-export const STATUS_PROJECTION_SCHEMA_VERSION = 2;
-const STATUS_BASELINE_CACHE_TTL_SEC = 7 * 24 * 60 * 60;
-const STATUS_BASELINE_MEMORY_TTL_MS = 60_000;
-const LIVE_STATUS_COUNT_TTL_MS = 60_000;
-const liveStatusCountCache = new Map();
-const statusCountWarmups = new Map();
-const statusIdBaselineCache = new Map();
-const statusIdBaselineLoads = new Map();
+const STATUS_COLLECTION = 'job_statuses';
+const COUNT_COLLECTION = 'job_status_counts';
+const RECEIPT_COLLECTION = 'operation_receipts';
+const JOB_COLLECTION = 'jobs';
+const EXTERNAL_JOB_COLLECTION = 'external_scraped_jobs';
+const COUNTER_SHARDS = 16;
+const RECEIPT_TTL_MS = 14 * 24 * 60 * 60 * 1_000;
+export const STATUS_PROJECTION_SCHEMA_VERSION = 3;
 
-function enabled() {
-  return true;
+function clean(value) {
+	return String(value ?? '').trim();
+}
+
+function asDate(value) {
+	if (!value) return null;
+	if (value instanceof Date) return value;
+	if (typeof value?.toDate === 'function') return value.toDate();
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function iso(value) {
+	return asDate(value)?.toISOString() || null;
+}
+
+function documentId(value) {
+	try { return new DocumentId(String(value)); } catch { return value; }
+}
+
+function nonNegativeInteger(value) {
+	const number = Number(value);
+	return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
 }
 
 export function stateOf(status = {}) {
 	const state = resolveJobStatusState(status);
-	return state === "posted" ? "other" : state;
+	return state === 'posted' ? 'other' : state;
 }
 
 export function statusContribution(statusOrStatuses = []) {
@@ -62,623 +58,205 @@ export function statusContribution(statusOrStatuses = []) {
 
 export function statesOf(statusOrStatuses = []) {
 	const state = resolveJobStatusState(statusOrStatuses);
-	return state === "posted" ? [] : [state];
+	return state === 'posted' ? [] : [state];
 }
 
-function nonNegativeInteger(value) {
-	const number = Number(value);
-	return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
+export function canonicalJobCatalog(sourceCatalog) {
+	return String(sourceCatalog || 'market').trim().toLowerCase() === 'external' ? 'external' : 'market';
 }
 
-/**
- * Materialized status rows outlive catalog inserts/deletes, so their `all` and
- * `posted` fields are only snapshots. Rebase them onto the authoritative live
- * market count and the live per-profile status index before returning them.
- */
-export function normalizeMaterializedJobStatusCounts(stored = {}, authoritativeAll = 0, liveStatusCount) {
-	const all = nonNegativeInteger(authoritativeAll);
-	const fallbackAny = stored.any ?? (
-		nonNegativeInteger(stored.all) - nonNegativeInteger(stored.posted)
-	);
-	const any = Math.min(all, nonNegativeInteger(liveStatusCount ?? fallbackAny));
-	const normalized = { all, posted: Math.max(0, all - any) };
-	for (const key of ["bid-ready", "bid-completed", "applied", "scheduled", "declined"]) {
-		normalized[key] = Math.min(any, nonNegativeInteger(stored[key]));
+function visibleJob(job = {}) {
+	return canonicalJobCatalog(job.sourceCatalog) === 'external'
+		|| job.titleReview?.label === 'APPROVED';
+}
+
+function publicJob(job = {}) {
+	return !isExtensionV2Job(job);
+}
+
+export function statusRowFromProjection(projection = {}) {
+	if (Number(projection.schemaVersion) === 2 && projection.statusRow) {
+		const legacy = mergeJobStatusRows([projection.statusRow], projection.profileId);
+		return legacy && resolveJobStatusState(legacy) !== 'posted' ? legacy : null;
 	}
-	return normalized;
-}
-
-/** Count live market jobs carrying any status for one profile. */
-export async function countLiveProjectedStatusJobs(profileId) {
-	if (!enabled() || !profileId) return null;
-	const key = String(profileId);
-	const cached = liveStatusCountCache.get(key);
-	if (cached?.expiresAt > Date.now()) return cached.promise;
-	const promise = getFirestoreDb()
-		.collection("job_statuses")
-		.where("profileId", "==", key)
-		.count()
-		.get()
-		.then((snapshot) => nonNegativeInteger(snapshot.data().count))
-		.catch((error) => {
-			liveStatusCountCache.delete(key);
-			throw error;
-		});
-	liveStatusCountCache.set(key, { promise, expiresAt: Date.now() + LIVE_STATUS_COUNT_TTL_MS });
-	return promise;
-}
-
-export function invalidateLiveProjectedStatusCount(profileId) {
-	if (profileId) liveStatusCountCache.delete(String(profileId));
-	else liveStatusCountCache.clear();
-}
-
-export function jobStatusProjectionId(profileId, jobId) {
-  return createHash("sha256").update(`${profileId}\0${jobId}`).digest("hex");
-}
-
-function canonicalStatusRow(profileId, row = {}) {
-	const canonical = { applier: String(profileId) };
-	for (const field of ["appliedDate", "scheduledDate", "declinedDate", "bidReadyDate", "bidCompletedDate"]) {
-		if (!row[field]) continue;
-		const raw = row[field];
-		const date = raw instanceof Date
-			? raw
-			: typeof raw?.toDate === "function"
-				? raw.toDate()
-				: new Date(raw);
-		canonical[field] = Number.isNaN(date.getTime()) ? String(raw) : date.toISOString();
+	if (Number(projection.schemaVersion) === STATUS_PROJECTION_SCHEMA_VERSION) {
+		const row = { applier: String(projection.profileId || '') };
+		for (const [stored, legacy] of [
+			['appliedAt', 'appliedDate'],
+			['scheduledAt', 'scheduledDate'],
+			['declinedAt', 'declinedDate'],
+			['bidReadyAt', 'bidReadyDate'],
+			['bidCompletedAt', 'bidCompletedDate'],
+		]) {
+			const value = iso(projection[stored]);
+			if (value) row[legacy] = value;
+		}
+		return resolveJobStatusState(row) === 'posted' ? null : row;
 	}
-	return canonical;
-}
-
-function statusFingerprint(row) {
-	const canonical = canonicalStatusRow(row?.applier, row);
-	return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
-}
-
-function projectedStatusRow(profileId, projection = {}) {
-	if (Number(projection.schemaVersion) !== STATUS_PROJECTION_SCHEMA_VERSION) return null;
-	if (!projection.statusRow || typeof projection.statusRow !== "object") return null;
-	const row = canonicalStatusRow(profileId, projection.statusRow);
-	if (projection.statusFingerprint !== statusFingerprint(row)) return null;
+	// Older docs may only carry a resolved state / contribution blob.
+	if (projection.statusRow) {
+		const legacy = mergeJobStatusRows([projection.statusRow], projection.profileId);
+		return legacy && resolveJobStatusState(legacy) !== 'posted' ? legacy : null;
+	}
+	const state = String(projection.state || '').trim();
+	if (!state || state === 'posted') return null;
+	const applier = String(projection.profileId || '');
+	const stamp = iso(projection.updatedAt) || iso(projection.postedAt) || new Date().toISOString();
+	const row = { applier };
+	if (state === 'applied') row.appliedDate = stamp;
+	else if (state === 'scheduled') { row.appliedDate = stamp; row.scheduledDate = stamp; }
+	else if (state === 'declined') { row.appliedDate = stamp; row.declinedDate = stamp; }
+	else if (state === 'bid-ready') row.bidReadyDate = stamp;
+	else if (state === 'bid-completed') { row.bidReadyDate = stamp; row.bidCompletedDate = stamp; }
+	else return null;
 	return row;
 }
 
-function stateFromBody(body = {}) {
-	if (!(body.applied === true || body.applied === "true")) return null;
-	return ({
-		Applied: "applied",
-		Scheduled: "scheduled",
-		Declined: "declined",
-		BidReady: "bid-ready",
-		BidCompleted: "bid-completed",
-	})[body.status] || null;
-}
-
-function hasUnsupportedStatusPageFilters(body = {}) {
-	const ignored = new Set([
-		"applierName", "applied", "status", "sort", "page", "limit", "skip",
-		"includeExternalScraped", "jobSources",
-	]);
-	if (body.jobSources) {
-		const selected = new Set(String(body.jobSources).split(",").map((value) => value.trim()).filter(Boolean));
-		if (!JobSourceTitles.every((source) => selected.has(source))) return true;
-	}
-	return Object.entries(body).some(([key, value]) => {
-		if (ignored.has(key)) return false;
-		if (Array.isArray(value)) return value.length > 0;
-		return value !== undefined && value !== null && value !== "" && value !== false;
-	});
-}
-
-export async function listMaterializedJobStatusPage(body = {}) {
-	if (!jobsCollection || !accountInfoCollection || !body.applierName) return null;
-	const state = stateFromBody(body);
-	if (!state) return null;
-	// Status projections contain ids, not current catalog visibility. Always
-	// intersect them with the authoritative query so quarantined titles cannot
-	// reappear through this compatibility path.
-	let hasGlobalFilters = true;
-	const account = await resolveApplierContext(String(body.applierName).trim());
-	if (!account?.id) return null;
-	const profileId = String(account.id);
-	const page = Math.max(1, Number.parseInt(body.page, 10) || 1);
-	const limit = Math.max(1, Math.min(5000, Number.parseInt(body.limit, 10) || 10));
-	const skip = body.skip !== undefined && body.skip !== null && body.skip !== ""
-		? Math.max(0, Number.parseInt(body.skip, 10) || 0)
-		: (page - 1) * limit;
-	const direction = String(body.sort || "").toLowerCase() === "postedat_asc" ? "asc" : "desc";
-	const statusIds = await readMaterializedJobStatusIds(profileId, state);
-	let orderedIds = direction === "asc" ? [...statusIds].reverse() : statusIds;
-	let total = statusIds.length;
-	let preloadedDocs = [];
-	if (hasGlobalFilters) {
-		const { query: globalQuery } = await buildJobsListQuery(body, { includePersonalStatus: false });
-		for (let start = 0; start < orderedIds.length; start += 250) {
-			const chunkIds = orderedIds.slice(start, start + 250).map((id) => new DocumentId(id));
-			preloadedDocs.push(...await jobsCollection.find(
-				{ $and: [globalQuery, { _id: { $in: chunkIds } }] },
-				{ projection: JOB_LIST_PROJECTION },
-			).toArray());
-		}
-		preloadedDocs.sort((left, right) => {
-			const delta = (Date.parse(right.postedAt || 0) || 0) - (Date.parse(left.postedAt || 0) || 0);
-			return direction === "asc" ? -delta : delta;
-		});
-		orderedIds = preloadedDocs.map((doc) => String(doc._id));
-		total = orderedIds.length;
-	}
-	const pageIds = orderedIds.slice(skip, skip + limit);
-	const documentIds = pageIds.map((id) => {
-		try { return new DocumentId(id); } catch { return id; }
-	});
-	const docs = hasGlobalFilters
-		? preloadedDocs.filter((doc) => pageIds.includes(String(doc._id)))
-		: documentIds.length
-		? await jobsCollection.find({ _id: { $in: documentIds } }, { projection: JOB_LIST_PROJECTION }).toArray()
-		: [];
-	const byId = new Map(docs.map((doc) => [String(doc._id), doc]));
+function projectionDates(row = {}) {
 	return {
-		docs: pageIds
-			.map((id) => {
-				const doc = byId.get(String(id));
-				if (!doc) return null;
-				const row = mergeJobStatusRows(doc.status, profileId);
-				return { ...doc, status: row ? [canonicalStatusRow(profileId, row)] : [] };
-			})
-			.filter(Boolean),
-		total,
-		page,
-		limit,
+		appliedAt: asDate(row.appliedDate),
+		scheduledAt: asDate(row.scheduledDate),
+		declinedAt: asDate(row.declinedDate),
+		bidReadyAt: asDate(row.bidReadyDate),
+		bidCompletedAt: asDate(row.bidCompletedDate),
+	};
+}
+
+export function jobStatusProjectionId(profileId, jobId) {
+	return createHash('sha256').update(`${profileId}\0${jobId}`).digest('hex');
+}
+
+function receiptId(profileId, mutationId) {
+	return createHash('sha256').update(`${profileId}\0${mutationId}`).digest('hex');
+}
+
+function counterShard(jobId) {
+	return Number.parseInt(createHash('sha256').update(String(jobId)).digest('hex').slice(0, 8), 16) % COUNTER_SHARDS;
+}
+
+function counterRef(profileId, catalog, jobId) {
+	const shard = counterShard(jobId);
+	return getFirestoreDb().collection(COUNT_COLLECTION).doc(`${profileId}_${catalog}_${String(shard).padStart(2, '0')}`);
+}
+
+function summaryCounterRef(profileId, catalog) {
+	return getFirestoreDb().collection(COUNT_COLLECTION).doc(`${profileId}_${catalog}_summary`);
+}
+
+function contributionForProjection(projection) {
+	const row = projection ? statusRowFromProjection(projection) : null;
+	if (!row || projection?.visibleInJobSearch === false) {
+		return { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	}
+	return jobStatusContribution(row);
+}
+
+function contributionDelta(previous, next) {
+	const left = contributionForProjection(previous);
+	const right = contributionForProjection(next);
+	return Object.fromEntries(Object.keys(right).map((key) => [key, Number(right[key] || 0) - Number(left[key] || 0)]));
+}
+
+function counterWrite({ profileId, catalog, jobId, previous, next, isPublic }) {
+	const delta = contributionDelta(previous, next);
+	const nested = Object.fromEntries(Object.entries(delta).map(([key, value]) => [key, FieldValue.increment(value)]));
+	const shard = counterShard(jobId);
+	const payload = {
+		schemaVersion: STATUS_PROJECTION_SCHEMA_VERSION,
+		profileId,
+		sourceCatalog: catalog,
+		shard,
+		all: nested,
+		...(isPublic ? { public: nested } : {}),
+		updatedAt: new Date(),
+	};
+	return {
+		ref: counterRef(profileId, catalog, jobId),
+		data: payload,
+		summaryRef: summaryCounterRef(profileId, catalog),
+		summaryData: {
+			schemaVersion: STATUS_PROJECTION_SCHEMA_VERSION,
+			profileId,
+			sourceCatalog: catalog,
+			kind: 'summary',
+			all: nested,
+			...(isPublic ? { public: nested } : {}),
+			updatedAt: new Date(),
+		},
+	};
+}
+
+function projectionFromRow({ profileId, jobId, job, row, mutationId, existing = null, now = new Date() }) {
+	const state = resolveJobStatusState(row);
+	if (state === 'posted') return null;
+	return {
+		schemaVersion: STATUS_PROJECTION_SCHEMA_VERSION,
+		profileId: String(profileId),
+		jobId: String(jobId),
+		sourceCatalog: canonicalJobCatalog(job?.sourceCatalog),
 		state,
+		...projectionDates(row),
+		postedAt: asDate(job?.postedAt || job?._createdAt || job?.createdAt) || now,
+		extensionV2: isExtensionV2Job(job),
+		isPublic: publicJob(job),
+		visibleInJobSearch: visibleJob(job),
+		stateChangedAt: now,
+		lastMutationId: mutationId || null,
+		createdAt: asDate(existing?.createdAt) || now,
+		updatedAt: now,
 	};
-}
-
-/** Fast New-tab numbered pagination from the Redis date index. */
-export async function listMaterializedPostedPage(body = {}) {
-	if (!jobsCollection || !body.applierName) return null;
-	if (!(body.applied === false || body.applied === "false") || hasUnsupportedStatusPageFilters(body)) return null;
-	const account = await resolveApplierContext(String(body.applierName).trim());
-	if (!account?.id) return null;
-	const profileId = String(account.id);
-	const page = Math.max(1, Number.parseInt(body.page, 10) || 1);
-	const limit = Math.max(1, Math.min(5000, Number.parseInt(body.limit, 10) || 10));
-	const skip = body.skip !== undefined && body.skip !== null && body.skip !== ""
-		? Math.max(0, Number.parseInt(body.skip, 10) || 0)
-		: (page - 1) * limit;
-	const excludedJobIds = new Set(await readMaterializedJobStatusIds(profileId, "any"));
-	const entries = await readDateTailPage({
-		offset: skip,
-		limit,
-		includeExternal: false,
-		excludeExtensionV2: !account.isBeta,
-		excludedJobIds,
-		direction: String(body.sort || "").toLowerCase() === "postedat_asc" ? "asc" : "desc",
-	});
-	const ids = entries.map((entry) => String(entry.jobId));
-	const payloads = await getJobRankingPoints(ids);
-	const cards = new Map(payloads.flatMap((payload) => {
-		const id = String(payload.jobId || "");
-		return id && payload.card ? [[id, { ...payload.card, _id: id, aiSkills: payload.aiSkills || [] }]] : [];
-	}));
-	const missingIds = ids.filter((id) => !cards.has(id));
-	if (missingIds.length) {
-		const documentIds = missingIds.map((id) => new DocumentId(id));
-		const fallbackDocs = await jobsCollection.find(
-			{ _id: { $in: documentIds } },
-			{ projection: JOB_LIST_PROJECTION },
-		).toArray();
-		for (const doc of fallbackDocs) cards.set(String(doc._id), doc);
-	}
-	const { query: visibilityQuery } = await buildJobsListQuery(body, { includePersonalStatus: false });
-	const all = await jobsCollection.countDocuments(visibilityQuery);
-	let excludedVisible = 0;
-	const excludedIds = [...excludedJobIds];
-	for (let start = 0; start < excludedIds.length; start += 250) {
-		const chunk = excludedIds.slice(start, start + 250).map((id) => new DocumentId(id));
-		excludedVisible += await jobsCollection.countDocuments({
-			$and: [visibilityQuery, { _id: { $in: chunk } }],
-		});
-	}
-	return {
-		docs: ids.map((id) => cards.get(id)).filter(Boolean).map((doc) => ({ ...doc, status: [] })),
-		total: Math.max(0, all - excludedVisible),
-		page,
-		limit,
-		state: "posted",
-	};
-}
-
-export function canUseMaterializedStatusPageForTier(tier) {
-	return isBetaTier(tier);
 }
 
 export function buildStatusProjectionData({ profileId, jobId, job, statuses }) {
-	const states = statesOf(statuses);
-	const merged = mergeJobStatusRows(statuses, profileId);
-	const statusRow = merged ? canonicalStatusRow(profileId, merged) : null;
+	const row = mergeJobStatusRows(statuses, profileId);
+	return row ? projectionFromRow({ profileId, jobId, job, row, now: new Date() }) : null;
+}
+
+export function normalizeMaterializedJobStatusCounts(stored = {}, authoritativeAll = 0, liveStatusCount) {
+	const all = nonNegativeInteger(authoritativeAll);
+	const any = Math.min(all, nonNegativeInteger(liveStatusCount ?? stored.any));
 	return {
-		schemaVersion: STATUS_PROJECTION_SCHEMA_VERSION,
-		profileId,
-		jobId,
-		state: states[0] || (statuses.length ? "other" : null),
-		states,
-		sourceCatalog: job.sourceCatalog || "market",
-		extensionV2: isExtensionV2Job(job),
-		postedAt: job.postedAt || null,
-		contribution: statusContribution(statuses),
-		statusRow,
-		statusFingerprint: statusRow ? statusFingerprint(statusRow) : null,
-		updatedAt: new Date(),
+		all,
+		posted: Math.max(0, all - any),
+		...Object.fromEntries(JOB_STATUS_STATES.map((state) => [state, Math.min(any, nonNegativeInteger(stored[state]))])),
 	};
 }
 
-const ADJUST_COUNTS_SCRIPT = `
-local raw = redis.call('GET', KEYS[1])
-local fields = {'any','rawApplied','applied','scheduled','declined','bid-ready','bid-completed','other'}
-if not raw then
-  for index, field in ipairs(fields) do
-    local delta = tonumber(ARGV[index] or 0)
-    if delta ~= 0 then redis.call('HINCRBY', KEYS[2], field, delta) end
-  end
-  redis.call('EXPIRE', KEYS[2], tonumber(ARGV[9]))
-  return 0
-end
-local value = cjson.decode(raw)
-for index, field in ipairs(fields) do
-  local current = tonumber(value[field] or 0)
-  local delta = tonumber(ARGV[index] or 0)
-  value[field] = math.max(0, current + delta)
-end
-redis.call('SETEX', KEYS[1], tonumber(ARGV[9]), cjson.encode(value))
-return 1
-`;
-
-const INITIALIZE_COUNTS_SCRIPT = `
-if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
-local value = cjson.decode(ARGV[1])
-local pending = redis.call('HGETALL', KEYS[2])
-for index = 1, #pending, 2 do
-  local field = pending[index]
-  local delta = tonumber(pending[index + 1] or 0)
-  value[field] = math.max(0, tonumber(value[field] or 0) + delta)
-end
-redis.call('SETEX', KEYS[1], tonumber(ARGV[2]), cjson.encode(value))
-redis.call('DEL', KEYS[2])
-return 1
-`;
-
-const UPDATE_STATUS_IDS_SCRIPT = `
-local jobId = ARGV[1]
-local currentState = ARGV[2]
-local states = {'applied','scheduled','declined','bid-ready','bid-completed'}
-for index, state in ipairs(states) do
-  local addedKey = KEYS[(index - 1) * 2 + 1]
-  local removedKey = KEYS[(index - 1) * 2 + 2]
-  redis.call('SREM', addedKey, jobId)
-  redis.call('SADD', removedKey, jobId)
-  if state == currentState then
-    redis.call('SREM', removedKey, jobId)
-    redis.call('SADD', addedKey, jobId)
-  end
-end
-return 1
-`;
-
-function warmMaterializedJobStatusCounts(profileId, includeExtensionV2) {
-	if (!isRedisReady()) return null;
-	const warmupKey = `${profileId}:${includeExtensionV2 ? "all" : "public"}`;
-	if (statusCountWarmups.has(warmupKey)) return statusCountWarmups.get(warmupKey);
-	const warmup = (async () => {
-		const baseline = await loadStatusIdBaseline(profileId);
-		const counts = buildJobStatusCountsCache(profileId, baseline);
-		await getRedis().eval(INITIALIZE_COUNTS_SCRIPT, {
-			keys: [
-				jobStatusCountsCacheKey(profileId, includeExtensionV2),
-				jobStatusCountsPendingKey(profileId, includeExtensionV2),
-			],
-			arguments: [JSON.stringify(counts), String(STATUS_COUNTS_CACHE_TTL_SEC)],
-		});
-		return counts;
-	})().catch((error) => {
-		console.warn('[jobs] status count warmup failed:', error?.message || error);
-		return null;
-	}).finally(() => statusCountWarmups.delete(warmupKey));
-	statusCountWarmups.set(warmupKey, warmup);
-	return warmup;
-}
-
-/**
- * Build one exact profile baseline from verified v2 projections and canonical
- * job rows for only the legacy/tampered subset. Projection state fields are
- * never trusted unless their fingerprint validates.
- */
-export function authoritativeJobStatusBaseline(profileId, projectionRows = [], canonicalJobsById = new Map()) {
-	const key = String(profileId || "");
-	const entries = Object.fromEntries(JOB_STATUS_STATES.map((state) => [state, []]));
-	const seen = new Set();
-	for (const projection of projectionRows) {
-		const jobId = String(projection?.jobId || "");
-		if (!jobId || seen.has(jobId)) continue;
-		let row = projectedStatusRow(key, projection);
-		let postedAt = projection?.postedAt || null;
-		if (!row) {
-			const job = canonicalJobsById.get(jobId);
-			const merged = job ? mergeJobStatusRows(job.status, key) : null;
-			row = merged ? canonicalStatusRow(key, merged) : null;
-			postedAt = job?.postedAt || job?.createdAt || postedAt;
-		}
-		const state = row ? stateOf(row) : null;
-		if (!JOB_STATUS_STATES.includes(state)) continue;
-		seen.add(jobId);
-		entries[state].push({ jobId, postedAt });
-	}
-	const baseline = emptyJobStatusBaseline();
-	for (const state of JOB_STATUS_STATES) {
-		baseline[state] = entries[state]
-			.sort((left, right) =>
-				(Date.parse(right.postedAt || 0) || 0) - (Date.parse(left.postedAt || 0) || 0) ||
-				right.jobId.localeCompare(left.jobId),
-			)
-			.map((entry) => entry.jobId);
-	}
-	return baseline;
-}
-
-async function loadCanonicalJobsForInvalidProjections(profileId, projectionRows, seededJobsById = new Map()) {
-	const key = String(profileId);
-	const invalidJobIds = [...new Set(projectionRows
-		.filter((row) => !projectedStatusRow(key, row))
-		.map((row) => String(row?.jobId || ""))
-		.filter((jobId) => jobId && !seededJobsById.has(jobId)))];
-	if (!invalidJobIds.length) return seededJobsById;
-	const firestore = getFirestoreDb();
-	const jobsById = new Map(seededJobsById);
-	const chunks = [];
-	for (let start = 0; start < invalidJobIds.length; start += 100) {
-		chunks.push(invalidJobIds.slice(start, start + 100));
-	}
-	const pages = await Promise.all(chunks.map(async (chunk) => {
-		const refs = chunk.map((jobId) => firestore.collection("jobs").doc(jobId));
-		return firestore.getAll(...refs, { fieldMask: ["status", "postedAt", "createdAt"] });
-	}));
-	for (let page = 0; page < pages.length; page += 1) {
-		const chunk = chunks[page];
-		const snapshots = pages[page];
-		for (let index = 0; index < snapshots.length; index += 1) {
-			if (snapshots[index].exists) jobsById.set(chunk[index], snapshots[index].data());
-		}
-	}
-	return jobsById;
-}
-
-async function loadStatusIdBaselineUncached(key) {
-	let baseline;
-	if (enabled()) {
-		const firestore = getFirestoreDb();
-		// Legacy jobs retain statusProfileIds until their v2 projection is verified.
-		// Start that narrow indexed lookup alongside the projection read so mixed
-		// profiles do not pay hundreds of sequential document lookups.
-		const [snapshot, legacyJobsSnapshot] = await Promise.all([
-			firestore.collection("job_statuses")
-				.where("profileId", "==", key)
-				.select("jobId", "state", "postedAt", "schemaVersion", "statusRow", "statusFingerprint")
-				.get(),
-			firestore.collection("jobs")
-				.where("statusProfileIds", "array-contains", key)
-				.select("status", "postedAt", "createdAt")
-				.get()
-				.catch(() => null),
-		]);
-		const projectionRows = snapshot.docs.map((doc) => doc.data());
-		if (projectionRows.length) {
-			const seededJobsById = new Map((legacyJobsSnapshot?.docs || [])
-				.map((document) => [document.id, document.data()]));
-			const canonicalJobsById = await loadCanonicalJobsForInvalidProjections(
-				key,
-				projectionRows,
-				seededJobsById,
-			);
-			baseline = authoritativeJobStatusBaseline(key, projectionRows, canonicalJobsById);
-		} else {
-			// A profile predating the projection collection still needs the legacy
-			// source fallback. Once any projections exist, mixed rows are handled by
-			// the targeted canonical reads above instead of an all-or-nothing scan.
-			baseline = emptyJobStatusBaseline();
-			const profileValues = [key];
-			try { profileValues.unshift(new DocumentId(key)); } catch { /* string profile id */ }
-			const docs = await jobsCollection.find(
-				{ 'status.applier': { $in: profileValues } },
-				{ projection: { status: 1, postedAt: 1 } },
-			).sort({ postedAt: -1, _id: -1 }).toArray();
-			for (const job of docs) {
-				const state = resolveJobStatusState(job.status, key);
-				if (JOB_STATUS_STATES.includes(state)) baseline[state].push(String(job._id));
-			}
-		}
-	} else {
-		const profileValues = [key];
-		try { profileValues.unshift(new DocumentId(key)); } catch { /* string profile id */ }
-		const docs = await jobsCollection.find(
-			{ 'status.applier': { $in: profileValues } },
-			{ projection: { status: 1, postedAt: 1 } },
-		).sort({ postedAt: -1, _id: -1 }).toArray();
-		baseline = emptyJobStatusBaseline();
-		for (const job of docs) {
-			const statuses = (Array.isArray(job.status) ? job.status : [])
-				.filter((row) => String(row?.applier || '') === key);
-			for (const state of statesOf(statuses)) baseline[state].push(String(job._id));
-		}
-	}
-	statusIdBaselineCache.set(key, {
-		baseline,
-		expiresAt: Date.now() + STATUS_BASELINE_MEMORY_TTL_MS,
-	});
-	if (isRedisReady()) {
-		await getRedis().setEx(
-			jobStatusBaselineCacheKey(key),
-			STATUS_BASELINE_CACHE_TTL_SEC,
-			serializeJobStatusBaseline(key, baseline),
-		).catch((error) => {
-			console.warn("[job-status-cache] baseline publication failed:", error?.message || error);
-		});
-	}
-	return baseline;
-}
-
-async function loadStatusIdBaseline(profileId) {
-	const key = String(profileId);
-	const cached = statusIdBaselineCache.get(key);
-	if (cached?.expiresAt > Date.now()) return cached.baseline;
-	if (cached) statusIdBaselineCache.delete(key);
-	const existing = statusIdBaselineLoads.get(key);
-	if (existing) return existing;
-	const pending = loadStatusIdBaselineUncached(key)
-		.finally(() => statusIdBaselineLoads.delete(key));
-	statusIdBaselineLoads.set(key, pending);
-	return pending;
-}
-
-/**
- * Extract one state directly from verified v2 projections. Invalid or legacy
- * rows are ignored instead of forcing a full scan of the jobs catalog.
- */
-export function canonicalProjectedJobStatusIdsByState(profileId, states = [], projectionRows = []) {
-	if (!profileId) return new Map();
-	const key = String(profileId);
-	const requested = [...new Set((Array.isArray(states) ? states : [states])
-		.filter((state) => JOB_STATUS_STATES.includes(state)))];
-	const grouped = new Map(requested.map((state) => [state, []]));
-	for (const projection of projectionRows) {
-		const row = projectedStatusRow(key, projection);
-		const state = row ? stateOf(row) : null;
-		if (!projection.jobId || !grouped.has(state)) continue;
-		grouped.get(state).push({ jobId: String(projection.jobId), postedAt: projection.postedAt || null });
-	}
-	for (const [state, entries] of grouped) {
-		grouped.set(state, entries.sort((left, right) =>
-			(Date.parse(right.postedAt || 0) || 0) - (Date.parse(left.postedAt || 0) || 0) ||
-			right.jobId.localeCompare(left.jobId),
-		).map((entry) => entry.jobId));
-	}
-	return grouped;
-}
-
-export function canonicalProjectedStatusIds(profileId, state, projectionRows = []) {
-	return canonicalProjectedJobStatusIdsByState(profileId, [state], projectionRows).get(state) || [];
-}
-
-/** Authoritative IDs grouped by state from one migrated Firestore projection read. */
-export async function readCanonicalProjectedJobStatusIdsByState(profileId, states = []) {
-	if (!enabled() || !profileId) return new Map();
-	const key = String(profileId);
-	const snapshot = await getFirestoreDb().collection("job_statuses")
-		.where("profileId", "==", key)
-		.select("jobId", "state", "postedAt", "schemaVersion", "statusRow", "statusFingerprint")
+export async function countLiveProjectedStatusJobs(profileId) {
+	if (!clean(profileId)) return null;
+	const snapshot = await getFirestoreDb().collection(STATUS_COLLECTION)
+		.where('profileId', '==', clean(profileId))
+		.where('visibleInJobSearch', '==', true)
+		.count()
 		.get();
-	return canonicalProjectedJobStatusIdsByState(key, states, snapshot.docs.map((doc) => doc.data()));
+	return nonNegativeInteger(snapshot.data().count);
 }
 
-/** Authoritative IDs for one state, read from the migrated Firestore projection. */
-export async function readCanonicalProjectedJobStatusIds(profileId, state) {
-	if (!JOB_STATUS_STATES.includes(state)) return [];
-	return (await readCanonicalProjectedJobStatusIdsByState(profileId, [state])).get(state) || [];
+export function invalidateLiveProjectedStatusCount() {
+	// Snapshot listeners and Firestore aggregates are authoritative; no Redis cache exists.
 }
 
-/** Exact ordered status IDs grouped from one authoritative profile load. */
-export async function readMaterializedJobStatusIdsByState(profileId, states = JOB_STATUS_STATES) {
-	if (!profileId) return new Map();
-	const requested = [...new Set((Array.isArray(states) ? states : [states])
-		.filter((state) => JOB_STATUS_STATES.includes(state)))];
-	const baseline = await loadStatusIdBaseline(profileId);
-	return new Map(requested.map((state) => [state, [...(baseline[state] || [])]]));
-}
-
-/** Ordered status IDs without requiring a Firestore composite index. */
-export async function readMaterializedJobStatusIds(profileId, state) {
-	if (!profileId || (state !== "any" && !JOB_STATUS_STATES.includes(state))) return [];
-	const baseline = await loadStatusIdBaseline(profileId);
-	if (state === "any") {
-		return [...new Set(JOB_STATUS_STATES.flatMap((item) => baseline[item] || []).map(String))];
+async function resolveAccount(applierName) {
+	if (!accountInfoCollection) return null;
+	const name = clean(applierName);
+	if (!name) return null;
+	let account = await accountInfoCollection.findOne({ name }, { projection: { name: 1, tier: 1 } });
+	if (!account) {
+		const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		account = await accountInfoCollection.findOne(
+			{ name: { $regex: new RegExp(`^${escaped}$`, 'i') } },
+			{ projection: { name: 1, tier: 1 } },
+		);
 	}
-	return [...(baseline[state] || [])];
+	return account ? { id: String(account._id), isBeta: isBetaTier(account.tier), name: account.name } : null;
 }
 
-function countDeltas(previousStatuses, statuses) {
-	const previous = statusContribution(previousStatuses);
-	const next = statusContribution(statuses);
-	const hadStatus = Array.isArray(previousStatuses) && previousStatuses.length > 0;
-	const hasStatus = Array.isArray(statuses) && statuses.length > 0;
-	return [
-		Number(hasStatus) - Number(hadStatus),
-		next.rawApplied - previous.rawApplied,
-		next.applied - previous.applied,
-		next.scheduled - previous.scheduled,
-		next.declined - previous.declined,
-		next["bid-ready"] - previous["bid-ready"],
-		next["bid-completed"] - previous["bid-completed"],
-		Number(hasStatus && !statesOf(statuses).length) - Number(hadStatus && !statesOf(previousStatuses).length),
-	];
-}
-
-export async function publishStatusCache(profileId, jobId, statuses, {
-	previousStatuses = [],
-	extensionV2 = false,
-	adjustCounts = true,
-	updateStatusIds = adjustCounts,
-} = {}) {
-	invalidateLiveProjectedStatusCount(profileId);
-	statusIdBaselineCache.delete(String(profileId));
-	await bumpStatusRevision(profileId);
-	if (!isRedisReady()) return;
-	const merged = mergeJobStatusRows(statuses, profileId);
-	const value = merged
-		? JSON.stringify(canonicalStatusRow(profileId, merged))
-		: STATUS_CACHE_EMPTY;
-	const deltas = countDeltas(previousStatuses, statuses).map(String);
-	const countKeys = adjustCounts ? [jobStatusCountsCacheKey(profileId, true)] : [];
-	if (adjustCounts && !extensionV2) countKeys.push(jobStatusCountsCacheKey(profileId, false));
-	const currentStates = new Set(statesOf(statuses));
-	const statusIdWrite = updateStatusIds
-		? getRedis().eval(UPDATE_STATUS_IDS_SCRIPT, {
-			keys: JOB_STATUS_STATES.flatMap((state) => [jobStatusAddedKey(profileId, state), jobStatusRemovedKey(profileId, state)]),
-			arguments: [jobId, JOB_STATUS_STATES.find((state) => currentStates.has(state)) || ""],
-		})
-		: Promise.resolve(1);
-	const adjustmentResults = await Promise.all([
-		getRedis().setEx(jobStatusCacheKey(profileId, jobId), STATUS_CACHE_TTL_SEC, value),
-		statusIdWrite,
-		...countKeys.map((key) => getRedis().eval(ADJUST_COUNTS_SCRIPT, {
-			keys: [key, `${key}:pending`],
-			arguments: [...deltas, String(STATUS_COUNTS_CACHE_TTL_SEC)],
-		})),
-	]);
-	if (adjustCounts && adjustmentResults.slice(2).some((result) => Number(result) === 0)) {
-		void warmMaterializedJobStatusCounts(profileId, true);
-		if (!extensionV2) void warmMaterializedJobStatusCounts(profileId, false);
-	}
-	if (updateStatusIds && !adjustCounts) {
-		await getRedis().del([
-			jobStatusCountsCacheKey(profileId, true),
-			jobStatusCountsCacheKey(profileId, false),
-		]);
-		void warmMaterializedJobStatusCounts(profileId, true);
-		if (!extensionV2) void warmMaterializedJobStatusCounts(profileId, false);
-	}
-}
-
-/** Pure state-machine used by every Apply/Bid/Pipeline mutation. */
-/** Mongo-era jobs without an explicit catalog belong to the market catalog. */
-export function canonicalJobCatalog(sourceCatalog) {
-	return String(sourceCatalog || "market").trim().toLowerCase();
-}
-
+/** Pure state-machine used by Apply, Bid and Pipeline mutations. */
 export function reduceJobStatuses(statusRows, profileValue, transition, now = new Date().toISOString()) {
-	const profileId = String(profileValue || "");
+	const profileId = String(profileValue || '');
 	const otherRows = [];
 	for (const row of Array.isArray(statusRows) ? statusRows : []) {
-		if (String(row?.applier || "") !== profileId && row) otherRows.push(row);
+		if (String(row?.applier || '') !== profileId && row) otherRows.push(row);
 	}
 	let current = mergeJobStatusRows(statusRows, profileId);
 	if (current) current = { ...current, applier: profileId };
@@ -686,41 +264,21 @@ export function reduceJobStatuses(statusRows, profileValue, transition, now = ne
 	const before = current ? JSON.stringify(current) : null;
 	const ensure = () => { current ||= { applier: profileId }; };
 	switch (transition) {
-		case "apply":
-			ensure();
-			current.appliedDate ||= now;
-			break;
-		case "unapply":
-			current = null;
-			break;
-		case "scheduled":
-			ensure();
-			current.appliedDate ||= now;
-			current.scheduledDate = now;
-			delete current.declinedDate;
-			break;
-		case "declined":
-			ensure();
-			current.appliedDate ||= now;
-			current.declinedDate = now;
-			delete current.scheduledDate;
-			break;
-		case "applied":
-			ensure();
-			current.appliedDate ||= now;
-			delete current.scheduledDate;
-			delete current.declinedDate;
-			break;
-		case "bid-ready":
-			ensure();
-			current.bidReadyDate ||= now;
-			break;
-		case "bid-completed":
-			ensure();
-			current.bidReadyDate ||= now;
-			current.bidCompletedDate ||= now;
-			break;
-		case "clear-bid":
+		case 'apply':
+			ensure(); current.appliedDate ||= now; break;
+		case 'unapply':
+			current = null; break;
+		case 'scheduled':
+			ensure(); current.appliedDate ||= now; current.scheduledDate = now; delete current.declinedDate; break;
+		case 'declined':
+			ensure(); current.appliedDate ||= now; current.declinedDate = now; delete current.scheduledDate; break;
+		case 'applied':
+			ensure(); current.appliedDate ||= now; delete current.scheduledDate; delete current.declinedDate; break;
+		case 'bid-ready':
+			ensure(); current.bidReadyDate ||= now; break;
+		case 'bid-completed':
+			ensure(); current.bidReadyDate ||= now; current.bidCompletedDate ||= now; break;
+		case 'clear-bid':
 			if (current) {
 				delete current.bidReadyDate;
 				delete current.bidCompletedDate;
@@ -730,158 +288,98 @@ export function reduceJobStatuses(statusRows, profileValue, transition, now = ne
 		default:
 			throw new Error(`Unsupported job status transition: ${transition}`);
 	}
-	const statuses = current ? [...otherRows, current] : otherRows;
-	return { statuses, current, previous, changed: before !== (current ? JSON.stringify(current) : null) };
+	return {
+		statuses: current ? [...otherRows, current] : otherRows,
+		current,
+		previous,
+		changed: before !== (current ? JSON.stringify(current) : null),
+	};
 }
 
-/**
- * Canonical status mutation. Firestore updates the job and its indexed
- * profile/job status document in one transaction; no catalog-wide counter
- * document is touched on the interactive request path.
- */
 export async function mutateJobStatus({
 	jobId: jobIdRaw,
 	applierName,
 	transition,
-	catalog: catalogRaw = "market",
+	catalog: catalogRaw = 'market',
 	mutationId: mutationIdRaw = null,
 }) {
-	const jobId = String(jobIdRaw || "");
-	const name = String(applierName || "").trim();
-	const catalog = String(catalogRaw || "market").trim().toLowerCase() === "external" ? "external" : "market";
-	const mutationId = String(mutationIdRaw || randomUUID()).trim();
-	if (!DocumentId.isValid(jobId)) throw new Error("Invalid job id");
-	if (!name) throw new Error("applierName is required");
-	if (!mutationId) throw new Error("mutationId is required");
-	const account = await resolveApplierContext(name);
-	if (!account?.id) throw new Error(`User ${name} not found`);
-	const profileId = String(account.id);
-	const documentId = new DocumentId(jobId);
+	const jobId = clean(jobIdRaw);
+	const catalog = canonicalJobCatalog(catalogRaw);
+	const mutationId = clean(mutationIdRaw || randomUUID());
+	if (!DocumentId.isValid(jobId)) throw new Error('Invalid job id');
+	if (!clean(applierName)) throw new Error('applierName is required');
+	if (!mutationId) throw new Error('mutationId is required');
+	const account = await resolveAccount(applierName);
+	if (!account) throw new Error(`User ${applierName} not found`);
+	const profileId = account.id;
+	const firestore = getFirestoreDb();
+	const jobRef = firestore.collection(catalog === 'external' ? EXTERNAL_JOB_COLLECTION : JOB_COLLECTION).doc(jobId);
+	const statusRef = firestore.collection(STATUS_COLLECTION).doc(jobStatusProjectionId(profileId, jobId));
+	const receiptRef = firestore.collection(RECEIPT_COLLECTION).doc(receiptId(profileId, mutationId));
+	const now = new Date();
 
-	if (!enabled()) {
-		const collection = catalog === "external" ? externalScrapedJobsCollection : jobsCollection;
-		const job = await collection.findOne({ _id: documentId });
-		if (!job || (!account.isBeta && isExtensionV2Job(job))) throw new Error("Job not found");
-		const reduced = reduceJobStatuses(job.status, profileId, transition);
-		await collection.updateOne({ _id: documentId }, {
-			$set: { status: reduced.statuses },
-			$unset: { statusProfileIds: "" },
-		});
-		void publishStatusCache(profileId, jobId, reduced.current ? [reduced.current] : [], {
-			previousStatuses: reduced.previous ? [reduced.previous] : [],
-			extensionV2: isExtensionV2Job(job),
-		}).catch((error) => console.warn("[job-status-cache] deferred publication failed:", error?.message || error));
-		return {
-			job: { ...job, status: reduced.statuses },
-			changed: reduced.changed,
+	const result = await firestore.runTransaction(async (transaction) => {
+		const [jobSnapshot, statusSnapshot, receiptSnapshot] = await Promise.all([
+			transaction.get(jobRef),
+			transaction.get(statusRef),
+			transaction.get(receiptRef),
+		]);
+		if (!jobSnapshot.exists) {
+			throw new Error('Job not found');
+		}
+		const job = { ...jobSnapshot.data(), sourceCatalog: catalog };
+		if ((!account.isBeta && isExtensionV2Job(job)) || !visibleJob(job)) throw new Error('Job not found');
+		const existing = statusSnapshot.exists ? statusSnapshot.data() : null;
+		if (receiptSnapshot.exists) {
+			const receipt = receiptSnapshot.data();
+			if (receipt.jobId !== jobId || receipt.transition !== transition) {
+				throw new Error('mutationId was already used for another status change');
+			}
+			return { changed: false, duplicate: true, projection: existing };
+		}
+		const previousRow = (existing ? statusRowFromProjection(existing) : null)
+			|| mergeJobStatusRows(job.status, profileId);
+		const reduced = reduceJobStatuses(previousRow ? [previousRow] : [], profileId, transition, now.toISOString());
+		const next = reduced.current
+			? projectionFromRow({ profileId, jobId, job, row: reduced.current, mutationId, existing, now })
+			: null;
+		const count = counterWrite({
 			profileId,
 			catalog,
-			mutationId,
-			statusVersion: `${Date.now()}:${mutationId}`,
-			viewerStatus: resolveJobStatusState(reduced.current ? [reduced.current] : []),
-			cacheSync: "queued",
-		};
-	}
-
-	const firestore = getFirestoreDb();
-	const jobRef = firestore.collection("jobs").doc(jobId);
-	const statusRef = firestore.collection("job_statuses").doc(jobStatusProjectionId(profileId, jobId));
-	const outboxRef = firestore.collection("job_status_outbox").doc(mutationId);
-	const statusVersion = `${Date.now()}:${mutationId}`;
-	const durableCommitStarted = performance.now();
-	const result = await firestore.runTransaction(async (transaction) => {
-		const [snapshot, existingOutbox] = await Promise.all([
-			transaction.get(jobRef),
-			transaction.get(outboxRef),
-		]);
-		if (
-			!snapshot.exists ||
-			// Mongo-era market jobs may not have sourceCatalog persisted. Everywhere
-			// else in the read model those records are canonically treated as market.
-			canonicalJobCatalog(snapshot.data()?.sourceCatalog) !== catalog ||
-			(!account.isBeta && isExtensionV2Job(snapshot.data()))
-		) throw new Error("Job not found");
-		const job = snapshot.data();
-		if (existingOutbox.exists) {
-			const prior = existingOutbox.data();
-			if (
-				String(prior.profileId || "") !== profileId ||
-				String(prior.jobId || "") !== jobId ||
-				String(prior.catalog || "market") !== catalog ||
-				String(prior.transition || "") !== String(transition)
-			) throw new Error("mutationId was already used for another status change");
-			const current = mergeJobStatusRows(job.status, profileId);
-			return {
-				job: { ...job, _id: documentId },
-				changed: false,
-				profileStatuses: current ? [canonicalStatusRow(profileId, current)] : [],
-				previousStatuses: current ? [canonicalStatusRow(profileId, current)] : [],
-				extensionV2: isExtensionV2Job(job),
-				mutationId,
-				statusVersion: String(prior.statusVersion || statusVersion),
-				duplicate: true,
-			};
-		}
-		const reduced = reduceJobStatuses(job.status, profileId, transition);
-		transaction.update(jobRef, {
-			status: reduced.statuses,
-			statusProfileIds: FieldValue.delete(),
+			jobId,
+			previous: existing,
+			next,
+			isPublic: publicJob(job),
 		});
-		const profileStatuses = reduced.current ? [reduced.current] : [];
-		if (profileStatuses.length) {
-			transaction.set(statusRef, buildStatusProjectionData({ profileId, jobId, job, statuses: profileStatuses }), { merge: false });
-		} else {
-			transaction.delete(statusRef);
-		}
-		transaction.set(outboxRef, {
-			mutationId,
+		if (next) transaction.set(statusRef, next, { merge: false });
+		else transaction.delete(statusRef);
+		transaction.set(count.ref, count.data, { merge: true });
+		transaction.set(count.summaryRef, count.summaryData, { merge: true });
+		transaction.create(receiptRef, {
+			schemaVersion: 1,
 			profileId,
 			jobId,
-			catalog,
 			transition,
-			profileStatuses,
-			previousStatuses: reduced.previous ? [canonicalStatusRow(profileId, reduced.previous)] : [],
-			extensionV2: isExtensionV2Job(job),
-			statusVersion,
-			status: "pending",
-			attempts: 0,
-			createdAt: new Date(),
-			updatedAt: new Date(),
-		});
-		return {
-			job: { ...job, _id: documentId, status: reduced.statuses },
-			changed: reduced.changed,
-			profileStatuses,
-			previousStatuses: reduced.previous ? [reduced.previous] : [],
-			extensionV2: isExtensionV2Job(job),
 			mutationId,
-			statusVersion,
-			duplicate: false,
-		};
-	});
-	observeHistogram("athens_job_status_durable_commit_seconds", { catalog }, (performance.now() - durableCommitStarted) / 1000);
-	// This write bypasses the compatibility adapter, so explicitly discard
-	// cached job reads before any subsequent filtered/list query can observe the
-	// old embedded status array.
-	if (catalog === "external") externalScrapedJobsCollection?._invalidateCaches?.();
-	else jobsCollection?._invalidateCaches?.();
-	if (!result.duplicate) {
-		const scheduled = setImmediate(() => {
-			import("./jobStatusOutboxWorker.js")
-				.then(({ processJobStatusOutboxRecord }) => processJobStatusOutboxRecord(result.mutationId))
-				.catch((error) => console.warn("[job-status-outbox] immediate publication failed; queued retry remains:", error?.message || error));
+			state: next?.state || 'posted',
+			createdAt: now,
+			expiresAt: new Date(now.getTime() + RECEIPT_TTL_MS),
 		});
-		scheduled.unref?.();
-	}
+		return { changed: reduced.changed, duplicate: false, projection: next };
+	});
+	const viewerStatusDates = result.projection ? statusRowFromProjection(result.projection) : null;
+	const collection = catalog === 'external' ? externalScrapedJobsCollection : jobsCollection;
+	const job = await collection?.findOne({ _id: new DocumentId(jobId) });
 	return {
-		job: result.job,
+		job: { ...(job || { _id: new DocumentId(jobId) }), status: viewerStatusDates ? [viewerStatusDates] : [] },
 		changed: result.changed,
 		profileId,
 		catalog,
-		mutationId: result.mutationId,
-		statusVersion: result.statusVersion,
-		viewerStatus: resolveJobStatusState(result.profileStatuses),
-		cacheSync: "queued",
+		mutationId,
+		statusVersion: `${now.getTime()}:${mutationId}`,
+		viewerStatus: result.projection?.state || 'posted',
+		viewerStatusDates,
+		cacheSync: 'firestore',
 	};
 }
 
@@ -891,271 +389,352 @@ export function normalizeBulkStatusJobs(jobs = []) {
 	const seen = new Set();
 	const normalized = [];
 	for (const value of Array.isArray(jobs) ? jobs : []) {
-		const jobId = String(value?.id || "").trim();
+		const jobId = clean(value?.id);
 		if (!DocumentId.isValid(jobId) || seen.has(jobId)) continue;
 		seen.add(jobId);
-		normalized.push({
-			jobId,
-			catalog: String(value?.catalog || "market").trim().toLowerCase() === "external" ? "external" : "market",
-		});
+		normalized.push({ jobId, catalog: canonicalJobCatalog(value?.catalog) });
 		if (normalized.length >= MAX_BULK_STATUS_JOBS) break;
 	}
 	return normalized;
 }
 
-/**
- * Apply one transition to many jobs in a single Firestore transaction.
- * Cache publication remains durable through the outbox and never blocks the
- * interactive response.
- */
-export async function mutateJobStatusesBulk({
-	jobs,
-	applierName,
-	transition,
-	bulkMutationId: bulkMutationIdRaw = null,
-}) {
-	const name = String(applierName || "").trim();
+export async function mutateJobStatusesBulk({ jobs, applierName, transition, bulkMutationId: rawId = null }) {
 	const targets = normalizeBulkStatusJobs(jobs);
-	const bulkMutationId = String(bulkMutationIdRaw || randomUUID()).trim();
-	if (!name) throw new Error("applierName is required");
-	if (!targets.length) throw new Error("jobs are required");
-	if (!bulkMutationId) throw new Error("mutationId is required");
-	if (!['bid-ready', 'clear-bid'].includes(transition)) throw new Error("Unsupported bulk status transition");
-
-	const account = await resolveApplierContext(name);
-	if (!account?.id) throw new Error(`User ${name} not found`);
-	const profileId = String(account.id);
-	const firestore = getFirestoreDb();
-	const now = new Date();
-	const nowIso = now.toISOString();
-	const startedAt = performance.now();
-	const jobRefs = targets.map(({ jobId }) => firestore.collection("jobs").doc(jobId));
-
-	const committed = await firestore.runTransaction(async (transaction) => {
-		const snapshots = await transaction.getAll(...jobRefs);
-		const results = [];
-		const failed = [];
-		for (let index = 0; index < targets.length; index += 1) {
-			const target = targets[index];
-			const snapshot = snapshots[index];
-			if (
-				!snapshot.exists ||
-				canonicalJobCatalog(snapshot.data()?.sourceCatalog) !== target.catalog ||
-				(!account.isBeta && isExtensionV2Job(snapshot.data()))
-			) {
-				failed.push({ jobId: target.jobId, error: "Job not found" });
-				continue;
-			}
-
-			const job = snapshot.data();
-			const reduced = reduceJobStatuses(job.status, profileId, transition, nowIso);
-			const profileStatuses = reduced.current ? [reduced.current] : [];
-			const mutationId = createHash("sha256")
-				.update(`${bulkMutationId}:${target.jobId}:${transition}`)
-				.digest("hex");
-			const statusVersion = `${now.getTime()}:${mutationId}`;
-			const statusRef = firestore.collection("job_statuses").doc(jobStatusProjectionId(profileId, target.jobId));
-			const outboxRef = firestore.collection("job_status_outbox").doc(mutationId);
-
-			transaction.update(jobRefs[index], {
-				status: reduced.statuses,
-				statusProfileIds: FieldValue.delete(),
-			});
-			if (profileStatuses.length) {
-				transaction.set(statusRef, buildStatusProjectionData({
-					profileId,
-					jobId: target.jobId,
-					job,
-					statuses: profileStatuses,
-				}), { merge: false });
-			} else {
-				transaction.delete(statusRef);
-			}
-			transaction.set(outboxRef, {
-				mutationId,
-				profileId,
-				jobId: target.jobId,
-				catalog: target.catalog,
-				transition,
-				profileStatuses,
-				previousStatuses: reduced.previous ? [canonicalStatusRow(profileId, reduced.previous)] : [],
-				extensionV2: isExtensionV2Job(job),
-				statusVersion,
-				status: "pending",
-				attempts: 0,
-				createdAt: now,
-				updatedAt: now,
-			});
-			results.push({
-				jobId: target.jobId,
-				job: { ...job, _id: new DocumentId(target.jobId), status: reduced.statuses },
-				profileId,
-				viewerStatus: resolveJobStatusState(profileStatuses),
-				changed: reduced.changed,
-				mutationId,
-				statusVersion,
-				cacheSync: "queued",
-			});
-		}
-		return { results, failed };
-	});
-
-	observeHistogram("athens_job_status_durable_commit_seconds", { catalog: "bulk" }, (performance.now() - startedAt) / 1000);
-	jobsCollection?._invalidateCaches?.();
-	externalScrapedJobsCollection?._invalidateCaches?.();
-	if (committed.results.length) {
-		const scheduled = setImmediate(() => {
-			import("./jobStatusOutboxWorker.js")
-				.then(async ({ processJobStatusOutboxRecord }) => {
-					for (let offset = 0; offset < committed.results.length; offset += 10) {
-						await Promise.all(committed.results.slice(offset, offset + 10)
-							.map((result) => processJobStatusOutboxRecord(result.mutationId).catch(() => false)));
-					}
-				})
-				.catch((error) => console.warn("[job-status-outbox] bulk publication deferred:", error?.message || error));
+	const bulkMutationId = clean(rawId || randomUUID());
+	if (!targets.length) throw new Error('jobs are required');
+	if (!['bid-ready', 'clear-bid'].includes(transition)) throw new Error('Unsupported bulk status transition');
+	const results = [];
+	const failed = [];
+	for (let offset = 0; offset < targets.length; offset += 10) {
+		const chunk = targets.slice(offset, offset + 10);
+		const settled = await Promise.allSettled(chunk.map((target) => mutateJobStatus({
+			jobId: target.jobId,
+			catalog: target.catalog,
+			applierName,
+			transition,
+			mutationId: createHash('sha256').update(`${bulkMutationId}:${target.jobId}:${transition}`).digest('hex'),
+		})));
+		settled.forEach((entry, index) => {
+			if (entry.status === 'fulfilled') results.push({ jobId: chunk[index].jobId, ...entry.value });
+			else failed.push({ jobId: chunk[index].jobId, error: entry.reason?.message || String(entry.reason) });
 		});
-		scheduled.unref?.();
 	}
-	return { profileId, ...committed, cacheSync: "queued" };
+	return { profileId: results[0]?.profileId || null, results, failed, cacheSync: 'firestore' };
 }
 
-export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {
-	const jobId = String(jobIdRaw || "");
-	const profileId = String(profileIdRaw || "");
-	if (!jobId || !profileId) return false;
-	if (!jobsCollection) return false;
-	let documentId;
-	try { documentId = new DocumentId(jobId); } catch { documentId = jobId; }
-	const job = await jobsCollection.findOne(
-		{ _id: documentId },
-		{ projection: { status: 1, postedAt: 1, sourceCatalog: 1, version: 1, extensionV2: 1 } },
+function validProjection(profileId, raw) {
+	// Accept current and legacy projection schemas. Job Search already treats
+	// schemaVersion 2 / missing-field docs as visible; Athens Lens was empty
+	// because it required schemaVersion === 3 only.
+	return Boolean(
+		raw
+		&& String(raw.profileId || '') === String(profileId)
+		&& JOB_STATUS_STATES.includes(String(raw.state || ''))
+		&& statusRowFromProjection(raw),
 	);
-	if (!job) return false;
-	const statuses = (Array.isArray(job.status) ? job.status : [])
-		.filter((row) => String(row?.applier || "") === profileId);
-	if (!enabled()) {
-		await publishStatusCache(profileId, jobId, statuses, {
-			extensionV2: isExtensionV2Job(job),
-			adjustCounts: false,
+}
+
+export function authoritativeJobStatusBaseline(profileId, projectionRows = [], canonicalJobsById = new Map()) {
+	const baseline = emptyJobStatusBaseline();
+	for (const raw of projectionRows || []) {
+		const row = raw?.data instanceof Function ? raw.data() : raw;
+		if (!validProjection(profileId, row)) continue;
+		const jobId = String(row.jobId || '');
+		const canonical = canonicalJobsById.get(jobId);
+		const state = canonical ? resolveJobStatusState(canonical.status, profileId) : row.state;
+		if (JOB_STATUS_STATES.includes(state)) baseline[state].push(jobId);
+	}
+	for (const state of JOB_STATUS_STATES) baseline[state] = [...new Set(baseline[state])];
+	return baseline;
+}
+
+export function canonicalProjectedJobStatusIdsByState(profileId, states = [], projectionRows = []) {
+	const requested = [...new Set((Array.isArray(states) ? states : [states]).filter((state) => JOB_STATUS_STATES.includes(state)))];
+	const grouped = new Map(requested.map((state) => [state, []]));
+	for (const raw of projectionRows || []) {
+		const row = raw?.data instanceof Function ? raw.data() : raw;
+		if (!validProjection(profileId, row) || !grouped.has(row.state)) continue;
+		grouped.get(row.state).push({ jobId: String(row.jobId), postedAt: iso(row.postedAt) || '' });
+	}
+	for (const [state, entries] of grouped) {
+		grouped.set(state, entries
+			.sort((a, b) => Date.parse(b.postedAt || 0) - Date.parse(a.postedAt || 0) || b.jobId.localeCompare(a.jobId))
+			.map((entry) => entry.jobId));
+	}
+	return grouped;
+}
+
+export function canonicalProjectedStatusIds(profileId, state, projectionRows = []) {
+	return canonicalProjectedJobStatusIdsByState(profileId, [state], projectionRows).get(state) || [];
+}
+
+export async function readCanonicalProjectedJobStatusIdsByState(profileId, states = []) {
+	const snapshot = await getFirestoreDb().collection(STATUS_COLLECTION)
+		.where('profileId', '==', String(profileId))
+		.get();
+	return canonicalProjectedJobStatusIdsByState(profileId, states, snapshot.docs);
+}
+
+export async function readCanonicalProjectedJobStatusIds(profileId, state) {
+	return (await readCanonicalProjectedJobStatusIdsByState(profileId, [state])).get(state) || [];
+}
+
+export async function readMaterializedJobStatusIdsByState(profileId, states = JOB_STATUS_STATES) {
+	return readCanonicalProjectedJobStatusIdsByState(profileId, states);
+}
+
+export async function readMaterializedJobStatusIds(profileId, state) {
+	if (state === 'any') {
+		const grouped = await readCanonicalProjectedJobStatusIdsByState(profileId, JOB_STATUS_STATES);
+		return [...new Set(JOB_STATUS_STATES.flatMap((item) => grouped.get(item) || []))];
+	}
+	return readCanonicalProjectedJobStatusIds(profileId, state);
+}
+
+export async function readProjectedJobStatuses(profileId, jobIds = []) {
+	const ids = [...new Set((jobIds || []).map(String).filter(Boolean))];
+	if (!profileId || !ids.length) return new Map();
+	const firestore = getFirestoreDb();
+	const result = new Map();
+	for (let offset = 0; offset < ids.length; offset += 250) {
+		const chunk = ids.slice(offset, offset + 250);
+		const snapshots = await firestore.getAll(...chunk.map((jobId) => (
+			firestore.collection(STATUS_COLLECTION).doc(jobStatusProjectionId(profileId, jobId))
+		)));
+		snapshots.forEach((snapshot, index) => {
+			const row = snapshot.exists ? statusRowFromProjection(snapshot.data()) : null;
+			if (row) result.set(chunk[index], [row]);
 		});
-		return true;
 	}
-	const statusRef = getFirestoreDb().collection("job_statuses").doc(jobStatusProjectionId(profileId, jobId));
-	if (statuses.length) {
-		await statusRef.set(buildStatusProjectionData({ profileId, jobId, job, statuses }), { merge: false });
-		await jobsCollection.updateOne({ _id: documentId }, { $unset: { statusProfileIds: "" } });
-	} else {
-		await statusRef.delete();
-		await jobsCollection.updateOne({ _id: documentId }, { $unset: { statusProfileIds: "" } });
-	}
-	await publishStatusCache(profileId, jobId, statuses, { adjustCounts: false });
+	return result;
+}
+
+export async function publishStatusCache() {
+	// Retained as a compatibility no-op while callers migrate from Redis naming.
 	return true;
 }
 
 export async function readMaterializedJobStatusCounts(profileId, { includeExtensionV2 = true } = {}) {
-	if (!profileId) return null;
-	const cacheKey = jobStatusCountsCacheKey(profileId, includeExtensionV2);
-	if (isRedisReady()) {
-		const cached = await getRedis().get(cacheKey);
-		if (cached) {
-			const counts = parseJobStatusCountsCache(cached, profileId);
-			if (counts) return counts;
-			await getRedis().del(cacheKey);
+	if (!clean(profileId)) return null;
+	const db = getFirestoreDb();
+	const field = includeExtensionV2 ? 'all' : 'public';
+	const empty = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	const sumDocs = (documents) => {
+		const counts = { ...empty };
+		let usedNested = false;
+		for (const document of documents) {
+			if (!document?.exists) continue;
+			const data = document.data() || {};
+			const nested = data[field];
+			if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+				usedNested = true;
+				for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(nested[key]);
+				continue;
+			}
+			for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(data[key]);
+		}
+		if (!usedNested && counts.any === 0) {
+			for (const key of Object.keys(counts)) {
+				if (key !== 'any') counts.any += counts[key];
+			}
+		}
+		return counts;
+	};
+
+	// Prefer O(1) summary docs written alongside sharded counters.
+	const summaries = await db.getAll(
+		summaryCounterRef(profileId, 'market'),
+		summaryCounterRef(profileId, 'external'),
+	);
+	const summaryCounts = sumDocs(summaries);
+	if (summaryCounts.any > 0 || summaries.some((document) => document.exists)) {
+		return summaryCounts;
+	}
+
+	// Fall back to known shard ids (no collection query) then legacy where().
+	const shardRefs = [];
+	for (const catalog of ['market', 'external']) {
+		for (let shard = 0; shard < COUNTER_SHARDS; shard += 1) {
+			shardRefs.push(db.collection(COUNT_COLLECTION).doc(`${profileId}_${catalog}_${String(shard).padStart(2, '0')}`));
 		}
 	}
-	void warmMaterializedJobStatusCounts(profileId, includeExtensionV2);
+	const shardSnapshots = await db.getAll(...shardRefs);
+	const shardCounts = sumDocs(shardSnapshots);
+	if (shardCounts.any > 0 || shardSnapshots.some((document) => document.exists)) {
+		return shardCounts;
+	}
+
+	const snapshot = await db.collection(COUNT_COLLECTION)
+		.where('profileId', '==', clean(profileId))
+		.get();
+	return sumDocs(snapshot.docs);
+}
+
+/** Live fallback when sharded counters are missing or stale. */
+export async function countLiveJobStatusesByState(profileId) {
+	if (!clean(profileId)) return null;
+	const snapshot = await getFirestoreDb().collection(STATUS_COLLECTION)
+		.where('profileId', '==', clean(profileId))
+		.get();
+	const counts = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	for (const document of snapshot.docs) {
+		const data = document.data() || {};
+		if (data.visibleInJobSearch === false) continue;
+		const state = String(data.state || '').trim();
+		if (!state || state === 'posted' || !Object.hasOwn(counts, state)) continue;
+		counts[state] += 1;
+		counts.any += 1;
+	}
+	return counts;
+}
+
+/**
+ * Accurate per-state totals via Firestore aggregation counts.
+ * Prefer this over sharded counters, which lag when statuses were written
+ * before counter projections existed (e.g. bid-ready shows 0 while docs exist).
+ */
+export async function countJobStatusesByStateAggregated(profileId, { includeExtensionV2 = true } = {}) {
+	if (!clean(profileId)) return null;
+	const db = getFirestoreDb();
+	const states = ['applied', 'scheduled', 'declined', 'bid-ready', 'bid-completed'];
+	const counts = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	await Promise.all(states.map(async (state) => {
+		let query = db.collection(STATUS_COLLECTION)
+			.where('profileId', '==', clean(profileId))
+			.where('state', '==', state);
+		// Non-beta viewers should not count extension-v2-only rows. Legacy docs
+		// omit the field; treat missing as public by counting all and subtracting
+		// explicit extensionV2=true when needed.
+		if (!includeExtensionV2) {
+			const [allSnap, extensionSnap] = await Promise.all([
+				query.count().get(),
+				db.collection(STATUS_COLLECTION)
+					.where('profileId', '==', clean(profileId))
+					.where('state', '==', state)
+					.where('extensionV2', '==', true)
+					.count()
+					.get(),
+			]);
+			counts[state] = Math.max(0, Number(allSnap.data().count || 0) - Number(extensionSnap.data().count || 0));
+		} else {
+			const snapshot = await query.count().get();
+			counts[state] = Math.max(0, Number(snapshot.data().count || 0));
+		}
+		counts.any += counts[state];
+	}));
+	return counts;
+}
+
+/** Reconcile status visibility after Title Review approval or quarantine. */
+export async function syncJobStatusVisibility(jobIds = []) {
+	const ids = [...new Set((jobIds || []).map(clean).filter((id) => DocumentId.isValid(id)))];
+	if (!ids.length) return { jobs: 0, statuses: 0 };
+	const firestore = getFirestoreDb();
+	let statuses = 0;
+	for (const jobId of ids) {
+		const jobSnapshot = await firestore.collection(JOB_COLLECTION).doc(jobId).get();
+		const job = jobSnapshot.exists ? jobSnapshot.data() : null;
+		const visibleInJobSearch = job ? visibleJob(job) : false;
+		const statusSnapshots = await firestore.collection(STATUS_COLLECTION).where('jobId', '==', jobId).get();
+		for (const statusDocument of statusSnapshots.docs) {
+			const changed = await firestore.runTransaction(async (transaction) => {
+				const currentSnapshot = await transaction.get(statusDocument.ref);
+				if (!currentSnapshot.exists) return false;
+				const previous = currentSnapshot.data();
+				if (previous.visibleInJobSearch === visibleInJobSearch) return false;
+				const next = {
+					...previous,
+					visibleInJobSearch,
+					isPublic: job ? publicJob(job) : previous.isPublic === true,
+					extensionV2: job ? isExtensionV2Job(job) : previous.extensionV2 === true,
+					postedAt: asDate(job?.postedAt || job?._createdAt || job?.createdAt) || previous.postedAt || new Date(),
+					updatedAt: new Date(),
+				};
+				const count = counterWrite({
+					profileId: String(previous.profileId),
+					catalog: canonicalJobCatalog(previous.sourceCatalog),
+					jobId,
+					previous,
+					next,
+					isPublic: next.isPublic,
+				});
+				transaction.set(statusDocument.ref, next, { merge: false });
+				transaction.set(count.ref, count.data, { merge: true });
+				transaction.set(count.summaryRef, count.summaryData, { merge: true });
+				return true;
+			});
+			if (changed) statuses += 1;
+		}
+	}
+	return { jobs: ids.length, statuses };
+}
+
+export async function syncJobStatusProjection(jobIdRaw, profileIdRaw) {
+	const jobId = clean(jobIdRaw);
+	const profileId = clean(profileIdRaw);
+	if (!jobId || !profileId || !jobsCollection) return false;
+	const job = await jobsCollection.findOne(
+		{ _id: documentId(jobId) },
+		{ projection: { status: 1, postedAt: 1, sourceCatalog: 1, version: 1, extensionV2: 1, titleReview: 1 } },
+	);
+	if (!job) return false;
+	const row = mergeJobStatusRows(job.status, profileId);
+	const ref = getFirestoreDb().collection(STATUS_COLLECTION).doc(jobStatusProjectionId(profileId, jobId));
+	if (!row || resolveJobStatusState(row) === 'posted') await ref.delete();
+	else await ref.set(projectionFromRow({ profileId, jobId, job, row, now: new Date() }), { merge: false });
+	return true;
+}
+
+function stateFromBody(body = {}) {
+	if (!(body.applied === true || body.applied === 'true')) return null;
+	return ({
+		Applied: 'applied', Scheduled: 'scheduled', Declined: 'declined',
+		BidReady: 'bid-ready', BidCompleted: 'bid-completed',
+	})[body.status] || null;
+}
+
+async function hydrateJobs(ids, profileId) {
+	if (!ids.length || !jobsCollection) return [];
+	const jobs = await jobsCollection.find({ _id: { $in: ids.map(documentId) } }).toArray();
+	const statuses = await readProjectedJobStatuses(profileId, ids);
+	return jobs
+		.filter(visibleJob)
+		.map((job) => ({ ...job, status: statuses.get(String(job._id)) || [] }));
+}
+
+export async function listMaterializedJobStatusPage(body = {}) {
+	const state = stateFromBody(body);
+	if (!state || !body.applierName) return null;
+	const account = await resolveAccount(body.applierName);
+	if (!account) return null;
+	const page = Math.max(1, Number(body.page || 1));
+	const limit = Math.max(1, Math.min(500, Number(body.limit || 25)));
+	const direction = String(body.sort || '').endsWith('_asc') ? 'asc' : 'desc';
+	let query = getFirestoreDb().collection(STATUS_COLLECTION)
+		.where('profileId', '==', account.id)
+		.where('visibleInJobSearch', '==', true)
+		.where('state', '==', state)
+		.orderBy('postedAt', direction)
+		.orderBy('jobId', direction);
+	const totalSnapshot = await query.count().get();
+	query = query.offset((page - 1) * limit).limit(limit);
+	const snapshot = await query.get();
+	const ids = snapshot.docs.map((doc) => String(doc.data().jobId));
+	const docs = await hydrateJobs(ids, account.id);
+	const byId = new Map(docs.map((job) => [String(job._id), job]));
+	return {
+		docs: ids.map((id) => byId.get(id)).filter(Boolean),
+		total: Number(totalSnapshot.data().count || 0),
+		page,
+		limit,
+	};
+}
+
+export async function listMaterializedPostedPage() {
+	// Newest cursor pagination is implemented by Job Search v3.
 	return null;
 }
 
-export async function readProjectedJobStatuses(profileId, jobIds = []) {
-  if (!profileId || !jobIds.length) return new Map();
-  const normalizedProfileId = String(profileId);
-  const ids = [...new Set(jobIds.map(String))];
-	const values = isRedisReady()
-		? await getRedis().mGet(ids.map((jobId) => jobStatusCacheKey(normalizedProfileId, jobId)))
-    : ids.map(() => null);
-  const statuses = new Map();
-  const missingIds = [];
-  values.forEach((value, index) => {
-    if (value == null) {
-      missingIds.push(ids[index]);
-      return;
-    }
-    if (value === STATUS_CACHE_EMPTY) return;
-    try {
-      const row = canonicalStatusRow(normalizedProfileId, JSON.parse(value));
-      statuses.set(ids[index], [row]);
-    } catch {
-      missingIds.push(ids[index]);
-    }
-  });
-  if (!missingIds.length) return statuses;
-
-	const rowsById = new Map();
-	let canonicalFallbackIds = [...missingIds];
-	const firestore = enabled() ? getFirestoreDb() : null;
-	if (firestore) {
-		const snapshots = [];
-		for (let start = 0; start < missingIds.length; start += 250) {
-			const chunk = missingIds.slice(start, start + 250);
-			const refs = chunk.map((jobId) => firestore.collection("job_statuses")
-				.doc(jobStatusProjectionId(normalizedProfileId, jobId)));
-			snapshots.push(...await firestore.getAll(...refs));
-		}
-		canonicalFallbackIds = [];
-		for (let index = 0; index < missingIds.length; index += 1) {
-			const jobId = missingIds[index];
-			const snapshot = snapshots[index];
-			const row = snapshot?.exists ? projectedStatusRow(normalizedProfileId, snapshot.data()) : null;
-			if (row) rowsById.set(jobId, row);
-			else canonicalFallbackIds.push(jobId);
-		}
-	}
-
-	if (canonicalFallbackIds.length) {
-		const documentIds = canonicalFallbackIds.map((jobId) => {
-			try { return new DocumentId(jobId); } catch { return jobId; }
-		});
-		const docs = await jobsCollection.find(
-			{ _id: { $in: documentIds } },
-			{ projection: { status: 1, postedAt: 1, sourceCatalog: 1, version: 1, extensionV2: 1 } },
-		).toArray();
-		const docsById = new Map(docs.map((job) => [String(job._id), job]));
-		const projectionWriter = firestore ? firestore.bulkWriter() : null;
-		for (const jobId of canonicalFallbackIds) {
-			const job = docsById.get(jobId);
-			const merged = job ? mergeJobStatusRows(job.status, normalizedProfileId) : null;
-			const row = merged ? canonicalStatusRow(normalizedProfileId, merged) : null;
-			if (row) rowsById.set(jobId, row);
-			if (projectionWriter) {
-				const ref = firestore.collection("job_statuses").doc(jobStatusProjectionId(normalizedProfileId, jobId));
-				if (row && job) {
-					projectionWriter.set(ref, buildStatusProjectionData({
-						profileId: normalizedProfileId,
-						jobId,
-						job,
-						statuses: [row],
-					}), { merge: false });
-				} else {
-					projectionWriter.delete(ref);
-				}
-			}
-		}
-		if (projectionWriter) await projectionWriter.close();
-	}
-
-	const cacheWrites = [];
-	for (const jobId of missingIds) {
-		const row = rowsById.get(jobId) || null;
-    if (row) statuses.set(jobId, [row]);
-    if (isRedisReady()) {
-		cacheWrites.push(getRedis().setEx(
-			jobStatusCacheKey(normalizedProfileId, jobId),
-        STATUS_CACHE_TTL_SEC,
-        row ? JSON.stringify(row) : STATUS_CACHE_EMPTY,
-      ));
-    }
-  }
-	if (cacheWrites.length) await Promise.all(cacheWrites);
-  return statuses;
+export function canUseMaterializedStatusPageForTier() {
+	return true;
 }

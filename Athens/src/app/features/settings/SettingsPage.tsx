@@ -5,14 +5,13 @@ import { Pill } from "../../components/ui";
 import { TabTransition } from "../../components/overlays";
 import { DEFAULT_TABS, normalizeTab, PATHS, type SettingsTab } from "../../config/routes";
 import { ProfileTab } from "./components/ProfileTab";
-import { SkillsTab } from "./components/SkillsTab";
 import { NotificationsTab } from "./components/NotificationsTab";
 import { SecurityTab } from "./components/SecurityTab";
 import { IntegrationsTab } from "./components/IntegrationsTab";
 import { useApplier } from "@/context/applier-context";
 import { isBetaTier } from "../../lib/beta";
 
-const ALL_TABS = ["profile", "skills", "notifications", "integrations", "security"] as const satisfies readonly SettingsTab[];
+const ALL_TABS = ["profile", "notifications", "integrations", "security"] as const satisfies readonly SettingsTab[];
 
 export function SettingsPage() {
   const { applier } = useApplier();
@@ -36,7 +35,6 @@ export function SettingsPage() {
       </div>
       <TabTransition tabKey={tab}>
         {tab === "profile" && <ProfileTab />}
-        {tab === "skills" && <SkillsTab />}
         {tab === "notifications" && <NotificationsTab />}
         {tab === "integrations" && <IntegrationsTab />}
         {tab === "security" && <SecurityTab />}

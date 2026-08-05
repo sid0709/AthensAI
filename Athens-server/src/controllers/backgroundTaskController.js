@@ -1,5 +1,3 @@
-import { duplicateRedisClient, isRedisConnectionError, isRedisReady } from '../db/redis.js';
-import { backgroundTaskKeys } from '../services/backgroundTasks/redisKeys.js';
 import { normalizeBackgroundTaskPayload } from '../services/backgroundTasks/taskPayload.js';
 import {
 	createBackgroundTask,
@@ -14,6 +12,7 @@ import {
 } from '../services/backgroundTasks/taskTypes.js';
 import { accountInfoCollection } from '../db/dataStore.js';
 import { isBetaTier } from '../lib/betaTier.js';
+import { getFirestoreDb } from '../services/firebase/firebaseAdmin.js';
 
 function clean(value) {
 	return String(value ?? '').trim();
@@ -47,12 +46,11 @@ function canAccessTask(req, task) {
 }
 
 function errorResponse(res, error) {
-	const redisUnavailable = isRedisConnectionError(error);
-	const status = Number.isInteger(error?.status) ? error.status : redisUnavailable ? 503 : 500;
+	const status = Number.isInteger(error?.status) ? error.status : 500;
 	return res.status(status).json({
 		success: false,
-		error: redisUnavailable ? 'Background task service is temporarily unavailable' : error?.message || 'Background task request failed',
-		code: error?.code || (redisUnavailable ? 'BACKGROUND_TASK_REDIS_UNAVAILABLE' : undefined),
+		error: error?.message || 'Background task request failed',
+		code: error?.code,
 		...(error?.betaRequired ? { betaRequired: true } : {}),
 		...(error?.health ? { health: error.health } : {}),
 	});
@@ -62,7 +60,6 @@ async function authorizeTaskType(req, type, applierName) {
 	const mayRunSystemTask = isAdmin(req) || (!req.auth && process.env.NODE_ENV !== 'production');
 	if ([
 		BACKGROUND_TASK_TYPES.SKILL_ENRICHMENT,
-		BACKGROUND_TASK_TYPES.JOB_EMBEDDING,
 	].includes(type) && !mayRunSystemTask) {
 		throw Object.assign(new Error('Administrator access is required for this background task'), { status: 403 });
 	}
@@ -179,7 +176,6 @@ function writeSse(res, { id, event, data }) {
 }
 
 export async function streamTaskEvents(req, res) {
-	if (!isRedisReady()) return res.status(503).json({ success: false, error: 'Background task events are unavailable' });
 	const { profileId } = requestIdentity(req);
 	if (!profileId) return res.status(400).json({ success: false, error: 'profileId is required' });
 
@@ -191,65 +187,63 @@ export async function streamTaskEvents(req, res) {
 	});
 	res.flushHeaders?.();
 
-	const reader = duplicateRedisClient('background-task event stream');
 	let closed = false;
+	let unsubscribe = () => {};
+	let heartbeat = null;
 	const close = () => {
 		if (closed) return;
 		closed = true;
-		try {
-			const pending = reader.disconnect();
-			if (pending && typeof pending.catch === 'function') void pending.catch(() => undefined);
-		} catch {
-			// The duplicate may have closed before connect completed.
-		}
+		if (heartbeat) clearInterval(heartbeat);
+		unsubscribe();
+		if (!res.writableEnded) res.end();
 	};
 	req.on('close', close);
 	req.on('aborted', close);
 
 	try {
-		await reader.connect();
-		const stream = backgroundTaskKeys.profileEvents(profileId);
-		let cursor = clean(req.headers['last-event-id'] || req.query?.lastEventId);
-		if (!cursor) {
-			// Capture the stream tail before taking the snapshot. Any task change
-			// after this point is then replayed, closing the snapshot/XREAD race that
-			// Redis' special '$' cursor would otherwise introduce.
-			const tail = await reader.xRevRange(stream, '+', '-', { COUNT: 1 });
-			cursor = tail?.[0]?.id || '0-0';
-		}
-		// Include recent terminal tasks so a tab that slept through a broadcast can
-		// reconcile a formerly-active task immediately on reconnect.
 		const tasks = await listBackgroundTasks(profileId, { activeOnly: false, limit: 100 });
 		writeSse(res, {
 			event: 'snapshot',
 			data: { tasks: tasks.map(publicTaskSnapshot), at: new Date().toISOString() },
 		});
-		while (!closed) {
-			const rows = await reader.xRead({ key: stream, id: cursor }, { BLOCK: 15_000, COUNT: 100 });
-			if (closed) break;
-			if (!rows?.length) {
-				writeSse(res, { event: 'heartbeat', data: { at: new Date().toISOString() } });
-				continue;
-			}
-			for (const row of rows) {
-				for (const message of row.messages || []) {
-					cursor = message.id;
+		unsubscribe = getFirestoreDb().collection('background_tasks')
+			.where('profileId', '==', profileId)
+			.onSnapshot((snapshot) => {
+				for (const change of snapshot.docChanges()) {
+					if (change.type === 'removed') continue;
+					const data = change.doc.data();
+					const task = {
+						...data,
+						id: change.doc.id,
+						createdAt: data.createdAt?.toDate?.().toISOString?.() || data.createdAt || null,
+						startedAt: data.startedAt?.toDate?.().toISOString?.() || data.startedAt || null,
+						finishedAt: data.finishedAt?.toDate?.().toISOString?.() || data.finishedAt || null,
+						updatedAt: data.updatedAt?.toDate?.().toISOString?.() || data.updatedAt || null,
+						cancelRequestedAt: data.cancelRequestedAt?.toDate?.().toISOString?.() || data.cancelRequestedAt || null,
+						cancelAcknowledgedAt: data.cancelAcknowledgedAt?.toDate?.().toISOString?.() || data.cancelAcknowledgedAt || null,
+					};
+					const event = data.lastEvent?.type || (change.type === 'added' ? 'task-created' : 'task-updated');
 					writeSse(res, {
-						id: message.id,
-						event: message.message?.type || 'task-event',
-						data: message.message?.data || '{}',
+						id: `${data.eventSequence || 0}:${change.doc.id}`,
+						event,
+						data: { task: publicTaskSnapshot(task), ...(data.lastEvent?.data || {}) },
 					});
 				}
-			}
-		}
+			}, (error) => {
+				if (!closed) writeSse(res, { event: 'stream-error', data: { error: error?.message || 'Task event stream interrupted' } });
+			});
+		heartbeat = setInterval(() => {
+			writeSse(res, { event: 'heartbeat', data: { at: new Date().toISOString() } });
+		}, 15_000);
+		heartbeat.unref?.();
 	} catch (error) {
 		if (!closed) {
 			console.warn('[background-task] event stream failed:', error?.message || error);
 			writeSse(res, { event: 'stream-error', data: { error: 'Task event stream interrupted' } });
 		}
-	} finally {
 		close();
-		if (!res.writableEnded) res.end();
+	} finally {
+		// The Firestore listener owns the response until the client disconnects.
 	}
 }
 

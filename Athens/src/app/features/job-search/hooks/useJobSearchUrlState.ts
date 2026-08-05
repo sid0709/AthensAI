@@ -56,10 +56,6 @@ export function useJobSearchUrlState() {
     commit({ ...state, view }, false);
   }, [commit, state]);
 
-  const setShowScores = useCallback((showScores: boolean) => {
-    commit({ ...state, showScores }, false);
-  }, [commit, state]);
-
   const setOpenJob = useCallback((groupId: string, jobId: string) => {
     commit({ ...state, groupId, jobId: groupId ? jobId : "" }, true);
   }, [commit, state]);
@@ -76,7 +72,6 @@ export function useJobSearchUrlState() {
     clampPage,
     setPageSize,
     setView,
-    setShowScores,
     setOpenJob,
     clearOpenJob,
   };

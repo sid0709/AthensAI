@@ -4,408 +4,617 @@
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "companyId", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "companyId", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "extensionV2",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "source",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "aiSkillStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "details.remote",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "source", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "details.time",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "matchScoreStatus", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "companyId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "skillAnalysis.status", "order": "ASCENDING" },
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "skillAnalysis.queuedAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "companyId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "extensionV2",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "source", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.processingState",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "source", "order": "ASCENDING" },
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.processingState",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "jobs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "source", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.confidence",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
-      "collectionGroup": "jobs",
+      "collectionGroup": "job_statuses",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "aiSkillStatus", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "profileId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "visibleInJobSearch",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "jobId",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
-      "collectionGroup": "jobs",
+      "collectionGroup": "job_statuses",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "aiSkillStatus", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "profileId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "visibleInJobSearch",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "jobId",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
-      "collectionGroup": "jobs",
+      "collectionGroup": "background_tasks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "lane",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "availableAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "priority",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
-      "collectionGroup": "jobs",
+      "collectionGroup": "background_tasks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "leaseExpiresAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
-      "collectionGroup": "jobs",
+      "collectionGroup": "background_tasks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
-        { "fieldPath": "titleReview.confidence", "order": "DESCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "jobs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "titleReview.label", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "jobs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "titleReview.processingState", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "jobs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "titleReview.processingState", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "jobs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "details.remote", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "jobs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "details.remote", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "jobs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "details.time", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "jobs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "sourceCatalog", "order": "ASCENDING" },
-        { "fieldPath": "extensionV2", "order": "ASCENDING" },
-        { "fieldPath": "details.time", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "match_profile_state",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "requestedAt", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "vendor_tasks",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "profileId", "order": "ASCENDING" },
-        { "fieldPath": "reviewStatus", "order": "ASCENDING" },
-        { "fieldPath": "updatedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "vendor_tasks",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "reviewStatus", "order": "ASCENDING" },
-        { "fieldPath": "updatedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "mail_messages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "profileId", "order": "ASCENDING" },
-        { "fieldPath": "mailbox", "order": "ASCENDING" },
-        { "fieldPath": "date", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "mail_messages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "mailbox", "order": "ASCENDING" },
-        { "fieldPath": "date", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "mail_messages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "folder", "order": "ASCENDING" },
-        { "fieldPath": "date", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "mail_messages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "mailbox", "order": "ASCENDING" },
-        { "fieldPath": "folder", "order": "ASCENDING" },
-        { "fieldPath": "date", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "mail_messages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "folder", "order": "ASCENDING" },
-        { "fieldPath": "hasCustomLabels", "order": "ASCENDING" },
-        { "fieldPath": "date", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "user_skills",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "category", "order": "ASCENDING" },
-        { "fieldPath": "level", "order": "DESCENDING" },
-        { "fieldPath": "name", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "job_match_scores",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "profileId", "order": "ASCENDING" },
-        { "fieldPath": "score", "order": "DESCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" },
-        { "fieldPath": "jobId", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "job_match_scores",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "source", "order": "ASCENDING" },
-        { "fieldPath": "score", "order": "DESCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" },
-        { "fieldPath": "jobId", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "bid_review_events",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "profileId", "order": "ASCENDING" },
-        { "fieldPath": "jobId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "bid_review_events",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "jobId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "profileId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "search_outbox",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
-      "collectionGroup": "job_match_scores",
+      "collectionGroup": "vendor_tasks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "score", "order": "DESCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" },
-        { "fieldPath": "jobId", "order": "DESCENDING" }
+        {
+          "fieldPath": "profileId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "reviewStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "vendor_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "applierName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "reviewStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "mail_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "applierName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "mailbox",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "folder",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "mail_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "applierName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "folder",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasCustomLabels",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "bid_review_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "profileId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "jobId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "bid_review_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "applierName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "jobId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "avalon_run_log_chunks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "runId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "job_statuses",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "profileId", "order": "ASCENDING" },
-        { "fieldPath": "state", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" },
-        { "fieldPath": "jobId", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "job_statuses",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "profileId", "order": "ASCENDING" },
-        { "fieldPath": "state", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "ASCENDING" },
-        { "fieldPath": "jobId", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "job_statuses",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "profileId", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" },
-        { "fieldPath": "jobId", "order": "DESCENDING" }
+        {
+          "fieldPath": "runId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "resume_generations",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "applierName", "order": "ASCENDING" },
-        { "fieldPath": "finishedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "applierName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "finishedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "user_resumes",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "ownerName", "order": "ASCENDING" },
-        { "fieldPath": "source", "order": "ASCENDING" },
-        { "fieldPath": "uploadedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "ownerName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "source",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "uploadedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "job_statuses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "profileId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "jobId",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "job_statuses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "profileId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "jobId",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "aiSkillStatus",
+          "order": "ASCENDING"
+        }
       ]
     }
   ],
   "fieldOverrides": [
+    {
+      "collectionGroup": "athens_lens_sessions",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "operation_receipts",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "background_task_reservations",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "background_tasks",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "search_outbox",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "upload_sessions",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "worker_leases",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
+    },
     {
       "collectionGroup": "background_task_inputs",
       "fieldPath": "request",
@@ -434,11 +643,6 @@
     {
       "collectionGroup": "mail_messages",
       "fieldPath": "bodyText",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "jobs",
-      "fieldPath": "embedding",
       "indexes": []
     },
     {

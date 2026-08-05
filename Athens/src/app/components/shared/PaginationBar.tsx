@@ -87,11 +87,11 @@ export function PaginationBar({
             </span>
           ) : total === null
             ? `${showingCount} loaded · Page ${page}`
-            : total === 0
+            : total === 0 && showingCount === 0
               ? "No results"
             : detailed
-              ? `Showing ${showingCount} of ${total.toLocaleString()} ${unitLabel}${secondaryTotal == null ? "" : ` · ${secondaryTotal.toLocaleString()} ${secondaryLabel}`} · Page ${page} / ${totalPages}`
-              : `${start}–${end} of ${total}`}
+              ? `Showing ${showingCount} of ${Math.max(total, showingCount).toLocaleString()} ${unitLabel}${secondaryTotal == null ? "" : ` · ${Math.max(secondaryTotal ?? 0, showingCount).toLocaleString()} ${secondaryLabel}`} · Page ${page} / ${Math.max(1, Math.ceil(Math.max(total, showingCount) / pageSize))}`
+              : `${start}–${end} of ${Math.max(total, showingCount)}`}
         </p>
         {onPageSizeChange && (
           <div className="flex items-center gap-2">

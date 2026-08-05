@@ -1,11 +1,6 @@
 
 import express from "express";
 import {
-	getProfileMatchSkills,
-	addProfileMatchSkill,
-	removeProfileMatchSkill,
-} from "../controllers/profileMatchSkillsController.js";
-import {
 	getSkillDictionary,
 	getSkillCoverage,
 } from "../controllers/skillDictionaryController.js";
@@ -70,10 +65,6 @@ import { analyzeResumeMatch } from "../controllers/resumeAnalysisController.js";
 import { listChromeProfiles, importChromeSession, chromeProfileAvatar } from "../controllers/chromeProfilesController.js";
 
 const router = express.Router();
-
-router.get('/personal/profile-match-skills', getProfileMatchSkills);
-router.post('/personal/profile-match-skills', addProfileMatchSkill);
-router.delete('/personal/profile-match-skills', removeProfileMatchSkill);
 
 router.get('/personal/skill-dictionary', getSkillDictionary);
 router.get('/personal/skill-dictionary/coverage', getSkillCoverage);

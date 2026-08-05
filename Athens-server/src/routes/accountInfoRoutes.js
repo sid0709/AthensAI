@@ -6,7 +6,6 @@ import {
 	removeAccountInfo,
 	signup,
 	signin,
-	bidderSignin,
 	setVendorPassword,
 	getAuthSession,
 } from "../controllers/accountInfoController.js";
@@ -23,7 +22,6 @@ router.delete("/account_info/:name", requireAdmin, removeAccountInfo);
 router.get("/auth/session", getAuthSession);
 router.post("/auth/signup", signup);
 router.post("/auth/signin", signin);
-router.post("/auth/bidder-signin", bidderSignin);
 router.post("/auth/vendor-password", setVendorPassword);
 
 export default router;

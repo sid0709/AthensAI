@@ -57,7 +57,6 @@ type CompanyJobGroupCardProps = {
   onActiveJobChange?: (jobId: string) => void;
   selectedIds?: Set<string>;
   onSelectJob?: (id: string, shiftKey: boolean) => void;
-  showScores?: boolean;
   bookmarkedIds?: Set<string>;
   onToggleBookmark?: (id: string) => void;
   isJobPending?: (jobId: string) => boolean;
@@ -66,7 +65,6 @@ type CompanyJobGroupCardProps = {
   onMarkScheduled?: (job: Job) => void;
   onMarkDeclined?: (job: Job) => void;
   onCancel?: (job: Job) => void;
-  onJobScoresUpdated?: (job: Job) => void;
   resumeStates?: Record<string, JobResumeGenerationState>;
   onGenerateResume?: (job: Job) => void;
   onLoadMore?: (companyId: string) => void;
@@ -98,9 +96,6 @@ function CompactRoleRow({ job, onClick }: { job: Job; onClick: () => void }) {
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-center">
         <Badge v={STATUS_VARIANTS[job.status]}>{STATUS_LABELS[job.status]}</Badge>
-        <span className="rounded-md border border-border bg-secondary/60 px-2 py-1 text-xs font-semibold tabular-nums text-foreground">
-          Skill {job.scores.skill}
-        </span>
       </span>
     </button>
   );
@@ -114,7 +109,6 @@ export function CompanyJobGroupCard({
   onActiveJobChange,
   selectedIds,
   onSelectJob,
-  showScores = true,
   bookmarkedIds,
   onToggleBookmark,
   isJobPending,
@@ -123,7 +117,6 @@ export function CompanyJobGroupCard({
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
-  onJobScoresUpdated,
   resumeStates,
   onGenerateResume,
   onLoadMore,
@@ -148,7 +141,6 @@ export function CompanyJobGroupCard({
         job={activeJob}
         selected={selectedIds?.has(activeJob.id)}
         onSelect={onSelectJob ? (shiftKey) => onSelectJob(activeJob.id, shiftKey) : undefined}
-        showScores={showScores}
         bookmarked={bookmarkedIds?.has(activeJob.id)}
         onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(activeJob.id) : undefined}
         statusPending={isJobPending?.(activeJob.id)}
@@ -157,7 +149,6 @@ export function CompanyJobGroupCard({
         onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(activeJob) : undefined}
         onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(activeJob) : undefined}
         onCancel={onCancel ? () => onCancel(activeJob) : undefined}
-        onJobScoresUpdated={onJobScoresUpdated}
         resumeState={resumeStates?.[activeJob.id]}
         onGenerateResume={onGenerateResume ? () => onGenerateResume(activeJob) : undefined}
       />

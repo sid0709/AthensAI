@@ -7,7 +7,6 @@ import { pathForView, viewFromPathname, type NavigateOptions } from "../config/r
 import { AgentRunProvider } from "../context/AgentRunContext";
 import { AgentSessionsProvider } from "../features/agents/context/AgentSessionsContext";
 import { ApplierProvider } from "../../context/applier-context";
-import { ProfileMatchSkillsProvider } from "../features/job-search/hooks/useProfileMatchSkills";
 import { AppNavigationContext } from "../context/AppNavigationContext";
 import {
   JobSearchNavigationContext,
@@ -69,7 +68,6 @@ function AppProviders({ children }: { children: ReactNode }) {
   return (
     <ApplierProvider>
       <BackgroundTaskProvider>
-        <ProfileMatchSkillsProvider>
           <AgentRunProvider>
           {/* Mounted here (not inside the Agents route) so its relay engines — and
               any auto-run in progress — survive navigating away from /agents. */}
@@ -81,7 +79,6 @@ function AppProviders({ children }: { children: ReactNode }) {
             </AppNavigationContext.Provider>
           </AgentSessionsProvider>
           </AgentRunProvider>
-        </ProfileMatchSkillsProvider>
       </BackgroundTaskProvider>
     </ApplierProvider>
   );

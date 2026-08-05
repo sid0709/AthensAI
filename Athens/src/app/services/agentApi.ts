@@ -242,14 +242,9 @@ function candidateFromDocument(d: Record<string, unknown>, fallbackSource: strin
   return job.id && /^https?:\/\//i.test(job.url) ? job : null;
 }
 
-/**
- * Candidate jobs for the transfer list, in Job Search's **Best match** rank order
- * (sort=recommended), posted (not-yet-applied) only — so the list matches what the
- * user sees in Job Search. Hits the same /jobs/list endpoint Job Search uses.
- *
- * `source` is optional: when omitted, all job sources are searched (lets the
- * title/date filters stand on their own without picking a source first).
- */
+const candidatePageCursors = new Map<string, Map<number, string | null>>();
+
+/** Newest-first, not-yet-actioned candidates from the same v3 search used by Job Search. */
 export async function fetchCandidateJobs(
   applierName: string,
   source: string,
@@ -259,47 +254,50 @@ export async function fetchCandidateJobs(
 ): Promise<CandidateJobsPage> {
   const page = Math.max(1, options.page || 1);
   const body: Record<string, unknown> = {
-    sort: "recommended", // Best match
-    applied: false, // posted, not yet applied
+    sort: "newest",
+    applied: false,
     applierName,
-    page,
     limit,
-    facets: ["source"],
   };
   if (source) body.jobSources = source;
   if (filters.titleQuery?.trim()) body.q = filters.titleQuery.trim();
   if (filters.postedFrom) body.postedAtFrom = filters.postedFrom;
   if (filters.postedTo) body.postedAtTo = filters.postedTo;
 
-  const request = async (path: string, includeFacets: boolean) => {
+  const cursorKey = JSON.stringify({ applierName, source, limit, filters });
+  const cursors = candidatePageCursors.get(cursorKey) || new Map<number, string | null>([[1, null]]);
+  candidatePageCursors.set(cursorKey, cursors);
+  const cursor = cursors.get(page);
+  if (page > 1 && cursor === undefined) throw new Error("Reload the first candidate page before loading more.");
+  if (cursor) body.cursor = cursor;
+
+  const request = async () => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 10_000);
     const abort = () => controller.abort();
     options.signal?.addEventListener("abort", abort, { once: true });
     try {
-      const res = await fetch(`${API_BASE.replace(/\/$/, "")}${path}`, {
+      const res = await fetch(`${API_BASE.replace(/\/$/, "")}/jobs/list/v3`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(includeFacets ? body : { ...body, facets: undefined }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       const data = (await res.json().catch(() => ({}))) as {
         data?: Record<string, unknown>[];
         error?: string;
-        facets?: { sources?: { title: string; type: string; posted: number }[] };
-        pagination?: { page?: number; total?: number; totalPages?: number };
+			nextCursor?: string | null;
+			hasMore?: boolean;
+			statusCounts?: { posted?: number };
       };
       if (!res.ok) throw new Error(data.error || `Candidate request failed (${res.status})`);
       const jobs = (Array.isArray(data.data) ? data.data : [])
         .map((doc) => candidateFromDocument(doc, source))
         .filter((job): job is JobCandidate => Boolean(job));
-      return {
-        jobs,
-        sources: data.facets?.sources || [],
-        page: data.pagination?.page || page,
-        total: data.pagination?.total ?? jobs.length,
-        totalPages: data.pagination?.totalPages ?? (jobs.length === limit ? page + 1 : page),
-      };
+			if (data.hasMore && data.nextCursor) cursors.set(page + 1, data.nextCursor);
+			else cursors.delete(page + 1);
+			const total = Number(data.statusCounts?.posted ?? ((page - 1) * limit + jobs.length));
+      return { jobs, page, total, totalPages: Math.max(page, Math.ceil(total / limit)) };
     } catch (error) {
       if (controller.signal.aborted && !options.signal?.aborted) throw new Error("Candidate loading timed out. Try again.");
       throw error;
@@ -309,18 +307,14 @@ export async function fetchCandidateJobs(
     }
   };
 
-  try {
-    return await request("/jobs/list/v2", true);
-  } catch (v2Error) {
-    if (options.signal?.aborted) throw v2Error;
-    const legacy = await request("/jobs/list", false);
-    const sourceData = await json<{ sources: { title: string; type: string; posted: number }[] }>(
-      `/job-sources${qs(null, { applierName })}`,
-      { signal: options.signal },
-    ).catch(() => ({ sources: [] }));
-    const sources = sourceData.sources || [];
-    return { ...legacy, sources };
-  }
+	const [result, sourceData] = await Promise.all([
+		request(),
+		json<{ sources: { title: string; type: string; posted: number }[] }>(
+			`/job-sources${qs(null, { applierName })}`,
+			{ signal: options.signal },
+		).catch(() => ({ sources: [] })),
+	]);
+	return { ...result, sources: sourceData.sources || [] };
 }
 
 export interface AgentReadiness {

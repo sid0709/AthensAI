@@ -39,6 +39,7 @@ import { MediaPlayerModal } from "./components/MediaPlayerModal";
 import { BidDetailPane } from "./components/BidDetailPane";
 import { useBidResults } from "./hooks/useBidResults";
 import { useRecordingUrl } from "./hooks/useRecordingUrl";
+import { useApplier } from "@/context/applier-context";
 import "./bid-management.css";
 
 const DND_TYPE = "application/x-bid-result-id";
@@ -378,6 +379,7 @@ function promptRejectReason(): string | null {
 }
 
 export function BidManagementPage() {
+  const { applier } = useApplier();
   const {
     results: allResults,
     stats,
@@ -391,6 +393,7 @@ export function BidManagementPage() {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [playingPath, setPlayingPath] = useState<string | null>(null);
 
   const moveStatus = (id: string, next: BidResultStatus) => {
     const current = allResults.find((r) => r.id === id);
@@ -438,12 +441,18 @@ export function BidManagementPage() {
   const selected = dayResults.find((r) => r.id === selectedId) ?? null;
   const playingResult = playing ? selected : null;
   const activeFolder = folders.find((f) => f.dayKey === selectedDay) ?? null;
+  const resolvedPlayingPath =
+    playingPath
+    || playingResult?.recording?.storagePath
+    || playingResult?.recordings?.[0]?.storagePath
+    || null;
   const {
     url: playingUrl,
     loading: playingUrlLoading,
     error: playingUrlError,
   } = useRecordingUrl(
-    playing ? playingResult?.recording?.storagePath || null : null,
+    playing ? resolvedPlayingPath : null,
+    applier?.name || null,
   );
 
   const openDay = (dayKey: string) => {
@@ -451,12 +460,14 @@ export function BidManagementPage() {
     setSelectedId(null);
     setQuery("");
     setPlaying(false);
+    setPlayingPath(null);
   };
 
   const backToFolders = () => {
     setSelectedDay(null);
     setSelectedId(null);
     setPlaying(false);
+    setPlayingPath(null);
   };
 
   return (
@@ -537,12 +548,12 @@ export function BidManagementPage() {
         ) : pendingCount === 0 && allResults.length === 0 ? (
           <div className="bm-info-banner">
             No Bid ready jobs for this profile. Mark jobs as Bid ready in{" "}
-            <Link to={PATHS.jobs}>Job Search</Link>, then Apply from Bid-Monitor.
+            <Link to={PATHS.jobs}>Job Search</Link>, then Apply from Athens Lens.
           </div>
         ) : pendingCount === 0 ? (
           <div className="bm-info-banner">
             No Pending (Bid ready) jobs right now. Mark more in{" "}
-            <Link to={PATHS.jobs}>Job Search</Link> or finish In-Process tickets in Bid-Monitor.
+            <Link to={PATHS.jobs}>Job Search</Link> or finish In-Process tickets in Athens Lens.
           </div>
         ) : null}
 
@@ -645,8 +656,17 @@ export function BidManagementPage() {
                 onClose={() => {
                   setSelectedId(null);
                   setPlaying(false);
+                  setPlayingPath(null);
                 }}
-                onWatch={() => setPlaying(true)}
+                onWatch={(storagePath) => {
+                  setPlayingPath(
+                    storagePath
+                    || selected?.recording?.storagePath
+                    || selected?.recordings?.[0]?.storagePath
+                    || null,
+                  );
+                  setPlaying(true);
+                }}
                 onChangeStatus={(id, status, options) => {
                   void setStatus(id, status, options);
                 }}
@@ -658,7 +678,7 @@ export function BidManagementPage() {
       </div>
 
       <MediaPlayerModal
-        open={Boolean(playing && playingResult?.recording?.storagePath)}
+        open={Boolean(playing && resolvedPlayingPath)}
         title={playingResult?.job.title ?? "Recording"}
         subtitle={
           playingResult ? `${playingResult.bidder.name} · ${playingResult.job.company}` : undefined
@@ -666,8 +686,11 @@ export function BidManagementPage() {
         src={playingUrl}
         loading={playingUrlLoading}
         error={playingUrlError}
-        pathHint={playingResult?.recording?.storagePath}
-        onClose={() => setPlaying(false)}
+        pathHint={resolvedPlayingPath}
+        onClose={() => {
+          setPlaying(false);
+          setPlayingPath(null);
+        }}
       />
     </PageShell>
   );

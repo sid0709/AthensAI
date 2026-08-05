@@ -87,8 +87,8 @@ export function SkillExtractionButton() {
         : pending === 0
           ? "All jobs have AI skills"
           : pending == null
-            ? "Extract missing job skills with AI"
-            : `${pending} job(s) pending`}
+            ? "Extract missing or failed job skills with AI (shared for all users)"
+            : `${pending} job(s) pending or failed — extraction is shared globally`}
     >
       {loading
         ? <Loader2 className="w-4 h-4 animate-spin" />

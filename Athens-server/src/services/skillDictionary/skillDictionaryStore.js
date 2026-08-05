@@ -1,8 +1,8 @@
 import { skillDictionaryCollection } from '../../db/dataStore.js';
 import { toCanonical } from '@nextoffer/shared/skill-normalize';
 import { skillTokens } from '@nextoffer/shared/skill-tokens';
-import { USER_SKILL_CATEGORIES } from '../../config/graphAndVectorConfig.js';
-import { stableSkillId } from '../matching/canonicalSkillVectors.js';
+import { SKILL_CATEGORIES } from '../../config/skillCategories.js';
+import { stableSkillId } from '../matching/canonicalSkillIdentity.js';
 import {
   publishCanonicalSkillDictionaryChange,
 } from '../matching/canonicalSkillDictionary.js';
@@ -20,7 +20,7 @@ function categoryOf(entry) {
   const counts = entry?.categoryCounts || {};
   let best = 'hard';
   let bestN = -1;
-  for (const cat of USER_SKILL_CATEGORIES) {
+  for (const cat of SKILL_CATEGORIES) {
     const n = counts[cat] || 0;
     if (n > bestN) {
       bestN = n;
@@ -49,7 +49,7 @@ export function aggregateJobSkillBatches(skillLists = []) {
       const name = String(skill?.name || '').trim();
       if (!name) continue;
       const canonical = toCanonical(name) || name.toLowerCase();
-      const category = USER_SKILL_CATEGORIES.includes(skill?.category) ? skill.category : 'hard';
+      const category = SKILL_CATEGORIES.includes(skill?.category) ? skill.category : 'hard';
       const requirement = Math.min(5, Math.max(1, Number(skill?.requirement) || 1));
       const existing = perJob.get(canonical);
       if (!existing || requirement > existing.requirement) {

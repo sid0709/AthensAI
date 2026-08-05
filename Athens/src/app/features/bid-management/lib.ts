@@ -67,7 +67,19 @@ export function vendorTaskToBidResult(task: {
     contentType?: string | null;
     sizeBytes?: number;
   } | null;
+  recordings?: Array<{
+    storagePath: string;
+    contentType?: string | null;
+    sizeBytes?: number;
+    sessionId?: string | null;
+  }> | null;
   recordingDurationSec?: number | null;
+  resumeOriginalName?: string | null;
+  resumeExpectedName?: string | null;
+  resumeCleanedName?: string | null;
+  resumeRenamed?: boolean;
+  resumeMismatch?: boolean;
+  resumeAudits?: BidResult["resumeAudits"];
 }): BidResult {
   const pooledAt = task.bidReadyDate || task.addedAt || new Date().toISOString();
   const bidderName = task.bidderName || task.applierName || "Unassigned";
@@ -125,6 +137,22 @@ export function vendorTaskToBidResult(task: {
           previewUrl: null,
         }
       : null,
+    recordings: Array.isArray(task.recordings)
+      ? task.recordings
+          .filter((entry) => entry?.storagePath)
+          .map((entry) => ({
+            storagePath: entry.storagePath,
+            contentType: entry.contentType || "video/webm",
+            sizeBytes: Number(entry.sizeBytes || 0),
+            sessionId: entry.sessionId || null,
+          }))
+      : undefined,
+    resumeOriginalName: task.resumeOriginalName ?? null,
+    resumeExpectedName: task.resumeExpectedName ?? null,
+    resumeCleanedName: task.resumeCleanedName ?? null,
+    resumeRenamed: Boolean(task.resumeRenamed),
+    resumeMismatch: Boolean(task.resumeMismatch),
+    resumeAudits: Array.isArray(task.resumeAudits) ? task.resumeAudits : undefined,
     notes:
       status === "pending"
         ? "Bid ready — waiting for bidder"

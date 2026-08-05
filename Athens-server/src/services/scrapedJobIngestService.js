@@ -84,7 +84,6 @@ export async function ingestScrapedJob(job, {
 		catalog: "external",
 		modelVersion: JOB_MARKET_MODEL_VERSION,
 		aiSkillStatus: "pending",
-		matchScoreStatus: "pending",
 		createdAt: now,
 		updatedAt: now,
 	};

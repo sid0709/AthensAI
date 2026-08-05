@@ -1,17 +1,13 @@
 import { DocumentId } from '@nextoffer/shared/document-id';
 import { jobsCollection } from '../../db/dataStore.js';
-import { attachStaticScoreFields } from '../jobListPipeline.js';
-import { indexJobInRedis, jobSkillTokens } from '../matching/skillIndex.js';
+import { jobSkillTokens } from '../matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
 import { isForegroundBusy } from '../runtimeLoad.js';
 import {
 	createBackgroundTask,
 } from '../backgroundTasks/taskStore.js';
 import { BACKGROUND_TASK_TYPES } from '../backgroundTasks/taskTypes.js';
-import {
-	firestoreMutationLimiter,
-	indexMutationLimiter,
-} from '../backgroundTasks/resourceLimits.js';
+import { firestoreMutationLimiter } from '../backgroundTasks/resourceLimits.js';
 
 const TERMINAL = new Set(['analyzed']);
 const WORKER_INTERVAL_MS = Number(process.env.SKILL_JOB_ANALYSIS_INTERVAL_MS || 5000);
@@ -136,8 +132,6 @@ export async function analyzeJobRecord(job, { signal } = {}) {
 	const { skills, skillsNormalized } = enrichJobSkillsFromTitle(job);
 	const skillTokens = jobSkillTokens(skills);
 	const applierName = job.skillAnalysis?.applierName || null;
-	const jobId = String(job._id);
-	const staticScores = attachStaticScoreFields({ ...job, skills, skillsNormalized });
 	const now = new Date().toISOString();
 
 	await firestoreMutationLimiter.run(async () => {
@@ -146,12 +140,9 @@ export async function analyzeJobRecord(job, { signal } = {}) {
 			{ _id: job._id },
 			{
 			$set: {
-				...staticScores,
 				skills,
 				skillsNormalized,
 				skillTokens,
-				// Skills may have changed — re-fan-out materialized match scores.
-				matchScoreStatus: 'pending',
 				skillAnalysis: {
 					status: 'analyzed',
 					applierName: applierName || null,
@@ -166,15 +157,6 @@ export async function analyzeJobRecord(job, { signal } = {}) {
 		);
 	});
 
-	throwIfAborted(signal);
-	try {
-		await indexMutationLimiter.run(async () => {
-			throwIfAborted(signal);
-			await indexJobInRedis(jobId, skillsNormalized, skillTokens);
-		});
-	} catch (error) {
-		if (signal?.aborted || error?.name === 'AbortError') throw error;
-	}
 	throwIfAborted(signal);
 
 	return { skillsProcessed: skillsNormalized.length };

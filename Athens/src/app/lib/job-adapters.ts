@@ -3,14 +3,6 @@ import { resolveJobStatusState } from '@nextoffer/shared/job-status';
 import type { ApplierAccount } from "@/context/applier-context";
 import type { Job, JobStatus, WorkMode } from "../types/job";
 
-function readScore(doc: Record<string, unknown>, ...keys: string[]): number | null {
-  for (const key of keys) {
-    const v = doc[key];
-    if (typeof v === "number" && !Number.isNaN(v)) return Math.round(v);
-  }
-  return null;
-}
-
 export function normalizeId(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "object" && value !== null && "$oid" in value) {
@@ -76,32 +68,6 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
         ? doc.sender
         : inferJobSource(String(doc.applyLink || doc.jobLink || ""));
 
-  const useScores = !isExternal || isAnalyzedExternal;
-  const skill = useScores ? readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0 : 0;
-  const overall = useScores ? readScore(doc, "_score", "scoreOverall") ?? skill : 0;
-  const skillsCovered = readScore(doc, "skillsCovered") ?? undefined;
-  const skillsRequired = readScore(doc, "skillsRequired") ?? undefined;
-  const scoreVector = readScore(doc, "scoreVector");
-
-  const skillHighlights = Array.isArray(doc.skillHighlights)
-    ? (doc.skillHighlights as { name?: unknown; matched?: unknown }[])
-        .map((row) => ({
-          name: String(row?.name ?? "").trim(),
-          matched: Boolean(row?.matched),
-        }))
-        .filter((row) => row.name)
-    : undefined;
-
-  const bestResumeTechStack =
-    typeof doc.bestResumeTechStack === "string" && doc.bestResumeTechStack.trim()
-      ? doc.bestResumeTechStack.trim()
-      : undefined;
-
-  const bestResumeId =
-    typeof doc.bestResumeId === "string" && doc.bestResumeId.trim()
-      ? doc.bestResumeId.trim()
-      : undefined;
-
   const skillAnalysis =
     doc.skillAnalysis && typeof doc.skillAnalysis === "object"
       ? (doc.skillAnalysis as Job["skillAnalysis"])
@@ -140,14 +106,6 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     experience: String(details.date || "").trim() || undefined,
     industries,
     status,
-    scores: {
-      overall,
-      skill,
-      vector: scoreVector ?? undefined,
-      skillsCovered: skillsCovered ?? undefined,
-      skillsRequired: skillsRequired ?? undefined,
-    },
-    matchScore: overall,
     posted,
     postedAt,
     postedAgo: typeof doc.postedAgo === "string" ? doc.postedAgo : undefined,
@@ -163,9 +121,6 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     applicantsText,
     applyUrl,
     skillAnalysis,
-    bestResumeTechStack,
-    bestResumeId,
-    skillHighlights,
     aiSkills,
     skillCount: typeof doc.aiSkillCount === "number" ? doc.aiSkillCount : aiSkills?.length,
     version:
@@ -176,27 +131,14 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
   };
 }
 
-/** Preserve list-time scores and recommendation metadata when detail fetch lacks them. */
+/** Preserve compact list metadata when the full detail response omits it. */
 export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
-  const preferListScores =
-    listJob.scores.overall > detailJob.scores.overall ||
-    (listJob.scores.overall === detailJob.scores.overall &&
-      listJob.scores.skill > detailJob.scores.skill);
-
   return {
     ...detailJob,
-    scores: preferListScores ? listJob.scores : detailJob.scores,
-    matchScore: preferListScores ? listJob.matchScore : detailJob.matchScore,
-    bestResumeTechStack: listJob.bestResumeTechStack ?? detailJob.bestResumeTechStack,
-    bestResumeId: listJob.bestResumeId ?? detailJob.bestResumeId,
-    skillHighlights: listJob.skillHighlights?.length ? listJob.skillHighlights : detailJob.skillHighlights,
     aiSkills: detailJob.aiSkills?.length ? detailJob.aiSkills : listJob.aiSkills,
   };
 }
 
 export const SORT_TO_API: Record<string, string> = {
-  newest: "postedAt_desc",
-  oldest: "postedAt_asc",
-  matchScore: "recommended",
-  title: "title_asc",
+  newest: "newest",
 };

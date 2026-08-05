@@ -1,5 +1,5 @@
 /**
- * Bid job page + Remote/Clearance analysis for Bid-Monitor.
+ * Bid job page + Remote/Clearance analysis for Athens Lens.
  * AI reads full page innerText (+ optional form hints) and profile JSON — no hardcoded answers.
  */
 import { accountInfoCollection } from "../db/dataStore.js";
@@ -56,6 +56,25 @@ Rules:
 - When a question maps clearly to a profile field, use that value with confidence "high".
 - Never invent API keys or passwords. Never leave suggestedAnswer empty.
 - notJobPageReason: required when isJobPage is false.`;
+
+const FORM_ANSWER_SYSTEM_PROMPT = `You help an applicant fill out a job application form. Use only the PROFILE JSON for facts. Respond with JSON only.
+
+Return JSON with this exact shape:
+{
+  "summary": string,
+  "formAnswers": [{ "question": string, "suggestedAnswer": string, "confidence": "high"|"medium"|"low" }]
+}
+
+Rules:
+- Your job is NOT to summarize the role. Your job is to list every fillable prompt on the page and draft an answer for each.
+- Read the FULL page text (and form field hints if present). Treat labels like "Full name", "Email address", "Phone number", "Current company", "Years of experience", "Expected salary", dropdowns, checkboxes, textareas, and open-ended questions as questions.
+- formAnswers must include every distinct application question / field label you can see. Do not stop after a few. Do not skip short labels.
+- suggestedAnswer must be the text the applicant should type or select. Prefer exact PROFILE values when they map clearly (name, email, phone, location, LinkedIn, years of experience, etc.).
+- For salary / compensation questions, use PROFILE values when available; otherwise give a concise reasonable draft and mark confidence "low".
+- Never invent employers, dates, degrees, or credentials that are not in PROFILE. If PROFILE lacks a fact, answer briefly and honestly with confidence "low".
+- Never invent API keys or passwords. Never leave suggestedAnswer empty.
+- summary: one short sentence about how many fields you answered, not a job description.`;
+
 
 const RECOMMEND_RESUME_SYSTEM_PROMPT = `You recommend the best matching resume stack for a job description from a fixed list of Library resumes.
 
@@ -131,6 +150,25 @@ ${String(pageContext.visibleText || "")}
 
 Form field hints (optional; page text is authoritative):
 ${formatFormsText(pageContext)}`;
+}
+
+function buildFormAnswerUserPrompt(pageContext, profileJson, jobTitle) {
+	const title = String(jobTitle || "").trim();
+	const visibleText = String(pageContext.visibleText || "").slice(0, 60_000);
+	return `APPLICANT PROFILE (JSON — use for all answers; secrets already removed):
+${profileJson}
+
+${title ? `Application role title (context only): ${title}\n\n` : ""}=== OPEN PAGE (answer the form on this page) ===
+URL: ${pageContext.url}
+Title: ${pageContext.title}
+
+Page text (visible innerText only):
+${visibleText}
+
+Form field hints (optional; page text is authoritative):
+${formatFormsText(pageContext)}
+
+Return every form question you can find with a suggestedAnswer for each.`;
 }
 
 function normalizeFormAnswers(entries) {
@@ -290,6 +328,101 @@ async function loadAccountCatalog(applierNameRaw) {
 				: null;
 	const { stackNames } = compressResumeCatalog(catalog || {});
 	return { catalog, stackNames, autoBidProfile: acc?.autoBidProfile || null };
+}
+
+/**
+ * Athens Lens Ask AI: draft copyable answers for application form fields from
+ * page innerText + profile. Not a job-description summarizer.
+ * @returns {{ result: object, usage: object|null, mode: 'llm'|'heuristic' }}
+ */
+export async function answerApplicationFormPage({
+	pageContext,
+	applierName,
+	jobTitle,
+	jobId,
+	signal,
+}) {
+	if (!pageContext || typeof pageContext !== "object") {
+		throw new Error("pageContext is required.");
+	}
+
+	const autoBidProfile = await loadDecryptedAutoBidProfile(applierName);
+	const profile = autoBidProfile && typeof autoBidProfile === "object" ? autoBidProfile : {};
+	const { provider, apiKey, model, configured, error: modelError } = resolveDefaultModel(profile);
+	const profileJson = JSON.stringify(sanitizeProfileForLlm(profile), null, 2);
+	const jobIdStr = String(jobId ?? "").trim() || undefined;
+
+	if (!configured || !model) {
+		throw Object.assign(
+			new Error(modelError || "Set a default AI provider and model in Settings → Profile."),
+			{ status: 400 },
+		);
+	}
+	if (!apiKey) {
+		const keyLabel = provider === "openai" ? "OpenAI" : "DeepSeek";
+		throw Object.assign(
+			new Error(`Add your ${keyLabel} API key in Settings → Profile to use Ask AI.`),
+			{ status: 400 },
+		);
+	}
+	if (profileJson === "{}") {
+		throw Object.assign(
+			new Error("No profile data found for this applier. Save Profile settings first."),
+			{ status: 400 },
+		);
+	}
+
+	const {
+		content,
+		usage,
+		requestId,
+		provider: usedProvider,
+		requestedModel,
+		billedModel,
+	} = await chatCompletion({
+		provider,
+		apiKey,
+		model,
+		messages: [
+			{ role: "system", content: FORM_ANSWER_SYSTEM_PROMPT },
+			{
+				role: "user",
+				content: buildFormAnswerUserPrompt(pageContext, profileJson, jobTitle),
+			},
+		],
+		jsonMode: true,
+		cacheKey: "athens-lens-form-answers",
+		feature: "athens-lens-ask-ai",
+		applierName,
+		jobId: jobIdStr,
+		signal,
+	});
+
+	let parsed;
+	try {
+		parsed = JSON.parse(content);
+	} catch {
+		throw new Error("LLM returned invalid JSON for form answers.");
+	}
+
+	const formAnswers = normalizeFormAnswers(parsed.formAnswers);
+	return {
+		result: {
+			summary: String(parsed.summary ?? "").trim(),
+			formAnswers,
+			formCount: formAnswers.length,
+			answeredCount: formAnswers.length,
+			pageUrl: pageContext.url,
+			pageTitle: pageContext.title,
+			applierName: applierName || null,
+		},
+		usage: summarizeUsage(usage, billedModel || model),
+		mode: "llm",
+		requestId,
+		provider: usedProvider,
+		requestedModel,
+		billedModel,
+	};
 }
 
 /**

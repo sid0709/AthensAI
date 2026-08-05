@@ -1,8 +1,6 @@
 import { DocumentId } from "@nextoffer/shared/document-id";
 import { userResumesCollection, userKnowledgeGraphsCollection } from "../db/dataStore.js";
 import { rebuildProfileGraph } from "./userKnowledgeGraph/index.js";
-import { invalidateRecommendationCache } from "./matching/matchingService.js";
-import { removeResumeEmbedding } from "./embeddings/embeddingIngest.js";
 import { deleteStoredObject, putBinaryObject, readStoredObject, storageSlug } from "./firebase/objectStore.js";
 
 const ALLOWED_MIME = new Set([
@@ -248,7 +246,6 @@ export async function deleteUserResume(id, ownerName, { rebuildProfile = true } 
 
   await deleteStoredContent(doc);
   await userResumesCollection.deleteOne({ _id: documentId });
-  invalidateRecommendationCache(name);
 
   if (userKnowledgeGraphsCollection) {
     await userKnowledgeGraphsCollection.deleteOne({
@@ -294,8 +291,7 @@ export async function clearUserResumeAnalysis(id, ownerName) {
         analysisError: null,
         updatedAt: now,
       },
-      $unset: { embedding: "" },
-    },
+	},
   );
 
   if (userKnowledgeGraphsCollection) {
@@ -305,9 +301,6 @@ export async function clearUserResumeAnalysis(id, ownerName) {
     });
     await rebuildProfileGraph(name);
   }
-
-  void removeResumeEmbedding(String(documentId)).catch(() => {});
-  invalidateRecommendationCache(name);
 
   return toSummary({
     ...doc,

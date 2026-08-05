@@ -67,8 +67,8 @@ function touchAuth() {
 }
 
 function apiMessage(error: unknown, fallback: string) {
-  const value = error as { data?: { message?: string }; message?: string };
-  return value?.data?.message || value?.message || fallback;
+  const value = error as { data?: { message?: string; error?: string }; message?: string };
+  return value?.data?.message || value?.data?.error || value?.message || fallback;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

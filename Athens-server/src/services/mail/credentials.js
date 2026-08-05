@@ -1,20 +1,20 @@
 import { accountInfoCollection } from '../../db/dataStore.js';
 import { decryptProfileApiKeysForClient } from '../autoBidProfileSecrets.js';
-import { getRedis, isRedisReady } from '../../db/redis.js';
 
 const accountCache = new Map();
 const ACCOUNT_CACHE_MS = Math.max(5_000, Number(process.env.MAIL_ACCOUNT_CACHE_MS || 30_000));
-const ACCOUNT_REDIS_CACHE_SEC = Math.max(15, Number(process.env.MAIL_ACCOUNT_REDIS_CACHE_SEC || 60));
+const ACCOUNT_CACHE_MAX = Math.max(25, Number(process.env.MAIL_ACCOUNT_CACHE_MAX || 200));
 
-function accountRedisKey(name) {
-	return `mail:v2:account:${String(name).trim().toLowerCase()}`;
+function rememberAccount(key, account) {
+	accountCache.delete(key);
+	accountCache.set(key, { account, expiresAt: Date.now() + ACCOUNT_CACHE_MS });
+	while (accountCache.size > ACCOUNT_CACHE_MAX) accountCache.delete(accountCache.keys().next().value);
 }
 
 export async function invalidateMailAccountCache(name) {
 	const key = String(name || '').trim().toLowerCase();
 	if (!key) return;
 	accountCache.delete(key);
-	if (isRedisReady()) await getRedis().del(accountRedisKey(key)).catch(() => undefined);
 }
 
 async function findAccountByApplierName(nameRaw) {
@@ -22,28 +22,17 @@ async function findAccountByApplierName(nameRaw) {
 	if (!trimmed || !accountInfoCollection) return null;
 	const cacheKey = trimmed.toLowerCase();
 	const cached = accountCache.get(cacheKey);
-	if (cached?.expiresAt > Date.now()) return cached.account;
-	if (isRedisReady()) {
-		const redisValue = await getRedis().get(accountRedisKey(cacheKey)).catch(() => null);
-		if (redisValue) {
-			try {
-				const account = JSON.parse(redisValue);
-				accountCache.set(cacheKey, { account, expiresAt: Date.now() + ACCOUNT_CACHE_MS });
-				return account;
-			} catch {
-				await getRedis().del(accountRedisKey(cacheKey)).catch(() => undefined);
-			}
-		}
+	if (cached?.expiresAt > Date.now()) {
+		rememberAccount(cacheKey, cached.account);
+		return cached.account;
 	}
+	accountCache.delete(cacheKey);
 	let acc = await accountInfoCollection.findOne(
 		{ name: trimmed },
 		{ projection: { name: 1, autoBidProfile: 1, tier: 1 } },
 	);
 	if (acc) {
-		accountCache.set(cacheKey, { account: acc, expiresAt: Date.now() + ACCOUNT_CACHE_MS });
-		if (isRedisReady()) {
-			await getRedis().setEx(accountRedisKey(cacheKey), ACCOUNT_REDIS_CACHE_SEC, JSON.stringify(acc)).catch(() => undefined);
-		}
+		rememberAccount(cacheKey, acc);
 		return acc;
 	}
 	const esc = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -51,12 +40,7 @@ async function findAccountByApplierName(nameRaw) {
 		{ name: { $regex: new RegExp(`^${esc}$`, 'i') } },
 		{ projection: { name: 1, autoBidProfile: 1, tier: 1 } },
 	);
-	if (acc) {
-		accountCache.set(cacheKey, { account: acc, expiresAt: Date.now() + ACCOUNT_CACHE_MS });
-		if (isRedisReady()) {
-			await getRedis().setEx(accountRedisKey(cacheKey), ACCOUNT_REDIS_CACHE_SEC, JSON.stringify(acc)).catch(() => undefined);
-		}
-	}
+	if (acc) rememberAccount(cacheKey, acc);
 	return acc || null;
 }
 
