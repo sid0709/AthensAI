@@ -134,7 +134,8 @@ export const getAgentJobSources = createAsyncHandler(async (req, res) => {
   if (!account?.name) return res.status(404).json({ error: 'Profile not found' });
   const allowed = new Set(JobSource.filter((source) => source.type !== 'Legal' && source.title !== 'Other').map((source) => source.title));
   const sources = await withTimeout(Promise.all([...allowed].map(async (title) => {
-    const snapshot = await getFirestoreDb().collection('job_market')
+    const snapshot = await getFirestoreDb().collection('jobs')
+      .where('sourceCatalog', '==', 'market')
       .where('titleReview.label', '==', 'APPROVED')
       .where('source', '==', title)
       .count()

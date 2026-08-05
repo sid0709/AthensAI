@@ -233,9 +233,9 @@ function createApp() {
 async function startBackgroundWorkers() {
 	const startupStartedAt = Date.now();
 	await runStartupStep("Firestore connection and job-identity maintenance", () => initDataStore());
-	await runStartupStep("Canonical skill dictionary", () => loadCanonicalSkillDictionary());
 	databaseReady = true;
 	console.log(`[startup] background services ready (${formatStartupDuration(Date.now() - startupStartedAt)} total)`);
+	await runStartupStep("Canonical skill dictionary", () => loadCanonicalSkillDictionary());
 	void cleanupHistoricalJobDuplicates().catch((error) => {
 		console.error("[job-identity] historical cleanup failed:", error?.message || error);
 	});
@@ -264,9 +264,9 @@ async function startHttpWorker({ clustered }) {
 	});
 
 	await runStartupStep("Firestore connection and job-identity maintenance", () => initDataStore());
-	await runStartupStep("Canonical skill dictionary", () => loadCanonicalSkillDictionary());
 	databaseReady = true;
 	console.log(`[startup] API ready (${formatStartupDuration(Date.now() - startupStartedAt)} total)`);
+	await runStartupStep("Canonical skill dictionary", () => loadCanonicalSkillDictionary());
 	if (!clustered) {
 		startAggregateMetricsServer();
 		void cleanupHistoricalJobDuplicates().catch((error) => {

@@ -76,7 +76,7 @@ export async function processAlgoliaOutbox(limit = 100) {
 	for (const outbox of snapshot.docs) {
 		const item = outbox.data();
 		try {
-			const job = await db.collection("job_market").doc(String(item.jobId)).get();
+			const job = await db.collection("jobs").doc(String(item.jobId)).get();
 			if (item.operation === "delete" || !job.exists) {
 				await search.deleteObject({ indexName: config().indexName, objectID: String(item.jobId) });
 			} else {
@@ -102,7 +102,7 @@ export async function processAlgoliaOutbox(limit = 100) {
 export async function rebuildAlgoliaJobs() {
 	const search = getClient();
 	if (!search) throw new Error("Algolia configuration is missing");
-	const snapshot = await getFirestoreDb().collection("job_market").get();
+	const snapshot = await getFirestoreDb().collection("jobs").where("sourceCatalog", "==", "market").get();
 	const objects = snapshot.docs.map((doc) => record(doc.id, doc.data()));
 	await search.replaceAllObjects({ indexName: config().indexName, objects, waitForTasks: true });
 	return { indexed: objects.length };

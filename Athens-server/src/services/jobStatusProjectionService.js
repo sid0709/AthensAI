@@ -15,7 +15,7 @@ import { JOB_STATUS_STATES, emptyJobStatusBaseline } from './jobStatusModel.js';
 const STATUS_COLLECTION = 'job_statuses';
 const COUNT_COLLECTION = 'job_status_counts';
 const RECEIPT_COLLECTION = 'operation_receipts';
-const JOB_COLLECTION = 'job_market';
+const JOB_COLLECTION = 'jobs';
 const EXTERNAL_JOB_COLLECTION = 'external_scraped_jobs';
 const COUNTER_SHARDS = 16;
 const RECEIPT_TTL_MS = 14 * 24 * 60 * 60 * 1_000;
@@ -79,19 +79,37 @@ export function statusRowFromProjection(projection = {}) {
 		const legacy = mergeJobStatusRows([projection.statusRow], projection.profileId);
 		return legacy && resolveJobStatusState(legacy) !== 'posted' ? legacy : null;
 	}
-	if (Number(projection.schemaVersion) !== STATUS_PROJECTION_SCHEMA_VERSION) return null;
-	const row = { applier: String(projection.profileId || '') };
-	for (const [stored, legacy] of [
-		['appliedAt', 'appliedDate'],
-		['scheduledAt', 'scheduledDate'],
-		['declinedAt', 'declinedDate'],
-		['bidReadyAt', 'bidReadyDate'],
-		['bidCompletedAt', 'bidCompletedDate'],
-	]) {
-		const value = iso(projection[stored]);
-		if (value) row[legacy] = value;
+	if (Number(projection.schemaVersion) === STATUS_PROJECTION_SCHEMA_VERSION) {
+		const row = { applier: String(projection.profileId || '') };
+		for (const [stored, legacy] of [
+			['appliedAt', 'appliedDate'],
+			['scheduledAt', 'scheduledDate'],
+			['declinedAt', 'declinedDate'],
+			['bidReadyAt', 'bidReadyDate'],
+			['bidCompletedAt', 'bidCompletedDate'],
+		]) {
+			const value = iso(projection[stored]);
+			if (value) row[legacy] = value;
+		}
+		return resolveJobStatusState(row) === 'posted' ? null : row;
 	}
-	return resolveJobStatusState(row) === 'posted' ? null : row;
+	// Older docs may only carry a resolved state / contribution blob.
+	if (projection.statusRow) {
+		const legacy = mergeJobStatusRows([projection.statusRow], projection.profileId);
+		return legacy && resolveJobStatusState(legacy) !== 'posted' ? legacy : null;
+	}
+	const state = String(projection.state || '').trim();
+	if (!state || state === 'posted') return null;
+	const applier = String(projection.profileId || '');
+	const stamp = iso(projection.updatedAt) || iso(projection.postedAt) || new Date().toISOString();
+	const row = { applier };
+	if (state === 'applied') row.appliedDate = stamp;
+	else if (state === 'scheduled') { row.appliedDate = stamp; row.scheduledDate = stamp; }
+	else if (state === 'declined') { row.appliedDate = stamp; row.declinedDate = stamp; }
+	else if (state === 'bid-ready') row.bidReadyDate = stamp;
+	else if (state === 'bid-completed') { row.bidReadyDate = stamp; row.bidCompletedDate = stamp; }
+	else return null;
+	return row;
 }
 
 function projectionDates(row = {}) {
@@ -123,7 +141,7 @@ function counterRef(profileId, catalog, jobId) {
 
 function contributionForProjection(projection) {
 	const row = projection ? statusRowFromProjection(projection) : null;
-	if (!row || projection?.visibleInJobSearch !== true) {
+	if (!row || projection?.visibleInJobSearch === false) {
 		return { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
 	}
 	return jobStatusContribution(row);
@@ -483,9 +501,40 @@ export async function readMaterializedJobStatusCounts(profileId, { includeExtens
 		.get();
 	const field = includeExtensionV2 ? 'all' : 'public';
 	const counts = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	let usedNested = false;
 	for (const document of snapshot.docs) {
-		const values = document.data()?.[field] || {};
-		for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(values[key]);
+		const data = document.data() || {};
+		const nested = data[field];
+		if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+			usedNested = true;
+			for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(nested[key]);
+			continue;
+		}
+		// Legacy flat counter docs store totals on the root (e.g. applied: 505).
+		for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(data[key]);
+	}
+	if (!usedNested && counts.any === 0) {
+		for (const key of Object.keys(counts)) {
+			if (key !== 'any') counts.any += counts[key];
+		}
+	}
+	return counts;
+}
+
+/** Live fallback when sharded counters are missing or stale. */
+export async function countLiveJobStatusesByState(profileId) {
+	if (!clean(profileId)) return null;
+	const snapshot = await getFirestoreDb().collection(STATUS_COLLECTION)
+		.where('profileId', '==', clean(profileId))
+		.get();
+	const counts = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	for (const document of snapshot.docs) {
+		const data = document.data() || {};
+		if (data.visibleInJobSearch === false) continue;
+		const state = String(data.state || '').trim();
+		if (!state || state === 'posted' || !Object.hasOwn(counts, state)) continue;
+		counts[state] += 1;
+		counts.any += 1;
 	}
 	return counts;
 }

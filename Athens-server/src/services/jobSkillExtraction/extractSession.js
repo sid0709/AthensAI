@@ -49,7 +49,7 @@ async function countPendingInCollection(collection, includeV2) {
   if (!collection) return 0;
   try {
     let query = getFirestoreDb()
-      .collection('job_market')
+      .collection('jobs')
       .where('sourceCatalog', '==', 'market')
       .where('aiSkillStatus', '==', 'pending');
     if (!includeV2) query = query.where('extensionV2', '==', false);

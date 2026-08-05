@@ -7,7 +7,7 @@ import {
 	normalizeTitleReviewRequest,
 } from './titleReviewQueryService.js';
 
-const JOB_COLLECTION = 'job_market';
+const JOB_COLLECTION = 'jobs';
 const METADATA_COLLECTION = 'system_metadata';
 const METADATA_ID = 'title_review';
 let revisionCache = { value: '1', expiresAt: 0 };

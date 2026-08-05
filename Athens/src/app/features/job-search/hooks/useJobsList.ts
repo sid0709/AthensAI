@@ -52,7 +52,7 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   declined: 0,
 };
 
-const JOB_LIST_REQUEST_TIMEOUT_MS = 5_000;
+const JOB_LIST_REQUEST_TIMEOUT_MS = 30_000;
 const JOB_LIST_ENDPOINT = "/jobs/list/v3";
 const JOB_COUNTS_ENDPOINT = "/jobs/list/v3/counts";
 

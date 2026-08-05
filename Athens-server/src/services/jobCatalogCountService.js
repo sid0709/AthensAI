@@ -3,7 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { isExtensionV2Job } from '../config/jobMarketSchema.js';
 import { getFirestoreDb } from './firebase/firebaseAdmin.js';
 
-const JOBS = 'job_market';
+const JOBS = 'jobs';
 const MEMBERSHIP = 'job_catalog_memberships';
 const COUNTS = 'job_catalog_counts';
 const SHARDS = 16;

@@ -6,16 +6,18 @@ import { jobsCollection } from '../db/dataStore.js';
 import { getFirestoreDb } from './firebase/firebaseAdmin.js';
 import { resolveApplierContext } from './jobListQuery.js';
 import { getProfileJobStatusIndex } from './jobStatusIndexService.js';
-import { readMaterializedJobStatusCounts } from './jobStatusProjectionService.js';
+import { readMaterializedJobStatusCounts, countLiveJobStatusesByState } from './jobStatusProjectionService.js';
 import { searchNewestJobPage } from './search/algoliaJobs.js';
 import { readApprovedCatalogCount } from './jobCatalogCountService.js';
 
-const JOB_COLLECTION = 'job_market';
+const JOB_COLLECTION = 'jobs';
+const MARKET_CATALOG = 'market';
 const STATUS_COLLECTION = 'job_statuses';
 const PAGE_LIMIT_MAX = 100;
 const SCAN_BATCH_SIZE = 100;
 const MAX_SCAN_BATCHES = 20;
 const COUNT_CACHE_MS = Math.max(1_000, Number(process.env.JOB_LIST_V3_COUNT_CACHE_MS || 5_000));
+const COMPANY_COUNT_CACHE_MS = Math.max(COUNT_CACHE_MS, Number(process.env.JOB_LIST_V3_COMPANY_COUNT_CACHE_MS || 60_000));
 const catalogCountCache = new Map();
 const companyCountCache = new Map();
 
@@ -26,6 +28,10 @@ const STATUS_FROM_API = {
 	BidReady: 'bid-ready',
 	BidCompleted: 'bid-completed',
 };
+
+function marketJobs() {
+	return getFirestoreDb().collection(JOB_COLLECTION).where('sourceCatalog', '==', MARKET_CATALOG);
+}
 
 function asDate(value) {
 	if (!value) return null;
@@ -182,8 +188,32 @@ async function viewerIndex(profileId, tab) {
 	return getProfileJobStatusIndex(profileId);
 }
 
-function nativeJobsQuery(body, facet) {
-	let query = getFirestoreDb().collection(JOB_COLLECTION).where('titleReview.label', '==', 'APPROVED');
+const LIST_JOB_FIELDS = [
+	'title',
+	'company',
+	'companyId',
+	'companyName',
+	'source',
+	'postedAt',
+	'_createdAt',
+	'createdAt',
+	'extensionV2',
+	'version',
+	'aiSkillStatus',
+	'details',
+	'titleReview',
+	'applyLink',
+	'jobLink',
+	'sourceCatalog',
+];
+
+function nativeJobsQuery(body, facet, { isBeta = false } = {}) {
+	// Physical documents live in `jobs` with sourceCatalog=market; `job_market`
+	// is only the adapter alias and is empty as a native collection.
+	let query = marketJobs().where('titleReview.label', '==', 'APPROVED');
+	// Non-beta viewers must not spend scan budget on extension-v2 rows that
+	// matchesFilters would discard. Counts already use this same predicate.
+	if (!isBeta) query = query.where('extensionV2', '==', false);
 	if (facet) query = query.where(facet.field, facet.operator, facet.value);
 	const from = asDate(body.postedAtFrom);
 	const to = asDate(body.postedAtTo);
@@ -193,13 +223,16 @@ function nativeJobsQuery(body, facet) {
 		if (String(body.postedAtTo).length <= 10) end.setUTCHours(23, 59, 59, 999);
 		query = query.where('postedAt', '<=', end);
 	}
-	return query.orderBy('postedAt', 'desc').orderBy(FieldPath.documentId(), 'desc');
+	return query
+		.orderBy('postedAt', 'desc')
+		.orderBy(FieldPath.documentId(), 'desc')
+		.select(...LIST_JOB_FIELDS);
 }
 
 async function listNative(body, context) {
 	const { limit, tab, hash, sources, isBeta, statuses } = context;
 	const cursor = decodeCursor(body.cursor, hash, 'jobs');
-	let query = nativeJobsQuery(body, nativeFacet(body, sources));
+	let query = nativeJobsQuery(body, nativeFacet(body, sources), { isBeta });
 	if (cursor) query = query.startAfter(new Date(cursor.postedAt), cursor.id);
 	const data = [];
 	let lastScanned = cursor ? { postedAt: cursor.postedAt, id: cursor.id } : null;
@@ -219,7 +252,7 @@ async function listNative(body, context) {
 		if (data.length === limit) break;
 		if (snapshot.size < SCAN_BATCH_SIZE) { hasMore = false; break; }
 		hasMore = true;
-		query = nativeJobsQuery(body, nativeFacet(body, sources)).startAfter(
+		query = nativeJobsQuery(body, nativeFacet(body, sources), { isBeta }).startAfter(
 			new Date(lastScanned.postedAt),
 			lastScanned.id,
 		);
@@ -279,40 +312,48 @@ async function listAlgolia(body, context) {
 }
 
 async function listStatusIndex(body, context) {
-	const { limit, tab, hash, sources, isBeta, statuses, profileId } = context;
+	const { limit, tab, hash, sources, isBeta, statuses } = context;
 	const cursor = decodeCursor(body.cursor, hash, 'statuses');
-	let query = getFirestoreDb().collection(STATUS_COLLECTION)
-		.where('profileId', '==', profileId)
-		.where('visibleInJobSearch', '==', true);
-	if (tab !== 'any') query = query.where('state', '==', tab);
-	query = query.orderBy('postedAt', 'desc').orderBy('jobId', 'desc');
-	if (cursor) query = query.startAfter(new Date(cursor.postedAt), cursor.id);
+	// Use the already-loaded profile status index. That avoids a second
+	// composite-index dependency and works for legacy rows that omit
+	// visibleInJobSearch.
+	const ordered = [...statuses.values()]
+		.filter((row) => row?.jobId && row.visibleInJobSearch !== false)
+		.filter((row) => tab === 'any' || row.state === tab)
+		.sort((left, right) => {
+			const leftAt = asDate(left.postedAt)?.getTime() || 0;
+			const rightAt = asDate(right.postedAt)?.getTime() || 0;
+			if (rightAt !== leftAt) return rightAt - leftAt;
+			return String(right.jobId).localeCompare(String(left.jobId));
+		});
+	let start = 0;
+	if (cursor) {
+		start = ordered.findIndex((row) => (
+			(asDate(row.postedAt)?.toISOString() || '') === cursor.postedAt
+			&& String(row.jobId) === cursor.id
+		)) + 1;
+		if (start < 1) start = 0;
+	}
 	const data = [];
 	let lastScanned = cursor ? { postedAt: cursor.postedAt, id: cursor.id } : null;
 	let hasMore = false;
-	for (let batch = 0; batch < MAX_SCAN_BATCHES && data.length < limit; batch += 1) {
-		const snapshot = await query.limit(SCAN_BATCH_SIZE).get();
-		if (snapshot.empty) { hasMore = false; break; }
-		const ids = snapshot.docs.map((document) => String(document.data().jobId));
-		const jobs = await hydrateJobIds(ids);
-		for (let index = 0; index < snapshot.docs.length; index += 1) {
-			const projection = snapshot.docs[index].data();
-			const jobId = ids[index];
-			lastScanned = { postedAt: asDate(projection.postedAt)?.toISOString() || new Date(0).toISOString(), id: jobId };
-			const job = jobs.get(jobId);
+	for (let index = start; index < ordered.length && data.length < limit;) {
+		const chunk = ordered.slice(index, index + SCAN_BATCH_SIZE);
+		const jobs = await hydrateJobIds(chunk.map((row) => String(row.jobId)));
+		for (const row of chunk) {
+			index += 1;
+			lastScanned = {
+				postedAt: asDate(row.postedAt)?.toISOString() || new Date(0).toISOString(),
+				id: String(row.jobId),
+			};
+			const job = jobs.get(String(row.jobId));
 			if (!job || !matchesFilters(job, body, { isBeta, sources })) continue;
-			data.push(attachViewerStatus(job, statuses.get(jobId)));
-			if (data.length === limit) { hasMore = true; break; }
+			data.push(attachViewerStatus(job, row));
+			if (data.length === limit) {
+				hasMore = index < ordered.length;
+				break;
+			}
 		}
-		if (data.length === limit) break;
-		if (snapshot.size < SCAN_BATCH_SIZE) { hasMore = false; break; }
-		hasMore = true;
-		query = getFirestoreDb().collection(STATUS_COLLECTION)
-			.where('profileId', '==', profileId)
-			.where('visibleInJobSearch', '==', true);
-		if (tab !== 'any') query = query.where('state', '==', tab);
-		query = query.orderBy('postedAt', 'desc').orderBy('jobId', 'desc')
-			.startAfter(new Date(lastScanned.postedAt), lastScanned.id);
 	}
 	return {
 		data,
@@ -352,13 +393,13 @@ async function attachCompanyCounts(jobs, isBeta) {
 			counts.set(companyId, cached.value);
 			return;
 		}
-		let query = getFirestoreDb().collection(JOB_COLLECTION)
+		let query = marketJobs()
 			.where('titleReview.label', '==', 'APPROVED')
 			.where('companyId', '==', companyId);
 		if (!isBeta) query = query.where('extensionV2', '==', false);
 		const snapshot = await query.count().get();
 		const value = Math.max(0, Number(snapshot.data().count || 0));
-		companyCountCache.set(key, { value, expiresAt: now + COUNT_CACHE_MS });
+		companyCountCache.set(key, { value, expiresAt: now + COMPANY_COUNT_CACHE_MS });
 		counts.set(companyId, value);
 	}));
 	while (companyCountCache.size > 1_000) companyCountCache.delete(companyCountCache.keys().next().value);
@@ -368,13 +409,38 @@ async function attachCompanyCounts(jobs, isBeta) {
 	}));
 }
 
-export async function getJobStatusCountsV3(body = {}) {
+function countsFromStatusIndex(index) {
+	if (!index?.rows) return null;
+	const counts = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	for (const row of index.rows.values()) {
+		if (!row?.jobId || row.visibleInJobSearch === false) continue;
+		const state = String(row.state || '').trim();
+		if (!state || state === 'posted' || !Object.hasOwn(counts, state)) continue;
+		counts[state] += 1;
+		counts.any += 1;
+	}
+	return counts;
+}
+
+export async function getJobStatusCountsV3(body = {}, { statusIndex = null } = {}) {
 	const { profileId, isBeta } = await resolveViewer(body);
 	const all = await approvedCatalogCount(isBeta);
 	if (!profileId) {
 		return { all, posted: all, 'bid-ready': 0, 'bid-completed': 0, applied: 0, scheduled: 0, declined: 0 };
 	}
-	const stored = await readMaterializedJobStatusCounts(profileId, { includeExtensionV2: isBeta });
+	// Prefer the already-warmed profile index (O(statuses in memory)) over
+	// downloading every job_statuses document again on each list request.
+	let stored = countsFromStatusIndex(statusIndex)
+		|| await readMaterializedJobStatusCounts(profileId, { includeExtensionV2: isBeta });
+	if (!stored?.any) {
+		const live = await countLiveJobStatusesByState(profileId);
+		if (live?.any) stored = live;
+	} else if (!statusIndex) {
+		// Materialized counters can lag after migrations; only pay for a live
+		// recount when we did not already load the profile index.
+		const live = await countLiveJobStatusesByState(profileId);
+		if (live?.any && live.any > Number(stored.any || 0)) stored = live;
+	}
 	const any = Math.min(all, Number(stored?.any || 0));
 	return {
 		all,
@@ -404,13 +470,17 @@ export async function listJobsV3(body = {}) {
 	if (requiresAlgolia(body, sources)) page = await listAlgolia(body, context);
 	else if (!['all', 'new'].includes(tab)) page = await listStatusIndex(body, context);
 	else page = await listNative(body, context);
-	page.data = await attachCompanyCounts(page.data, isBeta);
+	const [withCompanyCounts, statusCounts] = await Promise.all([
+		attachCompanyCounts(page.data, isBeta),
+		getJobStatusCountsV3(body, { statusIndex: index }),
+	]);
+	page.data = withCompanyCounts;
 	return {
 		success: true,
 		data: page.data,
 		nextCursor: page.nextCursor,
 		hasMore: page.hasMore,
 		viewerStatus: Object.fromEntries(page.data.map((job) => [String(job._id), job.viewerStatus])),
-		statusCounts: await getJobStatusCountsV3(body),
+		statusCounts,
 	};
 }

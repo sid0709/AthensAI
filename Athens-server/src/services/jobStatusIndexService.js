@@ -12,7 +12,9 @@ function normalizedProjection(raw = {}) {
 	return {
 		jobId: String(raw.jobId || ''),
 		state: String(raw.state || ''),
-		visibleInJobSearch: raw.visibleInJobSearch === true,
+		// Legacy projections omit this field; treat missing as visible so New/Applied
+		// tabs stay accurate until visibility is backfilled.
+		visibleInJobSearch: raw.visibleInJobSearch !== false,
 		postedAt: raw.postedAt || null,
 		row,
 	};
