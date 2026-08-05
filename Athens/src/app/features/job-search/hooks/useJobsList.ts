@@ -450,6 +450,9 @@ export function useJobsList(
     isDebouncing ||
     ((requestInFlight || settledKey !== currentQueryKey) && rawGroups.length === 0);
 
+  const settledKeyRef = useRef<string | null>(null);
+  settledKeyRef.current = settledKey;
+
   useEffect(() => {
     memberRequestTokensRef.current.clear();
     memberCursorsRef.current.clear();
@@ -466,10 +469,21 @@ export function useJobsList(
     const applyResponse = (res: ListResponse) => {
       if (!res?.success || !Array.isArray(res.data)) return false;
 			setRawGroups(mapResponseGroups(res.data, applierRef.current));
+      const tab = debouncedFilters.statusTab;
+      const countTotal = res.statusCounts
+        ? Number(
+            tab === "all"
+              ? res.statusCounts.all
+              : tab === "posted"
+                ? res.statusCounts.posted
+                : res.statusCounts[tab],
+          ) || 0
+        : null;
       const responseTotal = res.pagination?.total
+        ?? countTotal
         ?? ((page - 1) * pageSize + res.data.length + (res.hasMore ? 1 : 0));
       setTotal(responseTotal);
-			setTotalJobs(res.pagination?.totalJobs ?? responseTotal);
+			setTotalJobs(res.pagination?.totalJobs ?? countTotal ?? responseTotal);
       rememberNextCursor(listBody, page, res);
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
@@ -480,16 +494,25 @@ export function useJobsList(
     setRequestInFlight(true);
     setError(null);
     setStaleResults(false);
+    // Drop cross-tab/page leftovers immediately so Applied does not keep showing New.
+    if (!hasFreshCache) {
+      setRawGroups([]);
+      setTotal(0);
+      setTotalJobs(0);
+      setSettledKey(null);
+    }
 
     (async () => {
       try {
         if (!cached || cached.staleAt <= Date.now()) {
           cached = await readPersistentListResponse(cacheKey) ?? undefined;
           hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
-        }
-        if (cached && cached.staleAt > Date.now() && !cancelled) {
+          if (hasFreshCache && cached && !cancelled) applyResponse(cached.response);
+        } else if (cached && !cancelled) {
           applyResponse(cached.response);
-          if (!hasFreshCache) setStaleResults(true);
+        }
+        if (cached && cached.staleAt > Date.now() && cached.expiresAt <= Date.now() && !cancelled) {
+          setStaleResults(true);
         }
 
         const cursor = await resolvePageCursor(listBody, page, request);
@@ -505,19 +528,20 @@ export function useJobsList(
         if ((e as Error)?.name === "AbortError") return;
         console.error(e);
         let showingFallback = false;
+        // Only reuse cache/previous rows for THIS query key — never another tab.
         if (cached && cached.staleAt > Date.now() && applyResponse(cached.response)) {
           showingFallback = true;
           setStaleResults(true);
           setError(timedOut
             ? "Job refresh took too long. Showing cached results."
             : "Could not refresh jobs. Showing cached results.");
-        } else if (rawGroupsRef.current.length > 0) {
+        } else if (settledKeyRef.current === currentQueryKey && rawGroupsRef.current.length > 0) {
           showingFallback = true;
           setStaleResults(true);
           setError(timedOut
             ? "Job refresh took too long. Showing the previous results."
             : "Could not refresh jobs. Showing the previous results.");
-        } else if (rawGroupsRef.current.length === 0) {
+        } else {
 			setRawGroups([]);
           setTotal(0);
 			setTotalJobs(0);
@@ -540,7 +564,7 @@ export function useJobsList(
     return () => {
       cancelled = true;
     };
-  }, [currentQueryKey, retryRevision, request, applierReady, isDebouncing, listBody, page, pageSize]);
+  }, [currentQueryKey, retryRevision, request, applierReady, isDebouncing, listBody, page, pageSize, debouncedFilters.statusTab]);
 
   useEffect(() => {
     if (!applierReady || isDebouncing) return;

@@ -267,8 +267,19 @@ async function listNative(body, context) {
 async function hydrateJobIds(ids) {
 	if (!ids.length) return new Map();
 	const db = getFirestoreDb();
-	const snapshots = await db.getAll(...ids.map((id) => db.collection(JOB_COLLECTION).doc(id)));
-	return new Map(snapshots.filter((snapshot) => snapshot.exists).map((snapshot) => [snapshot.id, decodeJob(snapshot)]));
+	const unique = [...new Set(ids.map(String))];
+	const out = new Map();
+	// Prefer ranged `in` + select over getAll so Applied/Scheduled tabs do not
+	// download full job descriptions for every card.
+	for (let offset = 0; offset < unique.length; offset += 30) {
+		const chunk = unique.slice(offset, offset + 30);
+		const snapshot = await db.collection(JOB_COLLECTION)
+			.where(FieldPath.documentId(), 'in', chunk)
+			.select(...LIST_JOB_FIELDS)
+			.get();
+		for (const document of snapshot.docs) out.set(document.id, decodeJob(document));
+	}
+	return out;
 }
 
 function algoliaQuery(body) {
@@ -386,23 +397,35 @@ async function attachCompanyCounts(jobs, isBeta) {
 	const ids = [...new Set(jobs.map((job) => String(job.companyId || '').trim()).filter(Boolean))];
 	const now = Date.now();
 	const counts = new Map();
-	await Promise.all(ids.map(async (companyId) => {
+	const missing = [];
+	for (const companyId of ids) {
 		const key = `${isBeta ? 'beta' : 'public'}:${companyId}`;
 		const cached = companyCountCache.get(key);
-		if (cached?.expiresAt > now) {
-			counts.set(companyId, cached.value);
-			return;
-		}
-		let query = marketJobs()
-			.where('titleReview.label', '==', 'APPROVED')
-			.where('companyId', '==', companyId);
-		if (!isBeta) query = query.where('extensionV2', '==', false);
-		const snapshot = await query.count().get();
-		const value = Math.max(0, Number(snapshot.data().count || 0));
-		companyCountCache.set(key, { value, expiresAt: now + COMPANY_COUNT_CACHE_MS });
-		counts.set(companyId, value);
-	}));
-	while (companyCountCache.size > 1_000) companyCountCache.delete(companyCountCache.keys().next().value);
+		if (cached?.expiresAt > now) counts.set(companyId, cached.value);
+		else missing.push(companyId);
+	}
+	// Do not block the list on N Firestore count round-trips. Uncached companies
+	// default to 1 (single-job group); a background refresh warms the cache.
+	if (missing.length) {
+		void Promise.all(missing.map(async (companyId) => {
+			try {
+				let query = marketJobs()
+					.where('titleReview.label', '==', 'APPROVED')
+					.where('companyId', '==', companyId);
+				if (!isBeta) query = query.where('extensionV2', '==', false);
+				const snapshot = await query.count().get();
+				const value = Math.max(1, Number(snapshot.data().count || 0));
+				companyCountCache.set(
+					`${isBeta ? 'beta' : 'public'}:${companyId}`,
+					{ value, expiresAt: Date.now() + COMPANY_COUNT_CACHE_MS },
+				);
+			} catch {
+				// Best-effort cache warm; list already returned.
+			}
+		})).then(() => {
+			while (companyCountCache.size > 1_000) companyCountCache.delete(companyCountCache.keys().next().value);
+		});
+	}
 	return jobs.map((job) => ({
 		...job,
 		companyMatchingCount: counts.get(String(job.companyId || '')) ?? 1,
@@ -453,12 +476,19 @@ export async function getJobStatusCountsV3(body = {}, { statusIndex = null } = {
 	};
 }
 
+function totalForTab(tab, statusCounts) {
+	if (tab === 'all') return Number(statusCounts.all || 0);
+	if (tab === 'new') return Number(statusCounts.posted || 0);
+	return Number(statusCounts[tab] || 0);
+}
+
 export async function listJobsV3(body = {}) {
 	const requestedSort = String(body.sort || 'newest');
 	if (!['newest', 'postedAt_desc'].includes(requestedSort)) {
 		throw Object.assign(new Error('Job Search supports newest sort only'), { status: 400 });
 	}
 	const limit = Math.max(1, Math.min(PAGE_LIMIT_MAX, Number(body.limit || 25)));
+	const pageNumber = Math.max(1, Number(body.page || 1));
 	const tab = requestedStatus(body);
 	const { profileId, isBeta } = await resolveViewer(body);
 	const index = await viewerIndex(profileId, tab);
@@ -475,6 +505,7 @@ export async function listJobsV3(body = {}) {
 		getJobStatusCountsV3(body, { statusIndex: index }),
 	]);
 	page.data = withCompanyCounts;
+	const totalJobs = totalForTab(tab, statusCounts);
 	return {
 		success: true,
 		data: page.data,
@@ -482,5 +513,13 @@ export async function listJobsV3(body = {}) {
 		hasMore: page.hasMore,
 		viewerStatus: Object.fromEntries(page.data.map((job) => [String(job._id), job.viewerStatus])),
 		statusCounts,
+		pagination: {
+			page: pageNumber,
+			limit,
+			total: totalJobs,
+			totalJobs,
+			totalPages: Math.max(1, Math.ceil(Math.max(0, totalJobs) / limit)),
+			unit: 'jobs',
+		},
 	};
 }
