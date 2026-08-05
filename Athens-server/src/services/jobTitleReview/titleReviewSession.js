@@ -46,7 +46,7 @@ export function invalidateTitleReviewCounts() {
 }
 
 export function pendingTitleReviewQuery() {
-	return { 'titleReview.processingState': { $in: ['pending', 'failed'] } };
+	return { 'titleReview.processingState': { $in: ['pending', 'scanning'] } };
 }
 
 export async function getTitleReviewCounts() {

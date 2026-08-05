@@ -1,4 +1,4 @@
-import { Boxes, Database, RefreshCw } from "lucide-react";
+import { Database, RefreshCw, Search } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { LiveRange } from "./LiveMetricsPanel";
 
@@ -12,22 +12,14 @@ export type DependencyMetricSeries = {
   expectedDelaySeconds?: number;
 };
 export type DependencyMetrics = {
-  redis: DependencyMetricSeries;
-  qdrant: DependencyMetricSeries;
+  "firestore-tasks": DependencyMetricSeries;
+  "algolia-sync": DependencyMetricSeries;
 };
 
 type Metric = { key: string; label: string; color: string; format: (value: number | null) => string };
 
 const number = (value: number | null) => value == null ? "—" : new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
-const percent = (value: number | null) => value == null ? "—" : `${value.toFixed(2)}%`;
-const bytes = (value: number | null) => {
-  if (value == null) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let amount = Math.max(0, value); let unit = 0;
-  while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
-  return `${amount.toFixed(amount >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
-};
-const milliseconds = (value: number | null) => value == null ? "—" : `${value.toFixed(1)} ms`;
+const seconds = (value: number | null) => value == null ? "—" : `${value.toFixed(1)} s`;
 
 const cards: Array<{
   key: keyof DependencyMetrics;
@@ -38,24 +30,17 @@ const cards: Array<{
   chart: string[];
 }> = [
   {
-    key: "redis", title: "Redis", description: "Cache and ranking acceleration", Icon: Database,
+    key: "firestore-tasks", title: "Task workers", description: "Firestore queue and lease health", Icon: Database,
     metrics: [
-      { key: "memoryBytes", label: "Memory", color: "#2563eb", format: bytes },
-      { key: "rssBytes", label: "RSS", color: "#7c3aed", format: bytes },
-      { key: "clients", label: "Clients", color: "#0891b2", format: number },
-      { key: "operationsPerSecond", label: "Operations/sec", color: "#16a34a", format: number },
-      { key: "hitRatePercent", label: "Hit rate", color: "#d97706", format: percent },
-      { key: "evictionsPerSecond", label: "Evictions/sec", color: "#dc2626", format: number },
-    ], chart: ["operationsPerSecond", "clients"],
+      { key: "oldestQueueAgeSeconds", label: "Oldest queued", color: "#2563eb", format: seconds },
+      { key: "expiredLeaseCount", label: "Expired leases", color: "#dc2626", format: number },
+    ], chart: ["oldestQueueAgeSeconds", "expiredLeaseCount"],
   },
   {
-    key: "qdrant", title: "Qdrant", description: "Vector search request health", Icon: Boxes,
+    key: "algolia-sync", title: "Algolia sync", description: "Full-text search outbox health", Icon: Search,
     metrics: [
-      { key: "requestsPerSecond", label: "Requests/sec", color: "#2563eb", format: number },
-      { key: "errorRatePercent", label: "Error rate", color: "#dc2626", format: percent },
-      { key: "p95LatencyMs", label: "p95 latency", color: "#d97706", format: milliseconds },
-      { key: "memoryBytes", label: "Memory", color: "#7c3aed", format: bytes },
-    ], chart: ["requestsPerSecond", "errorRatePercent"],
+      { key: "outboxLagSeconds", label: "Outbox lag", color: "#d97706", format: seconds },
+    ], chart: ["outboxLagSeconds"],
   },
 ];
 

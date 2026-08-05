@@ -20,7 +20,6 @@ export type JobSearchUrlState = {
   page: number;
   pageSize: (typeof JOB_SEARCH_PAGE_SIZES)[number];
   view: JobSearchView;
-  showScores: boolean;
   groupId: string;
   jobId: string;
 };
@@ -30,15 +29,10 @@ export const DEFAULT_JOB_SEARCH_URL_STATE: JobSearchUrlState = {
     ...DEFAULT_JOB_FILTERS,
     source: [],
     seniority: [],
-    scores: {
-      overall: { ...DEFAULT_JOB_FILTERS.scores.overall },
-      skill: { ...DEFAULT_JOB_FILTERS.scores.skill },
-    },
   },
   page: 1,
   pageSize: 25,
   view: "list",
-  showScores: false,
   groupId: "",
   jobId: "",
 };
@@ -52,7 +46,7 @@ const STATUS_VALUES: readonly JobStatusTab[] = [
   "scheduled",
   "declined",
 ];
-const SORT_VALUES: readonly JobSearchFilterState["sort"][] = ["matchScore", "newest", "oldest", "title"];
+const SORT_VALUES: readonly JobSearchFilterState["sort"][] = ["newest"];
 
 function oneOf<T extends string>(value: string | null, allowed: readonly T[], fallback: T): T {
   return value && allowed.includes(value as T) ? value as T : fallback;
@@ -99,12 +93,6 @@ function appendMulti(params: URLSearchParams, key: string, values: readonly stri
   for (const value of values) params.append(key, value);
 }
 
-function normalizedScoreRange(minRaw: string | null, maxRaw: string | null) {
-  const min = boundedInteger(minRaw, 0, 0, 100);
-  const max = boundedInteger(maxRaw, 100, 0, 100);
-  return min <= max ? { min, max } : { min: max, max: min };
-}
-
 export function parseJobSearchUrl(params: URLSearchParams): JobSearchUrlState {
   const source = multiParam(params, "source", JobSourceTitles);
   const seniority = multiParam(params, "seniority", JOB_SENIORITIES.filter((value) => value !== "all"));
@@ -127,18 +115,13 @@ export function parseJobSearchUrl(params: URLSearchParams): JobSearchUrlState {
       industry: oneOf(params.get("industry"), JOB_INDUSTRIES, "all"),
       postedFrom: validDate(params.get("postedFrom")),
       postedTo: validDate(params.get("postedTo")),
-      scores: {
-        overall: normalizedScoreRange(params.get("overallMin"), params.get("overallMax")),
-        skill: normalizedScoreRange(params.get("skillMin"), params.get("skillMax")),
-      },
-      sort: oneOf(params.get("sort"), SORT_VALUES, "matchScore"),
+      sort: oneOf(params.get("sort"), SORT_VALUES, "newest"),
       aiExtractedOnly: boolParam(params.get("aiExtracted")),
       includeExternalScraped: boolParam(params.get("includeExternal")),
     },
     page: boundedInteger(params.get("page"), 1, 1, Number.MAX_SAFE_INTEGER),
     pageSize,
     view: oneOf(params.get("view"), ["list", "grid"] as const, "list"),
-    showScores: boolParam(params.get("showScores")),
     groupId,
     jobId,
   };
@@ -157,17 +140,12 @@ export function serializeJobSearchUrl(state: JobSearchUrlState): URLSearchParams
   params.set("industry", filters.industry);
   params.set("postedFrom", filters.postedFrom);
   params.set("postedTo", filters.postedTo);
-  params.set("overallMin", String(filters.scores.overall.min));
-  params.set("overallMax", String(filters.scores.overall.max));
-  params.set("skillMin", String(filters.scores.skill.min));
-  params.set("skillMax", String(filters.scores.skill.max));
   params.set("sort", filters.sort);
   params.set("aiExtracted", filters.aiExtractedOnly ? "1" : "0");
   params.set("includeExternal", filters.includeExternalScraped ? "1" : "0");
   params.set("page", String(state.page));
   params.set("pageSize", String(state.pageSize));
   params.set("view", state.view);
-  params.set("showScores", state.showScores ? "1" : "0");
   params.set("group", state.groupId);
   params.set("job", state.groupId ? state.jobId : "");
   return params;
@@ -183,7 +161,7 @@ export function jobSearchFilterHistoryMode(
 ): "push" | "replace" {
   const changed = (Object.keys(previous) as (keyof JobSearchFilterState)[])
     .filter((key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
-  return changed.length > 0 && changed.every((key) => key === "jobQuery" || key === "companyQuery" || key === "scores")
+  return changed.length > 0 && changed.every((key) => key === "jobQuery" || key === "companyQuery")
     ? "replace"
     : "push";
 }
@@ -215,9 +193,6 @@ export function mergeJobSearchState(
     ? {
       ...base.filters,
       ...patch.filters,
-      scores: patch.filters.scores
-        ? { ...base.filters.scores, ...patch.filters.scores }
-        : base.filters.scores,
     }
     : base.filters;
   return parseJobSearchUrl(serializeJobSearchUrl({ ...base, ...patch, filters: nextFilters }));

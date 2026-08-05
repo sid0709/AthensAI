@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import { fetchFirebaseStorageUrl } from "../../../api/firebase";
+import { fetchBidRecordingUrl } from "../../../api/bidResults";
 
 /**
- * Resolve a Firebase Storage path to a short-lived signed URL for video playback.
+ * Resolve a bid-recording Storage path to a short-lived signed URL for playback.
+ * Uses /bid-results/recording-url (profile-scoped) — not the admin Firebase explorer.
  */
-export function useRecordingUrl(storagePath: string | null | undefined) {
+export function useRecordingUrl(
+  storagePath: string | null | undefined,
+  applierName: string | null | undefined,
+) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!storagePath) {
+    if (!storagePath || !applierName?.trim()) {
       setUrl(null);
       setError(null);
       setLoading(false);
@@ -22,7 +26,7 @@ export function useRecordingUrl(storagePath: string | null | undefined) {
     setError(null);
     setUrl(null);
 
-    void fetchFirebaseStorageUrl(storagePath)
+    void fetchBidRecordingUrl(applierName.trim(), storagePath)
       .then((res) => {
         if (!cancelled) setUrl(res.url);
       })
@@ -38,7 +42,7 @@ export function useRecordingUrl(storagePath: string | null | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [storagePath]);
+  }, [storagePath, applierName]);
 
   return { url, loading, error };
 }

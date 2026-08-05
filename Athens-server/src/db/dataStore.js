@@ -21,9 +21,6 @@ let mailUserLabelsCollection;
 let userResumesCollection;
 let resumeTemplatesCollection;
 let avalonRunsCollection;
-let jobMatchScoresCollection;
-let matchProfileStateCollection;
-let userSkillsCollection;
 let skillDictionaryCollection;
 let externalScrapedJobsCollection;
 let companiesCollection;
@@ -53,9 +50,6 @@ function bindCollections(db) {
 	userResumesCollection = db.collection('user_resumes');
 	resumeTemplatesCollection = db.collection('resume_templates');
 	avalonRunsCollection = db.collection('avalon_apply_runs');
-	jobMatchScoresCollection = db.collection('job_match_scores');
-	matchProfileStateCollection = db.collection('match_profile_state');
-	userSkillsCollection = db.collection('user_skills');
 	skillDictionaryCollection = db.collection('skill_dictionary');
 	externalScrapedJobsCollection = db.collection('external_scraped_jobs');
 	companiesCollection = db.collection('companies');
@@ -121,9 +115,6 @@ export async function closeDataStore() {
 	userResumesCollection = null;
 	resumeTemplatesCollection = null;
 	avalonRunsCollection = null;
-	jobMatchScoresCollection = null;
-	matchProfileStateCollection = null;
-	userSkillsCollection = null;
 	skillDictionaryCollection = null;
 	externalScrapedJobsCollection = null;
 	companiesCollection = null;
@@ -154,9 +145,6 @@ export {
 	userResumesCollection,
 	resumeTemplatesCollection,
 	avalonRunsCollection,
-	jobMatchScoresCollection,
-	matchProfileStateCollection,
-	userSkillsCollection,
 	skillDictionaryCollection,
 	externalScrapedJobsCollection,
 	companiesCollection,

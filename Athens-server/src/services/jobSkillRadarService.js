@@ -5,7 +5,6 @@ import {
 	userResumesCollection,
 } from '../db/dataStore.js';
 import { PROFILE_GRAPH_ID } from '../services/userKnowledgeGraph/index.js';
-import { loadProfileSkillSet } from './matching/profileSkills.js';
 import { computeCoverageScore } from './matching/coverageScore.js';
 import { normalizeJobSkills, toCanonical } from './matching/skillIndex.js';
 import { queueJobAnalysis } from '../services/jobAnalysis/index.js';
@@ -122,10 +121,6 @@ export async function buildJobResumeRank({ jobId, applierName }) {
 			const c = toCanonical(s.surfaceForm || s.name || '');
 			if (c) profileSet.add(c);
 		}
-		if (!profileSet.size) {
-			const global = await loadProfileSkillSet(name);
-			for (const g of global) profileSet.add(g);
-		}
 		const { matchScore } = computeCoverageScore(jobSkills, profileSet);
 		if (matchScore > bestScore) {
 			bestScore = matchScore;
@@ -202,7 +197,7 @@ export async function buildJobSkillRadar({
 	const resumeMeta = availableResumes.find((r) => r.resumeId === chosenResumeId) || availableResumes[0];
 
 	const userSkills = await loadUserGraphSkills(name, resumeMeta.resumeId);
-	const profileSkills = await loadProfileSkillSet(name);
+	const profileSkills = new Set();
 	for (const s of userSkills) {
 		const c = toCanonical(s.surfaceForm || s.name || '');
 		if (c) profileSkills.add(c);

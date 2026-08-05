@@ -77,7 +77,7 @@ export async function beginBidRecordingResumableUpload({
 		throw new Error(`Recording size must be between 1 and ${MAX_RECORDING_BYTES} bytes`);
 	}
 	const sha256 = String(expectedSha256 || "").trim().toLowerCase();
-	if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("A valid SHA-256 is required");
+	if (sha256 && !/^[a-f0-9]{64}$/.test(sha256)) throw new Error("A valid SHA-256 is required");
 
 	const uploadId = randomUUID();
 	const ext = extFromContentType(contentType, fileName);
@@ -94,7 +94,7 @@ export async function beginBidRecordingResumableUpload({
 				applierName,
 				jobId,
 				sessionId,
-				expectedSha256: sha256,
+				...(sha256 ? { expectedSha256: sha256 } : {}),
 			},
 		},
 	});
@@ -108,7 +108,7 @@ export async function beginBidRecordingResumableUpload({
 		storagePath,
 		contentType,
 		expectedBytes: byteCount,
-		expectedSha256: sha256,
+		expectedSha256: sha256 || null,
 		status: "pending",
 		createdAt: FieldValue.serverTimestamp(),
 		expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -146,31 +146,47 @@ export async function completeBidRecordingResumableUpload({ uploadId, uid }) {
 	const [exists] = await file.exists();
 	if (!exists) throw new Error("Storage object is not complete");
 	const [metadata] = await file.getMetadata();
-	const actual = await sha256File(file);
-	if (actual.bytes !== Number(session.expectedBytes) || actual.sha256 !== session.expectedSha256) {
+	const actualBytes = Number(metadata.size || 0);
+	if (actualBytes !== Number(session.expectedBytes)) {
 		await file.delete({ ignoreNotFound: true });
 		await ref.update({
 			status: "rejected",
-			actualBytes: actual.bytes,
-			actualSha256: actual.sha256,
+			actualBytes,
 			validatedAt: FieldValue.serverTimestamp(),
 		});
-		throw new Error("Uploaded recording failed byte-count or SHA-256 validation");
+		throw new Error("Uploaded recording failed byte-count validation");
+	}
+
+	let actualSha256 = null;
+	const expectedSha = String(session.expectedSha256 || "").trim().toLowerCase();
+	if (expectedSha) {
+		const actual = await sha256File(file);
+		if (actual.sha256 !== expectedSha) {
+			await file.delete({ ignoreNotFound: true });
+			await ref.update({
+				status: "rejected",
+				actualBytes: actual.bytes,
+				actualSha256: actual.sha256,
+				validatedAt: FieldValue.serverTimestamp(),
+			});
+			throw new Error("Uploaded recording failed SHA-256 validation");
+		}
+		actualSha256 = actual.sha256;
 	}
 
 	const completed = {
 		...session,
 		status: "completed",
-		actualBytes: actual.bytes,
-		actualSha256: actual.sha256,
+		actualBytes,
+		actualSha256,
 		contentType: metadata.contentType || session.contentType,
 		generation: String(metadata.generation || ""),
 		completedAt: new Date(),
 	};
 	await ref.set({
 		status: "completed",
-		actualBytes: actual.bytes,
-		actualSha256: actual.sha256,
+		actualBytes,
+		actualSha256,
 		generation: completed.generation,
 		completedAt: FieldValue.serverTimestamp(),
 	}, { merge: true });

@@ -1,10 +1,8 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "../../../lib/utils";
-import { alignJobScoreForDisplay } from "../../../lib/skill-match";
 import type { CompanyJobGroup, Job } from "../../../types";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
-import { useProfileMatchSkills } from "../hooks/useProfileMatchSkills";
 import { CompanyJobGroupCard } from "./CompanyJobGroupCard";
 
 type JobListViewProps = {
@@ -20,7 +18,6 @@ type JobListViewProps = {
   layout?: "list" | "grid";
   selectedIds?: Set<string>;
   onSelectJob?: (id: string, shiftKey: boolean) => void;
-  showScores?: boolean;
   bookmarkedIds?: Set<string>;
   onToggleBookmark?: (id: string) => void;
   isJobPending?: (jobId: string) => boolean;
@@ -29,7 +26,6 @@ type JobListViewProps = {
   onMarkScheduled?: (job: Job) => void;
   onMarkDeclined?: (job: Job) => void;
   onCancel?: (job: Job) => void;
-  onJobScoresUpdated?: (job: Job) => void;
   resumeStates?: Record<string, JobResumeGenerationState>;
   onGenerateResume?: (job: Job) => void;
 };
@@ -47,7 +43,6 @@ export function JobListView({
   layout = "list",
   selectedIds,
   onSelectJob,
-  showScores = true,
   bookmarkedIds,
   onToggleBookmark,
   isJobPending,
@@ -56,18 +51,10 @@ export function JobListView({
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
-  onJobScoresUpdated,
   resumeStates,
   onGenerateResume,
 }: JobListViewProps) {
-  const { matchContext } = useProfileMatchSkills();
-  const displayGroups = useMemo(
-    () => groups.map((group) => ({
-      ...group,
-      jobs: group.jobs.map((job) => alignJobScoreForDisplay(job, matchContext)),
-    })),
-    [groups, matchContext],
-  );
+  const displayGroups = useMemo(() => groups, [groups]);
   const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
   const listRef = useCallback((node: HTMLDivElement | null) => {
     setScrollElement(node?.closest<HTMLElement>("[data-page-scroll-container]") ?? null);
@@ -100,7 +87,6 @@ export function JobListView({
         onActiveJobChange={(jobId) => onActiveJobChange?.(group.companyId, jobId)}
         selectedIds={selectedIds}
         onSelectJob={onSelectJob}
-        showScores={showScores}
         bookmarkedIds={bookmarkedIds}
         onToggleBookmark={onToggleBookmark}
         isJobPending={isJobPending}
@@ -109,7 +95,6 @@ export function JobListView({
         onMarkScheduled={onMarkScheduled}
         onMarkDeclined={onMarkDeclined}
         onCancel={onCancel}
-        onJobScoresUpdated={onJobScoresUpdated}
         resumeStates={resumeStates}
         onGenerateResume={onGenerateResume}
         onLoadMore={onLoadCompanyMembers}

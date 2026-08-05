@@ -10,7 +10,6 @@ import {
 } from "./userKnowledgeGraph/index.js";
 import { mergeSkillProfiles } from "./resumeSkillMerge.js";
 import { parseSkillProfileJson } from "./resumeSkillProfile.js";
-import { invalidateRecommendationCache } from "./matching/matchingService.js";
 import { decryptAccountDoc } from "./autoBidProfileSecrets.js";
 import { updateAccountInfoById } from "./accountInfoStore.js";
 
@@ -80,7 +79,7 @@ function buildCatalogSkillListFromResumes(resumes) {
 
 /**
  * Sync the *detailed* analyzed resume skills into account_info so that
- * Bid-Monitor / recommend-resume can rank using the same signal as the
+ * Recommend-resume can rank using the same signal as the
  * Athens "Analysis" tab.
  *
  * Writes:
@@ -289,7 +288,6 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false, 
   const profileGraph = await rebuildProfileGraph(ownerName);
 
   throwIfAborted(signal);
-  invalidateRecommendationCache(ownerName);
 	await firestoreMutationLimiter.run(() => syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack));
   throwIfAborted(signal);
 

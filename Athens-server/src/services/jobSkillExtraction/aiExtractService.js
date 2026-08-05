@@ -4,17 +4,13 @@ import { jobsCollection, accountInfoCollection } from '../../db/dataStore.js';
 import { chatCompletion, resolveDefaultModel } from '../llm/llmService.js';
 import { JOB_SKILL_EXTRACTION_PROMPT } from '../../config/jobSkillExtractionPrompt.js';
 import { toCanonical } from '@nextoffer/shared/skill-normalize';
-import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../matching/skillIndex.js';
+import { normalizeJobSkills, jobSkillTokens } from '../matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
-import { USER_SKILL_CATEGORIES } from '../../config/graphAndVectorConfig.js';
+import { SKILL_CATEGORIES } from '../../config/skillCategories.js';
 import { recordJobSkillBatches } from '../skillDictionary/skillDictionaryStore.js';
-import { indexJobRankingBatch } from '../matching/jobRankingIndex.js';
 import { decryptProfileApiKeys } from '../autoBidProfileSecrets.js';
 import { isBetaTier } from '../../lib/betaTier.js';
-import {
-  firestoreMutationLimiter,
-  indexMutationLimiter,
-} from '../backgroundTasks/resourceLimits.js';
+import { firestoreMutationLimiter } from '../backgroundTasks/resourceLimits.js';
 
 function throwIfAborted(signal) {
   if (!signal?.aborted) return;
@@ -126,7 +122,7 @@ export function parseJobSkillsJson(content) {
     const name = String(item?.name || '').trim();
     if (!isConcreteSkillName(name)) continue;
     const canonical = toCanonical(name) || name.toLowerCase();
-    const category = USER_SKILL_CATEGORIES.includes(item?.category) ? item.category : 'hard';
+    const category = SKILL_CATEGORIES.includes(item?.category) ? item.category : 'hard';
     const requirement = Math.min(5, Math.max(1, Math.round(Number(item?.requirement)) || 3));
     const existingIndex = indexByCanonical.get(canonical);
     if (existingIndex != null) {
@@ -181,15 +177,6 @@ function prepareExtractedJob(job, aiSkills, extractedAt) {
     skillsNormalized,
     skillTokens,
     extractedAt,
-    rankingJob: {
-      ...job,
-      aiSkills,
-      skills: displaySkills,
-      skillsNormalized,
-      skillTokens,
-      aiSkillStatus: 'extracted',
-      aiSkillExtractedAt: extractedAt,
-    },
   };
 }
 
@@ -211,7 +198,6 @@ async function persistExtractedJobs(rows, { signal } = {}) {
             aiSkillsHash: descriptionHash(row.job),
             aiSkillExtractedAt: extractedAt,
             aiSkillError: null,
-            matchScoreStatus: 'pending',
           },
           $unset: { aiSkillAttempts: '', aiSkillClaimedAt: '', aiSkillSessionId: '' },
         },
@@ -227,16 +213,7 @@ async function persistExtractedJobs(rows, { signal } = {}) {
   });
 
   throwIfAborted(signal);
-  await Promise.all([
-    Promise.all(
-      prepared.map((row) => indexMutationLimiter.run(async () => {
-        throwIfAborted(signal);
-        return indexJobInRedis(row.jobId, row.skillsNormalized, row.skillTokens);
-      })),
-    ).catch(() => {}),
-    indexMutationLimiter.run(() => recordJobSkillBatches(prepared.map((row) => row.aiSkills))).catch(() => {}),
-    indexMutationLimiter.run(() => indexJobRankingBatch(prepared.map((row) => row.rankingJob), { wait: true })).catch(() => {}),
-  ]);
+  await recordJobSkillBatches(prepared.map((row) => row.aiSkills));
   throwIfAborted(signal);
   return prepared;
 }

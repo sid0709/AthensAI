@@ -90,7 +90,7 @@ export async function analyzeResumeMatch(req, res) {
     }
 
     const profile = acc.autoBidProfile || {};
-    // Prefer the detailed analyzed-catalog (used by recommend-resume / Bid-Monitor),
+    // Prefer the detailed analyzed-catalog (used by recommend-resume),
     // but fall back to the legacy minimized resumeCatalog if needed.
     const catalog =
       acc.resumeAnalysisCatalog && typeof acc.resumeAnalysisCatalog === "object"

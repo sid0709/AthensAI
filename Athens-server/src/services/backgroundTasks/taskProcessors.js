@@ -16,9 +16,9 @@ import {
 import { removeJobRecords } from '../../controllers/jobController.js';
 import { runSkillExtractionTask } from '../jobSkillExtraction/extractSession.js';
 import { runTitleReviewTask } from '../jobTitleReview/titleReviewSession.js';
+import { syncJobStatusVisibility } from '../jobStatusProjectionService.js';
 import { analyzeJobRecord } from '../jobAnalysis/index.js';
 import { analyzeResumeSkills } from '../resumeSkillAnalysisService.js';
-import { runJobEmbeddingTask } from '../embeddings/jobEmbeddingWorker.js';
 import { resolveExtractionAuth } from '../jobSkillExtraction/aiExtractService.js';
 import {
 	extractAndPersistExternalJob,
@@ -84,7 +84,7 @@ async function loadResumeJob(jobId) {
 	return externalScrapedJobsCollection?.findOne({ _id: id }, { projection }) || null;
 }
 
-function redisSafeStep(step) {
+function serializableStep(step) {
 	if (!step || typeof step !== 'object') return null;
 	const plannedSteps = Array.isArray(step.steps)
 		? step.steps.slice(0, 100).map((planned, offset) => ({
@@ -202,7 +202,7 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 	};
 	try {
 		if (Array.isArray(body.steps) && body.steps.length) {
-			const safePlan = redisSafeStep({ phase: 'pipeline-ready', steps: body.steps });
+			const safePlan = serializableStep({ phase: 'pipeline-ready', steps: body.steps });
 			emitStep(safePlan, 'Preparing résumé generation…');
 		}
 		const prep = await prepareGeneration(body);
@@ -225,7 +225,7 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 				reasoningEffort: body.reasoningEffort,
 				signal,
 			}, (step) => {
-				const safeStep = redisSafeStep(step);
+				const safeStep = serializableStep(step);
 				if (
 					step?.phase === 'step-done'
 					&& step?.kind === 'final'
@@ -258,7 +258,7 @@ async function runStoredResumeGeneration(task, inputId, signal, onStep) {
 			{
 				signal,
 				onQueued: () => emitStep(
-					redisSafeStep({ phase: 'queued', name: 'Waiting for generation slot' }),
+					serializableStep({ phase: 'queued', name: 'Waiting for generation slot' }),
 					'Waiting for generation slot…',
 				),
 			},
@@ -390,7 +390,7 @@ async function runResumeGeneration(task, signal) {
 					jobId: itemId,
 					jobDescription: description,
 					forceRegenerate: task.payload?.forceRegenerate === true,
-					// Chromium is always dispatched through the dedicated BullMQ PDF lane.
+					// Chromium is always dispatched through the dedicated Firestore PDF lane.
 					deferPdf: true,
 					signal,
 					onStep: (step) => {
@@ -406,7 +406,7 @@ async function runResumeGeneration(task, signal) {
 							taskId: task.id,
 							itemId,
 							item: items[itemId],
-							step: redisSafeStep(step),
+							step: serializableStep(step),
 						});
 						void reportProgress();
 					},
@@ -648,6 +648,25 @@ async function runJobRemoval(task, signal) {
 	};
 }
 
+async function runJobStatusVisibility(task, signal) {
+	throwIfAborted(signal);
+	const recordIds = Array.isArray(task.payload?.recordIds) ? task.payload.recordIds : [];
+	const result = await syncJobStatusVisibility(recordIds);
+	throwIfAborted(signal);
+	return {
+		progress: {
+			total: recordIds.length,
+			completed: recordIds.length,
+			failed: 0,
+			cancelled: 0,
+			active: 0,
+			remaining: 0,
+			phase: 'done',
+		},
+		result,
+	};
+}
+
 async function runJobAnalysis(task, signal) {
 	const reporter = createTaskReporter(task.id);
 	const recordIds = Array.isArray(task.payload?.recordIds) ? task.payload.recordIds : [];
@@ -789,46 +808,6 @@ async function runResumeSkillAnalysis(task, signal) {
 			phase: 'done',
 		},
 		result: { analyzedResumeIds, failedResumeIds },
-	};
-}
-
-async function runJobEmbedding(task, signal) {
-	const reporter = createTaskReporter(task.id);
-	const session = await runJobEmbeddingTask({
-		limit: task.payload?.limit,
-		signal,
-		onProgress: (progress) => reporter.progress({
-			total: progress.total,
-			completed: progress.processed,
-			failed: progress.failed,
-			cancelled: progress.cancelled,
-			active: progress.active,
-			remaining: progress.remaining,
-			embedded: progress.embedded,
-			skipped: progress.skipped,
-			phase: progress.phase,
-			lastJob: progress.lastJob,
-			lastSkipReason: progress.lastSkipReason,
-		}),
-	});
-	await reporter.flush();
-	return {
-		progress: {
-			total: session.total,
-			completed: session.processed,
-			failed: session.failed,
-			cancelled: session.cancelled,
-			active: 0,
-			remaining: session.remaining,
-			embedded: session.embedded,
-			skipped: session.skipped,
-			phase: session.phase,
-		},
-		result: {
-			embedded: session.embedded,
-			skipped: session.skipped,
-			failed: session.failed,
-		},
 	};
 }
 
@@ -1089,12 +1068,12 @@ export async function processBackgroundTask(task, signal) {
 			return runResumeRemoval(task, signal);
 		case BACKGROUND_TASK_TYPES.JOB_REMOVAL:
 			return runJobRemoval(task, signal);
+		case BACKGROUND_TASK_TYPES.JOB_STATUS_VISIBILITY:
+			return runJobStatusVisibility(task, signal);
 		case BACKGROUND_TASK_TYPES.JOB_ANALYSIS:
 			return runJobAnalysis(task, signal);
 		case BACKGROUND_TASK_TYPES.RESUME_SKILL_ANALYSIS:
 			return runResumeSkillAnalysis(task, signal);
-		case BACKGROUND_TASK_TYPES.JOB_EMBEDDING:
-			return runJobEmbedding(task, signal);
 		case BACKGROUND_TASK_TYPES.SKILL_ENRICHMENT:
 			return runSkillEnrichment(task, signal);
 		case BACKGROUND_TASK_TYPES.MAIL_AI_LABEL:

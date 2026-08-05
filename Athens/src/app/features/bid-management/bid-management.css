@@ -1729,6 +1729,10 @@ body[data-bm-player-open="1"] [data-slot="sheet-overlay"] {
   margin-top: 10px;
 }
 
+.bm-detail-file-names--stack {
+  grid-template-columns: 1fr;
+}
+
 .bm-detail-file-names > div {
   min-width: 0;
   padding: 7px 9px;

@@ -93,20 +93,32 @@ export async function fetchAppliedJobDocs(
 ): Promise<Record<string, unknown>[]> {
   if (!applierName) return [];
   try {
-    const res = await fetch(`${API_BASE}/jobs/list`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        applierName,
-        applied: true,
-        sort: "postedAt_desc",
-        page: 1,
-        limit,
-      }),
-    });
-    if (!res.ok) return [];
-    const body = (await res.json()) as { success?: boolean; data?: Record<string, unknown>[] };
-    return body.success && Array.isArray(body.data) ? body.data : [];
+		const documents: Record<string, unknown>[] = [];
+		let cursor: string | null = null;
+		do {
+			const res = await fetch(`${API_BASE}/jobs/list/v3`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					applierName,
+					applied: true,
+					sort: "newest",
+					limit: Math.min(100, limit - documents.length),
+					...(cursor ? { cursor } : {}),
+				}),
+			});
+			if (!res.ok) break;
+			const body = (await res.json()) as {
+				success?: boolean;
+				data?: Record<string, unknown>[];
+				nextCursor?: string | null;
+				hasMore?: boolean;
+			};
+			if (!body.success || !Array.isArray(body.data)) break;
+			documents.push(...body.data);
+			cursor = body.hasMore ? body.nextCursor || null : null;
+		} while (cursor && documents.length < limit);
+		return documents.slice(0, limit);
   } catch {
     return [];
   }

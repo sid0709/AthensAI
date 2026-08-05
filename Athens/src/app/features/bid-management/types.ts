@@ -106,13 +106,26 @@ export type BidResult = {
   recommendedResume: BidResumeInfo | null;
   /** Résumé actually used on submission (submitted / reviewed / rejected). */
   submissionResume: BidResumeInfo | null;
+  /** Primary / latest recording (backward compatible). */
   recording: {
     storagePath: string;
     contentType: string;
     sizeBytes: number;
     /** Optional direct URL; live tickets resolve storagePath via signed URL. */
     previewUrl?: string | null;
+    sessionId?: string | null;
   } | null;
+  /** All tab clips uploaded for this bid (multi-tab apply flows). */
+  recordings?: Array<{
+    storagePath: string;
+    contentType: string;
+    sizeBytes: number;
+    sessionId?: string | null;
+    durationSec?: number | null;
+    recordedStartAt?: string | null;
+    recordedEndAt?: string | null;
+    uploadedAt?: string | null;
+  }>;
   notes: string | null;
   rejectReason?: string | null;
   rejectSource?: RejectSource | null;
@@ -128,9 +141,23 @@ export type BidResult = {
   resumeCleanedName?: string | null;
   resumeRenamed?: boolean;
   resumeMismatch?: boolean;
-  /** JD page summary from Bid-Monitor Analyze. */
+  /** Full résumé rename history across tabs / uploads. */
+  resumeAudits?: Array<{
+    originalName: string;
+    expectedName?: string | null;
+    cleanedName?: string | null;
+    renamed?: boolean;
+    mismatch?: boolean;
+    sessionId?: string | null;
+    source?: string | null;
+    fileSize?: number | null;
+    mimeType?: string | null;
+    auditKey?: string | null;
+    recordedAt?: string | null;
+  }>;
+  /** JD page summary from Athens Lens Ask AI. */
   analysisSummary?: string | null;
-  /** Latest complete answer set returned by Bid-Monitor Analyze. */
+  /** Latest complete answer set returned by Athens Lens Ask AI. */
   analysisFormAnswers?: BidFormAnswer[];
   analysisMode?: BidAiMode | null;
   analysisPageUrl?: string | null;
@@ -142,7 +169,7 @@ export type BidResult = {
   flagAnalysisUsage?: BidAiCallUsage | null;
   flagAnalysisRequestId?: string | null;
   flagAnalyzedAt?: string | null;
-  /** Library stack recommended by Bid-Monitor Recommend resume. */
+  /** Library stack recommended during bidding (Athens Lens). */
   recommendedResumeStack?: string | null;
   recommendedResumeReason?: string | null;
   useCustomizedResume?: boolean;

@@ -48,7 +48,6 @@ export function normalizeBackgroundTaskPayload(type, raw = {}) {
 		case BACKGROUND_TASK_TYPES.TITLE_REVIEW:
 		case BACKGROUND_TASK_TYPES.SKILL_EXTRACTION:
 		case BACKGROUND_TASK_TYPES.SKILL_ENRICHMENT:
-		case BACKGROUND_TASK_TYPES.JOB_EMBEDDING:
 			return {
 				...(positiveLimit(payload.limit) ? { limit: positiveLimit(payload.limit) } : {}),
 				...(payload.mode === 'fast' || payload.mode === 'smart' ? { mode: payload.mode } : {}),
@@ -68,7 +67,8 @@ export function normalizeBackgroundTaskPayload(type, raw = {}) {
 			return { forceAll: payload.forceAll === true };
 		case BACKGROUND_TASK_TYPES.JOB_ANALYSIS:
 		case BACKGROUND_TASK_TYPES.JOB_REMOVAL:
-		case BACKGROUND_TASK_TYPES.RESUME_REMOVAL: {
+		case BACKGROUND_TASK_TYPES.RESUME_REMOVAL:
+		case BACKGROUND_TASK_TYPES.JOB_STATUS_VISIBILITY: {
 			const recordIds = ids(payload.recordIds || payload.jobIds || payload.resumeIds);
 			if (!recordIds.length) throw Object.assign(new Error('payload.recordIds is required'), { status: 400 });
 			return { recordIds };

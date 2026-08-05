@@ -10,7 +10,7 @@ import {
   Sparkles,
   Wifi,
 } from "lucide-react";
-import { Av, Badge, Score } from "../../../components/ui";
+import { Av, Badge } from "../../../components/ui";
 import { Button } from "../../../components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { cn } from "../../../lib/utils";
@@ -53,7 +53,6 @@ type JobCardProps = {
   className?: string;
   selected?: boolean;
   onSelect?: (shiftKey: boolean) => void;
-  showScores?: boolean;
   bookmarked?: boolean;
   onToggleBookmark?: () => void;
   statusPending?: boolean;
@@ -62,7 +61,6 @@ type JobCardProps = {
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
-  onJobScoresUpdated?: (job: Job) => void;
   resumeState?: JobResumeGenerationState;
   onGenerateResume?: () => void;
 };
@@ -88,16 +86,6 @@ function InfoChip({ children }: { children: React.ReactNode }) {
   return <Badge v="subtle">{children}</Badge>;
 }
 
-function MiniScore({ label, value, hint }: { label: string; value: number; hint?: string }) {
-  return (
-    <div className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg bg-secondary/60 border border-border/60 min-w-[52px]">
-      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
-      <span className="text-xs font-bold text-foreground tabular-nums">{value}</span>
-      {hint ? <span className="text-[9px] text-muted-foreground">{hint}</span> : null}
-    </div>
-  );
-}
-
 const MAX_SKILL_CHIPS = 8;
 
 function analyzedSkillLabels(job: Job): string[] {
@@ -114,7 +102,6 @@ export function JobCard({
   className,
   selected,
   onSelect,
-  showScores = true,
   bookmarked = false,
   onToggleBookmark,
   statusPending = false,
@@ -123,7 +110,6 @@ export function JobCard({
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
-  onJobScoresUpdated,
   resumeState,
   onGenerateResume,
 }: JobCardProps) {
@@ -189,26 +175,11 @@ export function JobCard({
                 </div>
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
-                <Score score={job.scores.skill} />
                 <Badge v={STATUS_VARIANTS[job.status]}>{STATUS_LABELS[job.status]}</Badge>
               </div>
             </div>
           </div>
         </div>
-
-        {showScores && (
-          <div className="flex flex-wrap gap-2">
-            <MiniScore
-              label="Skill"
-              value={job.scores.skill}
-              hint={
-                job.scores.skillsRequired
-                  ? `${job.scores.skillsCovered ?? 0}/${job.scores.skillsRequired} skills`
-                  : undefined
-              }
-            />
-          </div>
-        )}
 
         {visibleSkills.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
@@ -334,7 +305,6 @@ export function JobCard({
         onMarkScheduled={() => onMarkScheduled?.()}
         onMarkDeclined={() => onMarkDeclined?.()}
         onCancel={() => onCancel?.()}
-        onJobScoresUpdated={onJobScoresUpdated}
       />
       ) : null}
 

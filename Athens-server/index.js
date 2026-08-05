@@ -11,15 +11,12 @@ import express from "express";
 import cors from "cors";
 
 import { initDataStore, closeDataStore, getDataStore } from "./src/db/dataStore.js";
-import { initRedis, closeRedis, isRedisReady } from "./src/db/redis.js";
 import { loadCanonicalSkillDictionary } from "./src/services/matching/canonicalSkillDictionary.js";
 import {
 	closeExtensionScraperSocket,
 	initExtensionScraperSocket,
 } from "./src/services/extensionScraperSocket.js";
-import { startMatchScoreWorker, stopMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 import { startLocalSearchOutboxWorker, stopLocalSearchOutboxWorker } from "./src/services/search/localOutboxWorker.js";
-import { startJobStatusOutboxWorker, stopJobStatusOutboxWorker } from "./src/services/jobStatusOutboxWorker.js";
 import { shutdownPool as shutdownImapPool } from "./src/services/mail/imapPool.js";
 import { shutdownPdfPool } from "./src/services/pdf/pdfRenderPool.js";
 import statusRoutes from "./src/routes/statusRoutes.js";
@@ -33,20 +30,7 @@ import {
 } from "./src/services/monitoring/metrics.js";
 import { startMonitoringLoop } from "./src/services/monitoring/monitorLoop.js";
 import { markForegroundActivity } from "./src/services/runtimeLoad.js";
-import { initJobRankingCollection, initQdrantCollections } from "./src/services/vectorStore/qdrantClient.js";
-import {
-	isQueryTimeRankingEnabled,
-	isQueryTimeRankingIndexEnabled,
-} from "./src/config/graphAndVectorConfig.js";
-import { shutdownRankingPool, warmRankingPool } from "./src/services/matching/exactRerankPool.js";
 import { cleanupExistingJobIdentityDuplicates } from "./src/services/jobIdentityCleanup.js";
-import {
-	getJobListReadModelState,
-	initJobListCatalogSnapshot,
-	initJobListReadModel,
-	isJobListV2Enabled,
-} from "./src/services/jobListReadModelService.js";
-import { warmTitleReviewReadCache } from "./src/services/jobTitleReview/titleReviewSession.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -56,7 +40,6 @@ import reportRoutes from "./src/routes/reportRoutes.js";
 import accountInfoRoutes from "./src/routes/accountInfoRoutes.js";
 import foxRoutes from "./src/routes/foxRoutes.js";
 import ruleRoutes from "./src/routes/ruleRoutes.js";
-import vendorMonitorRoutes from "./src/routes/vendorMonitorRoutes.js";
 import mailRoutes from "./src/routes/mailRoutes.js";
 import settingsRoutes from "./src/routes/settingsRoutes.js";
 import notionRoutes from "./src/routes/notionRoutes.js";
@@ -65,8 +48,8 @@ import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
 import firebaseRoutes from "./src/routes/firebaseRoutes.js";
 import bidResultsRoutes from "./src/routes/bidResultsRoutes.js";
-import jobAnalyzeRoutes from "./src/routes/jobAnalyzeRoutes.js";
 import backgroundTaskRoutes from "./src/routes/backgroundTaskRoutes.js";
+import athensLensRoutes from "./src/routes/athensLensRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 import { requireFirebaseAuth } from "./src/middleware/firebaseAuth.js";
 import internalTaskRoutes from "./src/routes/internalTaskRoutes.js";
@@ -133,12 +116,6 @@ async function runStartupStep(label, operation) {
 	}
 }
 
-function isCompanyGroupingEnabled() {
-	return !["0", "false", "no", "off"].includes(
-		String(process.env.JOB_COMPANY_GROUPING_ENABLED ?? "true").trim().toLowerCase(),
-	);
-}
-
 async function cleanupHistoricalJobDuplicates() {
 	const result = await cleanupExistingJobIdentityDuplicates();
 	if (!result.alreadyComplete) {
@@ -182,11 +159,7 @@ function createApp() {
 		if (!databaseReady || !getDataStore()) return res.status(503).json({ ok: false, databaseReady: false });
 		try {
 			await getDataStore().command({ ping: 1 });
-			const jobListReadModel = getJobListReadModelState();
-			if (jobListReadModel.enabled && !jobListReadModel.ready) {
-				return res.status(503).json({ ok: false, databaseReady: true, jobListReadModel });
-			}
-			return res.json({ ok: true, databaseReady: true, jobListReadModel });
+			return res.json({ ok: true, databaseReady: true });
 		} catch {
 			return res.status(503).json({ ok: false, databaseReady: false, error: "database unavailable" });
 		}
@@ -203,6 +176,8 @@ function createApp() {
 		});
 	});
 	app.use("/internal/tasks", internalTaskRoutes);
+	// Athens Lens uses a vendor-password session boundary, separate from Firebase owner auth.
+	app.use("/api", athensLensRoutes);
 
 	app.use(requireFirebaseAuth);
 	app.use(requireRoleScope);
@@ -216,7 +191,6 @@ function createApp() {
 	app.use("/api", accountInfoRoutes);
 	app.use("/api", foxRoutes);
 	app.use("/api", ruleRoutes);
-	app.use("/api", vendorMonitorRoutes);
 	app.use("/api", mailRoutes);
 	app.use("/api", settingsRoutes);
 	app.use("/api", notionRoutes);
@@ -225,7 +199,6 @@ function createApp() {
 	app.use("/api", aiUsageRoutes);
 	app.use("/api", firebaseRoutes);
 	app.use("/api", bidResultsRoutes);
-	app.use("/api", jobAnalyzeRoutes);
 	app.use("/api", backgroundTaskRoutes);
 	app.use("/api", statusRoutes);
 	app.use("/api", statusAdminRoutes);
@@ -255,24 +228,14 @@ function createApp() {
 async function startBackgroundWorkers() {
 	const startupStartedAt = Date.now();
 	await runStartupStep("Firestore connection and job-identity maintenance", () => initDataStore());
-	const rankingIndexNeeded = isQueryTimeRankingIndexEnabled() || isCompanyGroupingEnabled() || isJobListV2Enabled();
-	await runStartupStep("Redis connection", () => initRedis({ force: true }));
-	if (rankingIndexNeeded) {
-		await runStartupStep("Qdrant collections", () => initQdrantCollections());
-		await runStartupStep("Qdrant ranking indexes", () => initJobRankingCollection());
-	}
-	if (isJobListV2Enabled()) {
-		await runStartupStep("Job-list catalog snapshot", () => initJobListCatalogSnapshot());
-	}
 	databaseReady = true;
 	console.log(`[startup] background services ready (${formatStartupDuration(Date.now() - startupStartedAt)} total)`);
+	await runStartupStep("Canonical skill dictionary", () => loadCanonicalSkillDictionary());
 	void cleanupHistoricalJobDuplicates().catch((error) => {
 		console.error("[job-identity] historical cleanup failed:", error?.message || error);
 	});
 	if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
-		if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 		startLocalSearchOutboxWorker();
-		startJobStatusOutboxWorker();
 	}
 	console.log(`[athens] primary background workers started (pid ${process.pid})`);
 }
@@ -296,22 +259,9 @@ async function startHttpWorker({ clustered }) {
 	});
 
 	await runStartupStep("Firestore connection and job-identity maintenance", () => initDataStore());
-	const needsJobRankingIndex = isQueryTimeRankingIndexEnabled() || isJobListV2Enabled();
-	await runStartupStep("Redis connection", () => initRedis({ force: true }));
-	if (needsJobRankingIndex) {
-		await runStartupStep("Qdrant collections", () => initQdrantCollections());
-		const rankingReady = await runStartupStep("Qdrant ranking indexes", () => initJobRankingCollection());
-		if (rankingReady && isRedisReady()) {
-			await runStartupStep("Canonical skill dictionary", () => loadCanonicalSkillDictionary());
-			await runStartupStep("Ranking worker pool", () => warmRankingPool());
-		}
-	}
-	if (isJobListV2Enabled()) {
-		await runStartupStep("Job-list read model and profile caches", () => initJobListReadModel());
-	}
-	await runStartupStep("Title-review first-page cache", () => warmTitleReviewReadCache());
 	databaseReady = true;
 	console.log(`[startup] API ready (${formatStartupDuration(Date.now() - startupStartedAt)} total)`);
+	await runStartupStep("Canonical skill dictionary", () => loadCanonicalSkillDictionary());
 	if (!clustered) {
 		startAggregateMetricsServer();
 		void cleanupHistoricalJobDuplicates().catch((error) => {
@@ -331,16 +281,12 @@ async function startHttpWorker({ clustered }) {
 			stopEventLoopMetrics();
 			await closeExtensionScraperSocket();
 			if (!clustered) {
-				stopMatchScoreWorker();
 				stopLocalSearchOutboxWorker();
-				stopJobStatusOutboxWorker();
 			}
 			if (server.listening) await new Promise((resolve) => server.close(() => resolve()));
 			await shutdownPdfPool();
 			await shutdownImapPool();
-			await shutdownRankingPool();
 			if (!clustered) await stopAggregateMetricsServer();
-			await closeRedis();
 			await closeDataStore();
 		} catch (err) {
 			console.error(`[athens] worker shutdown error:`, err.message);
@@ -381,9 +327,7 @@ async function startPrimary() {
 		if (shuttingDown) return;
 		shuttingDown = true;
 		console.log(`[athens] primary ${signal} — stopping workers`);
-		stopMatchScoreWorker();
 		stopLocalSearchOutboxWorker();
-		stopJobStatusOutboxWorker();
 		for (const id of Object.keys(cluster.workers || {})) {
 			cluster.workers[id]?.process.kill("SIGTERM");
 		}
@@ -392,7 +336,6 @@ async function startPrimary() {
 		try {
 			await shutdownImapPool();
 			await stopAggregateMetricsServer();
-			await closeRedis();
 			await closeDataStore();
 		} catch (err) {
 			console.error(`[athens] primary shutdown error:`, err.message);
@@ -415,9 +358,7 @@ async function main() {
 	if (!clustered) {
 		// Single process also owns background workers (cluster primary runs them instead).
 		if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") {
-			if (!isQueryTimeRankingEnabled()) startMatchScoreWorker();
 			startLocalSearchOutboxWorker();
-			startJobStatusOutboxWorker();
 		}
 	}
 }

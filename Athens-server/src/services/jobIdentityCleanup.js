@@ -2,11 +2,7 @@ import {
 	jobIdentityRegistryCollection,
 	jobsCollection,
 } from "../db/dataStore.js";
-import { removeJobEmbedding } from "./embeddings/embeddingIngest.js";
 import { invalidateLiveProjectedStatusCount } from "./jobStatusProjectionService.js";
-import { deleteScoresForJobs } from "./matching/matchScoreStore.js";
-import { removeJobsFromRanking } from "./matching/jobRankingIndex.js";
-import { removeJobFromRedisIndex } from "./matching/skillIndex.js";
 import { selectExistingJobIdentityDuplicates } from "./jobIdentityDedupe.js";
 import { randomUUID } from "node:crypto";
 
@@ -67,21 +63,6 @@ async function refreshCleanupLease(registryCollection, token) {
 	);
 }
 
-async function runLimited(values, limit, task) {
-	let next = 0;
-	async function worker() {
-		for (;;) {
-			const index = next;
-			next += 1;
-			if (index >= values.length) return;
-			await task(values[index]);
-		}
-	}
-	await Promise.all(
-		Array.from({ length: Math.min(limit, values.length) }, () => worker()),
-	);
-}
-
 /**
  * One-time destructive migration for pre-policy data. Jobs are grouped by the
  * same normalized company/title identity as live ingest; only the newest row
@@ -90,10 +71,6 @@ async function runLimited(values, limit, task) {
 export async function cleanupExistingJobIdentityDuplicates({
 	marketCollection = jobsCollection,
 	registryCollection = jobIdentityRegistryCollection,
-	deleteScores = deleteScoresForJobs,
-	removeRanking = removeJobsFromRanking,
-	removeSkillIndex = removeJobFromRedisIndex,
-	removeEmbedding = removeJobEmbedding,
 	invalidateStatusCounts = invalidateLiveProjectedStatusCount,
 } = {}) {
 	if (!marketCollection || !registryCollection) {
@@ -143,16 +120,6 @@ export async function cleanupExistingJobIdentityDuplicates({
 			const chunk = duplicates.slice(offset, offset + CLEANUP_CHUNK_SIZE);
 			const ids = chunk.map((job) => job._id);
 			await refreshCleanupLease(registryCollection, lease.token);
-			// Firestore supports at most 30 values in an `in` query. Keep score
-			// cleanup native-indexed instead of falling back to a collection scan.
-			for (let scoreOffset = 0; scoreOffset < ids.length; scoreOffset += 25) {
-				await deleteScores(ids.slice(scoreOffset, scoreOffset + 25));
-				await refreshCleanupLease(registryCollection, lease.token);
-			}
-			await removeRanking(ids);
-			await refreshCleanupLease(registryCollection, lease.token);
-			await runLimited(ids, 10, removeSkillIndex);
-			await runLimited(ids, 10, removeEmbedding);
 			if (typeof marketCollection.bulkDeleteByIds === "function") {
 				await marketCollection.bulkDeleteByIds(ids);
 			} else {

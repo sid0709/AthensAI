@@ -187,6 +187,175 @@ export async function fetchRecentEnvelopes(email, password, count, applierName) 
 	});
 }
 
+/**
+ * Fetch only the inexpensive fields needed to paint the Athens Lens inbox.
+ * Message sources and MIME parsing are deliberately deferred until after the
+ * list is visible.
+ */
+export async function fetchRecentInboxEnvelopes(email, password, count = 15) {
+	return withMailboxPath(email, password, 'INBOX', async (client) => {
+		const total = client.mailbox.exists ?? 0;
+		if (total === 0) return [];
+
+		const start = Math.max(1, total - count + 1);
+		const messages = [];
+		for await (const message of client.fetch(`${start}:${total}`, {
+			envelope: true,
+			flags: true,
+			uid: true,
+		})) {
+			const from = message.envelope?.from?.[0];
+			messages.push({
+				uid: message.uid,
+				from: from?.address || '',
+				fromName: from?.name || message.envelope?.from?.[0]?.address || '',
+				subject: message.envelope?.subject || '',
+				date: message.envelope?.date ?? null,
+				seen: message.flags?.has('\\Seen') ?? false,
+			});
+		}
+
+		return messages.sort((left, right) =>
+			new Date(right.date || 0).getTime() - new Date(left.date || 0).getTime(),
+		).slice(0, count);
+	});
+}
+
+/**
+ * Page envelopes from a Gmail label mailbox (labels are IMAP folders).
+ * Newest-first; page 1 is the latest pageSize messages.
+ */
+export async function fetchLabelMailboxEnvelopes(
+	email,
+	password,
+	mailboxPath,
+	{ page = 1, pageSize = 15 } = {},
+) {
+	const path = String(mailboxPath || '').trim();
+	if (!path) throw new Error('mailboxPath is required');
+	return withMailboxPath(email, password, path, async (client) => {
+		const total = client.mailbox.exists ?? 0;
+		if (total === 0) return { messages: [], total: 0, hasMore: false };
+
+		const size = Math.min(Math.max(Number(pageSize) || 15, 1), 50);
+		const pageNumber = Math.max(1, Number(page) || 1);
+		const end = total - (pageNumber - 1) * size;
+		const start = Math.max(1, end - size + 1);
+		if (end < 1) return { messages: [], total, hasMore: false };
+
+		const messages = [];
+		for await (const message of client.fetch(`${start}:${end}`, {
+			envelope: true,
+			flags: true,
+			uid: true,
+		})) {
+			const from = message.envelope?.from?.[0];
+			messages.push({
+				uid: message.uid,
+				from: from?.address || '',
+				fromName: from?.name || from?.address || '',
+				subject: message.envelope?.subject || '',
+				date: message.envelope?.date ?? null,
+				seen: message.flags?.has('\\Seen') ?? false,
+			});
+		}
+
+		messages.sort((left, right) =>
+			new Date(right.date || 0).getTime() - new Date(left.date || 0).getTime(),
+		);
+		return {
+			messages,
+			total,
+			hasMore: start > 1,
+		};
+	});
+}
+
+async function parseInboxSource(message) {
+	if (!message?.source) return null;
+	try {
+		const parsed = await simpleParser(message.source);
+		const from = parsed.from?.value?.[0];
+		const textBody = parsed.text?.trim() || stripHtml(parsed.html ?? '');
+		return {
+			uid: message.uid,
+			from: from?.address || '',
+			fromName: from?.name || parsed.from?.text || '',
+			subject: parsed.subject || '',
+			date: parsed.date ?? message.envelope?.date ?? null,
+			bodyText: textBody || '',
+			bodyHtml: extractHtmlBody(parsed) || '',
+			seen: message.flags?.has('\\Seen') ?? false,
+		};
+	} catch {
+		return null;
+	}
+}
+
+async function readStreamText(stream) {
+	const chunks = [];
+	for await (const chunk of stream || []) chunks.push(Buffer.from(chunk));
+	return Buffer.concat(chunks).toString('utf-8').trim();
+}
+
+async function fetchInboxBodyByUid(email, password, uid, maxBytes, mailboxPath = 'INBOX') {
+	return withMailboxPath(email, password, mailboxPath, async (client) => {
+		const meta = await client.fetchOne(uid, {
+			bodyStructure: true,
+			envelope: true,
+			flags: true,
+			uid: true,
+		}, { uid: true });
+		if (!meta) return null;
+
+		const plainPart = findTextBodyPart(meta.bodyStructure, false);
+		const htmlPart = plainPart ? null : findTextBodyPart(meta.bodyStructure, true);
+		const partNode = plainPart || htmlPart;
+		let bodyText = '';
+		if (partNode?.part) {
+			const part = partNode.part === '1' && !meta.bodyStructure?.childNodes ? 'TEXT' : partNode.part;
+			const download = await client.download(uid, part, { uid: true, maxBytes });
+			bodyText = await readStreamText(download?.content);
+			if (htmlPart && !plainPart) bodyText = stripHtml(bodyText);
+		} else {
+			// Rare malformed MIME messages without a text part use the compatibility parser.
+			const source = await client.fetchOne(uid, { source: true, uid: true }, { uid: true });
+			const parsed = await parseInboxSource({ ...source, envelope: meta.envelope, flags: meta.flags });
+			bodyText = parsed?.bodyText || '';
+		}
+
+		const from = meta.envelope?.from?.[0];
+		return {
+			uid: meta.uid,
+			from: from?.address || '',
+			fromName: from?.name || from?.address || '',
+			subject: meta.envelope?.subject || '',
+			date: meta.envelope?.date ?? null,
+			bodyText,
+			bodyHtml: '',
+			seen: meta.flags?.has('\\Seen') ?? false,
+		};
+	});
+}
+
+/** Fetch only decoded text MIME parts across pooled connections, never attachments. */
+export async function fetchInboxBodiesByUid(
+	email,
+	password,
+	uids = [],
+	{ maxBytes = 100_000, mailboxPath = 'INBOX' } = {},
+) {
+	const requested = [...new Set((Array.isArray(uids) ? uids : [])
+		.map(Number)
+		.filter((uid) => Number.isSafeInteger(uid) && uid > 0))];
+	if (!requested.length) return [];
+
+	const results = await Promise.allSettled(
+		requested.map((uid) => fetchInboxBodyByUid(email, password, uid, maxBytes, mailboxPath)),
+	);
+	return results.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
+}
+
 export function filterExactUnlabeledDocs(docs) {
 	return (docs || []).filter((doc) => extractCustomLabels(doc?.gmailLabels).length === 0);
 }
@@ -265,23 +434,8 @@ export async function fetchRecentInboxWithBodies(email, password, count = 10, ma
 		const out = [];
 
 		for await (const message of client.fetch(range, { source: true, uid: true, flags: true, envelope: true })) {
-			if (!message?.source) continue;
-			try {
-				const parsed = await simpleParser(message.source);
-				const from = parsed.from?.value?.[0];
-				const textBody = parsed.text?.trim() || stripHtml(parsed.html ?? '');
-				out.push({
-					uid: message.uid,
-					from: from?.address || '',
-					fromName: from?.name || parsed.from?.text || '',
-					subject: parsed.subject || '',
-					date: parsed.date ?? message.envelope?.date ?? null,
-					bodyText: textBody || '',
-					bodyHtml: extractHtmlBody(parsed) || '',
-				});
-			} catch {
-				/* skip unparseable message */
-			}
+			const parsed = await parseInboxSource(message);
+			if (parsed) out.push(parsed);
 		}
 
 		// Sequence fetch returns ascending (oldest→newest); sort newest-first.

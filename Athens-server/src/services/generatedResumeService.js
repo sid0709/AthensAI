@@ -7,7 +7,6 @@ import {
   mergeSkillsIntoPersonalInfo,
   rebuildProfileGraph,
 } from "./userKnowledgeGraph/index.js";
-import { invalidateRecommendationCache } from "./matching/matchingService.js";
 
 function cleanString(v) {
   return String(v ?? "").trim();
@@ -172,7 +171,6 @@ export async function syncGeneratedResumeAfterRun({
     });
     await mergeSkillsIntoPersonalInfo(profile.map((s) => s.name));
     await rebuildProfileGraph(ownerName);
-    invalidateRecommendationCache(ownerName);
   }
 
   return { skillProfile: profile, techStack: stackLabel, resumeId: resumeIdStr, fileName };

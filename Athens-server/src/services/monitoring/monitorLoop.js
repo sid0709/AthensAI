@@ -1,8 +1,8 @@
 import { setGauge, setHealthMetric, setHealthStateMetrics } from './metrics.js';
 import { prepareStatusResults, recordChecks, rollupDay } from './statusStore.js';
-import { getRedis, isRedisReady } from '../../db/redis.js';
-import { getQdrantApiKey, getQdrantUrl } from '../../config/graphAndVectorConfig.js';
 import { readPrometheusVpsMetrics } from './prometheusClient.js';
+import { getFirestoreDb } from '../firebase/firebaseAdmin.js';
+import { getBackgroundWorkerHealth } from '../backgroundTasks/taskStore.js';
 
 const httpChecks = [
 	{ component: 'athens-web', name: 'Athens web application', failureStatus: 'major_outage', url: () => `http://127.0.0.1:${process.env.PUBLIC_PORT || (process.env.NODE_ENV === 'production' ? 80 : 9030)}/` },
@@ -50,30 +50,57 @@ async function checkHttp(check) {
 	}
 }
 
-async function checkRedis() {
-	const check = { component: 'redis', name: 'Redis cache', failureStatus: 'degraded' };
+function toDate(value) {
+	if (value instanceof Date) return value;
+	if (typeof value?.toDate === 'function') return value.toDate();
+	const parsed = new Date(value || 0);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function checkTaskWorker() {
+	const check = { component: 'firestore-tasks', name: 'Firestore task workers', failureStatus: 'degraded' };
 	const started = performance.now();
 	try {
-		if (!isRedisReady()) throw new Error('Redis client is not ready');
-		if (await getRedis().ping() !== 'PONG') throw new Error('Redis ping returned an unexpected response');
+		const [health, queued, running] = await Promise.all([
+			getBackgroundWorkerHealth(),
+			getFirestoreDb().collection('background_tasks').where('status', '==', 'queued').orderBy('availableAt').limit(1).get(),
+			getFirestoreDb().collection('background_tasks').where('status', '==', 'running').limit(100).get(),
+		]);
+		const now = Date.now();
+		const availableAt = toDate(queued.docs[0]?.data()?.availableAt);
+		const oldestQueueAgeSeconds = availableAt ? Math.max(0, (now - availableAt.getTime()) / 1000) : 0;
+		const expiredLeaseCount = running.docs.filter((doc) => {
+			const expiresAt = toDate(doc.data()?.leaseExpiresAt);
+			return expiresAt && expiresAt.getTime() < now;
+		}).length;
+		setGauge('athens_background_queue_oldest_age_seconds', {}, oldestQueueAgeSeconds);
+		setGauge('athens_background_expired_lease_count', {}, expiredLeaseCount);
+		if (!health.ready) throw new Error(health.error || health.reason || 'No fresh worker heartbeat');
+		if (expiredLeaseCount > 0) throw new Error(`${expiredLeaseCount} running task lease(s) have expired`);
 		return { ...check, ok: true, latencyMs: Math.round(performance.now() - started), status: 'operational', message: 'Operating normally.' };
 	} catch (error) {
-		return failed(check, started, error, 'Redis is unavailable; cache and ranking fallbacks are active.');
+		return failed(check, started, error, 'Background task processing is delayed or unavailable.');
 	}
 }
 
-async function checkQdrant() {
-	const check = { component: 'qdrant', name: 'Qdrant vector search', failureStatus: 'degraded' };
+async function checkAlgoliaOutbox() {
+	const check = { component: 'algolia-sync', name: 'Algolia search synchronization', failureStatus: 'degraded' };
 	const started = performance.now();
 	try {
-		const configured = getQdrantUrl();
-		if (!configured) throw new Error('QDRANT_URL is not configured');
-		const headers = getQdrantApiKey() ? { 'api-key': getQdrantApiKey() } : {};
-		const response = await fetch(`${configured.replace(/\/+$/, '')}/readyz`, { headers, signal: AbortSignal.timeout(5000) });
-		if (!response.ok) throw new Error(`Qdrant readiness returned HTTP ${response.status}`);
+		if (!String(process.env.ALGOLIA_APP_ID || '').trim() || !String(process.env.ALGOLIA_ADMIN_API_KEY || '').trim()) {
+			throw new Error('Algolia is not configured');
+		}
+		const snapshot = await getFirestoreDb().collection('search_outbox')
+			.where('status', '==', 'pending').orderBy('createdAt').limit(1).get();
+		const createdAt = toDate(snapshot.docs[0]?.data()?.createdAt);
+		const lagSeconds = createdAt ? Math.max(0, (Date.now() - createdAt.getTime()) / 1000) : 0;
+		setGauge('athens_algolia_outbox_lag_seconds', {}, lagSeconds);
+		if (lagSeconds > Number(process.env.ALGOLIA_OUTBOX_MAX_LAG_SECONDS || 300)) {
+			throw new Error(`Oldest pending search update is ${Math.round(lagSeconds)} seconds old`);
+		}
 		return { ...check, ok: true, latencyMs: Math.round(performance.now() - started), status: 'operational', message: 'Operating normally.' };
 	} catch (error) {
-		return failed(check, started, error, 'Qdrant is unavailable; vector-search fallbacks are active.');
+		return failed(check, started, error, 'Full-text search synchronization is delayed or unavailable.');
 	}
 }
 
@@ -119,8 +146,8 @@ export async function runMonitoringCycle() {
 	const checkedAt = new Date();
 	const rawResults = await Promise.all([
 		...httpChecks.map(checkHttp),
-		checkRedis(),
-		checkQdrant(),
+		checkTaskWorker(),
+		checkAlgoliaOutbox(),
 		checkVps(),
 	]);
 	const results = prepareStatusResults(rawResults, previousResults);

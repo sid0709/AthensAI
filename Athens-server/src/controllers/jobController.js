@@ -14,7 +14,6 @@ import {
 	getVendorTasksCollection,
 } from "../db/dataStore.js";
 import { isJobBlocked, buildQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
-import { attachStaticScoreFields } from '../services/jobListPipeline.js';
 import {
 	JOB_MARKET_MODEL_VERSION,
 	excludeExtensionV2JobsFilter,
@@ -35,32 +34,23 @@ import {
 import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import {
-	buildJobsListQuery,
-	STATUS_TABS,
-	JOB_LIST_PROJECTION,
 	JOB_DETAIL_PROJECTION,
 	resolveApplierContext,
 } from '../services/jobListQuery.js';
 import { queueJobAnalysis, getJobAnalysisStatus } from '../services/jobAnalysis/index.js';
-import { listRecommendedJobs } from '../services/matching/matchScoreReader.js';
 import { normalizeExternalScrapedJob } from '../services/externalScrapedJobsListQuery.js';
-import { listMergedJobs, countExternalForStatusTabs } from '../services/mergedJobsListService.js';
-import { countIndexedJobStatuses, listIndexedJobPage } from '../services/matching/indexedJobListService.js';
-import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../services/matching/skillIndex.js';
-import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
-import { indexOneJobRanking, removeJobsFromRanking } from '../services/matching/jobRankingIndex.js';
+import { normalizeJobSkills, jobSkillTokens } from '../services/matching/skillIndex.js';
 import { buildJobSkillRadar } from '../services/jobSkillRadarService.js';
 import {
 	clearJobBidStatus,
 	upsertJobBidStatus,
 } from '../services/jobBidStatusService.js';
-import { isForegroundBusy } from '../services/runtimeLoad.js';
 import {
 	invalidateLiveProjectedStatusCount,
-	listMaterializedPostedPage,
-	listMaterializedJobStatusPage,
 	mutateJobStatus,
 	mutateJobStatusesBulk,
+	readProjectedJobStatuses,
+	syncJobStatusVisibility,
 } from '../services/jobStatusProjectionService.js';
 import { findDuplicateByUrl } from '../services/jobDuplicateLookup.js';
 import {
@@ -71,18 +61,10 @@ import {
 } from '../services/jobIdentityDedupe.js';
 import { applyCompanyIdentity, resolveCompanyIdentity } from '../services/companyIdentity.js';
 import {
-	listCompanyGroupedJobs,
-	listCompanyGroupMembers,
-} from '../services/companyGroupedJobsService.js';
-import {
-	countJobsV2,
-	getJobListReadModelState,
-	listJobCompanyMembersV2,
-	listJobsV2,
-	patchJobListViewerStatus,
-	evictJobsFromJobListReadModel,
-	listCompanyJobIdsFromReadModel,
-} from '../services/jobListReadModelService.js';
+	getJobStatusCountsV3 as countJobsV3,
+	invalidateJobListV3Counts,
+	listJobsV3,
+} from '../services/jobListV3Service.js';
 import {
 	deleteJobDocuments,
 	findOtherCompanyJobIds,
@@ -90,7 +72,7 @@ import {
 	normalizeJobRemovalIds,
 	resolveJobRemovalTaskIdentity,
 } from '../services/jobRemovalService.js';
-import { setGauge } from '../services/monitoring/metrics.js';
+import { syncApprovedCatalogMembership } from '../services/jobCatalogCountService.js';
 import { ingestJobsBulk, MAX_JOB_BULK_SIZE } from '../services/jobBulkIngest.js';
 import {
 	patchTitleReviewReadModel,
@@ -100,17 +82,11 @@ import { invalidatePendingExtractionCount } from '../services/jobSkillExtraction
 import { createBackgroundTask } from '../services/backgroundTasks/taskStore.js';
 import { normalizeBackgroundTaskPayload } from '../services/backgroundTasks/taskPayload.js';
 import { BACKGROUND_TASK_TYPES, publicTaskSnapshot } from '../services/backgroundTasks/taskTypes.js';
-import {
-	firestoreMutationLimiter,
-	indexMutationLimiter,
-} from '../services/backgroundTasks/resourceLimits.js';
+import { firestoreMutationLimiter } from '../services/backgroundTasks/resourceLimits.js';
 import { runWithoutBackgroundTaskContext } from '../services/backgroundTasks/taskContext.js';
 
-const JOB_COUNT_CACHE_MS = Number(process.env.JOB_COUNT_CACHE_MS || 5 * 60 * 1000);
-const jobCountCache = new Map();
-
 export function invalidateJobListCountCache() {
-	jobCountCache.clear();
+	invalidateJobListV3Counts();
 }
 
 async function enqueueJobRemoval(req, ids, operation) {
@@ -163,22 +139,15 @@ export async function removeJobRecords(ids, { signal } = {}) {
 	// cleanup for an already-started item, not a new item or provider call.
 	await runWithoutBackgroundTaskContext(async () => {
 		if (deletedCount) invalidatePendingExtractionCount();
-		evictJobsFromJobListReadModel(normalized);
+		if (deletedCount) await syncApprovedCatalogMembership(normalized);
+		if (deletedCount) await syncJobStatusVisibility(normalized);
 		await firestoreMutationLimiter.run(() => patchTitleReviewReadModel({ deletedIds: normalized }));
 		invalidateLiveProjectedStatusCount();
-		jobCountCache.clear();
-		// The job list is sourced from the ranking index. Do not mark deletion as
-		// successful while those points still exist, or a refresh resurrects them.
-		await indexMutationLimiter.run(() => removeJobsFromRanking(normalized));
-		await Promise.allSettled([
-			indexMutationLimiter.run(() => deleteScoresForJobs(normalized)),
-		]);
+		invalidateJobListV3Counts();
 	});
 	throwIfRemovalAborted(signal);
 	return { deletedCount, deletedIds: normalized };
 }
-const jobCountRefreshes = new Map();
-
 function jobForProfile(job, profileId) {
 	if (!job || !profileId) return { ...job, status: [] };
 	const row = mergeJobStatusRows(job.status, String(profileId));
@@ -197,16 +166,15 @@ async function jobsForApplier(jobs, applierName) {
 	const name = String(applierName || '').trim();
 	const account = name ? await resolveApplierContext(name) : null;
 	const profileId = account?.id ? String(account.id) : null;
-	return (Array.isArray(jobs) ? jobs : []).map((job) => jobForProfile(job, profileId));
+	const source = Array.isArray(jobs) ? jobs : [];
+	if (!profileId) return source.map((job) => jobForProfile(job, null));
+	const projected = await readProjectedJobStatuses(profileId, source.map((job) => String(job._id)));
+	return source.map((job) => jobForProfile({ ...job, status: projected.get(String(job._id)) || [] }, profileId));
 }
 
 function syncMutationReadModel(result, jobId) {
-	patchJobListViewerStatus({
-		profileId: result.profileId,
-		jobId,
-		state: result.viewerStatus,
-		version: result.statusVersion,
-	});
+	void result;
+	void jobId;
 }
 
 function mutationMetadata(result) {
@@ -217,54 +185,6 @@ function mutationMetadata(result) {
 		cacheSync: result.cacheSync || 'queued',
 		viewerStatus: result.viewerStatus,
 	};
-}
-
-function jobCountCacheKey(body = {}) {
-	return JSON.stringify(Object.fromEntries(Object.entries(body).sort(([left], [right]) => left.localeCompare(right))));
-}
-
-async function materializedCountsForRequest() {
-	// Legacy status baselines include quarantined title-review jobs. Use the exact
-	// review-aware read model until those baselines carry the visibility facet.
-	return null;
-}
-
-async function calculateJobStatusCounts(body) {
-	const facet = {};
-	for (const tab of STATUS_TABS) {
-		const { query } = await buildJobsListQuery(body, { statusTab: tab });
-		facet[tab] = [{ $match: query }, { $count: 'count' }];
-	}
-	const [result] = await jobsCollection.aggregate([{ $facet: facet }]).toArray();
-	const counts = {};
-	for (const tab of STATUS_TABS) counts[tab] = result?.[tab]?.[0]?.count ?? 0;
-	const externalCounts = await countExternalForStatusTabs(body);
-	counts.all += externalCounts.all;
-	counts.posted += externalCounts.posted;
-	return counts;
-}
-
-function refreshJobStatusCountsWhenIdle(key, body) {
-	if (jobCountRefreshes.has(key)) return;
-	const refresh = new Promise((resolve) => {
-		const attempt = async () => {
-			if (isForegroundBusy()) {
-				setTimeout(attempt, 10_000).unref?.();
-				return;
-			}
-			try {
-				const counts = await calculateJobStatusCounts(body);
-				jobCountCache.set(key, { counts, expiresAt: Date.now() + JOB_COUNT_CACHE_MS });
-			} catch (error) {
-				console.warn('[jobs] deferred status count refresh failed:', error?.message || error);
-			} finally {
-				jobCountRefreshes.delete(key);
-				resolve();
-			}
-		};
-		setTimeout(attempt, 10_000).unref?.();
-	});
-	jobCountRefreshes.set(key, refresh);
 }
 
 const toValidDate = (value) => {
@@ -426,14 +346,11 @@ export async function createJob(req, res) {
 			console.warn('Failed to upsert company categories', e);
 		}
 
-		// Match-score worker fans this job out to every user profile.
-		job.matchScoreStatus = 'pending';
 		// Queue for AI skill extraction (run manually from the Extract skills button).
 		job.aiSkillStatus = 'pending';
 		// A queryable state keeps the title-review queue indexed. Missing-field
 		// checks force Firestore to scan the entire catalog.
 		job.titleReview = { processingState: 'pending' };
-		Object.assign(job, attachStaticScoreFields({ ...job, skills }));
 		// Re-assert after static fields — distinct from sourceVersion / modelVersion.
 		stampJobMarketIngestVersion(job, ingest);
 
@@ -449,8 +366,6 @@ export async function createJob(req, res) {
 				// is best-effort and must not turn a successful insert into a 500.
 				console.warn('[job-identity] finalize failed:', error?.message || error);
 			});
-			void indexJobInRedis(String(result.insertedId), job.skillsNormalized, job.skillTokens).catch(() => {});
-			void indexOneJobRanking({ ...job, _id: result.insertedId }).catch(() => {});
 			if (!req.deferSkillPendingInvalidation) invalidatePendingExtractionCount();
 			if (!req.deferTitleReviewRevision) {
 				void patchTitleReviewReadModel({
@@ -631,327 +546,37 @@ export async function removeJobsForRule(req, res) {
 	}
 }
 
-/**
- * Status counts are expensive in Firestore because the legacy per-user status
- * values live inside an array. Never let that compatibility scan block the job
- * list: return a fast indexed catalog count and refresh exact tab counts only
- * after interactive traffic has gone quiet.
- */
-export async function getJobStatusCounts(req, res) {
-	try {
-		if (!jobsCollection) {
-			return res.status(503).json({ success: false, error: 'Database not ready' });
-		}
-
-		const materialized = await materializedCountsForRequest(req.body);
-		if (materialized) return res.json({ success: true, counts: materialized, materialized: true });
-		const indexed = await countIndexedJobStatuses(req.body);
-		if (indexed) return res.json({ success: true, counts: indexed, indexed: true });
-
-		const key = jobCountCacheKey(req.body);
-		const cached = jobCountCache.get(key);
-		if (cached) {
-			if (cached.expiresAt <= Date.now()) refreshJobStatusCountsWhenIdle(key, { ...req.body });
-			return res.json({ success: true, counts: cached.counts, cached: true });
-		}
-
-		const [{ query: allQuery }, externalCounts] = await Promise.all([
-			buildJobsListQuery(req.body, { statusTab: 'all' }),
-			countExternalForStatusTabs(req.body),
-		]);
-		const marketTotal = await jobsCollection.countDocuments(allQuery);
-		const all = marketTotal + externalCounts.all;
-		const counts = Object.fromEntries(STATUS_TABS.map((tab) => [tab, 0]));
-		counts.all = all;
-		// Until exact array counts are warmed, treating the catalog as posted is
-		// preferable to hiding jobs or blocking the first paint.
-		counts.posted = all;
-		jobCountCache.set(key, { counts, expiresAt: 0 });
-		refreshJobStatusCountsWhenIdle(key, { ...req.body });
-		return res.json({ success: true, counts, cached: false, warming: true });
-	} catch (err) {
-		console.error('POST /api/jobs/list/counts error', err);
-		return res.status(500).json({ success: false, error: err.message });
-	}
-}
-
-export async function getJobs(req, res) {
-	try {
-		if (!jobsCollection) {
-			return res.status(503).json({ success: false, error: 'Database not ready' });
-		}
-		if (req.body.groupBy === 'company' || req.body.groupByCompany === true) {
-			const grouped = await listCompanyGroupedJobs(req.body);
-			if (grouped?.unavailable) {
-				return res.status(503).json({ success: false, error: 'Grouped Job Search is temporarily unavailable' });
-			}
-			if (!grouped?.disabled) return res.json(grouped);
-		}
-		// Status tabs are refreshed by the dedicated /jobs/list/counts request.
-		// Never hold job cards behind a separate Firestore count read.
-		const statusCounts = null;
-
-		const requestedSort = String(req.body.sort || 'postedAt_desc');
-		const canUseMaterializedPostedPage = requestedSort === 'postedAt_desc' || requestedSort === 'postedAt_asc';
-		const indexedJobPage = requestedSort === 'recommended' ? null : await listIndexedJobPage(req.body);
-		const materializedStatusPage = indexedJobPage || await listMaterializedJobStatusPage(req.body)
-			|| (canUseMaterializedPostedPage ? await listMaterializedPostedPage(req.body) : null);
-		if (materializedStatusPage) {
-			const recommendedRequested = req.body.sort === 'recommended';
-			const responseDocs = await jobsForApplier(materializedStatusPage.docs, req.body.applierName);
-			return res.json({
-				success: true,
-				data: responseDocs,
-				statusCounts,
-				recommendationFallback: recommendedRequested,
-				recommendationReason: recommendedRequested ? 'status_date_order' : null,
-				recommendationWarming: false,
-				catalogTotal: materializedStatusPage.total,
-				pagination: {
-					total: materializedStatusPage.total,
-					page: materializedStatusPage.page,
-					limit: materializedStatusPage.limit,
-					totalPages: Math.ceil(materializedStatusPage.total / materializedStatusPage.limit),
-				},
-			});
-		}
-
-		const mergedResult = await listMergedJobs(req.body);
-		if (mergedResult.mergeExternal) {
-			const { docs, total, pageNum, limitNum, recommendationFallback, recommendationReason, recommendationWarming, catalogTotal } = mergedResult;
-			const responseDocs = await jobsForApplier(docs, req.body.applierName);
-			return res.json({
-				success: true,
-				data: responseDocs,
-				statusCounts,
-				recommendationFallback,
-				recommendationReason,
-				recommendationWarming,
-				catalogTotal,
-				rankingVersion: mergedResult.rankingVersion ?? null,
-				rankingStatus: mergedResult.rankingStatus ?? (recommendationFallback ? 'fallback' : 'legacy'),
-				catalogRevision: mergedResult.catalogRevision ?? null,
-				personalizedThroughRank: mergedResult.personalizedThroughRank ?? null,
-				pagination: {
-					total,
-					page: pageNum,
-					limit: limitNum,
-					totalPages: Math.ceil(total / limitNum),
-				},
-			});
-		}
-
-		const {
-			sort,
-			applierName,
-		} = req.body;
-		const {
-			marketQuery: query,
-			applierId,
-			scoreFilters,
-			skip,
-			limit: limitNum,
-			pageNum,
-			countsOnly,
-		} = mergedResult;
-
-		if (countsOnly === true || countsOnly === 'true') {
-			const total = await jobsCollection.countDocuments(query);
-			return res.json({
-				success: true,
-				data: [],
-				pagination: {
-					total,
-					page: pageNum,
-					limit: limitNum,
-					totalPages: Math.ceil(total / limitNum),
-				},
-			});
-		}
-
-		let docs;
-		let total;
-		let recommendationFallback = false;
-		let recommendationReason = null;
-		let recommendationWarming = false;
-		let catalogTotal = null;
-		let rankingVersion = null;
-		let rankingStatus = null;
-		let catalogRevision = null;
-		let personalizedThroughRank = null;
-		const useRecommendation = sort === 'recommended' && applierName;
-
-		if (useRecommendation) {
-			// Start the lightweight date page alongside personalization. It is
-			// discarded when Best Match wins, but makes cold/no-skills fallback
-			// latency the max of the two reads instead of their sum.
-			const indexedFallbackPage = listIndexedJobPage({ ...req.body, sort: 'postedAt_desc' })
-				.catch((error) => {
-					console.warn('[jobs] indexed recommendation fallback failed:', error?.message || error);
-					return null;
-				});
-			const result = await listRecommendedJobs({
-				applierName,
-				profileId: applierId ? String(applierId) : null,
-				dataQuery: query,
-				scoreFilters,
-				listBody: req.body,
-				skip,
-				limit: limitNum,
-				fastFallback: async () => {
-					const page = await indexedFallbackPage;
-					if (!page) return null;
-					return {
-						docs: page.docs,
-						total: page.total,
-						catalogTotal: page.total,
-						recommendationFallback: true,
-						recommendationReason: 'ranking_backend_unavailable',
-						recommendationWarming: false,
-						recommendationMaterialized: false,
-						rankingVersion: null,
-						rankingStatus: 'fallback',
-						catalogRevision: null,
-						personalizedThroughRank: 0,
-					};
-				},
-			});
-			docs = result.docs || [];
-			total = result.total ?? docs.length;
-			catalogTotal = result.catalogTotal ?? total;
-			recommendationFallback = Boolean(result.recommendationFallback);
-			recommendationReason = recommendationFallback
-				? result.recommendationReason || result.reason || 'unknown'
-				: null;
-			recommendationWarming = Boolean(result.recommendationWarming);
-			rankingVersion = result.rankingVersion ?? null;
-			rankingStatus = result.rankingStatus ?? (
-				recommendationFallback ? 'fallback' : recommendationWarming ? 'warming' : 'legacy'
-			);
-			catalogRevision = result.catalogRevision ?? null;
-			personalizedThroughRank = result.personalizedThroughRank ?? null;
-		} else {
-			const sortOption = {};
-			if (sort && typeof sort === 'string') {
-				let sortField = '', sortOrder;
-				[sortField, sortOrder] = sort.split('_');
-				if (sortField === 'postedAt') {
-					sortOption.postedAt = sortOrder === 'asc' ? 1 : -1;
-				} else if (sortField && sortField.trim().length > 0) {
-					sortOption[sortField] = sortOrder === 'desc' ? -1 : 1;
-				} else {
-					sortOption.postedAt = -1;
-				}
-			} else {
-				sortOption.postedAt = -1;
-			}
-			[docs, total] = await Promise.all([
-				jobsCollection
-					.find(query, { projection: JOB_LIST_PROJECTION })
-					.sort(sortOption)
-					.skip(skip)
-					.limit(limitNum)
-					.toArray(),
-				jobsCollection.countDocuments(query),
-			]);
-		}
-
-		const responseDocs = await jobsForApplier(docs, applierName);
-		return res.json({
-			success: true,
-			data: responseDocs,
-			statusCounts,
-			recommendationFallback,
-			recommendationReason,
-			recommendationWarming,
-			catalogTotal,
-			rankingVersion,
-			rankingStatus: rankingStatus ?? (recommendationFallback ? 'fallback' : null),
-			catalogRevision,
-			personalizedThroughRank,
-			pagination: {
-				total,
-				page: pageNum,
-				limit: limitNum,
-				totalPages: Math.ceil(total / limitNum),
-			}
-		});
-
-	} catch (err) {
-		console.error('GET /api/jobs error', err);
-		return res.status(500).json({ success: false, error: err.message });
-	}
-}
-
-/** Compact, pre-materialized Job Search endpoint. */
-export async function getJobsV2(req, res) {
+/** Firestore-authoritative, approval-gated, newest-only Job Search. */
+export async function getJobsV3(req, res) {
 	const started = performance.now();
 	try {
-		const result = await listJobsV2(req.body || {});
-		if (result?.disabled) return res.status(404).json({ success: false, error: 'Job Search v2 is disabled' });
-		const totalMs = performance.now() - started;
-		const phases = result._serverTiming || { total: totalMs };
-		res.setHeader('Server-Timing', Object.entries(phases)
-			.map(([phase, duration]) => `jobs-v2-${phase};dur=${Number(duration).toFixed(1)}`)
-			.join(', '));
-		setGauge(
-			'athens_jobs_v2_payload_bytes',
-			{ limit: String(result.pagination?.limit || 0) },
-			Buffer.byteLength(JSON.stringify(result)),
-		);
-		res.setHeader('X-Job-Read-Model-Version', String(result.readModelVersion || ''));
+		if (String(process.env.JOB_LIST_V3_ENABLED || 'true').toLowerCase() === 'false') {
+			return res.status(404).json({ success: false, error: 'Job Search v3 is disabled' });
+		}
+		const result = await listJobsV3(req.body || {});
+		res.setHeader('Server-Timing', `jobs-v3-total;dur=${(performance.now() - started).toFixed(1)}`);
 		return res.json(result);
 	} catch (err) {
-		console.error('POST /api/jobs/list/v2 error', err);
-		return res.status(503).json({
+		console.error('POST /api/jobs/list/v3 error', err);
+		return res.status(Number.isInteger(err?.status) ? err.status : 503).json({
 			success: false,
-			retryable: true,
+			retryable: err?.retryable !== false,
 			error: err.message,
-			readModel: getJobListReadModelState(),
 		});
 	}
 }
 
-/** Snapshot-backed status counts; intentionally independent from card delivery. */
-export async function getJobStatusCountsV2(req, res) {
-	const started = performance.now();
+export async function getJobStatusCountsV3(req, res) {
 	try {
-		const result = await countJobsV2(req.body || {});
-		if (result?.disabled) return res.status(404).json({ success: false, error: 'Job Search v2 is disabled' });
-		res.setHeader('Server-Timing', `jobs-v2-counts;dur=${(performance.now() - started).toFixed(1)}`);
-		return res.json(result);
+		const counts = await countJobsV3(req.body || {});
+		return res.json({ success: true, counts });
 	} catch (err) {
-		console.error('POST /api/jobs/list/v2/counts error', err);
-		return res.status(503).json({ success: false, retryable: true, error: err.message });
-	}
-}
-
-export async function getCompanyGroupMembersV2(req, res) {
-	try {
-		const result = await listJobCompanyMembersV2(req.body || {});
-		if (result?.disabled) return res.status(404).json({ success: false, error: 'Job Search v2 is disabled' });
-		if (result?.invalid) return res.status(400).json({ success: false, error: result.error || 'Invalid request' });
-		if (result?.notFound) return res.status(404).json({ success: false, error: 'Company group not found' });
-		res.setHeader('X-Job-Read-Model-Version', String(result.readModelVersion || ''));
-		return res.json(result);
-	} catch (err) {
-		console.error('POST /api/jobs/list/v2/company-members error', err);
-		return res.status(503).json({ success: false, retryable: true, error: err.message });
-	}
-}
-
-export async function getCompanyGroupMembers(req, res) {
-	try {
-		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
-		const result = await listCompanyGroupMembers(req.body || {});
-		if (result?.disabled) return res.status(404).json({ success: false, error: 'Company grouping is disabled' });
-		if (result?.unavailable) return res.status(503).json({ success: false, error: 'Grouped Job Search is temporarily unavailable' });
-		if (result?.forbidden) return res.status(403).json({ success: false, error: 'Beta tier required', betaRequired: true });
-		if (result?.notFound) return res.status(404).json({ success: false, error: 'Company group not found' });
-		return res.json(result);
-	} catch (err) {
-		console.error('POST /api/jobs/list/company-members error', err);
-		return res.status(500).json({ success: false, error: err.message });
+		console.error('POST /api/jobs/list/v3/counts error', err);
+		return res.status(Number.isInteger(err?.status) ? err.status : 503).json({
+			success: false,
+			retryable: err?.retryable !== false,
+			error: err.message,
+		});
 	}
 }
 
@@ -962,7 +587,7 @@ export async function applyToJob(req, res) {
 		const { applierName, catalog, mutationId } = req.body;
 		const result = await mutateJobStatus({ jobId: id, applierName, transition: 'apply', catalog, mutationId });
 		syncMutationReadModel(result, id);
-		jobCountCache.clear();
+		invalidateJobListV3Counts();
 		return res.json({
 			success: true,
 			data: jobForProfile(result.job, result.profileId),
@@ -989,7 +614,7 @@ export async function updateJobStatus(req, res) {
 		}
 		const result = await mutateJobStatus({ jobId: id, applierName, transition, catalog, mutationId });
 		syncMutationReadModel(result, id);
-		jobCountCache.clear();
+		invalidateJobListV3Counts();
 		return res.json({ success: true, data: jobForProfile(result.job, result.profileId), ...mutationMetadata(result) });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/status error', err);
@@ -1022,8 +647,7 @@ export async function removeOtherCompanyJobs(req, res) {
 			return res.status(400).json({ success: false, error: 'companyId and keepJobId are required' });
 		}
 
-		const companyJobIds = await listCompanyJobIdsFromReadModel(input.companyId);
-		const ids = await findOtherCompanyJobIds({ ...input, jobsCollection, companyJobIds });
+		const ids = await findOtherCompanyJobIds({ ...input, jobsCollection });
 		if (!ids.length) return res.json({ success: true, deletedCount: 0, deletedIds: [] });
 
 		const queued = await enqueueJobRemoval(req, ids.map(String), 'company_sibling_job_removal');
@@ -1044,7 +668,7 @@ export async function unapplyFromJob(req, res) {
 		const { applierName, catalog, mutationId } = req.body;
 		const result = await mutateJobStatus({ jobId: id, applierName, transition: 'unapply', catalog, mutationId });
 		syncMutationReadModel(result, id);
-		jobCountCache.clear();
+		invalidateJobListV3Counts();
 		return res.json({ success: true, data: jobForProfile(result.job, result.profileId), ...mutationMetadata(result) });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/unapply error', err);
@@ -1156,7 +780,7 @@ export async function updateJobBidStatus(req, res) {
 			updatedProfileId = result.profileId;
 		}
 		syncMutationReadModel(mutationResult, id);
-		jobCountCache.clear();
+		invalidateJobListV3Counts();
 		return res.json({
 			success: true,
 			data: jobForProfile(updatedJob, updatedProfileId),
@@ -1188,7 +812,7 @@ export async function updateJobsBidStatusBulk(req, res) {
 			bulkMutationId: req.body?.mutationId,
 		});
 		for (const row of result.results) syncMutationReadModel(row, row.jobId);
-		jobCountCache.clear();
+		invalidateJobListV3Counts();
 
 		const tasks = getVendorTasksCollection();
 		if (tasks && result.results.length) {
@@ -1294,9 +918,11 @@ export async function getJobById(req, res) {
 					return res.status(404).json({ success: false, error: 'Job not found' });
 				}
 			}
+			const profileId = account?.id ? String(account.id) : null;
+			const projected = profileId ? await readProjectedJobStatuses(profileId, [id]) : new Map();
 			return res.json({
 				success: true,
-				data: jobForProfile(doc, account?.id ? String(account.id) : null),
+				data: jobForProfile({ ...doc, status: projected.get(id) || [] }, profileId),
 			});
 		}
 
@@ -1329,10 +955,11 @@ export async function getJobViewerStatus(req, res) {
 		const collection = catalog === 'external' ? externalScrapedJobsCollection : jobsCollection;
 		const job = await collection?.findOne(
 			{ _id: new DocumentId(id) },
-			{ projection: { status: 1, sourceCatalog: 1 } },
+			{ projection: { sourceCatalog: 1 } },
 		);
 		if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
-		const row = mergeJobStatusRows(job.status, String(account.id));
+		const projected = await readProjectedJobStatuses(String(account.id), [id]);
+		const row = mergeJobStatusRows(projected.get(id), String(account.id));
 		return res.json({
 			success: true,
 			jobId: id,

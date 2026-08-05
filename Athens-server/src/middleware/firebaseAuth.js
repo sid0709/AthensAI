@@ -9,7 +9,6 @@ const accessCache = new Map();
 const PUBLIC_PASSWORD_AUTH_ROUTES = new Set([
 	"POST /api/auth/signup",
 	"POST /api/auth/signin",
-	"POST /api/auth/bidder-signin",
 ]);
 
 function isPublicPasswordAuthRoute(req) {

@@ -42,7 +42,6 @@ import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js
 import { runMailAiWrite } from '../services/mail/aiWriteService.js';
 import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
 import { isBetaTier } from '../lib/betaTier.js';
-import { getRedis, isRedisReady } from '../db/redis.js';
 import {
 	createBackgroundTask,
 	getBackgroundTask,
@@ -82,37 +81,26 @@ function mailLabelCacheMs() {
 	return Math.max(10_000, Number(process.env.MAIL_LABEL_CACHE_MS || 5 * 60 * 1000));
 }
 
-function mailLabelRedisKey(applierName) {
-	return `mail:v2:gmail-labels:${applierName.trim().toLowerCase()}`;
+function rememberMailLabels(key, labels, ttl = mailLabelCacheMs()) {
+	mailLabelMemoryCache.delete(key);
+	mailLabelMemoryCache.set(key, { labels, expiresAt: Date.now() + ttl });
+	while (mailLabelMemoryCache.size > 200) mailLabelMemoryCache.delete(mailLabelMemoryCache.keys().next().value);
 }
 
 async function loadCachedGmailLabels(applierName, credentials) {
 	const memoryKey = applierName.trim().toLowerCase();
 	const memoryEntry = mailLabelMemoryCache.get(memoryKey);
 	if (memoryEntry?.expiresAt > Date.now()) {
+		rememberMailLabels(memoryKey, memoryEntry.labels);
 		return { ok: true, labels: memoryEntry.labels, cached: true };
 	}
-	if (isRedisReady()) {
-		const cached = await getRedis().get(mailLabelRedisKey(applierName)).catch(() => null);
-		if (cached) {
-			try {
-				const labels = JSON.parse(cached);
-				mailLabelMemoryCache.set(memoryKey, { labels, expiresAt: Date.now() + mailLabelCacheMs() });
-				return { ok: true, labels, cached: true };
-			} catch {
-				await getRedis().del(mailLabelRedisKey(applierName)).catch(() => undefined);
-			}
-		}
-	}
+	mailLabelMemoryCache.delete(memoryKey);
 
 	const state = await getSyncState(applierName);
 	const cacheMs = mailLabelCacheMs();
 	const cachedAt = state?.gmailLabelsUpdatedAt ? new Date(state.gmailLabelsUpdatedAt).getTime() : 0;
 	if (Array.isArray(state?.gmailLabels) && Date.now() - cachedAt < cacheMs) {
-		mailLabelMemoryCache.set(memoryKey, { labels: state.gmailLabels, expiresAt: Date.now() + cacheMs });
-		if (isRedisReady()) {
-			await getRedis().setEx(mailLabelRedisKey(applierName), Math.ceil(cacheMs / 1000), JSON.stringify(state.gmailLabels)).catch(() => undefined);
-		}
+		rememberMailLabels(memoryKey, state.gmailLabels, cacheMs);
 		return { ok: true, labels: state.gmailLabels, cached: true };
 	}
 
@@ -120,19 +108,13 @@ async function loadCachedGmailLabels(applierName, credentials) {
 	if (!creds.ok) return creds;
 	try {
 		const labels = await fetchGmailLabelList(creds.email, creds.password);
-		mailLabelMemoryCache.set(memoryKey, { labels, expiresAt: Date.now() + cacheMs });
-		if (isRedisReady()) {
-			await getRedis().setEx(mailLabelRedisKey(applierName), Math.ceil(cacheMs / 1000), JSON.stringify(labels)).catch(() => undefined);
-		}
+		rememberMailLabels(memoryKey, labels, cacheMs);
 		void upsertSyncState(applierName, { gmailLabels: labels, gmailLabelsUpdatedAt: new Date() })
 			.catch((error) => console.warn('[mail] background label cache write failed:', error?.message || error));
 		return { ok: true, labels, cached: false };
 	} catch (error) {
 		if (Array.isArray(state?.gmailLabels)) {
-			mailLabelMemoryCache.set(memoryKey, {
-				labels: state.gmailLabels,
-				expiresAt: Date.now() + Math.min(cacheMs, 60_000),
-			});
+			rememberMailLabels(memoryKey, state.gmailLabels, Math.min(cacheMs, 60_000));
 			return { ok: true, labels: state.gmailLabels, cached: true, stale: true };
 		}
 		throw error;
@@ -141,7 +123,6 @@ async function loadCachedGmailLabels(applierName, credentials) {
 
 async function invalidateMailLabelCache(applierName) {
 	mailLabelMemoryCache.delete(applierName.trim().toLowerCase());
-	if (isRedisReady()) await getRedis().del(mailLabelRedisKey(applierName)).catch(() => undefined);
 	await upsertSyncState(applierName, { gmailLabelsUpdatedAt: null });
 }
 

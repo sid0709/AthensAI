@@ -213,71 +213,7 @@ export const signin = async (req, res) => {
 };
 
 /**
- * Bid Monitor / vendor bidder login.
- * Requires: vendorAllowed ON + vendorPassword set + name+password match.
- * Does NOT accept the Athens owner account password.
- */
-export const bidderSignin = async (req, res) => {
-	try {
-		const name = String(req.body?.name ?? "").trim();
-		const password = String(req.body?.password ?? "");
-		if (!name || !password) {
-			return res.status(400).json({
-				success: false,
-				code: "MISSING_CREDENTIALS",
-				message: "Profile name and vendor access password are required",
-			});
-		}
-
-		const user = await findAccountByName(name);
-		if (!user) {
-			return res.status(401).json({
-				success: false,
-				code: "INVALID_CREDENTIALS",
-				message: "Invalid profile name or password",
-			});
-		}
-
-		if (!user.vendorAllowed) {
-			return res.status(403).json({
-				success: false,
-				code: "VENDOR_ACCESS_OFF",
-				message:
-					"Vendor access is off for this profile. Turn it on in Athens → Settings → Profile.",
-			});
-		}
-
-		if (!user.vendorPassword) {
-			return res.status(403).json({
-				success: false,
-				code: "VENDOR_PASSWORD_UNSET",
-				message:
-					"Vendor access password is not set. Set it in Athens → Settings → Profile.",
-			});
-		}
-
-		const isValid = await bcrypt.compare(password, user.vendorPassword);
-		if (!isValid) {
-			return res.status(401).json({
-				success: false,
-				code: "INVALID_CREDENTIALS",
-				message: "Invalid profile name or password",
-			});
-		}
-
-		return res.status(200).json({
-			success: true,
-			message: "Signed in successfully",
-			user: { _id: user._id, name: user.name, tier: user.tier || null },
-		});
-	} catch (error) {
-		console.error("Error in bidderSignin:", error);
-		return res.status(500).json({ success: false, message: error.message });
-	}
-};
-
-/**
- * Set or clear the vendor-purpose password used by Bid Monitor bidders.
+ * Set or clear the vendor-purpose password used by Athens Lens bidders.
  * Body: { applierName, vendorPassword } or { applierName, clear: true }
  */
 export const setVendorPassword = async (req, res) => {

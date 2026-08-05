@@ -10,6 +10,19 @@ Backend for **Athens** (NextOffer job search, resume analysis, skill graph, and 
 - **Skill knowledge graph** — Neo4j world graph + Firestore user graphs; graph boost during ranking
 - **Real-time** — Socket.io for extension / frontend events
 - **Mail, accounts, rules, FoxHire integration** — see routes under `src/routes/`
+- **Athens Lens API** — vendor-password sessions and the authenticated Bid Ready job feed
+
+## Athens Lens API
+
+Athens Lens uses a separate session boundary from Firebase owner auth:
+
+- `POST /api/athens-lens/auth/signin` with `{ "username", "password" }` validates the profile username, `vendorAllowed`, and the bcrypt vendor access password. It returns an opaque expiring bearer session.
+- `GET /api/athens-lens/jobs` with `Authorization: Bearer <token>` returns only that session profile's current Bid Ready jobs.
+- `GET /api/athens-lens/gmail/messages` reads only recent Gmail envelopes and flags through the profile's stored Google app password so the inbox list can render without waiting for message downloads.
+- `GET /api/athens-lens/gmail/message-bodies?ids=<uid,...>` fetches bounded, decoded MIME text parts concurrently across pooled IMAP connections—without downloading attachments—and returns safe text content plus detected verification codes.
+- `POST /api/athens-lens/auth/signout` with the same bearer token revokes the Redis session.
+
+No Athens Lens endpoint accepts an applier name from the client. Set `ATHENS_LENS_SESSION_TTL_SECONDS` to override the default 12-hour lifetime.
 
 ## Stack
 

@@ -118,7 +118,7 @@ export function VendorAccessRow({
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-foreground">Allow vendor access</p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Lets Bid Monitor bidders sign in with your profile name and a vendor-purpose password
+            Lets Athens Lens bidders sign in with your profile name and a vendor-purpose password
           </p>
         </div>
         <button
@@ -144,7 +144,7 @@ export function VendorAccessRow({
                 passwordSet ? "text-emerald-600" : "text-amber-600"
               }`}
             >
-              {passwordSet ? "Set" : "Not set — Bid Monitor blocked"}
+              {passwordSet ? "Set" : "Not set — Athens Lens blocked"}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">

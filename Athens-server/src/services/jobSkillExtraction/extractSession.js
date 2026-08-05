@@ -6,7 +6,6 @@
 import { randomUUID } from 'crypto';
 import { excludeExtensionV2JobsFilter } from '../../config/jobMarketSchema.js';
 import { jobsCollection } from '../../db/dataStore.js';
-import { getRedis, isRedisReady } from '../../db/redis.js';
 import { isBetaTier } from '../../lib/betaTier.js';
 import { getFirestoreDb } from '../firebase/firebaseAdmin.js';
 import { formatCostUsd } from '../llm/llmService.js';
@@ -40,11 +39,12 @@ const PENDING_COUNT_CACHE_MS = Math.max(
   5_000,
   Number(process.env.JOB_SKILL_PENDING_COUNT_CACHE_MS || 30_000),
 );
-const PENDING_COUNT_CACHE_SEC = Math.max(5, Math.ceil(PENDING_COUNT_CACHE_MS / 1_000));
 
 export function pendingExtractionQuery(includeV2) {
-  if (includeV2) return { aiSkillStatus: 'pending' };
-  return { aiSkillStatus: 'pending', ...excludeExtensionV2JobsFilter() };
+  // Failed extractions are globally retriable — once extracted, every user benefits.
+  const status = { aiSkillStatus: { $in: ['pending', 'failed'] } };
+  if (includeV2) return status;
+  return { ...status, ...excludeExtensionV2JobsFilter() };
 }
 
 async function countPendingInCollection(collection, includeV2) {
@@ -53,7 +53,7 @@ async function countPendingInCollection(collection, includeV2) {
     let query = getFirestoreDb()
       .collection('jobs')
       .where('sourceCatalog', '==', 'market')
-      .where('aiSkillStatus', '==', 'pending');
+      .where('aiSkillStatus', 'in', ['pending', 'failed']);
     if (!includeV2) query = query.where('extensionV2', '==', false);
     return (await query.count().get()).data().count;
   } catch (error) {
@@ -80,22 +80,6 @@ async function countPendingExtractionCached(includeV2) {
   const generation = pendingCountGeneration;
   const cached = pendingCountCache.get(key);
   if (cached?.expiresAt > Date.now()) return cached.promise;
-  const redisKey = `jobs:analysis:skill-pending:v1:${key}`;
-  // After an ingest/delete, bypass Redis until this process has recomputed the
-  // affected count from Firestore. The Redis DEL is asynchronous and must not
-  // create a brief window where the toolbar reads the old value again.
-  if (isRedisReady() && pendingCountRefreshedGeneration.get(key) === generation) {
-    const stored = await getRedis().get(redisKey).catch(() => null);
-    const count = stored == null ? NaN : Number(stored);
-    if (Number.isFinite(count) && count >= 0) {
-      const promise = Promise.resolve(count);
-      pendingCountCache.set(key, {
-        promise,
-        expiresAt: Date.now() + PENDING_COUNT_CACHE_MS,
-      });
-      return promise;
-    }
-  }
   const promise = countPendingExtraction(includeV2)
     .catch((error) => {
       pendingCountCache.delete(key);
@@ -105,9 +89,6 @@ async function countPendingExtractionCached(includeV2) {
       if (pendingCountGeneration !== generation) {
         pendingCountCache.delete(key);
         return count;
-      }
-      if (isRedisReady()) {
-        void getRedis().setEx(redisKey, PENDING_COUNT_CACHE_SEC, String(count)).catch(() => undefined);
       }
       pendingCountRefreshedGeneration.set(key, generation);
       return count;
@@ -122,12 +103,6 @@ async function countPendingExtractionCached(includeV2) {
 export function invalidatePendingExtractionCount() {
   pendingCountGeneration += 1;
   pendingCountCache.clear();
-  if (isRedisReady()) {
-    void getRedis().del(
-      'jobs:analysis:skill-pending:v1:all',
-      'jobs:analysis:skill-pending:v1:public',
-    ).catch(() => undefined);
-  }
 }
 
 async function includeV2JobsForApplier(applierName) {
@@ -164,7 +139,7 @@ export async function claimPendingJobs(collection, jobs, {
       throwIfCancelled(signal);
       return collection.atomicClaimMany(
         jobs.map((job) => job._id),
-        { aiSkillStatus: 'pending' },
+        { aiSkillStatus: { $in: ['pending', 'failed'] } },
         claimUpdate,
       );
     }));
@@ -182,7 +157,7 @@ export async function claimPendingJobs(collection, jobs, {
       const result = await firestoreMutationLimiter.run(async () => {
         throwIfCancelled(signal);
         return collection.updateOne(
-          { _id: job._id, aiSkillStatus: 'pending' },
+          { _id: job._id, aiSkillStatus: { $in: ['pending', 'failed'] } },
           claimUpdate,
         );
       });

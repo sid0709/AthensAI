@@ -1,5 +1,5 @@
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const READ_ONLY_POSTS = new Set(["/api/auth/signin", "/api/auth/bidder-signin"]);
+const READ_ONLY_POSTS = new Set(["/api/auth/signin"]);
 
 export function writesEnabled() {
 	const raw = String(process.env.FIRESTORE_WRITES_ENABLED || "").trim().toLowerCase();

@@ -148,6 +148,7 @@ jobs:
       # Avalon relay is NOT published on 3847; only via /avalon/ on the web port.
       # WXT_AVALON_RELAY_URL must be the public origin (no /avalon path) — Socket.IO
       # treats URL path as a namespace; the Engine.IO path is /avalon/socket.io.
+      # ATHENS_API_URL / WXT_API_URL bake as ${ORIGIN}/api (e.g. https://athensai.remotepairnet.net/api).
       - name: Resolve public origin
         id: origin
         shell: bash
@@ -172,6 +173,7 @@ jobs:
             echo "api_url=${ORIGIN}/api"
           } >> "$GITHUB_OUTPUT"
           echo "Extension public origin: ${ORIGIN}"
+          echo "Extension API URL: ${ORIGIN}/api"
 
       - name: Build and push
         uses: docker/build-push-action@v6

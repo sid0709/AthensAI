@@ -12,7 +12,7 @@ import { findAccountByApplierName } from "../services/mail/credentials.js";
 import { resolveDefaultModel } from "../services/llm/llmService.js";
 import { decryptSelectedProfileSecrets } from "../services/autoBidProfileSecrets.js";
 import { getServiceAuthHeaders } from "../services/googleServiceAuth.js";
-import { listJobsV2 } from "../services/jobListReadModelService.js";
+import { getFirestoreDb } from "../services/firebase/firebaseAdmin.js";
 import { createJobRecord } from "./jobController.js";
 
 const AI_BFF_URL = (process.env.AI_BFF_URL || "http://127.0.0.1:3920").replace(/\/$/, "");
@@ -132,16 +132,18 @@ export const getAgentModels = createAsyncHandler(async (req, res) => {
 export const getAgentJobSources = createAsyncHandler(async (req, res) => {
   const account = await accountForRequest(req);
   if (!account?.name) return res.status(404).json({ error: 'Profile not found' });
-  const result = await withTimeout(listJobsV2({
-    applierName: account.name,
-    applied: false,
-    limit: 1,
-    facets: ['source'],
-  }), 5_000, 'Job source lookup');
-  if (result?.disabled) return res.status(503).json({ error: 'Job read model unavailable', retryable: true });
   const allowed = new Set(JobSource.filter((source) => source.type !== 'Legal' && source.title !== 'Other').map((source) => source.title));
-  const sources = (result?.facets?.sources || []).filter((source) => allowed.has(source.title));
-  res.json({ sources, total: result?.pagination?.total || 0 });
+  const sources = await withTimeout(Promise.all([...allowed].map(async (title) => {
+    const snapshot = await getFirestoreDb().collection('jobs')
+      .where('sourceCatalog', '==', 'market')
+      .where('titleReview.label', '==', 'APPROVED')
+      .where('source', '==', title)
+      .count()
+      .get();
+    return { title, count: Number(snapshot.data().count || 0) };
+  })), 5_000, 'Job source lookup');
+  const available = sources.filter((source) => source.count > 0);
+  res.json({ sources: available, total: available.reduce((sum, source) => sum + source.count, 0) });
 });
 
 export const getAgentReadiness = createAsyncHandler(async (req, res) => {

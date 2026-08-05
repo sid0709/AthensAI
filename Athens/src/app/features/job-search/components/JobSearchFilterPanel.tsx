@@ -4,25 +4,19 @@ import {
   ChevronDown,
   Search,
   SlidersHorizontal,
-  Sparkles,
   X,
 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
-import { AthensSelect } from "../../../components/forms";
 import { cn } from "../../../lib/utils";
 import {
   countAttributeFilters,
-  countScoreFilters,
   getActiveFilterChips,
   type JobSearchFilterState,
   type JobStatusTab,
 } from "../../../hooks/useJobSearchFilters";
 import { ActiveFilterChips } from "./filters/ActiveFilterChips";
 import { JobFiltersSheet } from "./filters/JobFiltersSheet";
-import { JobScoreFiltersPopover } from "./filters/JobScoreFiltersPopover";
-import { MySkillsPopover } from "./MySkillsPopover";
 import { SkillExtractionButton } from "./SkillExtractionButton";
-import { ReviewTitlesButton } from "./ReviewTitlesButton";
 
 const STATUS_TABS: {
   id: JobStatusTab;
@@ -38,22 +32,11 @@ const STATUS_TABS: {
   { id: "declined", label: "Declined", dot: "bg-rose-500" },
 ];
 
-const SORT_OPTIONS = [
-  { value: "newest", label: "Newest" },
-  { value: "oldest", label: "Oldest" },
-  { value: "matchScore", label: "Best match" },
-  { value: "title", label: "Title A–Z" },
-];
-
 type JobSearchFilterPanelProps = {
   filters: JobSearchFilterState;
   onChange: (filters: JobSearchFilterState) => void;
   statusCounts: Record<JobStatusTab, number>;
   countsLoading?: boolean;
-  showScoresOnCards: boolean;
-  onShowScoresOnCardsChange: (v: boolean) => void;
-  matchScoreHint?: string | null;
-  matchScoreHintVariant?: "info" | "warning";
   /** Hide All/New/Applied status tabs (e.g. task pool always uses New/posted). */
   showStatusTabs?: boolean;
   /** Hide My Skills / Skill Extraction tools used only on Job Search. */
@@ -110,10 +93,6 @@ export function JobSearchFilterPanel({
   onChange,
   statusCounts,
   countsLoading = false,
-  showScoresOnCards,
-  onShowScoresOnCardsChange,
-  matchScoreHint,
-  matchScoreHintVariant = "info",
   showStatusTabs = true,
   showSkillsTools = true,
 }: JobSearchFilterPanelProps) {
@@ -122,7 +101,6 @@ export function JobSearchFilterPanel({
 
   const patch = (partial: Partial<JobSearchFilterState>) => onChange({ ...filters, ...partial });
   const attributeCount = countAttributeFilters(filters);
-  const scoreCount = countScoreFilters(filters);
   const chips = getActiveFilterChips(filters);
   const hasChips = chips.length > 0;
 
@@ -186,21 +164,6 @@ export function JobSearchFilterPanel({
             />
           </div>
 
-          <ToolbarDivider />
-
-          <div className="flex items-center gap-2 shrink-0">
-            <AthensSelect
-              value={filters.sort}
-              onChange={(sort) => patch({ sort: sort as JobSearchFilterState["sort"] })}
-              options={SORT_OPTIONS}
-              size="sm"
-              className="w-[140px] shrink-0"
-            />
-
-          </div>
-
-          <ToolbarDivider />
-
           <div className="flex items-center gap-1.5 shrink-0">
             <Button
               variant="outline"
@@ -216,22 +179,12 @@ export function JobSearchFilterPanel({
                 </span>
               )}
             </Button>
-
-            <JobScoreFiltersPopover
-              filters={filters}
-              onChange={onChange}
-              scoreCount={scoreCount}
-              showOnCards={showScoresOnCards}
-              onShowOnCardsChange={onShowScoresOnCardsChange}
-            />
           </div>
 
           {showSkillsTools ? (
             <>
               <ToolbarDivider />
               <div className="flex items-center gap-1.5 sm:ml-auto shrink-0">
-                <MySkillsPopover />
-                <ReviewTitlesButton />
                 <SkillExtractionButton />
               </div>
             </>
@@ -256,26 +209,6 @@ export function JobSearchFilterPanel({
             )}
           </div>
         )}
-
-        {/* Match-score hint banner */}
-        {matchScoreHint ? (
-          <div
-            className={cn(
-              "border-t px-3 py-2 text-xs flex items-center gap-2",
-              matchScoreHintVariant === "warning"
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-100"
-                : "border-border/60 text-muted-foreground",
-            )}
-          >
-            <Sparkles
-              className={cn(
-                "w-3.5 h-3.5 shrink-0",
-                matchScoreHintVariant === "warning" ? "text-amber-600 dark:text-amber-400" : "text-primary/70",
-              )}
-            />
-            <span>{matchScoreHint}</span>
-          </div>
-        ) : null}
       </div>
 
         <JobFiltersSheet

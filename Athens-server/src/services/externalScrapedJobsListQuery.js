@@ -104,7 +104,6 @@ export function normalizeExternalScrapedJob(doc) {
 		'skillTokens',
 		'aiSkillStatus',
 		'aiSkillExtractedAt',
-		'matchScoreStatus',
 		'modelVersion',
 	]) {
 		if (doc[key] !== undefined) enrichedFields[key] = doc[key];
@@ -116,33 +115,6 @@ export function normalizeExternalScrapedJob(doc) {
 export function isIncludeExternalScraped(body = {}) {
 	const flag = body.includeExternalScraped;
 	return flag === true || flag === 'true';
-}
-
-function parseScoreBound(value) {
-	if (value === undefined || value === null || value === '') return null;
-	const n = Number(value);
-	if (!Number.isFinite(n)) return null;
-	return Math.max(0, Math.min(100, Math.round(n)));
-}
-
-/** External rows without match scores are excluded when score-dimension filters are active. */
-export function hasBlockingFiltersForExternal(body = {}) {
-	const dimensions = [
-		['scoreOverallMin', 'scoreOverallMax'],
-		['scoreSkillMin', 'scoreSkillMax'],
-		['scoreSalaryMin', 'scoreSalaryMax'],
-		['scoreBidEstMin', 'scoreBidEstMax'],
-		['scoreFreshnessMin', 'scoreFreshnessMax'],
-	];
-
-	for (const [minKey, maxKey] of dimensions) {
-		const min = parseScoreBound(body[minKey]);
-		const max = parseScoreBound(body[maxKey]);
-		if (min !== null && min > 0) return true;
-		if (max !== null && max < 100) return true;
-	}
-
-	return false;
 }
 
 /** External jobs only appear on all/posted tabs (treated as new). */
@@ -163,7 +135,6 @@ export function resolveStatusTabFromBody(body = {}) {
 export function shouldMergeExternal(body = {}, statusTab = resolveStatusTabFromBody(body)) {
 	return (
 		isIncludeExternalScraped(body) &&
-		!hasBlockingFiltersForExternal(body) &&
 		externalAllowedForStatusTab(statusTab)
 	);
 }

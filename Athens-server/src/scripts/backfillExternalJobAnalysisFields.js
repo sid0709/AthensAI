@@ -1,5 +1,5 @@
 /**
- * Backfill aiSkillStatus / matchScoreStatus on external_scraped_jobs documents
+ * Backfill aiSkillStatus on external_scraped_jobs documents
  * that predate the AI analysis pipeline.
  *
  * Marks duplicates (jobLink already extracted in job_market) as skipped_duplicate.
@@ -39,7 +39,6 @@ async function main() {
 	for (const doc of missing) {
 		const jobLink = String(doc.jobLink || "").trim();
 		let aiSkillStatus = "pending";
-		let matchScoreStatus = "pending";
 
 		if (jobLink) {
 			const dup = await jobsCollection.findOne(
@@ -48,7 +47,6 @@ async function main() {
 			);
 			if (dup) {
 				aiSkillStatus = "skipped_duplicate";
-				matchScoreStatus = "scored";
 				skipped += 1;
 			} else {
 				pending += 1;
@@ -65,7 +63,6 @@ async function main() {
 						catalog: "external",
 						modelVersion: JOB_MARKET_MODEL_VERSION,
 						aiSkillStatus,
-						matchScoreStatus,
 					},
 				},
 			);

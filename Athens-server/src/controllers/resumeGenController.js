@@ -1280,6 +1280,7 @@ export async function getAgentJobResumePdf(req, res) {
 
 		const draft = await renderResumePdfInBackgroundLane({
 			taskId: `interactive-${randomUUID()}`,
+			applierName,
 			profileId: cleanString(req.authProfile?.profileId)
 				|| String((await accountInfoCollection?.findOne(
 					{ name: applierName },

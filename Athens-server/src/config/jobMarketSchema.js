@@ -1,5 +1,5 @@
 /** Current job_market document schema version. */
-export const JOB_MARKET_MODEL_VERSION = '2026.07.29-title-review-v1';
+export const JOB_MARKET_MODEL_VERSION = '2026.08.04-firestore-first-v3';
 
 /**
  * Ingest provenance for jobs uploaded by extension-v2.
@@ -26,7 +26,6 @@ export const SCRAPER_ONLY_JOB_FIELDS = [
 	'tags',
 	'applicants',
 	'duplicateWindowDays',
-	'skillAnalysis',
 	'scoreSalary',
 	'scoreApplicant',
 	'scoreApplication',

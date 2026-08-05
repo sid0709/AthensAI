@@ -9,7 +9,6 @@ export type BackgroundTaskType =
   | 'mail_ai_label'
   | 'job_analysis'
   | 'skill_enrichment'
-  | 'job_embedding'
   | 'job_removal'
   | 'resume_removal'
   | 'resume_identity_refresh';

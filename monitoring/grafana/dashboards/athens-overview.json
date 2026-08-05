@@ -1,29 +1,49 @@
 {
-  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
-  "editable": false,
-  "graphTooltip": 1,
-  "panels": [
-    {"type":"stat","title":"Active internal alerts","gridPos":{"h":5,"w":6,"x":0,"y":0},"targets":[{"expr":"count(ALERTS{alertstate=\"firing\"})","legendFormat":"Firing"}],"fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"red","value":1}]}}}},
-    {"type":"stat","title":"Monitoring cycle age","gridPos":{"h":5,"w":6,"x":6,"y":0},"targets":[{"expr":"time() - athens_monitor_cycle_timestamp_seconds","legendFormat":"Seconds"}],"fieldConfig":{"defaults":{"unit":"s","thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":90},{"color":"red","value":120}]}}}},
-    {"type":"stat","title":"Redis keys (private)","gridPos":{"h":5,"w":6,"x":12,"y":0},"targets":[{"expr":"sum(redis_db_keys)","legendFormat":"Keys"}],"fieldConfig":{"defaults":{"unit":"short"}}},
-    {"type":"stat","title":"Qdrant vectors (private)","gridPos":{"h":5,"w":6,"x":18,"y":0},"targets":[{"expr":"sum(collections_vector_total)","legendFormat":"Vectors"}],"fieldConfig":{"defaults":{"unit":"short"}}},
-    {"type":"timeseries","title":"CPU utilization","gridPos":{"h":8,"w":8,"x":0,"y":5},"targets":[{"expr":"athens:node_cpu_utilization:ratio * 100","legendFormat":"CPU"}],"fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100}}},
-    {"type":"timeseries","title":"Memory utilization","gridPos":{"h":8,"w":8,"x":8,"y":5},"targets":[{"expr":"athens:node_memory_utilization:ratio * 100","legendFormat":"Host memory"},{"expr":"100 * redis_memory_used_bytes / clamp_min(redis_memory_max_bytes, 1)","legendFormat":"Redis maxmemory"}],"fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100}}},
-    {"type":"timeseries","title":"Root filesystem utilization","gridPos":{"h":8,"w":8,"x":16,"y":5},"targets":[{"expr":"athens:root_filesystem_utilization:ratio * 100","legendFormat":"Disk"}],"fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100}}},
-    {"type":"state-timeline","title":"Dependency health","gridPos":{"h":8,"w":12,"x":0,"y":13},"targets":[{"expr":"athens_health_severity","legendFormat":"{{component}}"}],"fieldConfig":{"defaults":{"mappings":[{"options":{"0":{"text":"Operational","color":"green"},"1":{"text":"Degraded","color":"yellow"},"2":{"text":"Partial outage","color":"orange"},"3":{"text":"Major outage","color":"red"},"4":{"text":"Unknown","color":"gray"}},"type":"value"}]}}},
-    {"type":"timeseries","title":"Public probes","gridPos":{"h":8,"w":12,"x":12,"y":13},"targets":[{"expr":"probe_success{job=\"public-http\"}","legendFormat":"{{instance}}"}],"fieldConfig":{"defaults":{"min":0,"max":1}}},
-    {"type":"timeseries","title":"Redis operations and clients","gridPos":{"h":8,"w":12,"x":0,"y":21},"targets":[{"expr":"sum(rate(redis_commands_processed_total[5m]))","legendFormat":"Operations/sec"},{"expr":"redis_connected_clients","legendFormat":"Clients"}]},
-    {"type":"timeseries","title":"Redis memory and persistence","gridPos":{"h":8,"w":12,"x":12,"y":21},"targets":[{"expr":"redis_memory_used_bytes","legendFormat":"Used"},{"expr":"redis_memory_used_rss_bytes","legendFormat":"RSS"}],"fieldConfig":{"defaults":{"unit":"bytes"}}},
-    {"type":"timeseries","title":"Qdrant requests and failures","gridPos":{"h":8,"w":12,"x":0,"y":29},"targets":[{"expr":"sum(rate(rest_responses_total[5m]))","legendFormat":"Requests/sec"},{"expr":"sum(rate(rest_responses_failures_total[5m]))","legendFormat":"Failures/sec"}]},
-    {"type":"timeseries","title":"Qdrant p95 latency","gridPos":{"h":8,"w":12,"x":12,"y":29},"targets":[{"expr":"athens:qdrant_p95_latency_seconds","legendFormat":"p95"}],"fieldConfig":{"defaults":{"unit":"s"}}},
-    {"type":"timeseries","title":"Exporter freshness","gridPos":{"h":8,"w":24,"x":0,"y":37},"targets":[{"expr":"up{job=~\"athens-server|redis|qdrant|node|containers\"}","legendFormat":"{{job}} / {{instance}}"}],"fieldConfig":{"defaults":{"min":0,"max":1}}}
-  ],
-  "refresh": "30s",
+  "title": "Athens Operations",
+  "uid": "athens-overview",
   "schemaVersion": 39,
-  "tags": ["athensai", "firebase", "redis", "qdrant"],
-  "templating": {"list": []},
-  "time": {"from":"now-24h","to":"now"},
-  "title":"AthensAI Overview",
-  "uid":"athens-overview",
-  "version":2
+  "version": 2,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "VPS utilization",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "athens:node_cpu_utilization:ratio * 100", "legendFormat": "CPU" },
+        { "expr": "athens:node_memory_utilization:ratio * 100", "legendFormat": "Memory" },
+        { "expr": "athens:root_filesystem_utilization:ratio * 100", "legendFormat": "Disk" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Firestore task queue",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "athens_background_queue_oldest_age_seconds", "legendFormat": "Oldest queue age" },
+        { "expr": "athens_background_expired_lease_count", "legendFormat": "Expired leases" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Algolia outbox lag",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "athens_algolia_outbox_lag_seconds", "legendFormat": "Lag" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Service availability",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "athens_health_status", "legendFormat": "{{component}}" }
+      ],
+      "fieldConfig": { "defaults": { "min": 0, "max": 1 } }
+    }
+  ],
+  "tags": ["athensai", "firebase", "algolia"]
 }

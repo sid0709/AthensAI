@@ -200,7 +200,7 @@ export async function getTitleReviewCountsNative({ db = getFirestoreDb(), timeou
 	const base = () => collection.where('sourceCatalog', '==', SOURCE_CATALOG);
 	try {
 		const snapshots = await withQueryTimeout(Promise.all([
-			base().where('titleReview.processingState', 'in', ['pending', 'failed']).count().get(),
+			base().where('titleReview.processingState', 'in', ['pending', 'scanning']).count().get(),
 			base().where('titleReview.processingState', 'in', ['pending', 'scanning']).count().get(),
 			base().where('titleReview.label', '==', 'REVIEW_REQUIRED').count().get(),
 			base().where('titleReview.processingState', '==', 'failed').count().get(),
