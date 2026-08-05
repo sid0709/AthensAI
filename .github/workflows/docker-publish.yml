@@ -85,7 +85,6 @@ jobs:
           GRAFANA_ADMIN_PASSWORD: ci-validation-only
         run: |
           bash -n docker/entrypoint.sh docker/deploy-remote.sh
-          docker compose -f docker/ranking-compose.yml config >/dev/null
           docker compose -f monitoring/docker-compose.yml config >/dev/null
           docker run --rm --entrypoint promtool \
             -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
@@ -417,7 +416,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
-          source: docker/deploy-remote.sh,docker/ranking-compose.yml
+          source: docker/deploy-remote.sh
           target: /opt/nextoffer/
           strip_components: 1
 
