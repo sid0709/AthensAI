@@ -21,6 +21,14 @@ type PageTextFrame = {
   title: string;
   metaDescription: string;
   visibleText: string;
+  forms: Array<{
+    label?: string;
+    name?: string;
+    type?: string;
+    placeholder?: string;
+    required?: boolean;
+    options?: string[];
+  }>;
 };
 
 const recordingTabs = new Map<string, number>();
@@ -152,51 +160,370 @@ async function beginOffscreenRecording(
   return tabId;
 }
 
-async function readTabPageText(tabId: number) {
-  const results = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    func: () => {
-      const body = document.body;
-      return {
-        url: location.href,
-        title: document.title || "",
-        metaDescription:
-          document.querySelector('meta[name="description"]')?.getAttribute("content") || "",
-        visibleText: body?.innerText || "",
-      };
-    },
+const MAX_VISIBLE_TEXT_CHARS = 60_000;
+
+function listTabFrames(tabId: number): Promise<Array<{ frameId: number; url?: string }>> {
+  return new Promise((resolve) => {
+    if (!chrome.webNavigation?.getAllFrames) {
+      resolve([{ frameId: 0 }]);
+      return;
+    }
+    chrome.webNavigation.getAllFrames({ tabId }, (frames) => {
+      if (chrome.runtime.lastError?.message || !frames?.length) {
+        resolve([{ frameId: 0 }]);
+        return;
+      }
+      resolve(
+        frames
+          .filter((frame) => {
+            const url = String(frame.url || "");
+            if (!url || url === "about:blank") return frame.frameId === 0;
+            if (/^(chrome|chrome-extension|devtools|data):/i.test(url)) return false;
+            return true;
+          })
+          .map((frame) => ({ frameId: frame.frameId, url: frame.url })),
+      );
+    });
   });
+}
 
-  const frames = (results || [])
-    .map((entry: { result?: PageTextFrame }) => entry.result)
-    .filter((entry): entry is PageTextFrame => Boolean(entry?.visibleText || entry?.title || entry?.url));
+/**
+ * Runs inside each page frame. Visible text only (`innerText`) — never textContent/DOM dumps.
+ * Must be self-contained and never throw.
+ *
+ * Also walks open Shadow DOM. Sites like Manatal careers-page mount the whole
+ * application form into `#application-root.attachShadow({mode:"open"})`, and
+ * `document.body.innerText` does not include shadow-root text.
+ */
+function extractFrameContent() {
+  type Root = Document | ShadowRoot;
 
-  if (!frames.length) {
-    throw new Error("Could not read text from the open page.");
+  const listOpenShadowRoots = (root: Root): ShadowRoot[] => {
+    const found: ShadowRoot[] = [];
+    const scope: ParentNode = root instanceof Document
+      ? (root.body || root.documentElement || root)
+      : root;
+    if (!scope?.querySelectorAll) return found;
+    for (const el of Array.from(scope.querySelectorAll("*"))) {
+      const shadow = (el as Element).shadowRoot;
+      if (!shadow) continue;
+      found.push(shadow);
+      found.push(...listOpenShadowRoots(shadow));
+    }
+    return found;
+  };
+
+  const fieldFromElement = (
+    el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+    root: Root,
+  ) => {
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") return null;
+    } catch {
+      // ignore
+    }
+    let label = "";
+    try {
+      if (el.id) {
+        const safeId = el.id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const labeled = root.querySelector(`label[for="${safeId}"]`) as HTMLElement | null;
+        label = labeled?.innerText || "";
+      }
+      if (!label) label = (el.closest("label") as HTMLElement | null)?.innerText || "";
+      if (!label) label = el.getAttribute("aria-label") || "";
+    } catch {
+      label = el.getAttribute("aria-label") || "";
+    }
+    const options = el instanceof HTMLSelectElement
+      ? Array.from(el.options)
+        .map((option) => (option.innerText || option.textContent || "").trim())
+        .filter(Boolean)
+        .slice(0, 30)
+      : [];
+    return {
+      label: label.replace(/\s+/g, " ").trim().slice(0, 200) || undefined,
+      name: el.getAttribute("name") || undefined,
+      type: el.getAttribute("type") || el.tagName.toLowerCase(),
+      placeholder: el.getAttribute("placeholder") || undefined,
+      required: el.hasAttribute("required") || el.getAttribute("aria-required") === "true",
+      options: options.length ? options : undefined,
+    };
+  };
+
+  const collectForms = () => {
+    try {
+      const roots: Root[] = [document, ...listOpenShadowRoots(document)];
+      const fields: Array<NonNullable<ReturnType<typeof fieldFromElement>>> = [];
+      for (const root of roots) {
+        const nodes = root.querySelectorAll(
+          "input, textarea, select, [role='textbox'], [contenteditable='true']",
+        );
+        for (const element of Array.from(nodes)) {
+          if (fields.length >= 120) break;
+          const mapped = fieldFromElement(
+            element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+            root,
+          );
+          if (mapped && (mapped.label || mapped.name || mapped.placeholder)) {
+            fields.push(mapped);
+          }
+        }
+        if (fields.length >= 120) break;
+      }
+      return fields;
+    } catch {
+      return [];
+    }
+  };
+
+  const shadowInnerText = (shadow: ShadowRoot) => {
+    const parts: string[] = [];
+    for (const node of Array.from(shadow.childNodes)) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const text = ((node as HTMLElement).innerText || "").trim();
+        if (text) parts.push(text);
+      } else if (node.nodeType === Node.TEXT_NODE) {
+        const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+        if (text) parts.push(text);
+      }
+    }
+    // Fallback: labels/headings if children produced nothing (odd hosts).
+    if (!parts.length) {
+      for (const el of Array.from(shadow.querySelectorAll("label, legend, h1, h2, h3, h4, p, li, button"))) {
+        const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
+        if (text) parts.push(text);
+      }
+    }
+    return parts.join("\n\n").trim();
+  };
+
+  const collectVisibleText = () => {
+    const parts: string[] = [];
+    const light = (document.body?.innerText || document.documentElement?.innerText || "").trim();
+    if (light) parts.push(light);
+
+    for (const shadow of listOpenShadowRoots(document)) {
+      const shadowText = shadowInnerText(shadow);
+      if (shadowText) parts.push(shadowText);
+    }
+
+    return parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+  };
+
+  try {
+    return {
+      url: location.href,
+      title: document.title || "",
+      metaDescription:
+        document.querySelector('meta[name="description"]')?.getAttribute("content") || "",
+      visibleText: collectVisibleText(),
+      forms: collectForms(),
+    };
+  } catch {
+    return {
+      url: location.href,
+      title: document.title || "",
+      metaDescription: "",
+      visibleText: "",
+      forms: [],
+    };
+  }
+}
+
+async function readFrameContent(tabId: number, frameId: number): Promise<PageTextFrame | null> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      func: extractFrameContent,
+    });
+    return results?.[0]?.result || null;
+  } catch {
+    return null;
+  }
+}
+
+function fingerprintText(text: string) {
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  return normalized.slice(0, 400);
+}
+
+function mergeVisibleFrameText(frames: PageTextFrame[], maxChars = MAX_VISIBLE_TEXT_CHARS) {
+  const ranked = [...frames]
+    .map((frame) => ({ ...frame, visibleText: frame.visibleText.trim() }))
+    .filter((frame) => frame.visibleText.length > 0)
+    .sort((a, b) => b.visibleText.length - a.visibleText.length);
+
+  const selected: PageTextFrame[] = [];
+  const seen = new Set<string>();
+  let total = 0;
+
+  for (const frame of ranked) {
+    if (total >= maxChars) break;
+    const key = fingerprintText(frame.visibleText);
+    if (seen.has(key)) continue;
+    // Skip near-duplicates contained in an already-selected larger frame.
+    if ([...seen].some((existing) => existing.includes(key.slice(0, 160)) || key.includes(existing.slice(0, 160)))) {
+      continue;
+    }
+    const room = maxChars - total;
+    const sliced = frame.visibleText.slice(0, room);
+    if (!sliced) continue;
+    seen.add(key);
+    selected.push({ ...frame, visibleText: sliced });
+    total += sliced.length;
   }
 
-  const primary = frames[0]!;
-  const visibleText = frames
-    .map((frame) => frame.visibleText.trim())
-    .filter(Boolean)
-    .join("\n\n");
+  // Always keep a truncated slice of the largest frame when nothing else survived.
+  if (!selected.length && ranked[0]) {
+    const frame = ranked[0];
+    return {
+      frames: [{ ...frame, visibleText: frame.visibleText.slice(0, maxChars) }],
+      visibleText: frame.visibleText.slice(0, maxChars),
+    };
+  }
 
+  const visibleText = selected
+    .map((frame, index) => {
+      const header = selected.length > 1
+        ? `[frame ${index + 1}${frame.url ? ` · ${frame.url}` : ""}]\n`
+        : "";
+      return `${header}${frame.visibleText}`;
+    })
+    .join("\n\n")
+    .slice(0, maxChars);
+
+  return { frames: selected, visibleText };
+}
+
+function formsAsVisibleText(
+  forms: PageTextFrame["forms"],
+): string {
+  return forms
+    .map((field) => {
+      const bits = [
+        field.label,
+        field.name ? `(${field.name})` : "",
+        field.type ? `[${field.type}]` : "",
+        field.placeholder ? `placeholder: ${field.placeholder}` : "",
+        field.required ? "required" : "",
+        field.options?.length ? `options: ${field.options.join(" | ")}` : "",
+      ].filter(Boolean);
+      return bits.join(" · ");
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function readTabPageText(tabId: number) {
+  const frameList = await listTabFrames(tabId);
+  const frameResults: PageTextFrame[] = [];
+
+  for (const frame of frameList) {
+    const result = await readFrameContent(tabId, frame.frameId);
+    if (!result) continue;
+    if (frame.url && !result.url) result.url = frame.url;
+    if (result.visibleText?.trim() || result.forms?.length) frameResults.push(result);
+  }
+
+  if (!frameResults.length) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: extractFrameContent,
+      });
+      for (const entry of results || []) {
+        if (entry?.result?.visibleText?.trim() || entry?.result?.forms?.length) {
+          frameResults.push(entry.result);
+        }
+      }
+    } catch {
+      // Fall through to empty context below.
+    }
+  }
+
+  // Retry once in the page's main world — some hosts expose open shadow only there.
+  if (!frameResults.some((frame) => frame.visibleText?.trim())) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        world: "MAIN",
+        func: extractFrameContent,
+      });
+      for (const entry of results || []) {
+        if (entry?.result?.visibleText?.trim() || entry?.result?.forms?.length) {
+          frameResults.push(entry.result);
+        }
+      }
+    } catch {
+      // Keep whatever we already have.
+    }
+  }
+
+  let tabUrl = "";
+  try {
+    tabUrl = String((await tabsGet(tabId)).url || "");
+  } catch {
+    tabUrl = "";
+  }
+
+  if (!frameResults.length) {
+    // Still return a context so the Ask AI panel can show empty innerText for debugging.
+    return {
+      url: tabUrl,
+      title: "",
+      metaDescription: "",
+      visibleText: "",
+      forms: [],
+      readMeta: {
+        tabId,
+        frameCount: 0,
+        charCount: 0,
+        formCount: 0,
+        note: "executeScript returned no frames with text or form fields",
+      },
+    };
+  }
+
+  const { frames: selectedFrames, visibleText: mergedText } = mergeVisibleFrameText(frameResults);
+  const allForms = (selectedFrames.length ? selectedFrames : frameResults)
+    .flatMap((frame) => frame.forms || [])
+    .slice(0, 120);
+
+  let visibleText = mergedText.trim();
+  if (!visibleText && allForms.length) {
+    visibleText = formsAsVisibleText(allForms).slice(0, MAX_VISIBLE_TEXT_CHARS);
+  }
+
+  const primary = selectedFrames[0] || frameResults[0]!;
   return {
-    url: primary.url,
+    url: primary.url || tabUrl,
     title: primary.title,
     metaDescription: primary.metaDescription,
     visibleText,
+    forms: allForms,
+    readMeta: {
+      tabId,
+      frameCount: frameResults.length,
+      selectedFrameCount: selectedFrames.length,
+      charCount: visibleText.length,
+      formCount: allForms.length,
+      truncated: frameResults.some((frame) => frame.visibleText.length > MAX_VISIBLE_TEXT_CHARS),
+    },
   };
 }
 
 async function resolveReadableTabId(preferredTabId?: number | null) {
   const preferred = asTabId(preferredTabId) ?? invokedTabId;
+
+  // Prefer the recording / invoked application tab when available — side panel
+  // clicks can make "focused" resolution flaky.
   if (preferred != null) {
     try {
       const tab = await tabsGet(preferred);
       if (tab?.id != null && isCapturableUrl(tab.url)) return tab.id;
     } catch {
-      // Fall through to the focused browser tab.
+      // Fall through.
     }
   }
 

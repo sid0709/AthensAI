@@ -13,6 +13,23 @@ export interface PageContext {
   title: string;
   metaDescription?: string;
   visibleText: string;
+  forms?: Array<{
+    label?: string;
+    name?: string;
+    type?: string;
+    placeholder?: string;
+    required?: boolean;
+    options?: string[];
+  }>;
+  readMeta?: {
+    tabId?: number;
+    frameCount?: number;
+    selectedFrameCount?: number;
+    charCount?: number;
+    formCount?: number;
+    truncated?: boolean;
+    note?: string;
+  };
 }
 
 type ReadPageResponse =
@@ -49,7 +66,7 @@ export async function readOpenPageText(tabId?: number | null): Promise<{ tabId: 
 export async function askAiForPageAnswers(
   session: Session,
   pageContext: PageContext,
-  job?: { id?: string; title?: string; description?: string } | null,
+  job?: { id?: string; title?: string } | null,
 ): Promise<{ answers: FormAnswer[]; summary: string; mode: string }> {
   const payload = await requestAthensApi<AskAiResponse>("/athens-lens/ask-ai", {
     method: "POST",
@@ -57,19 +74,18 @@ export async function askAiForPageAnswers(
     body: JSON.stringify({
       pageContext,
       jobId: job?.id || undefined,
-      sessionContext: {
-        jdSummary: job?.title || undefined,
-        jdText: job?.description || undefined,
-      },
+      jobTitle: job?.title || undefined,
     }),
   });
 
-  const answers = (payload.answers || []).map((entry, index) => ({
-    id: `answer-${index + 1}`,
-    question: entry.question,
-    answer: entry.suggestedAnswer,
-    confidence: entry.confidence,
-  }));
+  const answers = (payload.answers || [])
+    .map((entry, index) => ({
+      id: `answer-${index + 1}`,
+      question: String(entry.question || "").trim(),
+      answer: String(entry.suggestedAnswer || "").trim(),
+      confidence: entry.confidence,
+    }))
+    .filter((entry) => entry.question && entry.answer);
 
   return {
     answers,

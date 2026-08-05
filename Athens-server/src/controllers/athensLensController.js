@@ -1,7 +1,7 @@
 import bcrypt from "bcrypt";
 import { accountInfoCollection } from "../db/dataStore.js";
 import { listAthensLensJobs } from "../services/athensLensJobsService.js";
-import { analyzeJobPage } from "../services/bidJobAnalyzeService.js";
+import { answerApplicationFormPage } from "../services/bidJobAnalyzeService.js";
 import {
 	createAthensLensSession,
 	revokeAthensLensSession,
@@ -156,40 +156,30 @@ export async function askAthensLensAi(req, res) {
 
 		await resolveLensAnalyzeModel(req.athensLensSession.applierName);
 
-		const { result, mode } = await analyzeJobPage({
+		const { result, mode } = await answerApplicationFormPage({
 			pageContext: {
 				url: String(pageContext.url || ""),
 				title: String(pageContext.title || ""),
 				metaDescription: String(pageContext.metaDescription || ""),
-				visibleText,
-				forms: Array.isArray(pageContext.forms) ? pageContext.forms : [],
+				visibleText: visibleText.slice(0, 60_000),
+				forms: Array.isArray(pageContext.forms) ? pageContext.forms.slice(0, 120) : [],
 			},
 			applierName: req.athensLensSession.applierName,
-			sessionContext: req.body?.sessionContext || null,
+			jobTitle: req.body?.jobTitle || req.body?.sessionContext?.jdSummary || null,
 			jobId: req.body?.jobId || null,
 		});
-
-		if (mode === "heuristic") {
-			return res.status(400).json({
-				success: false,
-				code: "ASK_AI_UNAVAILABLE",
-				message: result.summary || result.notJobPageReason || "Ask AI is unavailable for this profile.",
-			});
-		}
 
 		return res.json({
 			success: true,
 			mode,
 			summary: result.summary || "",
 			answers: Array.isArray(result.formAnswers) ? result.formAnswers : [],
-			isJobPage: Boolean(result.isJobPage),
-			notJobPageReason: result.notJobPageReason || null,
 		});
 	} catch (error) {
 		console.error("[athens-lens] ask-ai failed", error?.message || error);
 		const message = String(error?.message || "Unable to analyze the open page");
 		const status = error?.status
-			|| (/API key|default AI|Settings → Profile/i.test(message) ? 400 : 500);
+			|| (/API key|default AI|Settings → Profile|profile data/i.test(message) ? 400 : 500);
 		return res.status(status).json({
 			success: false,
 			message,

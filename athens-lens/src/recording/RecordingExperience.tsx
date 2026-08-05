@@ -1,7 +1,7 @@
 import { Check, ClipboardCheck, Copy, Loader2, RefreshCw, Sparkles, Video, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Job, Session } from "../types";
-import { askAiForPageAnswers, readOpenPageText, type FormAnswer } from "./askAi";
+import { askAiForPageAnswers, readOpenPageText, type FormAnswer, type PageContext } from "./askAi";
 import { formatRecordingTime, type ApplicationRecordingState } from "./useApplicationRecording";
 
 interface RecordingDockProps {
@@ -82,37 +82,54 @@ interface AiAnswerPanelProps {
   onClose(): void;
 }
 
+type AskPhase = "reading" | "asking" | "done";
+
 export function AiAnswerPanel({ job, session, tabId = null, onClose }: AiAnswerPanelProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [phase, setPhase] = useState<AskPhase>("reading");
   const [error, setError] = useState<string | null>(null);
+  const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const [readTabId, setReadTabId] = useState<number | null>(null);
   const [summary, setSummary] = useState("");
   const [answers, setAnswers] = useState<FormAnswer[]>([]);
 
   useEffect(() => {
     if (!job) return;
     let cancelled = false;
-    setLoading(true);
+    setPhase("reading");
     setError(null);
+    setPageContext(null);
+    setReadTabId(null);
     setAnswers([]);
     setSummary("");
 
     void (async () => {
       try {
-        const { pageContext } = await readOpenPageText(tabId);
-        const result = await askAiForPageAnswers(session, pageContext, job);
+        const read = await readOpenPageText(tabId);
+        if (cancelled) return;
+        setPageContext(read.pageContext);
+        setReadTabId(read.tabId);
+
+        const visibleText = String(read.pageContext.visibleText || "").trim();
+        if (!visibleText) {
+          setError("No readable text on the focused tab (see innerText above). Click the application form page, then try Ask AI again.");
+          setPhase("done");
+          return;
+        }
+
+        setPhase("asking");
+        const result = await askAiForPageAnswers(session, read.pageContext, job);
         if (cancelled) return;
         setAnswers(result.answers);
         setSummary(result.summary);
         if (!result.answers.length) {
-          setError("No application questions were detected on the open page.");
+          setError("AI returned no form answers from the innerText above.");
         }
+        setPhase("done");
       } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Ask AI failed.");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (cancelled) return;
+        setError(loadError instanceof Error ? loadError.message : "Ask AI failed.");
+        setPhase("done");
       }
     })();
 
@@ -128,6 +145,10 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose }: AiAnswerP
     setCopiedId(id);
     window.setTimeout(() => setCopiedId(null), 1600);
   }
+
+  const innerText = pageContext?.visibleText ?? "";
+  const innerTextReady = pageContext != null;
+  const meta = pageContext?.readMeta;
 
   return (
     <div className="assistant-backdrop" role="presentation">
@@ -147,37 +168,64 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose }: AiAnswerP
           <div className="ai-notice">
             <Video size={16} aria-hidden="true" />
             <p>
-              Answers are generated from the open page&apos;s text using your profile AI key and default model.
-              Review every response before submitting.
+              Drafted from the open page&apos;s text and your profile. Copy each answer into the form, then review before submitting.
             </p>
           </div>
 
-          {loading ? (
-            <div className="ai-loading" role="status">
-              <Loader2 size={18} className="spin" aria-hidden="true" />
-              <span>Reading the open page and drafting answers…</span>
-            </div>
-          ) : null}
+          <section className="ai-debug-block" aria-label="Focused tab innerText">
+            <p className="ai-section-label">innerText</p>
+            {phase === "reading" && !innerTextReady ? (
+              <div className="ai-loading" role="status">
+                <Loader2 size={18} className="spin" aria-hidden="true" />
+                <span>Reading focused tab innerText…</span>
+              </div>
+            ) : (
+              <>
+                <p className="ai-debug-meta">
+                  {readTabId != null ? `tab ${readTabId}` : "tab ?"}
+                  {pageContext?.url ? ` · ${pageContext.url}` : ""}
+                  {meta ? ` · ${meta.charCount ?? innerText.length} chars` : ` · ${innerText.length} chars`}
+                  {meta?.formCount != null ? ` · ${meta.formCount} fields` : ""}
+                  {meta?.note ? ` · ${meta.note}` : ""}
+                </p>
+                <pre className="ai-debug-pre">{innerText.trim() ? innerText : "(empty)"}</pre>
+              </>
+            )}
+          </section>
 
-          {error ? <p className="ai-error" role="alert">{error}</p> : null}
-          {summary ? (
-            <>
-              <p className="ai-section-label">Page summary</p>
+          <section className="ai-debug-block" aria-label="AI response">
+            <p className="ai-section-label">AI response</p>
+            {phase === "asking" ? (
+              <div className="ai-loading" role="status">
+                <Loader2 size={18} className="spin" aria-hidden="true" />
+                <span>Generating answers from innerText + profile…</span>
+              </div>
+            ) : null}
+
+            {phase === "done" && error ? <p className="ai-error" role="alert">{error}</p> : null}
+
+            {phase === "done" && answers.length > 0 ? (
+              <p className="ai-section-label ai-section-label--nested">{answers.length} answers ready to copy</p>
+            ) : null}
+            {answers.map((item) => (
+              <article className="answer-card" key={item.id}>
+                <h3>{item.question}</h3>
+                <p>{item.answer}</p>
+                <button className="copy-answer-button" type="button" onClick={() => void copyAnswer(item.id, item.answer)}>
+                  {copiedId === item.id ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                  {copiedId === item.id ? "Copied" : "Copy answer"}
+                </button>
+              </article>
+            ))}
+
+            {phase === "done" && !error && summary && answers.length === 0 ? (
               <p className="ai-summary">{summary}</p>
-            </>
-          ) : null}
+            ) : null}
 
-          {!loading && answers.length > 0 ? <p className="ai-section-label">Detected questions</p> : null}
-          {answers.map((item) => (
-            <article className="answer-card" key={item.id}>
-              <h3>{item.question}</h3>
-              <p>{item.answer}</p>
-              <button className="copy-answer-button" type="button" onClick={() => void copyAnswer(item.id, item.answer)}>
-                {copiedId === item.id ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-                {copiedId === item.id ? "Copied" : "Copy answer"}
-              </button>
-            </article>
-          ))}
+            {phase === "done" && !error && !summary && answers.length === 0 ? (
+              <p className="ai-summary">(no AI response)</p>
+            ) : null}
+          </section>
         </div>
       </aside>
     </div>

@@ -60,9 +60,10 @@ declare namespace chrome {
 
   namespace scripting {
     function executeScript<T>(injection: {
-      target: { tabId: number; allFrames?: boolean };
+      target: { tabId: number; allFrames?: boolean; frameIds?: number[] };
+      world?: "ISOLATED" | "MAIN";
       func: () => T;
-    }): Promise<Array<{ result?: T }>>;
+    }): Promise<Array<{ result?: T; frameId?: number }>>;
   }
 
   namespace offscreen {
@@ -83,6 +84,13 @@ declare namespace chrome {
       filename?: string;
       saveAs?: boolean;
     }): Promise<number>;
+  }
+
+  namespace webNavigation {
+    function getAllFrames(
+      details: { tabId: number },
+      callback: (details: Array<{ frameId: number; url?: string }> | null) => void,
+    ): void;
   }
 }
 

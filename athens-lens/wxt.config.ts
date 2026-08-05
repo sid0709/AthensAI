@@ -19,10 +19,10 @@ export default defineConfig({
     return {
       name: "Athens Lens",
       description: "A focused job search assistant in your Chrome side panel.",
-      version: "0.2.4",
+      version: "0.2.9",
       minimum_chrome_version: "116",
-      permissions: ["sidePanel", "storage", "tabs", "activeTab", "tabCapture", "scripting", "offscreen", "downloads"],
-      host_permissions: [...apiHosts, "http://*/*", "https://*/*"],
+      permissions: ["sidePanel", "storage", "tabs", "activeTab", "tabCapture", "scripting", "offscreen", "downloads", "webNavigation"],
+      host_permissions: [...apiHosts, "http://*/*", "https://*/*", "<all_urls>"],
       action: {
         default_title: "Open Athens Lens",
         default_icon: {

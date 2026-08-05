@@ -243,8 +243,13 @@ describe("Athens Lens app", () => {
     await user.click(screen.getByRole("button", { name: "Restart" }));
     await user.click(screen.getAllByRole("button", { name: "Ask AI" })[0]!);
     expect(screen.getByRole("dialog", { name: "Form answers" })).toBeInTheDocument();
-    expect(await screen.findByText("Detected questions")).toBeInTheDocument();
-    expect(screen.getByText("Why are you interested in this role?")).toBeInTheDocument();
+    expect(screen.getByLabelText("Focused tab innerText")).toBeInTheDocument();
+    expect(screen.getByLabelText("AI response")).toBeInTheDocument();
+    expect(await screen.findByText(/\d+ answers ready to copy/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Focused tab innerText").textContent).toMatch(
+      /Why are you interested in this role\?/,
+    );
+    expect(screen.getByText("I am interested because the work matches my background.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close AI answers" }));
 
     await user.click(screen.getByRole("button", { name: /Gmail inbox/ }));
