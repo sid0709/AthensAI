@@ -462,6 +462,164 @@ export async function chatCompletion({
   );
 }
 
+/**
+ * Streaming chat completion. Yields { type:'delta', text } then { type:'done', ... }.
+ * No jsonMode by default — favors time-to-first-token for interactive UX.
+ */
+export async function* chatCompletionStream({
+  provider,
+  apiKey,
+  model,
+  messages,
+  jsonMode = false,
+  cacheKey,
+  reasoningEffort,
+  timeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
+  runId,
+  feature = 'resume-analysis',
+  applierName,
+  jobId,
+  requestId,
+  signal,
+}) {
+  const p = getProvider(provider);
+  if (!apiKey) {
+    throw new Error(`No API key configured for ${p.label}. Add it under Settings → Profile.`);
+  }
+  if (!String(model || '').trim()) {
+    throw new Error('No default AI model is configured. Set one under Settings → Profile.');
+  }
+  if (!isModelCompatibleWithProvider(p.id, model)) {
+    throw new Error(`Model "${model}" is not valid for the ${p.label} profile default.`);
+  }
+
+  const body = {
+    model,
+    messages,
+    stream: true,
+    apiKeys: p.id === 'deepseek' ? { deepseek: apiKey } : { openai: apiKey },
+    workloadClass: process.env.BACKGROUND_TASK_WORKER === 'true' ? 'background' : 'interactive',
+  };
+  if (jsonMode && (p.id === 'openai' || p.id === 'deepseek')) {
+    body.response_format = { type: 'json_object' };
+    body.jsonMode = true;
+  }
+  if (cacheKey) body.prompt_cache_key = cacheKey;
+  if (p.id === 'openai' && isReasoningModel(model) && reasoningEffort && reasoningEffort !== 'default') {
+    body.reasoning_effort = reasoningEffort;
+  }
+
+  const promptChars = messages.reduce((sum, m) => sum + String(m?.content || '').length, 0);
+  const startedAt = Date.now();
+  const reqId = requestId || randomUUID();
+
+  if (process.env.LLM_LOG !== 'off') {
+    log.llm({
+      msg: 'chat stream started',
+      requestId: reqId,
+      feature,
+      provider: p.id,
+      requestedModel: model,
+      promptChars,
+    });
+  }
+
+  if (signal?.aborted) {
+    throw signal.reason || Object.assign(new Error('LLM request cancelled'), { name: 'AbortError' });
+  }
+
+  const response = await fetchRetry(
+    `${AI_BASE}/v1/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(await getServiceAuthHeaders(AI_BASE)),
+        'x-provider-api-key': apiKey,
+        'x-request-id': reqId,
+        ...(runId ? { 'x-run-id': runId } : {}),
+        ...(applierName ? { 'x-applier-name': applierName } : {}),
+        ...(jobId ? { 'x-job-id': jobId } : {}),
+        'x-feature': feature,
+      },
+      body: JSON.stringify(body),
+    },
+    { timeoutMs, retries: 2, signal, beforeAttempt: () => assertBackgroundTaskActive(signal) },
+  );
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const providerMessage = typeof data?.error === 'string' ? data.error : data?.error?.message;
+    const err = new Error(providerMessage || `${p.label} stream failed (${response.status})`);
+    err.status = response.status;
+    throw err;
+  }
+
+  if (!response.body) {
+    throw new Error(`${p.label} returned an empty stream body.`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let billedModel = model;
+  let usageRaw = null;
+
+  while (true) {
+    if (signal?.aborted) {
+      try { await reader.cancel(); } catch { /* ignore */ }
+      throw signal.reason || Object.assign(new Error('LLM request cancelled'), { name: 'AbortError' });
+    }
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n');
+    buffer = parts.pop() || '';
+    for (const rawLine of parts) {
+      const line = rawLine.trim();
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      if (parsed?.model) billedModel = parsed.model;
+      if (parsed?.usage) usageRaw = parsed.usage;
+      const delta = parsed?.choices?.[0]?.delta?.content
+        ?? parsed?.choices?.[0]?.text
+        ?? '';
+      if (delta) yield { type: 'delta', text: String(delta) };
+    }
+  }
+
+  const usage = summarizeUsage(usageRaw, billedModel || model);
+  const elapsedMs = Date.now() - startedAt;
+  if (process.env.LLM_LOG !== 'off') {
+    log.llm({
+      msg: 'chat stream completed',
+      requestId: reqId,
+      feature,
+      provider: p.id,
+      requestedModel: model,
+      billedModel,
+      durationMs: elapsedMs,
+      outputTokens: usage.outputTokens,
+    });
+  }
+  yield {
+    type: 'done',
+    usage,
+    requestId: reqId,
+    provider: p.id,
+    requestedModel: model,
+    billedModel,
+  };
+}
+
 const modelCache = new Map();
 const MODEL_TTL_MS = 5 * 60 * 1000;
 

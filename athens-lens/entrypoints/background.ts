@@ -3,6 +3,7 @@ import { createCaptureReadyTracker } from "../src/recording/captureReadyTabs";
 import {
   injectSerializePage,
   MAX_FORM_TREE_CHARS,
+  isNoiseFrameUrl,
   type OakInjectSerializeResult,
 } from "../src/oak-forms";
 import {
@@ -780,20 +781,29 @@ async function readFrameOakFormTree(
 function mergeOakFormTrees(
   frames: Array<OakInjectSerializeResult & { frameUrl?: string }>,
   maxChars = MAX_FORM_TREE_CHARS,
-): { formTree: string; oakFrameCount: number; nodeCount: number } {
-  const usable = frames.filter((frame) => String(frame.formTree || "").trim());
-  if (!usable.length) return { formTree: "", oakFrameCount: 0, nodeCount: 0 };
+): { formTree: string; oakFrameCount: number; nodeCount: number; fieldCount: number } {
+  const usable = frames.filter((frame) => {
+    const url = frame.frameUrl || frame.url;
+    if (isNoiseFrameUrl(url)) return false;
+    return Boolean(String(frame.formTree || "").trim());
+  });
+  if (!usable.length) return { formTree: "", oakFrameCount: 0, nodeCount: 0, fieldCount: 0 };
+
+  // Prefer the densest application frame first (usually the top page).
+  usable.sort((a, b) => (Number(b.fieldCount) || 0) - (Number(a.fieldCount) || 0));
 
   const parts: string[] = [];
   let total = 0;
   let nodeCount = 0;
+  let fieldCount = 0;
 
   for (let index = 0; index < usable.length; index += 1) {
     if (total >= maxChars) break;
     const frame = usable[index]!;
     nodeCount += Number(frame.nodeCount) || 0;
+    fieldCount += Number(frame.fieldCount) || 0;
     const header = usable.length > 1
-      ? `[oak frame ${index + 1}${frame.frameUrl || frame.url ? ` · ${frame.frameUrl || frame.url}` : ""}]\n`
+      ? `[frame ${index + 1}${frame.frameUrl || frame.url ? ` · ${frame.frameUrl || frame.url}` : ""}]\n`
       : "";
     const body = String(frame.formTree || "").trim();
     const chunk = `${header}${body}`.slice(0, maxChars - total);
@@ -806,6 +816,7 @@ function mergeOakFormTrees(
     formTree: parts.join("\n\n").slice(0, maxChars),
     oakFrameCount: usable.length,
     nodeCount,
+    fieldCount,
   };
 }
 
@@ -813,6 +824,7 @@ async function readTabOakFormTree(tabId: number): Promise<{
   formTree: string;
   oakFrameCount: number;
   nodeCount: number;
+  fieldCount: number;
   url: string;
   title: string;
 }> {
@@ -820,8 +832,10 @@ async function readTabOakFormTree(tabId: number): Promise<{
   const frameResults: Array<OakInjectSerializeResult & { frameUrl?: string }> = [];
 
   for (const frame of frameList) {
+    if (isNoiseFrameUrl(frame.url)) continue;
     const result = await readFrameOakFormTree(tabId, frame.frameId);
     if (!result?.formTree?.trim()) continue;
+    if (isNoiseFrameUrl(result.url)) continue;
     frameResults.push({ ...result, frameUrl: frame.url || result.url });
   }
 
@@ -833,7 +847,10 @@ async function readTabOakFormTree(tabId: number): Promise<{
         func: injectSerializePage,
       });
       for (const entry of results || []) {
-        if (entry?.result?.formTree?.trim()) frameResults.push(entry.result);
+        const result = entry?.result;
+        if (!result?.formTree?.trim()) continue;
+        if (isNoiseFrameUrl(result.url)) continue;
+        frameResults.push(result);
       }
     } catch {
       // Keep empty.
@@ -841,7 +858,10 @@ async function readTabOakFormTree(tabId: number): Promise<{
   }
 
   const merged = mergeOakFormTrees(frameResults);
-  const primary = frameResults[0];
+  const primary = [...frameResults]
+    .filter((frame) => !isNoiseFrameUrl(frame.frameUrl || frame.url))
+    .sort((a, b) => (Number(b.fieldCount) || 0) - (Number(a.fieldCount) || 0))[0]
+    || frameResults[0];
   return {
     ...merged,
     url: primary?.url || "",
@@ -920,6 +940,7 @@ async function readTabPageText(tabId: number) {
         formTreeChars: 0,
         oakFrameCount: 0,
         oakNodeCount: 0,
+        oakFieldCount: 0,
         note: "executeScript returned no frames with text, form fields, or Oak tree",
       },
     };
@@ -955,6 +976,7 @@ async function readTabPageText(tabId: number) {
       formTreeChars: oak.formTree.length,
       oakFrameCount: oak.oakFrameCount,
       oakNodeCount: oak.nodeCount,
+      oakFieldCount: oak.fieldCount,
       truncated: frameResults.some((frame) => frame.visibleText.length > MAX_VISIBLE_TEXT_CHARS)
         || oak.formTree.length >= MAX_FORM_TREE_CHARS,
     },

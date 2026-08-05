@@ -16,6 +16,7 @@ export {
   injectSerializePage,
   type OakInjectSerializeResult,
 } from "./injectSerializePage";
+export { isNoiseFrameUrl } from "./frameFilter";
 
-/** Cap Analyze tree text sent to the Ask AI API. */
-export const MAX_FORM_TREE_CHARS = 60_000;
+/** Cap compact actionable-field text sent to Ask AI / shown in the panel. */
+export const MAX_FORM_TREE_CHARS = 12_000;

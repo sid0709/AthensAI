@@ -304,19 +304,20 @@ describe("Athens Lens app", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/athens-lens/ask-ai")) {
-        return new Response(JSON.stringify({
-          success: true,
-          summary: "Application form detected.",
-          answers: [
-            {
-              question: "Why are you interested in this role?",
-              suggestedAnswer: "I am interested because the work matches my background.",
-              confidence: "high",
-            },
-          ],
-        }), {
+        const sse = [
+          "event: token",
+          'data: {"text":"{\\"formAnswers\\":["}',
+          "",
+          "event: answers",
+          'data: {"answers":[{"question":"Why are you interested in this role?","suggestedAnswer":"I am interested because the work matches my background.","confidence":"high"}]}',
+          "",
+          "event: done",
+          'data: {"success":true,"mode":"llm-stream","summary":"Application form detected.","answers":[{"question":"Why are you interested in this role?","suggestedAnswer":"I am interested because the work matches my background.","confidence":"high"}]}',
+          "",
+        ].join("\n");
+        return new Response(sse, {
           status: 200,
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "text/event-stream" },
         });
       }
       if (url.includes("/athens-lens/bids/")) {

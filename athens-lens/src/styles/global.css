@@ -1326,6 +1326,11 @@ a:focus-visible {
   max-height: min(42vh, 360px);
 }
 
+.ai-debug-pre--stream {
+  max-height: min(28vh, 220px);
+  color: var(--color-text, #0d0d0d);
+}
+
 .ai-section-label {
   margin: var(--space-6) 0 var(--space-3);
   color: var(--color-text-muted);

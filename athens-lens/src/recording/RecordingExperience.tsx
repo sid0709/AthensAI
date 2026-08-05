@@ -1,7 +1,7 @@
 import { Check, ClipboardCheck, Copy, Loader2, RefreshCw, Sparkles, Video, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Job, Session } from "../types";
-import { askAiForPageAnswers, readOpenPageText, type FormAnswer, type PageContext } from "./askAi";
+import { askAiForPageAnswersStream, readOpenPageText, type FormAnswer, type PageContext } from "./askAi";
 import { formatRecordingTime, type ApplicationRecordingState } from "./useApplicationRecording";
 
 interface RecordingDockProps {
@@ -154,6 +154,7 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState("");
   const [answers, setAnswers] = useState<FormAnswer[]>([]);
+  const [streamText, setStreamText] = useState("");
   const [formTree, setFormTree] = useState("");
   const [captureMeta, setCaptureMeta] = useState<PageContext["readMeta"] | null>(null);
   const [pageUrl, setPageUrl] = useState("");
@@ -161,10 +162,12 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
   useEffect(() => {
     if (!job) return;
     let cancelled = false;
+    const abort = new AbortController();
     setPhase("reading");
     setError(null);
     setAnswers([]);
     setSummary("");
+    setStreamText("");
     setFormTree("");
     setCaptureMeta(null);
     setPageUrl("");
@@ -187,10 +190,21 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
         }
 
         setPhase("asking");
-        const result = await askAiForPageAnswers(session, read.pageContext, job);
+        const result = await askAiForPageAnswersStream(session, read.pageContext, job, {
+          signal: abort.signal,
+          onToken: (text) => {
+            if (cancelled) return;
+            setStreamText((current) => current + text);
+          },
+          onAnswers: (nextAnswers) => {
+            if (cancelled) return;
+            setAnswers(nextAnswers);
+          },
+        });
         if (cancelled) return;
         setAnswers(result.answers);
         setSummary(result.summary);
+        if (result.streamText) setStreamText(result.streamText);
         onAnswers?.({
           jobId: job.id,
           answers: result.answers,
@@ -211,6 +225,7 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
 
     return () => {
       cancelled = true;
+      abort.abort();
     };
   }, [job, session, tabId, onAnswers]);
 
@@ -224,6 +239,7 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
 
   const oakNodeCount = captureMeta?.oakNodeCount ?? 0;
   const oakFrameCount = captureMeta?.oakFrameCount ?? 0;
+  const oakFieldCount = captureMeta?.oakFieldCount ?? 0;
   const showOakSection = phase !== "reading" || Boolean(formTree);
 
   return (
@@ -261,7 +277,7 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
               <>
                 <p className="ai-debug-meta">
                   {pageUrl ? `${pageUrl} · ` : ""}
-                  {oakNodeCount > 0 ? `${oakNodeCount} nodes` : "tree ready"}
+                  {oakFieldCount > 0 ? `${oakFieldCount} fields` : oakNodeCount > 0 ? `${oakNodeCount} nodes` : "capture ready"}
                   {oakFrameCount > 1 ? ` · ${oakFrameCount} frames` : ""}
                   {" · algorithmic (no AI)"}
                 </p>
@@ -276,21 +292,31 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
 
           <section className="ai-debug-block" aria-label="AI response">
             <p className="ai-section-label">AI response</p>
-            {phase === "reading" || phase === "asking" ? (
+            {phase === "reading" ? (
               <div className="ai-loading" role="status">
                 <Loader2 size={18} className="spin" aria-hidden="true" />
-                <span>
-                  {phase === "reading"
-                    ? "Waiting for form capture…"
-                    : "Generating answers from the form tree + profile…"}
-                </span>
+                <span>Waiting for form capture…</span>
               </div>
+            ) : null}
+
+            {phase === "asking" && !streamText && answers.length === 0 ? (
+              <div className="ai-loading" role="status">
+                <Loader2 size={18} className="spin" aria-hidden="true" />
+                <span>Streaming answers (gpt-5-nano)…</span>
+              </div>
+            ) : null}
+
+            {streamText && answers.length === 0 ? (
+              <pre className="ai-debug-pre ai-debug-pre--stream" aria-live="polite">{streamText}</pre>
             ) : null}
 
             {phase === "done" && error ? <p className="ai-error" role="alert">{error}</p> : null}
 
-            {phase === "done" && answers.length > 0 ? (
-              <p className="ai-section-label ai-section-label--nested">{answers.length} answers ready to copy</p>
+            {answers.length > 0 ? (
+              <p className="ai-section-label ai-section-label--nested">
+                {answers.length} answer{answers.length === 1 ? "" : "s"}
+                {phase === "asking" ? " so far…" : " ready to copy"}
+              </p>
             ) : null}
             {answers.map((item) => (
               <article className="answer-card" key={item.id}>
@@ -307,7 +333,7 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
               <p className="ai-summary">{summary}</p>
             ) : null}
 
-            {phase === "done" && !error && !summary && answers.length === 0 ? (
+            {phase === "done" && !error && !summary && answers.length === 0 && !streamText ? (
               <p className="ai-summary">(no AI response)</p>
             ) : null}
           </section>

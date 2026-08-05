@@ -2,15 +2,18 @@
  * Self-contained page serialize for chrome.scripting.executeScript({ func }).
  * Must not close over imports — Chrome only serializes this function body.
  *
- * Adapted from Project Oak serializer + Copy-for-Analyze formatting.
+ * Adapted from Project Oak serializer. Emits a compact actionable-field list
+ * (not a full DOM dump) so Ask AI prompts stay small and fast.
  * Does not stamp data-oak-id on the live page.
  */
 
 export type OakInjectSerializeResult = {
   url: string;
   title: string;
+  /** Compact actionable field list for UI + Ask AI. */
   formTree: string;
   nodeCount: number;
+  fieldCount: number;
   error?: string;
 };
 
@@ -42,41 +45,13 @@ export function injectSerializePage(): OakInjectSerializeResult {
     "FOOTER",
     "NAV",
   ]);
-  const DETAIL_TAGS = new Set([
-    "a",
-    "button",
-    "fieldset",
-    "form",
-    "input",
-    "label",
-    "li",
-    "option",
-    "select",
-    "textarea",
-  ]);
-  const DETAIL_ATTR_KEYS = [
-    "for",
-    "type",
-    "role",
-    "name",
-    "aria-label",
-    "aria-labelledby",
-    "aria-describedby",
-    "aria-required",
-    "aria-invalid",
-    "aria-checked",
-    "autocomplete",
-    "placeholder",
-    "value",
-    "data-automation-id",
-    "data-fkit-id",
-    "selected",
-    "checked",
-  ] as const;
 
   const MAX_DEPTH = 32;
   const MAX_CHILDREN = 120;
-  const MAX_TEXT = 120;
+  const MAX_TEXT = 160;
+  const MAX_OPTIONS = 12;
+  const MAX_FIELDS = 80;
+  const MAX_FORM_TREE_CHARS = 12_000;
 
   type DomNode = {
     nodeId: number;
@@ -89,12 +64,12 @@ export function injectSerializePage(): OakInjectSerializeResult {
     children: DomNode[];
   };
 
-  type PureNode = {
-    tag: string;
-    id: number;
-    text?: string;
-    detail?: string;
-    children: PureNode[];
+  type ActionableField = {
+    kind: string;
+    label: string;
+    name?: string;
+    required?: boolean;
+    options?: string[];
   };
 
   let oakIdCounter = 0;
@@ -104,6 +79,7 @@ export function injectSerializePage(): OakInjectSerializeResult {
     title: document.title || "",
     formTree: "",
     nodeCount: 0,
+    fieldCount: 0,
     error,
   });
 
@@ -200,29 +176,23 @@ export function injectSerializePage(): OakInjectSerializeResult {
       const attrs: Record<string, string> = {};
 
       for (const attr of [
-        "href",
-        "src",
-        "for",
         "type",
         "role",
         "name",
         "aria-label",
-        "aria-labelledby",
-        "aria-describedby",
         "aria-required",
         "aria-invalid",
-        "aria-checked",
-        "autocomplete",
         "placeholder",
         "value",
         "data-automation-id",
-        "data-fkit-id",
-        "selected",
+        "required",
         "checked",
+        "selected",
       ]) {
         const val = el.getAttribute(attr);
         if (val) attrs[attr] = val.slice(0, 120);
       }
+      if (el.hasAttribute("required")) attrs.required = "true";
 
       if ((tag === "input" || tag === "textarea") && "value" in el) {
         const val = (el as HTMLInputElement).value;
@@ -260,59 +230,198 @@ export function injectSerializePage(): OakInjectSerializeResult {
       throw new Error("Root element was completely pruned");
     };
 
-    const formatDetailValue = (value: string): string =>
-      (/\s/.test(value) ? JSON.stringify(value) : value);
+    const collectText = (node: DomNode, out: string[] = [], budget = 3): string[] => {
+      if (out.length >= budget) return out;
+      if (node.text) out.push(node.text);
+      for (const child of node.children) {
+        if (out.length >= budget) break;
+        if (child.tag === "input" || child.tag === "select" || child.tag === "textarea") continue;
+        collectText(child, out, budget);
+      }
+      return out;
+    };
 
-    const toPureNode = (node: DomNode): PureNode => {
-      const pure: PureNode = {
-        tag: node.tag,
-        id: node.nodeId,
-        children: node.children.map(toPureNode),
-      };
-      if (node.text) pure.text = node.text;
-      if (DETAIL_TAGS.has(node.tag) && (node.attrs || node.id)) {
-        const parts: string[] = [];
-        if (node.id) parts.push(`domId=${node.id}`);
-        for (const key of DETAIL_ATTR_KEYS) {
-          const value = node.attrs?.[key];
-          if (value) parts.push(`${key}=${formatDetailValue(value)}`);
+    const nearestLabel = (node: DomNode, ancestors: DomNode[], opts?: { skipOptionLabel?: boolean }): string => {
+      const aria = node.attrs?.["aria-label"];
+      if (aria) return aria.slice(0, MAX_TEXT);
+      const placeholder = node.attrs?.placeholder;
+      const start = opts?.skipOptionLabel ? Math.max(0, ancestors.length - 1) : ancestors.length - 1;
+      for (let i = start; i >= 0; i -= 1) {
+        const parent = ancestors[i]!;
+        if (opts?.skipOptionLabel && parent.tag === "label") continue;
+        if (parent.tag === "label" && !opts?.skipOptionLabel) {
+          const bits = collectText(parent).filter((t) => t !== placeholder);
+          if (bits.length) return bits.join(" ").replace(/\s*✱\s*/g, "").trim().slice(0, MAX_TEXT);
         }
-        if (parts.length > 0) pure.detail = parts.join(" ");
+        // Question text often sits in a sibling above the control list (Lever cards, etc.).
+        if (parent.tag === "li" || parent.tag === "fieldset" || parent.tag === "div") {
+          for (const sib of parent.children) {
+            if (sib === node) break;
+            if (sib.tag === "input" || sib.tag === "select" || sib.tag === "textarea" || sib.tag === "ul") continue;
+            if (sib.tag === "label" && opts?.skipOptionLabel) continue;
+            const bits = collectText(sib);
+            const joined = bits.join(" ").replace(/\s*✱\s*/g, "").trim();
+            if (joined && !/^(yes|no)$/i.test(joined)) {
+              return joined.slice(0, MAX_TEXT);
+            }
+          }
+        }
       }
-      return pure;
+      if (placeholder) return placeholder.slice(0, MAX_TEXT);
+      return (node.attrs?.name || node.id || node.tag).slice(0, MAX_TEXT);
     };
 
-    const formatPureNodeLine = (pure: PureNode): string => {
-      const detailPart = pure.detail ? ` ${pure.detail}` : "";
-      const textPart = pure.text ? ` "${pure.text}"` : "";
-      return `${pure.tag}[${pure.id}]${detailPart}${textPart}`;
+    const optionTexts = (node: DomNode): string[] => {
+      const opts: string[] = [];
+      const walk = (n: DomNode) => {
+        if (opts.length >= MAX_OPTIONS) return;
+        if (n.tag === "option" || (n.tag === "li" && n.attrs?.role === "option")) {
+          const label = (n.text || n.attrs?.value || "").trim();
+          if (label && !/^select/i.test(label)) opts.push(label.slice(0, 80));
+          return;
+        }
+        // Radio/checkbox option often: label > input + span
+        if (n.tag === "label") {
+          const input = n.children.find((c) => c.tag === "input");
+          const type = input?.attrs?.type;
+          if (type === "radio" || type === "checkbox") {
+            const value = input?.attrs?.value;
+            const text = collectText(n).join(" ").trim() || value;
+            if (text) opts.push(text.slice(0, 80));
+            return;
+          }
+        }
+        for (const child of n.children) walk(child);
+      };
+      walk(node);
+      return opts;
     };
 
-    const formatPureTreePreview = (pure: PureNode, depth = 0): string => {
-      const indent = "  ".repeat(depth);
-      const lines = [`${indent}${formatPureNodeLine(pure)}`];
-      for (const child of pure.children) {
-        lines.push(formatPureTreePreview(child, depth + 1));
+    const fields: ActionableField[] = [];
+    const seenRadioNames = new Set<string>();
+
+    const visit = (node: DomNode, ancestors: DomNode[]) => {
+      if (fields.length >= MAX_FIELDS) return;
+
+      if (node.tag === "input") {
+        const type = (node.attrs?.type || "text").toLowerCase();
+        if (type === "hidden" || type === "submit" || type === "button" || type === "image" || type === "reset") {
+          return;
+        }
+        const name = node.attrs?.name;
+        if (type === "radio") {
+          const key = name || `radio-${node.nodeId}`;
+          if (seenRadioNames.has(key)) return;
+          seenRadioNames.add(key);
+          // Options live on the shared parent group.
+          let group: DomNode = node;
+          for (let i = ancestors.length - 1; i >= 0; i -= 1) {
+            const parent = ancestors[i]!;
+            if (parent.tag === "ul" || parent.tag === "fieldset" || parent.tag === "li" || parent.tag === "div") {
+              group = parent;
+              // Prefer the li/fieldset that wraps the question + both options.
+              if (parent.tag === "li" || parent.tag === "fieldset") break;
+            }
+          }
+          // Walk up one more if current li only wraps a single option.
+          const groupOpts = optionTexts(group);
+          const parentOfGroup = ancestors[ancestors.indexOf(group) - 1];
+          const opts = groupOpts.length >= 2
+            ? groupOpts
+            : parentOfGroup
+              ? optionTexts(parentOfGroup)
+              : groupOpts;
+          fields.push({
+            kind: "radio",
+            label: nearestLabel(node, ancestors, { skipOptionLabel: true }),
+            name,
+            required: node.attrs?.required === "true" || node.attrs?.["aria-required"] === "true",
+            options: opts.length ? opts.slice(0, MAX_OPTIONS) : undefined,
+          });
+          return;
+        }
+        if (type === "checkbox") {
+          fields.push({
+            kind: "checkbox",
+            label: nearestLabel(node, ancestors, { skipOptionLabel: true }),
+            name,
+            required: node.attrs?.required === "true" || node.attrs?.["aria-required"] === "true",
+          });
+          return;
+        }
+        fields.push({
+          kind: type,
+          label: nearestLabel(node, ancestors),
+          name,
+          required: node.attrs?.required === "true" || node.attrs?.["aria-required"] === "true",
+        });
+        return;
       }
-      return lines.join("\n");
+
+      if (node.tag === "textarea") {
+        fields.push({
+          kind: "textarea",
+          label: nearestLabel(node, ancestors),
+          name: node.attrs?.name,
+          required: node.attrs?.required === "true" || node.attrs?.["aria-required"] === "true",
+        });
+        return;
+      }
+
+      if (node.tag === "select") {
+        fields.push({
+          kind: "select",
+          label: nearestLabel(node, ancestors),
+          name: node.attrs?.name,
+          required: node.attrs?.required === "true" || node.attrs?.["aria-required"] === "true",
+          options: optionTexts(node),
+        });
+        return;
+      }
+
+      if (node.attrs?.role === "combobox" || (node.tag === "div" && node.attrs?.role === "textbox")) {
+        fields.push({
+          kind: node.attrs?.role || "textbox",
+          label: nearestLabel(node, ancestors),
+          name: node.attrs?.name || node.attrs?.["data-automation-id"],
+          required: node.attrs?.["aria-required"] === "true",
+        });
+      }
+
+      const nextAncestors = [...ancestors, node];
+      for (const child of node.children) visit(child, nextAncestors);
     };
 
     const tree = serializeDom();
-    const pure = toPureNode(tree);
+    visit(tree, []);
+
+    const lines = fields.map((field, index) => {
+      const bits = [
+        `${index + 1}.`,
+        field.kind,
+        `| ${field.label || "(unlabeled)"}`,
+        field.name ? `| name=${field.name}` : "",
+        field.required ? "| required" : "",
+        field.options?.length ? `| options=${field.options.join(" / ")}` : "",
+      ].filter(Boolean);
+      return bits.join(" ");
+    });
+
     const formTree = [
-      `# DOM Tree — ${document.title || "Untitled"}`,
+      `# Actionable fields — ${document.title || "Untitled"}`,
       `URL: ${location.href}`,
-      `Fetched: ${new Date().toISOString()}`,
+      `Fields: ${fields.length}`,
       "",
-      formatPureTreePreview(pure),
+      ...lines,
       "",
-    ].join("\n");
+    ].join("\n").slice(0, MAX_FORM_TREE_CHARS);
 
     return {
       url: location.href,
       title: document.title || "",
       formTree,
       nodeCount: oakIdCounter,
+      fieldCount: fields.length,
     };
   } catch (error) {
     return empty(error instanceof Error ? error.message : "serialize failed");

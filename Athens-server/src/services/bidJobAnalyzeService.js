@@ -7,7 +7,7 @@ import {
 	compressResumeCatalog,
 	resolveCatalogKey,
 } from "../lib/resumeCatalogCompress.js";
-import { chatCompletion, resolveDefaultModel, summarizeUsage } from "./llm/llmService.js";
+import { chatCompletion, chatCompletionStream, resolveDefaultModel, summarizeUsage } from "./llm/llmService.js";
 import { decryptAccountDoc, loadDecryptedAutoBidProfile } from "./autoBidProfileSecrets.js";
 
 const FLAG_KEYWORDS = {
@@ -57,24 +57,21 @@ Rules:
 - Never invent API keys or passwords. Never leave suggestedAnswer empty.
 - notJobPageReason: required when isJobPage is false.`;
 
-const FORM_ANSWER_SYSTEM_PROMPT = `You help an applicant fill out a job application form. Use only the PROFILE JSON for facts. Respond with JSON only.
+const FORM_ANSWER_SYSTEM_PROMPT = `You draft application form answers from PROFILE JSON. JSON only.
 
-Return JSON with this exact shape:
 {
   "summary": string,
   "formAnswers": [{ "question": string, "suggestedAnswer": string, "confidence": "high"|"medium"|"low" }]
 }
 
 Rules:
-- Your job is NOT to summarize the role. Your job is to list every fillable prompt on the page and draft an answer for each.
-- When an interactive DOM tree (Oak Analyze tree) is present, it is the SOURCE OF TRUTH for fillable controls. Answer every distinct fillable control you can identify: input, textarea, select, combobox, radio/checkbox groups, file upload, contenteditable, and required/aria-invalid fields. Use option / li role=option / aria-label text from the tree for dropdown values. Do not skip short labels. Do not stop after a few fields.
-- Surrounding page text is secondary context for question wording (e.g. "If Other…", essay prompts) when the tree alone is ambiguous.
-- When no DOM tree is present, discover questions from page text and any form field hints.
-- suggestedAnswer must be the text the applicant should type or select. Prefer exact PROFILE values when they map clearly (name, email, phone, location, LinkedIn, years of experience, etc.).
-- For salary / compensation questions, use PROFILE values when available; otherwise give a concise reasonable draft and mark confidence "low".
-- Never invent employers, dates, degrees, or credentials that are not in PROFILE. If PROFILE lacks a fact, answer briefly and honestly with confidence "low".
-- Never invent API keys or passwords. Never leave suggestedAnswer empty.
-- summary: one short sentence about how many fields you answered, not a job description.`;
+- Answer EVERY listed fillable field. Do not summarize the job.
+- suggestedAnswer = text to type/select. Prefer exact PROFILE values. Use listed options when present.
+- Never invent employers, dates, degrees, or credentials absent from PROFILE. If unknown, brief honest low-confidence answer.
+- Never leave suggestedAnswer empty. summary: one short sentence (field count only).`;
+
+const FORM_TREE_MAX_CHARS = 12_000;
+const FORM_PROFILE_MAX_CHARS = 4_000;
 
 
 const RECOMMEND_RESUME_SYSTEM_PROMPT = `You recommend the best matching resume stack for a job description from a fixed list of Library resumes.
@@ -153,32 +150,37 @@ Form field hints (optional; page text is authoritative):
 ${formatFormsText(pageContext)}`;
 }
 
+function compactProfileJson(profile) {
+	const sanitized = sanitizeProfileForLlm(profile);
+	const full = JSON.stringify(sanitized, null, 2);
+	if (full.length <= FORM_PROFILE_MAX_CHARS) return full;
+	return full.slice(0, FORM_PROFILE_MAX_CHARS);
+}
+
 function buildFormAnswerUserPrompt(pageContext, profileJson, jobTitle) {
 	const title = String(jobTitle || "").trim();
-	const formTree = String(pageContext.formTree || "").trim().slice(0, 60_000);
-	const visibleText = String(pageContext.visibleText || "").slice(0, formTree ? 20_000 : 60_000);
+	const formTree = String(pageContext.formTree || "").trim().slice(0, FORM_TREE_MAX_CHARS);
+	const visibleText = formTree
+		? ""
+		: String(pageContext.visibleText || "").slice(0, 12_000);
 	const treeSection = formTree
-		? `Interactive DOM tree (SOURCE OF TRUTH for fillable controls — Oak Analyze format):
-${formTree}
-
-Surrounding page text (secondary — question wording / essays only):
-${visibleText || "(none)"}`
-		: `Page text (visible innerText only):
+		? `Actionable fields (SOURCE OF TRUTH — answer each numbered field):
+${formTree}`
+		: `Page text:
 ${visibleText}
 
-Form field hints (optional; page text is authoritative):
+Form field hints:
 ${formatFormsText(pageContext)}`;
 
-	return `APPLICANT PROFILE (JSON — use for all answers; secrets already removed):
+	return `PROFILE JSON:
 ${profileJson}
 
-${title ? `Application role title (context only): ${title}\n\n` : ""}=== OPEN PAGE (answer the form on this page) ===
-URL: ${pageContext.url}
+${title ? `Role title (context only): ${title}\n\n` : ""}URL: ${pageContext.url}
 Title: ${pageContext.title}
 
 ${treeSection}
 
-Return every form question / fillable control you can find with a suggestedAnswer for each.`;
+Return formAnswers for every listed field.`;
 }
 
 function normalizeFormAnswers(entries) {
@@ -192,6 +194,56 @@ function normalizeFormAnswers(entries) {
 				: "medium",
 		}))
 		.filter((entry) => entry.question && entry.suggestedAnswer);
+}
+
+/** Best-effort parse of streaming / partial JSON — UX over schema perfection. */
+export function extractFormAnswersFromPartialText(text) {
+	const source = String(text || "");
+	const answers = [];
+	const seen = new Set();
+	const pairRe =
+		/"question"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"suggestedAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+	const pairReAlt =
+		/"suggestedAnswer"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"question"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+
+	const unescapeJson = (value) => {
+		try {
+			return JSON.parse(`"${value}"`);
+		} catch {
+			return value.replace(/\\"/g, '"').replace(/\\n/g, "\n");
+		}
+	};
+
+	for (const match of source.matchAll(pairRe)) {
+		const question = unescapeJson(match[1] || "").trim();
+		const suggestedAnswer = unescapeJson(match[2] || "").trim();
+		const key = question.toLowerCase();
+		if (!question || !suggestedAnswer || seen.has(key)) continue;
+		seen.add(key);
+		answers.push({ question, suggestedAnswer, confidence: "medium" });
+	}
+	for (const match of source.matchAll(pairReAlt)) {
+		const suggestedAnswer = unescapeJson(match[1] || "").trim();
+		const question = unescapeJson(match[2] || "").trim();
+		const key = question.toLowerCase();
+		if (!question || !suggestedAnswer || seen.has(key)) continue;
+		seen.add(key);
+		answers.push({ question, suggestedAnswer, confidence: "medium" });
+	}
+
+	try {
+		const parsed = JSON.parse(source);
+		for (const entry of normalizeFormAnswers(parsed?.formAnswers)) {
+			const key = entry.question.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			answers.push(entry);
+		}
+	} catch {
+		// Partial stream — ignore.
+	}
+
+	return answers;
 }
 
 function extractFlagSentences(text, neededFlags) {
@@ -340,10 +392,37 @@ async function loadAccountCatalog(applierNameRaw) {
 	return { catalog, stackNames, autoBidProfile: acc?.autoBidProfile || null };
 }
 
+/** Fast Ask AI model — prefer OpenAI nano when key exists; else profile default. */
+const ASK_AI_FAST_MODEL = "gpt-5-nano";
+
+function resolveAskAiModel(profile) {
+	const openaiKey = String(profile?.openaiApiKey || "").trim();
+	if (openaiKey) {
+		return {
+			provider: "openai",
+			apiKey: openaiKey,
+			model: ASK_AI_FAST_MODEL,
+			configured: true,
+			error: null,
+		};
+	}
+	return resolveDefaultModel(profile);
+}
+
+function buildAskAiMessages(pageContext, profileJson, jobTitle) {
+	return [
+		{ role: "system", content: FORM_ANSWER_SYSTEM_PROMPT },
+		{
+			role: "user",
+			content: buildFormAnswerUserPrompt(pageContext, profileJson, jobTitle),
+		},
+	];
+}
+
 /**
- * Athens Lens Ask AI: draft copyable answers for application form fields from
- * page innerText + profile. Not a job-description summarizer.
- * @returns {{ result: object, usage: object|null, mode: 'llm'|'heuristic' }}
+ * Athens Lens Ask AI: draft copyable answers for application form fields.
+ * AI-only — never hardcode field answers from profile heuristics.
+ * @returns {{ result: object, usage: object|null, mode: 'llm' }}
  */
 export async function answerApplicationFormPage({
 	pageContext,
@@ -358,10 +437,17 @@ export async function answerApplicationFormPage({
 
 	const autoBidProfile = await loadDecryptedAutoBidProfile(applierName);
 	const profile = autoBidProfile && typeof autoBidProfile === "object" ? autoBidProfile : {};
-	const { provider, apiKey, model, configured, error: modelError } = resolveDefaultModel(profile);
-	const profileJson = JSON.stringify(sanitizeProfileForLlm(profile), null, 2);
+	const { provider, apiKey, model, configured, error: modelError } = resolveAskAiModel(profile);
+	const profileJson = compactProfileJson(profile);
 	const jobIdStr = String(jobId ?? "").trim() || undefined;
+	const formTree = String(pageContext.formTree || "").trim().slice(0, FORM_TREE_MAX_CHARS);
 
+	if (profileJson === "{}") {
+		throw Object.assign(
+			new Error("No profile data found for this applier. Save Profile settings first."),
+			{ status: 400 },
+		);
+	}
 	if (!configured || !model) {
 		throw Object.assign(
 			new Error(modelError || "Set a default AI provider and model in Settings → Profile."),
@@ -375,12 +461,12 @@ export async function answerApplicationFormPage({
 			{ status: 400 },
 		);
 	}
-	if (profileJson === "{}") {
-		throw Object.assign(
-			new Error("No profile data found for this applier. Save Profile settings first."),
-			{ status: 400 },
-		);
-	}
+
+	const llmPageContext = {
+		...pageContext,
+		formTree,
+		visibleText: formTree ? "" : pageContext.visibleText,
+	};
 
 	const {
 		content,
@@ -393,32 +479,27 @@ export async function answerApplicationFormPage({
 		provider,
 		apiKey,
 		model,
-		messages: [
-			{ role: "system", content: FORM_ANSWER_SYSTEM_PROMPT },
-			{
-				role: "user",
-				content: buildFormAnswerUserPrompt(pageContext, profileJson, jobTitle),
-			},
-		],
+		messages: buildAskAiMessages(llmPageContext, profileJson, jobTitle),
 		jsonMode: true,
-		cacheKey: "athens-lens-form-answers",
+		reasoningEffort: "none",
+		cacheKey: "athens-lens-form-answers-v3",
 		feature: "athens-lens-ask-ai",
 		applierName,
 		jobId: jobIdStr,
 		signal,
 	});
 
-	let parsed;
+	const formAnswers = extractFormAnswersFromPartialText(content);
+	let summary = "";
 	try {
-		parsed = JSON.parse(content);
+		summary = String(JSON.parse(content)?.summary ?? "").trim();
 	} catch {
-		throw new Error("LLM returned invalid JSON for form answers.");
+		summary = "";
 	}
 
-	const formAnswers = normalizeFormAnswers(parsed.formAnswers);
 	return {
 		result: {
-			summary: String(parsed.summary ?? "").trim(),
+			summary: summary || `Answered ${formAnswers.length} fields.`,
 			formAnswers,
 			formCount: formAnswers.length,
 			answeredCount: formAnswers.length,
@@ -433,6 +514,104 @@ export async function answerApplicationFormPage({
 		requestedModel,
 		billedModel,
 	};
+}
+
+/**
+ * Stream Ask AI tokens for minimal time-to-first-token.
+ * Yields { type: 'delta'|'answers'|'done' }. Mid-stream schema may be imperfect.
+ */
+export async function* streamApplicationFormPage({
+	pageContext,
+	applierName,
+	jobTitle,
+	jobId,
+	signal,
+}) {
+	if (!pageContext || typeof pageContext !== "object") {
+		throw new Error("pageContext is required.");
+	}
+
+	const autoBidProfile = await loadDecryptedAutoBidProfile(applierName);
+	const profile = autoBidProfile && typeof autoBidProfile === "object" ? autoBidProfile : {};
+	const { provider, apiKey, model, configured, error: modelError } = resolveAskAiModel(profile);
+	const profileJson = compactProfileJson(profile);
+	const jobIdStr = String(jobId ?? "").trim() || undefined;
+	const formTree = String(pageContext.formTree || "").trim().slice(0, FORM_TREE_MAX_CHARS);
+
+	if (profileJson === "{}") {
+		throw Object.assign(
+			new Error("No profile data found for this applier. Save Profile settings first."),
+			{ status: 400 },
+		);
+	}
+	if (!configured || !model) {
+		throw Object.assign(
+			new Error(modelError || "Set a default AI provider and model in Settings → Profile."),
+			{ status: 400 },
+		);
+	}
+	if (!apiKey) {
+		const keyLabel = provider === "openai" ? "OpenAI" : "DeepSeek";
+		throw Object.assign(
+			new Error(`Add your ${keyLabel} API key in Settings → Profile to use Ask AI.`),
+			{ status: 400 },
+		);
+	}
+
+	const llmPageContext = {
+		...pageContext,
+		formTree,
+		visibleText: formTree ? "" : pageContext.visibleText,
+	};
+
+	let fullText = "";
+	let lastAnswerCount = 0;
+
+	for await (const event of chatCompletionStream({
+		provider,
+		apiKey,
+		model,
+		messages: buildAskAiMessages(llmPageContext, profileJson, jobTitle),
+		jsonMode: false,
+		reasoningEffort: "none",
+		cacheKey: "athens-lens-form-answers-stream-v1",
+		feature: "athens-lens-ask-ai",
+		applierName,
+		jobId: jobIdStr,
+		signal,
+	})) {
+		if (event.type === "delta") {
+			fullText += event.text || "";
+			yield { type: "delta", text: event.text || "" };
+			const answers = extractFormAnswersFromPartialText(fullText);
+			if (answers.length > lastAnswerCount) {
+				lastAnswerCount = answers.length;
+				yield { type: "answers", answers };
+			}
+			continue;
+		}
+		if (event.type === "done") {
+			const answers = extractFormAnswersFromPartialText(fullText);
+			let summary = "";
+			try {
+				summary = String(JSON.parse(fullText)?.summary ?? "").trim();
+			} catch {
+				summary = "";
+			}
+			yield {
+				type: "done",
+				text: fullText,
+				answers,
+				summary: summary || (answers.length ? `Answered ${answers.length} fields.` : ""),
+				usage: event.usage || null,
+				requestId: event.requestId || null,
+				provider: event.provider || provider,
+				requestedModel: event.requestedModel || model,
+				billedModel: event.billedModel || model,
+				mode: "llm-stream",
+			};
+		}
+	}
 }
 
 /**
