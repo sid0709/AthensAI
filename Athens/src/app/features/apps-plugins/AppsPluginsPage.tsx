@@ -17,7 +17,7 @@ import { APPS_CATALOG, type AppPlugin, type DownloadsManifest } from "./catalog"
 const INSTALL_STEPS = [
   {
     title: "Download the zip",
-    body: "Grab Project Avalon from the cards below. Each build ships with the VPS release.",
+    body: "Grab Athens Lens or Project Avalon from the cards below. Each build ships with the VPS release.",
   },
   {
     title: "Unzip on your machine",

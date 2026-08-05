@@ -16,7 +16,9 @@ npm run dev
 
 WXT opens a development browser with the extension installed and reloads it as source files change. Click the Athens Lens toolbar icon to open the side panel directly.
 
-The local API defaults to `http://127.0.0.1:8979/api`. To target another server, copy `.env.example` to `.env`, set `WXT_ATHENS_API_URL`, and rebuild so Chrome receives the matching host permission.
+The local API defaults to `http://127.0.0.1:8979/api`. To target another server, copy `.env.example` to `.env`, set `WXT_ATHENS_API_URL` (include `/api`), and rebuild so Chrome receives the matching host permission.
+
+Production zips from Docker/CI bake `PUBLIC_ORIGIN/api` (for example `https://athensai.remotepairnet.net/api`) as an opaque `enc:` token — the same pattern Project Avalon uses.
 
 Before signing in, enable **Vendor access** and set a vendor access password for the profile in Athens Settings. Redis must be available because Athens Lens sessions are opaque, expiring server sessions.
 

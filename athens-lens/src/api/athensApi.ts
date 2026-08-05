@@ -1,7 +1,11 @@
+import { resolveEndpoint } from "./endpoint";
+
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8979/api";
 
-export const ATHENS_API_BASE_URL = String(
-  import.meta.env.WXT_ATHENS_API_URL || DEFAULT_API_BASE_URL
+/** Build-time API may be plain (local .env) or enc:<token> (CI / Docker pack). */
+export const ATHENS_API_BASE_URL = resolveEndpoint(
+  import.meta.env.WXT_ATHENS_API_URL,
+  DEFAULT_API_BASE_URL,
 ).replace(/\/+$/, "");
 
 interface ApiErrorPayload {

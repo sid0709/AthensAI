@@ -14,6 +14,24 @@ export type AppPlugin = {
 
 export const APPS_CATALOG: AppPlugin[] = [
   {
+    id: "athens-lens",
+    name: "Athens Lens",
+    tagline: "Bid Ready apply, record, and Ask AI",
+    description:
+      "Chrome side panel for Athens Bid Ready — apply, capture sessions, ask AI for form answers, and submit without leaving the tab.",
+    version: "0.3.14",
+    downloadUrl: "/downloads/athens-lens-extension.zip",
+    iconSrc: "/apps/athens-lens.png",
+    accent: "indigo",
+    badges: ["Chrome MV3", "Developer mode", "Bid Ready"],
+    highlights: [
+      "Loads your live Bid Ready queue",
+      "Records apply sessions as video evidence",
+      "Ask AI form answers + resume rename audit",
+    ],
+    pairsWith: { label: "Bid Management", href: "/bid-management" },
+  },
+  {
     id: "avalon",
     name: "Project Avalon",
     tagline: "Remote browser control for auto-apply",

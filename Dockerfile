@@ -13,7 +13,7 @@ ENV npm_config_fetch_retries=5 \
     PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_SKIP_CHROME_DOWNLOAD=1
 
-# zip/rsync: pack Avalon extension downloads for the Apps page.
+# zip/rsync: pack Athens Lens + Avalon extension downloads for the Apps page.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends zip rsync \
  && rm -rf /var/lib/apt/lists/*
@@ -22,6 +22,7 @@ COPY . .
 
 RUN npm ci \
  && npm ci --prefix Athens \
+ && npm ci --prefix athens-lens \
  && cd project-avalon && npm ci --ignore-scripts \
  && npm run build -w @avalon/shared \
  && cd .. \
