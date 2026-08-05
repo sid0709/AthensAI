@@ -45,7 +45,7 @@ describe("Athens Lens app", () => {
       runtime: {
         sendMessage: vi.fn(async (message: { type?: string; tabId?: number }) => {
           if (message?.type === "ATHENS_LENS_START_RECORDING") {
-            return { ok: true, tabId: message.tabId ?? 42 };
+            return { ok: true, tabId: 42 };
           }
           if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
             return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
@@ -65,18 +65,6 @@ describe("Athens Lens app", () => {
           return { ok: false, error: `Unhandled message ${message?.type || ""}` };
         }),
         lastError: undefined,
-      },
-      tabs: {
-        create: vi.fn((_options: { url: string }, callback?: (tab: { id: number }) => void) => {
-          callback?.({ id: 42 });
-        }),
-      },
-      tabCapture: {
-        getMediaStreamId: vi.fn(
-          (_options: { targetTabId: number }, callback: (streamId: string) => void) => {
-            callback("mock-stream-id");
-          },
-        ),
       },
     });
   });

@@ -24,17 +24,31 @@ declare namespace chrome {
       url?: string;
       windowId?: number;
       active?: boolean;
+      status?: string;
     }
     function create(
       createProperties: { url: string; active?: boolean },
       callback?: (tab: Tab) => void,
     ): void;
     function create(createProperties: { url: string; active?: boolean }): Promise<Tab>;
+    function get(tabId: number, callback: (tab: Tab) => void): void;
     function get(tabId: number): Promise<Tab>;
+    function query(
+      queryInfo: { active?: boolean; lastFocusedWindow?: boolean },
+      callback: (tabs: Tab[]) => void,
+    ): void;
     function query(queryInfo: {
       active?: boolean;
       lastFocusedWindow?: boolean;
     }): Promise<Tab[]>;
+    function update(
+      tabId: number,
+      updateProperties: { url?: string; active?: boolean },
+      callback?: (tab: Tab) => void,
+    ): void;
+    const onActivated: {
+      addListener(callback: (activeInfo: { tabId: number; windowId: number }) => void): void;
+    };
   }
 
   namespace tabCapture {

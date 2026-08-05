@@ -1,8 +1,7 @@
 type StartRecordingMessage = {
   type: "ATHENS_LENS_START_RECORDING";
   sessionId: string;
-  tabId: number;
-  streamId: string;
+  applyUrl: string;
 };
 
 type StopRecordingMessage = {
@@ -26,8 +25,85 @@ type PageTextFrame = {
 
 const recordingTabs = new Map<string, number>();
 
+/**
+ * tabCapture only works for the tab where the user invoked the extension
+ * (activeTab). Newly created tabs cannot be captured. We capture this tab,
+ * then navigate it to the apply URL — capture continues across navigations.
+ */
+let invokedTabId: number | null = null;
+
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isCapturableUrl(url: string | undefined | null) {
+  return /^https?:/i.test(url || "");
+}
+
+function asTabId(value: unknown): number | null {
+  const tabId = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(tabId) && tabId >= 0 ? tabId : null;
+}
+
+function tabsGet(tabId: number): Promise<chrome.tabs.Tab> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.get(tabId, (tab) => {
+      const error = chrome.runtime.lastError?.message;
+      if (error || !tab) {
+        reject(new Error(error || "Tab not found."));
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+function tabsQuery(queryInfo: {
+  active?: boolean;
+  lastFocusedWindow?: boolean;
+}): Promise<chrome.tabs.Tab[]> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.query(queryInfo, (tabs) => {
+      const error = chrome.runtime.lastError?.message;
+      if (error) {
+        reject(new Error(error));
+        return;
+      }
+      resolve(tabs || []);
+    });
+  });
+}
+
+function tabsUpdate(tabId: number, url: string): Promise<chrome.tabs.Tab> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.update(tabId, { url, active: true }, (tab) => {
+      const error = chrome.runtime.lastError?.message;
+      if (error || !tab) {
+        reject(new Error(error || "Could not open the application page."));
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+function rememberInvokedTab(tabId: number | undefined | null) {
+  const id = asTabId(tabId);
+  if (id != null) invokedTabId = id;
+}
+
+function getMediaStreamIdSync(
+  tabId: number,
+  callback: (result: { streamId?: string; error?: string }) => void,
+) {
+  chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+    const error = chrome.runtime.lastError?.message;
+    if (error || !streamId) {
+      callback({ error: error || "Could not capture the application tab." });
+      return;
+    }
+    callback({ streamId });
+  });
 }
 
 async function ensureOffscreenDocument() {
@@ -54,6 +130,26 @@ async function sendOffscreenMessage(message: Record<string, unknown>, attempts =
   throw lastError instanceof Error
     ? lastError
     : new Error("Recorder failed to start. Reload Athens Lens and try again.");
+}
+
+async function beginOffscreenRecording(
+  sessionId: string,
+  tabId: number,
+  streamId: string,
+  applyUrl: string,
+) {
+  await ensureOffscreenDocument();
+  const response = await sendOffscreenMessage({
+    type: "OFFSCREEN_START_RECORDING",
+    sessionId,
+    streamId,
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error || "Could not start the recorder.");
+  }
+  recordingTabs.set(sessionId, tabId);
+  await tabsUpdate(tabId, applyUrl);
+  return tabId;
 }
 
 async function readTabPageText(tabId: number) {
@@ -94,26 +190,28 @@ async function readTabPageText(tabId: number) {
 }
 
 async function resolveReadableTabId(preferredTabId?: number | null) {
-  if (preferredTabId != null) {
+  const preferred = asTabId(preferredTabId) ?? invokedTabId;
+  if (preferred != null) {
     try {
-      const tab = await chrome.tabs.get(preferredTabId);
-      if (tab?.id != null && /^https?:/i.test(tab.url || "")) return tab.id;
+      const tab = await tabsGet(preferred);
+      if (tab?.id != null && isCapturableUrl(tab.url)) return tab.id;
     } catch {
       // Fall through to the focused browser tab.
     }
   }
 
-  const [focused] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (focused?.id != null && /^https?:/i.test(focused.url || "")) return focused.id;
+  const [focused] = await tabsQuery({ active: true, lastFocusedWindow: true });
+  if (focused?.id != null && isCapturableUrl(focused.url)) return focused.id;
 
-  const tabs = await chrome.tabs.query({ lastFocusedWindow: true });
-  const httpTab = tabs.find((tab) => tab.id != null && /^https?:/i.test(tab.url || ""));
+  const tabs = await tabsQuery({ lastFocusedWindow: true });
+  const httpTab = tabs.find((tab) => tab.id != null && isCapturableUrl(tab.url));
   if (httpTab?.id != null) return httpTab.id;
   throw new Error("Open the application page in a browser tab, then try Ask AI again.");
 }
 
 export default defineBackground(() => {
   browser.action.onClicked.addListener((tab) => {
+    rememberInvokedTab(tab.id);
     if (tab.windowId === undefined) return;
     browser.sidePanel.open({ windowId: tab.windowId }).catch((error: unknown) => {
       console.error("Unable to open the Athens Lens side panel", error);
@@ -122,33 +220,42 @@ export default defineBackground(() => {
 
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
-      void (async () => {
-        if (!message.streamId || message.tabId == null) {
-          sendResponse({ ok: false, error: "Missing tab capture stream." });
-          return;
-        }
-        await ensureOffscreenDocument();
-        const response = await sendOffscreenMessage({
-          type: "OFFSCREEN_START_RECORDING",
-          sessionId: message.sessionId,
-          streamId: message.streamId,
+      const tabId = invokedTabId;
+      if (tabId == null) {
+        sendResponse({
+          ok: false,
+          error: "Click the Athens Lens icon on a normal web page, then try Apply & record again.",
         });
-        if (!response?.ok) {
+        return false;
+      }
+
+      // getMediaStreamId must run in this turn (no awaits before it) or Chrome
+      // rejects with the activeTab / "Chrome pages cannot be captured" error.
+      getMediaStreamIdSync(tabId, (capture) => {
+        if (!capture.streamId) {
           sendResponse({
             ok: false,
-            tabId: message.tabId,
-            error: response?.error || "Could not start the recorder.",
+            tabId,
+            error: capture.error
+              || "Click the Athens Lens icon on this tab, then try Apply & record again.",
           });
           return;
         }
-        recordingTabs.set(message.sessionId, message.tabId);
-        sendResponse({ ok: true, tabId: message.tabId });
-      })().catch((error: unknown) => {
-        sendResponse({
-          ok: false,
-          tabId: message.tabId,
-          error: error instanceof Error ? error.message : "Could not start recording.",
-        });
+
+        void beginOffscreenRecording(
+          message.sessionId,
+          tabId,
+          capture.streamId,
+          message.applyUrl,
+        )
+          .then((recordedTabId) => sendResponse({ ok: true, tabId: recordedTabId }))
+          .catch((error: unknown) => {
+            sendResponse({
+              ok: false,
+              tabId,
+              error: error instanceof Error ? error.message : "Could not start recording.",
+            });
+          });
       });
       return true;
     }

@@ -43,80 +43,46 @@ function extensionApi() {
   return root.chrome ?? root.browser ?? null;
 }
 
-function runtimeLastErrorMessage(api: NonNullable<ReturnType<typeof extensionApi>>) {
-  return api.runtime?.lastError?.message || null;
-}
-
 /**
- * Open the apply URL and obtain a tab-capture stream ID in the same user-gesture
- * callback chain, then hand the stream to the background/offscreen recorder.
+ * Send the start request immediately from the click turn so Chrome preserves
+ * the user gesture for tabCapture in the service worker. The worker captures
+ * the tab Athens Lens was opened on, then navigates it to the apply URL.
  */
 function startTabRecording(applyUrl: string, sessionId: string): Promise<StartResponse> {
   const api = extensionApi();
-  if (!api?.tabs?.create || !api.tabCapture?.getMediaStreamId || !api.runtime?.sendMessage) {
+  if (!api?.runtime?.sendMessage) {
     return Promise.resolve({
       ok: false,
       error: "Tab recording is only available in the Athens Lens Chrome extension.",
     });
   }
 
-  return new Promise((resolve) => {
-    api.tabs.create({ url: applyUrl, active: true }, (tab) => {
-      const createError = runtimeLastErrorMessage(api);
-      if (createError || tab?.id == null) {
-        resolve({ ok: false, error: createError || "Could not open the application page." });
-        return;
+  try {
+    return Promise.resolve(
+      api.runtime.sendMessage({
+        type: "ATHENS_LENS_START_RECORDING",
+        applyUrl,
+        sessionId,
+      }) as Promise<StartResponse | undefined>,
+    ).then((response) => {
+      if (response?.ok && response.tabId != null) {
+        return { ok: true as const, tabId: response.tabId };
       }
-
-      const tabId = tab.id;
-      api.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
-        const captureError = runtimeLastErrorMessage(api);
-        if (captureError || !streamId) {
-          resolve({
-            ok: false,
-            tabId,
-            error: captureError || "Could not capture the application tab.",
-          });
-          return;
-        }
-
-        try {
-          const pending = api.runtime.sendMessage({
-            type: "ATHENS_LENS_START_RECORDING",
-            sessionId,
-            tabId,
-            streamId,
-          }) as Promise<StartResponse | undefined>;
-
-          void Promise.resolve(pending)
-            .then((response) => {
-              if (response?.ok) {
-                resolve({ ok: true, tabId: response.tabId ?? tabId });
-                return;
-              }
-              resolve({
-                ok: false,
-                tabId,
-                error: response?.error || "Could not start the recorder.",
-              });
-            })
-            .catch((error: unknown) => {
-              resolve({
-                ok: false,
-                tabId,
-                error: error instanceof Error ? error.message : "Could not start the recorder.",
-              });
-            });
-        } catch (error) {
-          resolve({
-            ok: false,
-            tabId,
-            error: error instanceof Error ? error.message : "Could not start the recorder.",
-          });
-        }
-      });
+      return {
+        ok: false as const,
+        tabId: response && "tabId" in response ? response.tabId : undefined,
+        error: (!response?.ok && response?.error) || "Could not start the recorder.",
+      };
+    }).catch((error: unknown) => ({
+      ok: false as const,
+      error: error instanceof Error ? error.message : "Could not start the recorder.",
+    }));
+  } catch (error) {
+    return Promise.resolve({
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not start the recorder.",
     });
-  });
+  }
 }
 
 async function stopTabRecording(sessionId: string): Promise<StopResponse> {
