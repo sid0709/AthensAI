@@ -365,6 +365,7 @@ function JobSearchPageContent() {
         page={page}
         pageSize={pageSize}
         total={total}
+        itemCount={jobs.length}
         totalJobs={totalJobs}
         onPageChange={setPage}
         onPageSizeChange={setPageSize}
@@ -434,11 +435,12 @@ function JobSearchPageContent() {
         page={page}
         pageSize={pageSize}
         total={total}
+        itemCount={jobs.length}
         onPageChange={setPage}
         onPageSizeChange={setPageSize}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         detailed
-        unitLabel="companies"
+        unitLabel="jobs"
         secondaryTotal={totalJobs}
         secondaryLabel="matching jobs"
         loading={loading}

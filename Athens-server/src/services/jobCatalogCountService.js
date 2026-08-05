@@ -6,6 +6,7 @@ import { getFirestoreDb } from './firebase/firebaseAdmin.js';
 const JOBS = 'jobs';
 const MEMBERSHIP = 'job_catalog_memberships';
 const COUNTS = 'job_catalog_counts';
+const COMPANIES = 'companies';
 const SHARDS = 16;
 
 export function jobCatalogShard(jobId) {
@@ -57,8 +58,17 @@ export async function syncApprovedCatalogMembership(jobIds = []) {
 				shard,
 				approved: nextApproved,
 				isPublic: nextPublic,
+				companyId: String(job?.companyId || previous.companyId || '').trim() || null,
 				updatedAt: new Date(),
 			}, { merge: false });
+			const companyId = String(job?.companyId || previous.companyId || '').trim();
+			if (companyId) {
+				transaction.set(db.collection(COMPANIES).doc(companyId), {
+					approvedJobCount: FieldValue.increment(deltaAll),
+					publicApprovedJobCount: FieldValue.increment(deltaPublic),
+					approvedJobCountUpdatedAt: new Date(),
+				}, { merge: true });
+			}
 			return 1;
 		});
 	}

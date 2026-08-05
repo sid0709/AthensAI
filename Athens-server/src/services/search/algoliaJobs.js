@@ -31,6 +31,11 @@ function record(id, data) {
 	};
 }
 
+export function isAlgoliaConfigured() {
+	const { appId, apiKey } = config();
+	return Boolean(appId && apiKey);
+}
+
 export async function searchJobIds(query, limit = 5000) {
 	const search = getClient();
 	if (!search) {
@@ -43,21 +48,29 @@ export async function searchJobIds(query, limit = 5000) {
 }
 
 /** Search the newest-sorted Algolia replica and return one stable hit page. */
-export async function searchNewestJobPage(query, { page = 0, hitsPerPage = 100 } = {}) {
+export async function searchNewestJobPage(query, {
+	page = 0,
+	hitsPerPage = 100,
+	facetFilters = null,
+} = {}) {
 	const search = getClient();
 	if (!search) {
 		if (process.env.NODE_ENV === "production") throw new Error("Algolia is required for production job search");
 		return null;
 	}
 	const { latestIndexName } = config();
+	const searchParams = {
+		query: String(query || ""),
+		page: Math.max(0, Number(page) || 0),
+		hitsPerPage: Math.max(1, Math.min(1000, Number(hitsPerPage) || 100)),
+		attributesToRetrieve: ["objectID"],
+	};
+	if (Array.isArray(facetFilters) && facetFilters.length) {
+		searchParams.facetFilters = facetFilters;
+	}
 	const result = await search.searchSingleIndex({
 		indexName: latestIndexName,
-		searchParams: {
-			query: String(query || ""),
-			page: Math.max(0, Number(page) || 0),
-			hitsPerPage: Math.max(1, Math.min(1000, Number(hitsPerPage) || 100)),
-			attributesToRetrieve: ["objectID"],
-		},
+		searchParams,
 	});
 	return {
 		ids: result.hits.map((hit) => String(hit.objectID)),

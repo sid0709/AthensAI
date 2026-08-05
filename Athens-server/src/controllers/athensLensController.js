@@ -1,13 +1,35 @@
 import bcrypt from "bcrypt";
 import { accountInfoCollection } from "../db/dataStore.js";
 import { listAthensLensJobs } from "../services/athensLensJobsService.js";
+import { analyzeJobPage } from "../services/bidJobAnalyzeService.js";
 import {
 	createAthensLensSession,
 	revokeAthensLensSession,
 } from "../services/athensLensSessionService.js";
+import { loadDecryptedAutoBidProfile } from "../services/autoBidProfileSecrets.js";
+import { resolveDefaultModel } from "../services/llm/llmService.js";
 
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function resolveLensAnalyzeModel(applierName) {
+	const profile = (await loadDecryptedAutoBidProfile(applierName)) || {};
+	const resolved = resolveDefaultModel(profile);
+	if (resolved.error || !resolved.configured || !resolved.model) {
+		throw Object.assign(
+			new Error(resolved.error || "Set a default AI provider and model in Settings → Profile."),
+			{ status: 400 },
+		);
+	}
+	if (!resolved.apiKey) {
+		const keyLabel = resolved.provider === "openai" ? "OpenAI" : "DeepSeek";
+		throw Object.assign(
+			new Error(`Add your ${keyLabel} API key in Settings → Profile to use Ask AI.`),
+			{ status: 400 },
+		);
+	}
+	return resolved;
 }
 
 async function findAccountByUsername(username) {
@@ -116,6 +138,61 @@ export async function listAthensLensJobsHandler(req, res) {
 		return res.status(error?.status || 500).json({
 			success: false,
 			message: error?.status === 503 ? error.message : "Unable to load Bid Ready jobs",
+		});
+	}
+}
+
+export async function askAthensLensAi(req, res) {
+	try {
+		const pageContext = req.body?.pageContext;
+		const visibleText = String(pageContext?.visibleText || "").trim();
+		if (!pageContext || typeof pageContext !== "object" || !visibleText) {
+			return res.status(400).json({
+				success: false,
+				code: "MISSING_PAGE_TEXT",
+				message: "Open the application page and try Ask AI again.",
+			});
+		}
+
+		await resolveLensAnalyzeModel(req.athensLensSession.applierName);
+
+		const { result, mode } = await analyzeJobPage({
+			pageContext: {
+				url: String(pageContext.url || ""),
+				title: String(pageContext.title || ""),
+				metaDescription: String(pageContext.metaDescription || ""),
+				visibleText,
+				forms: Array.isArray(pageContext.forms) ? pageContext.forms : [],
+			},
+			applierName: req.athensLensSession.applierName,
+			sessionContext: req.body?.sessionContext || null,
+			jobId: req.body?.jobId || null,
+		});
+
+		if (mode === "heuristic") {
+			return res.status(400).json({
+				success: false,
+				code: "ASK_AI_UNAVAILABLE",
+				message: result.summary || result.notJobPageReason || "Ask AI is unavailable for this profile.",
+			});
+		}
+
+		return res.json({
+			success: true,
+			mode,
+			summary: result.summary || "",
+			answers: Array.isArray(result.formAnswers) ? result.formAnswers : [],
+			isJobPage: Boolean(result.isJobPage),
+			notJobPageReason: result.notJobPageReason || null,
+		});
+	} catch (error) {
+		console.error("[athens-lens] ask-ai failed", error?.message || error);
+		const message = String(error?.message || "Unable to analyze the open page");
+		const status = error?.status
+			|| (/API key|default AI|Settings → Profile/i.test(message) ? 400 : 500);
+		return res.status(status).json({
+			success: false,
+			message,
 		});
 	}
 }

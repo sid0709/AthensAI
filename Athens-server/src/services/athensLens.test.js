@@ -97,12 +97,40 @@ test("Athens Lens mapping rejects unsafe application schemes", () => {
 	assert.equal(result.applyUrl, "");
 });
 
+test("Athens Lens job mapping preserves line breaks from HTML descriptions", () => {
+	const result = mapAthensLensJob(
+		{
+			_id: "job-3",
+			title: "Role",
+			companyName: "Company",
+			description: "<p>First paragraph</p><p>Second paragraph</p><br>Trailing line",
+		},
+		{ jobId: "job-3" },
+	);
+	assert.match(result.description, /First paragraph\n+Second paragraph\n+Trailing line/);
+});
+
+test("Athens Lens job mapping breaks jammed plain-text section labels", () => {
+	const result = mapAthensLensJob(
+		{
+			_id: "job-4",
+			title: "Role",
+			companyName: "Company",
+			description:
+				"Intro sentence. Responsibilities Apply expertise to help train models Qualification Proficiency in Python3",
+		},
+		{ jobId: "job-4" },
+	);
+	assert.match(result.description, /Intro sentence\.\n+Responsibilities\nApply expertise/);
+	assert.match(result.description, /models\n+Qualification\nProficiency in Python3/);
+});
+
 test("Athens Lens bearer tokens are parsed and hashed before Firestore lookup", () => {
 	assert.equal(
 		athensLensAuthTest.bearerToken({ headers: { authorization: "Bearer session-secret" } }),
 		"session-secret",
 	);
 	const key = athensLensSessionTest.sessionKey("session-secret");
-	assert.match(key, /^athens-lens:session:v1:[a-f0-9]{64}$/);
+	assert.match(key, /^[a-f0-9]{64}$/);
 	assert.equal(key.includes("session-secret"), false);
 });

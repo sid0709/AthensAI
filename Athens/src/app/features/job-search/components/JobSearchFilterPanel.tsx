@@ -17,7 +17,6 @@ import {
 import { ActiveFilterChips } from "./filters/ActiveFilterChips";
 import { JobFiltersSheet } from "./filters/JobFiltersSheet";
 import { SkillExtractionButton } from "./SkillExtractionButton";
-import { ReviewTitlesButton } from "./ReviewTitlesButton";
 
 const STATUS_TABS: {
   id: JobStatusTab;
@@ -186,7 +185,6 @@ export function JobSearchFilterPanel({
             <>
               <ToolbarDivider />
               <div className="flex items-center gap-1.5 sm:ml-auto shrink-0">
-                <ReviewTitlesButton />
                 <SkillExtractionButton />
               </div>
             </>

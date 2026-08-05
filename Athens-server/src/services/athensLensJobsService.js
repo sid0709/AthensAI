@@ -1,7 +1,8 @@
 import { DocumentId } from "@nextoffer/shared/document-id";
 import { jobsCollection } from "../db/dataStore.js";
+import { getFirestoreDb } from "./firebase/firebaseAdmin.js";
 import { resolveApplierId } from "./jobBidStatusService.js";
-import { readCanonicalProjectedJobStatusIdsByState } from "./jobStatusProjectionService.js";
+import { statusRowFromProjection } from "./jobStatusProjectionService.js";
 
 const JOB_PROJECTION = {
 	title: 1,
@@ -35,8 +36,15 @@ function text(value) {
 	return typeof value === "string" ? value.trim() : "";
 }
 
+const JD_SECTION_LABEL =
+	/\b(Responsibilities|Responsibility|Qualifications?|Qualification|Requirements?|Requirement|Benefits|Nice to [Hh]ave|About (?:the )?(?:role|job|us)|What [Yy]ou(?:'ll| will) (?:do|bring|need))\s+(?=\S)/g;
+
 function plainText(value) {
 	return text(value)
+		.replace(/\r\n?/g, "\n")
+		.replace(/<\s*br\s*\/?\s*>/gi, "\n")
+		.replace(/<\/\s*(p|div|li|h[1-6]|tr|section|article|header|footer)\s*>/gi, "\n")
+		.replace(/<\s*(p|div|li|h[1-6]|tr|section|article|header|footer)(?:\s[^>]*)?>/gi, "\n")
 		.replace(/<[^>]*>/g, " ")
 		.replace(/&nbsp;/gi, " ")
 		.replace(/&amp;/gi, "&")
@@ -44,7 +52,12 @@ function plainText(value) {
 		.replace(/&gt;/gi, ">")
 		.replace(/&quot;/gi, '"')
 		.replace(/&#39;/gi, "'")
-		.replace(/\s+/g, " ")
+		.replace(/[^\S\n]+/g, " ")
+		.replace(/ *\n */g, "\n")
+		// Plain JD blobs often jam section labels into the previous sentence.
+		.replace(JD_SECTION_LABEL, "\n\n$1\n")
+		.replace(/ *\n */g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
 		.trim();
 }
 
@@ -152,14 +165,35 @@ export async function listAthensLensJobs(applierName, { limit = 100 } = {}) {
 	const boundedLimit = Math.max(1, Math.min(500, Number(limit) || 100));
 	const applierId = await resolveApplierId(applierName);
 	if (!applierId) return [];
-	const idsByState = await readCanonicalProjectedJobStatusIdsByState(String(applierId), ["bid-ready"]);
-	const jobIds = (idsByState.get("bid-ready") || []).slice(0, boundedLimit).map(String);
-	if (!jobIds.length) return [];
+	const profileId = String(applierId);
 
-	const ids = jobIds
-		.map((jobId) => {
+	// Query bid-ready projections directly (same source as Job Search). Do not
+	// require schemaVersion === 3 — legacy v2 docs are still valid Bid Ready rows.
+	const statusSnapshot = await getFirestoreDb().collection("job_statuses")
+		.where("profileId", "==", profileId)
+		.where("state", "==", "bid-ready")
+		.orderBy("postedAt", "desc")
+		.orderBy("jobId", "desc")
+		.limit(boundedLimit)
+		.get();
+
+	const statusEntries = statusSnapshot.docs.flatMap((document) => {
+		const raw = document.data() || {};
+		if (raw.visibleInJobSearch === false) return [];
+		if (!statusRowFromProjection(raw)) return [];
+		const jobId = String(raw.jobId || "").trim();
+		if (!jobId) return [];
+		return [{
+			jobId,
+			bidReadyDate: raw.bidReadyAt || raw.statusRow?.bidReadyDate || raw.updatedAt || raw.postedAt || null,
+		}];
+	});
+	if (!statusEntries.length) return [];
+
+	const ids = statusEntries
+		.map((entry) => {
 			try {
-				return new DocumentId(jobId);
+				return new DocumentId(entry.jobId);
 			} catch {
 				return null;
 			}
@@ -168,9 +202,9 @@ export async function listAthensLensJobs(applierName, { limit = 100 } = {}) {
 	const docs = await jobsCollection.find({ _id: { $in: ids } }, { projection: JOB_PROJECTION }).toArray();
 	const byId = new Map(docs.map((job) => [String(job._id), job]));
 
-	return jobIds.flatMap((jobId) => {
-		const job = byId.get(jobId);
-		return job ? [mapAthensLensJob(job, { jobId })] : [];
+	return statusEntries.flatMap((entry) => {
+		const job = byId.get(entry.jobId);
+		return job ? [mapAthensLensJob(job, { jobId: entry.jobId, bidReadyDate: entry.bidReadyDate })] : [];
 	});
 }
 

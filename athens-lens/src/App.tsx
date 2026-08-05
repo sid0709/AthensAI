@@ -12,9 +12,10 @@ import {
   AiAnswerPanel,
   BidOutcomeToast,
   RecordingDock,
-  SubmissionDialog
+  RecordingErrorToast,
+  SubmissionDialog,
 } from "./recording/RecordingExperience";
-import { useMockRecording } from "./recording/useMockRecording";
+import { useApplicationRecording } from "./recording/useApplicationRecording";
 import type { AuthStore, Credentials, InboxRepository, Job, JobsRepository, Session } from "./types";
 
 interface AppProps {
@@ -35,7 +36,7 @@ export function App({
   const [sessionState, setSessionState] = useState<SessionState>({ status: "restoring" });
   const [aiJob, setAiJob] = useState<Job | null>(null);
   const { route, navigate } = useWorkspaceRoute();
-  const recording = useMockRecording();
+  const recording = useApplicationRecording();
 
   useEffect(() => {
     let isActive = true;
@@ -120,8 +121,7 @@ export function App({
       onNavigate={navigate}
       onNavigateView={navigateView}
       onApply={(job) => {
-        window.open(job.applyUrl, "_blank", "noopener,noreferrer");
-        recording.start(job);
+        void recording.start(job);
       }}
       onAskAi={setAiJob}
       onLogout={logout}
@@ -133,17 +133,26 @@ export function App({
       {workspace}
       <RecordingDock
         state={recording.state}
-        onRestart={recording.restart}
-        onComplete={recording.complete}
+        onRestart={() => void recording.restart()}
+        onComplete={() => void recording.complete()}
         onAskAi={setAiJob}
       />
       <SubmissionDialog
         state={recording.state}
-        onResume={recording.resume}
+        onResume={() => void recording.restart()}
         onFinish={recording.finish}
       />
-      <AiAnswerPanel job={aiJob} onClose={() => setAiJob(null)} />
+      <AiAnswerPanel
+        job={aiJob}
+        session={session}
+        tabId={recording.state.tabId}
+        onClose={() => setAiJob(null)}
+      />
       <BidOutcomeToast state={recording.state} onDismiss={recording.clearOutcome} />
+      <RecordingErrorToast
+        message={recording.state.status === "idle" ? recording.state.error : null}
+        onDismiss={() => recording.clearOutcome()}
+      />
     </>
   );
 }

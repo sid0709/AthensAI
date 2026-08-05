@@ -756,6 +756,7 @@ a:focus-visible {
 
 .detail-section p {
   margin: 0;
+  white-space: pre-wrap;
 }
 
 .detail-section ul {
@@ -1328,6 +1329,45 @@ a:focus-visible {
   }
 }
 
+.ai-loading,
+.ai-error,
+.ai-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+.ai-error {
+  color: var(--color-danger, #b42318);
+}
+
+.ai-summary {
+  display: block;
+  white-space: pre-wrap;
+}
+
+.dialog-error {
+  margin: 0;
+  color: var(--color-danger, #b42318);
+  font-size: var(--font-size-sm);
+}
+
+.outcome-toast--error {
+  background: color-mix(in srgb, #b42318 12%, var(--color-surface, #fff));
+}
+
+.spin {
+  animation: athens-lens-spin 1s linear infinite;
+}
+
+@keyframes athens-lens-spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (min-width: 760px) {
   :root {
     --navigation-width: 244px;
@@ -1344,6 +1384,10 @@ a:focus-visible {
   }
 
   .recording-dot {
+    animation: none;
+  }
+
+  .spin {
     animation: none;
   }
 }

@@ -6,8 +6,14 @@ import { jobsCollection } from '../db/dataStore.js';
 import { getFirestoreDb } from './firebase/firebaseAdmin.js';
 import { resolveApplierContext } from './jobListQuery.js';
 import { getProfileJobStatusIndex } from './jobStatusIndexService.js';
-import { readMaterializedJobStatusCounts, countLiveJobStatusesByState } from './jobStatusProjectionService.js';
-import { searchNewestJobPage } from './search/algoliaJobs.js';
+import {
+	jobStatusProjectionId,
+	readMaterializedJobStatusCounts,
+	countLiveJobStatusesByState,
+	countJobStatusesByStateAggregated,
+	statusRowFromProjection,
+} from './jobStatusProjectionService.js';
+import { isAlgoliaConfigured, searchNewestJobPage } from './search/algoliaJobs.js';
 import { readApprovedCatalogCount } from './jobCatalogCountService.js';
 
 const JOB_COLLECTION = 'jobs';
@@ -16,10 +22,11 @@ const STATUS_COLLECTION = 'job_statuses';
 const PAGE_LIMIT_MAX = 100;
 const SCAN_BATCH_SIZE = 100;
 const MAX_SCAN_BATCHES = 20;
-const COUNT_CACHE_MS = Math.max(1_000, Number(process.env.JOB_LIST_V3_COUNT_CACHE_MS || 5_000));
-const COMPANY_COUNT_CACHE_MS = Math.max(COUNT_CACHE_MS, Number(process.env.JOB_LIST_V3_COMPANY_COUNT_CACHE_MS || 60_000));
+const COUNT_CACHE_MS = Math.max(1_000, Number(process.env.JOB_LIST_V3_COUNT_CACHE_MS || 60_000));
+const COMPANY_COUNT_CACHE_MS = Math.max(COUNT_CACHE_MS, Number(process.env.JOB_LIST_V3_COMPANY_COUNT_CACHE_MS || 300_000));
 const catalogCountCache = new Map();
 const companyCountCache = new Map();
+const statusCountCache = new Map();
 
 const STATUS_FROM_API = {
 	Applied: 'applied',
@@ -39,6 +46,27 @@ function asDate(value) {
 	if (typeof value?.toDate === 'function') return value.toDate();
 	const date = new Date(value);
 	return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function cursorPoint(postedAt, id) {
+	const date = asDate(postedAt);
+	const iso = typeof postedAt === 'string' && postedAt.trim()
+		? postedAt.trim()
+		: (date?.toISOString() || new Date(0).toISOString());
+	return {
+		postedAtMs: date?.getTime() || 0,
+		postedAt: iso,
+		id: String(id || ''),
+	};
+}
+
+/** Jobs/statuses store postedAt as ISO strings; Date/Timestamp cursors do not seek. */
+function startAfterIsoPoint(query, point) {
+	if (!point?.id) return query;
+	const postedAt = typeof point.postedAt === 'string' && point.postedAt
+		? point.postedAt
+		: (asDate(point.postedAtMs ?? point.postedAt)?.toISOString() || new Date(0).toISOString());
+	return query.startAfter(postedAt, String(point.id));
 }
 
 function decodeValue(value) {
@@ -154,8 +182,38 @@ function requiresAlgolia(body, sources) {
 	return exact > 1;
 }
 
+function preferAlgoliaBrowse(_body, _sources, tab) {
+	return isAlgoliaConfigured() && ['all', 'new'].includes(tab);
+}
+
 function statusMap(index) {
 	return new Map([...index.rows.values()].map((value) => [value.jobId, value]));
+}
+
+async function hydrateStatusRows(profileId, jobIds) {
+	if (!profileId || !jobIds.length) return new Map();
+	const db = getFirestoreDb();
+	const unique = [...new Set(jobIds.map(String))];
+	const out = new Map();
+	for (let offset = 0; offset < unique.length; offset += 100) {
+		const chunk = unique.slice(offset, offset + 100);
+		const refs = chunk.map((jobId) => db.collection(STATUS_COLLECTION).doc(jobStatusProjectionId(profileId, jobId)));
+		const snapshots = await db.getAll(...refs);
+		for (const snapshot of snapshots) {
+			if (!snapshot.exists) continue;
+			const raw = snapshot.data() || {};
+			const jobId = String(raw.jobId || '');
+			if (!jobId) continue;
+			out.set(jobId, {
+				jobId,
+				state: String(raw.state || ''),
+				visibleInJobSearch: raw.visibleInJobSearch !== false,
+				postedAt: raw.postedAt || null,
+				row: statusRowFromProjection(raw),
+			});
+		}
+	}
+	return out;
 }
 
 function attachViewerStatus(job, row) {
@@ -169,8 +227,8 @@ function attachViewerStatus(job, row) {
 function statusMatches(row, tab) {
 	if (tab === 'all') return true;
 	if (tab === 'new') return !row;
-	if (tab === 'any') return Boolean(row?.visibleInJobSearch);
-	return row?.visibleInJobSearch === true && row.state === tab;
+	if (tab === 'any') return Boolean(row && row.visibleInJobSearch !== false);
+	return Boolean(row && row.visibleInJobSearch !== false && row.state === tab);
 }
 
 async function resolveViewer(body) {
@@ -178,14 +236,6 @@ async function resolveViewer(body) {
 	const context = name ? await resolveApplierContext(name) : { id: null, isBeta: false };
 	if (name && !context.id) throw Object.assign(new Error(`User ${name} not found`), { status: 404 });
 	return { profileId: context.id ? String(context.id) : null, isBeta: Boolean(context.isBeta) };
-}
-
-async function viewerIndex(profileId, tab) {
-	if (!profileId) {
-		if (tab !== 'all') throw Object.assign(new Error('applierName is required for status tabs'), { status: 400 });
-		return null;
-	}
-	return getProfileJobStatusIndex(profileId);
 }
 
 const LIST_JOB_FIELDS = [
@@ -230,37 +280,42 @@ function nativeJobsQuery(body, facet, { isBeta = false } = {}) {
 }
 
 async function listNative(body, context) {
-	const { limit, tab, hash, sources, isBeta, statuses } = context;
+	const { limit, tab, hash, sources, isBeta, statuses, profileId } = context;
 	const cursor = decodeCursor(body.cursor, hash, 'jobs');
-	let query = nativeJobsQuery(body, nativeFacet(body, sources), { isBeta });
-	if (cursor) query = query.startAfter(new Date(cursor.postedAt), cursor.id);
+	let query = startAfterIsoPoint(nativeJobsQuery(body, nativeFacet(body, sources), { isBeta }), cursor);
 	const data = [];
-	let lastScanned = cursor ? { postedAt: cursor.postedAt, id: cursor.id } : null;
-	let hasMore = false;
-	for (let batch = 0; batch < MAX_SCAN_BATCHES && data.length < limit; batch += 1) {
+	let lastScanned = cursor ? cursorPoint(cursor.postedAtMs ?? cursor.postedAt, cursor.id) : null;
+	const fetchLimit = limit + 1;
+	for (let batch = 0; batch < MAX_SCAN_BATCHES && data.length < fetchLimit; batch += 1) {
 		const snapshot = await query.limit(SCAN_BATCH_SIZE).get();
-		if (snapshot.empty) { hasMore = false; break; }
+		if (snapshot.empty) break;
+		const pageStatuses = (tab === 'all' || !profileId)
+			? new Map()
+			: (statuses?.size
+				? statuses
+				: await hydrateStatusRows(profileId, snapshot.docs.map((document) => document.id)));
 		for (const document of snapshot.docs) {
 			const job = decodeJob(document);
-			const postedAt = asDate(job.postedAt);
-			lastScanned = { postedAt: postedAt?.toISOString() || new Date(0).toISOString(), id: document.id };
-			const row = statuses.get(document.id);
+			lastScanned = cursorPoint(job.postedAt, document.id);
+			const row = pageStatuses.get(document.id);
 			if (!matchesFilters(job, body, { isBeta, sources }) || !statusMatches(row, tab)) continue;
 			data.push(attachViewerStatus(job, row));
-			if (data.length === limit) { hasMore = true; break; }
+			if (data.length === fetchLimit) break;
 		}
-		if (data.length === limit) break;
-		if (snapshot.size < SCAN_BATCH_SIZE) { hasMore = false; break; }
-		hasMore = true;
-		query = nativeJobsQuery(body, nativeFacet(body, sources), { isBeta }).startAfter(
-			new Date(lastScanned.postedAt),
-			lastScanned.id,
-		);
+		if (data.length === fetchLimit) break;
+		if (snapshot.size < SCAN_BATCH_SIZE) break;
+		query = startAfterIsoPoint(nativeJobsQuery(body, nativeFacet(body, sources), { isBeta }), lastScanned);
 	}
+	const hasMore = data.length > limit;
+	const pageData = hasMore ? data.slice(0, limit) : data;
+	const cursorSource = pageData.length ? pageData[pageData.length - 1] : null;
+	const nextPoint = cursorSource
+		? cursorPoint(cursorSource.postedAt, cursorSource._id)
+		: null;
 	return {
-		data,
+		data: pageData,
 		hasMore,
-		nextCursor: hasMore && lastScanned ? encodeCursor({ v: 1, h: hash, kind: 'jobs', ...lastScanned }) : null,
+		nextCursor: hasMore && nextPoint ? encodeCursor({ v: 1, h: hash, kind: 'jobs', ...nextPoint }) : null,
 	};
 }
 
@@ -287,22 +342,30 @@ function algoliaQuery(body) {
 }
 
 async function listAlgolia(body, context) {
-	const { limit, tab, hash, sources, isBeta, statuses } = context;
+	const { limit, tab, hash, sources, isBeta, statuses, profileId } = context;
 	const cursor = decodeCursor(body.cursor, hash, 'algolia') || { page: 0, offset: 0 };
 	let page = Number(cursor.page || 0);
 	let offset = Number(cursor.offset || 0);
 	let hasMore = true;
 	const data = [];
 	for (let scannedPages = 0; scannedPages < MAX_SCAN_BATCHES && data.length < limit; scannedPages += 1) {
-		const result = await searchNewestJobPage(algoliaQuery(body), { page, hitsPerPage: SCAN_BATCH_SIZE });
+		const result = await searchNewestJobPage(algoliaQuery(body), {
+			page,
+			hitsPerPage: SCAN_BATCH_SIZE,
+		});
 		if (!result) throw Object.assign(new Error('Algolia is required for this Job Search filter'), { status: 503, retryable: true });
 		const ids = result.ids.slice(offset);
-		const jobs = await hydrateJobIds(ids);
+		const [jobs, pageStatuses] = await Promise.all([
+			hydrateJobIds(ids),
+			(tab === 'all' || !profileId)
+				? Promise.resolve(new Map())
+				: (statuses?.size ? Promise.resolve(statuses) : hydrateStatusRows(profileId, ids)),
+		]);
 		for (let index = 0; index < ids.length; index += 1) {
 			const jobId = ids[index];
 			offset += 1;
 			const job = jobs.get(jobId);
-			const row = statuses.get(jobId);
+			const row = pageStatuses.get(jobId);
 			if (!job || !matchesFilters(job, body, { isBeta, sources }) || !statusMatches(row, tab)) continue;
 			data.push(attachViewerStatus(job, row));
 			if (data.length === limit) break;
@@ -322,54 +385,62 @@ async function listAlgolia(body, context) {
 	};
 }
 
-async function listStatusIndex(body, context) {
-	const { limit, tab, hash, sources, isBeta, statuses } = context;
+async function listStatusQuery(body, context) {
+	const { limit, tab, hash, sources, isBeta, profileId } = context;
+	if (!profileId) throw Object.assign(new Error('applierName is required for status tabs'), { status: 400 });
 	const cursor = decodeCursor(body.cursor, hash, 'statuses');
-	// Use the already-loaded profile status index. That avoids a second
-	// composite-index dependency and works for legacy rows that omit
-	// visibleInJobSearch.
-	const ordered = [...statuses.values()]
-		.filter((row) => row?.jobId && row.visibleInJobSearch !== false)
-		.filter((row) => tab === 'any' || row.state === tab)
-		.sort((left, right) => {
-			const leftAt = asDate(left.postedAt)?.getTime() || 0;
-			const rightAt = asDate(right.postedAt)?.getTime() || 0;
-			if (rightAt !== leftAt) return rightAt - leftAt;
-			return String(right.jobId).localeCompare(String(left.jobId));
-		});
-	let start = 0;
-	if (cursor) {
-		start = ordered.findIndex((row) => (
-			(asDate(row.postedAt)?.toISOString() || '') === cursor.postedAt
-			&& String(row.jobId) === cursor.id
-		)) + 1;
-		if (start < 1) start = 0;
-	}
+	const db = getFirestoreDb();
+	let query = db.collection(STATUS_COLLECTION)
+		.where('profileId', '==', profileId)
+		.where('state', '==', tab)
+		.orderBy('postedAt', 'desc')
+		.orderBy('jobId', 'desc');
+	if (cursor) query = startAfterIsoPoint(query, cursor);
 	const data = [];
-	let lastScanned = cursor ? { postedAt: cursor.postedAt, id: cursor.id } : null;
-	let hasMore = false;
-	for (let index = start; index < ordered.length && data.length < limit;) {
-		const chunk = ordered.slice(index, index + SCAN_BATCH_SIZE);
-		const jobs = await hydrateJobIds(chunk.map((row) => String(row.jobId)));
-		for (const row of chunk) {
-			index += 1;
-			lastScanned = {
-				postedAt: asDate(row.postedAt)?.toISOString() || new Date(0).toISOString(),
-				id: String(row.jobId),
+	const fetchLimit = limit + 1;
+	for (let batch = 0; batch < MAX_SCAN_BATCHES && data.length < fetchLimit; batch += 1) {
+		const snapshot = await query.limit(Math.min(SCAN_BATCH_SIZE, fetchLimit - data.length + 5)).get();
+		if (snapshot.empty) break;
+		const rows = snapshot.docs.map((document) => {
+			const raw = document.data() || {};
+			return {
+				jobId: String(raw.jobId || ''),
+				state: String(raw.state || ''),
+				visibleInJobSearch: raw.visibleInJobSearch !== false,
+				postedAt: raw.postedAt || null,
+				row: statusRowFromProjection(raw),
 			};
-			const job = jobs.get(String(row.jobId));
+		}).filter((row) => row.jobId && row.visibleInJobSearch !== false);
+		const jobs = await hydrateJobIds(rows.map((row) => row.jobId));
+		let lastScanned = null;
+		for (const row of rows) {
+			lastScanned = cursorPoint(row.postedAt, row.jobId);
+			const job = jobs.get(row.jobId);
 			if (!job || !matchesFilters(job, body, { isBeta, sources })) continue;
 			data.push(attachViewerStatus(job, row));
-			if (data.length === limit) {
-				hasMore = index < ordered.length;
-				break;
-			}
+			if (data.length === fetchLimit) break;
 		}
+		if (data.length === fetchLimit) break;
+		if (snapshot.size < Math.min(SCAN_BATCH_SIZE, fetchLimit - data.length + 5)) break;
+		query = startAfterIsoPoint(
+			db.collection(STATUS_COLLECTION)
+				.where('profileId', '==', profileId)
+				.where('state', '==', tab)
+				.orderBy('postedAt', 'desc')
+				.orderBy('jobId', 'desc'),
+			lastScanned || cursorPoint(snapshot.docs.at(-1).get('postedAt'), snapshot.docs.at(-1).get('jobId')),
+		);
 	}
+	const hasMore = data.length > limit;
+	const pageData = hasMore ? data.slice(0, limit) : data;
+	const cursorSource = pageData.length ? pageData[pageData.length - 1] : null;
+	const nextPoint = cursorSource
+		? cursorPoint(cursorSource.postedAt, cursorSource._id)
+		: null;
 	return {
-		data,
+		data: pageData,
 		hasMore,
-		nextCursor: hasMore && lastScanned ? encodeCursor({ v: 1, h: hash, kind: 'statuses', ...lastScanned }) : null,
+		nextCursor: hasMore && nextPoint ? encodeCursor({ v: 1, h: hash, kind: 'statuses', ...nextPoint }) : null,
 	};
 }
 
@@ -379,10 +450,17 @@ async function approvedCatalogCount(isBeta) {
 	if (cached?.expiresAt > Date.now()) return cached.value;
 	let value = await readApprovedCatalogCount({ includeExtensionV2: isBeta });
 	if (value == null) {
-		const filter = isBeta
-			? { 'titleReview.label': 'APPROVED' }
-			: { 'titleReview.label': 'APPROVED', extensionV2: false };
-		value = await jobsCollection.countDocuments(filter);
+		try {
+			let query = marketJobs().where('titleReview.label', '==', 'APPROVED');
+			if (!isBeta) query = query.where('extensionV2', '==', false);
+			const snapshot = await query.count().get();
+			value = Number(snapshot.data().count || 0);
+		} catch {
+			const filter = isBeta
+				? { 'titleReview.label': 'APPROVED' }
+				: { 'titleReview.label': 'APPROVED', extensionV2: false };
+			value = await jobsCollection.countDocuments(filter);
+		}
 	}
 	catalogCountCache.set(key, { value, expiresAt: Date.now() + COUNT_CACHE_MS });
 	return value;
@@ -391,40 +469,79 @@ async function approvedCatalogCount(isBeta) {
 export function invalidateJobListV3Counts() {
 	catalogCountCache.clear();
 	companyCountCache.clear();
+	statusCountCache.clear();
 }
 
 async function attachCompanyCounts(jobs, isBeta) {
 	const ids = [...new Set(jobs.map((job) => String(job.companyId || '').trim()).filter(Boolean))];
 	const now = Date.now();
 	const counts = new Map();
-	const missing = [];
+	const uncached = [];
 	for (const companyId of ids) {
 		const key = `${isBeta ? 'beta' : 'public'}:${companyId}`;
 		const cached = companyCountCache.get(key);
 		if (cached?.expiresAt > now) counts.set(companyId, cached.value);
-		else missing.push(companyId);
+		else uncached.push(companyId);
 	}
-	// Do not block the list on N Firestore count round-trips. Uncached companies
-	// default to 1 (single-job group); a background refresh warms the cache.
-	if (missing.length) {
-		void Promise.all(missing.map(async (companyId) => {
+	// Hot path: never block on company doc reads or count queries. Warm denorm
+	// counters asynchronously so the next page hits memory/company fields.
+	if (uncached.length) {
+		const db = getFirestoreDb();
+		void (async () => {
 			try {
-				let query = marketJobs()
-					.where('titleReview.label', '==', 'APPROVED')
-					.where('companyId', '==', companyId);
-				if (!isBeta) query = query.where('extensionV2', '==', false);
-				const snapshot = await query.count().get();
-				const value = Math.max(1, Number(snapshot.data().count || 0));
-				companyCountCache.set(
-					`${isBeta ? 'beta' : 'public'}:${companyId}`,
-					{ value, expiresAt: Date.now() + COMPANY_COUNT_CACHE_MS },
-				);
+				for (let offset = 0; offset < uncached.length; offset += 100) {
+					const chunk = uncached.slice(offset, offset + 100);
+					const snapshots = await db.getAll(...chunk.map((companyId) => db.collection('companies').doc(companyId)));
+					const stillMissing = [];
+					for (let index = 0; index < snapshots.length; index += 1) {
+						const snapshot = snapshots[index];
+						const companyId = chunk[index];
+						const data = snapshot.exists ? (snapshot.data() || {}) : {};
+						const value = Number(isBeta ? data.approvedJobCount : data.publicApprovedJobCount);
+						if (Number.isFinite(value) && value > 0) {
+							companyCountCache.set(
+								`${isBeta ? 'beta' : 'public'}:${companyId}`,
+								{ value: Math.max(1, value), expiresAt: Date.now() + COMPANY_COUNT_CACHE_MS },
+							);
+						} else {
+							stillMissing.push(companyId);
+						}
+					}
+					await Promise.all(stillMissing.map(async (companyId) => {
+						const [allSnap, publicSnap] = await Promise.all([
+							marketJobs()
+								.where('titleReview.label', '==', 'APPROVED')
+								.where('companyId', '==', companyId)
+								.count()
+								.get(),
+							marketJobs()
+								.where('titleReview.label', '==', 'APPROVED')
+								.where('companyId', '==', companyId)
+								.where('extensionV2', '==', false)
+								.count()
+								.get(),
+						]);
+						const approvedJobCount = Math.max(0, Number(allSnap.data().count || 0));
+						const publicApprovedJobCount = Math.max(0, Number(publicSnap.data().count || 0));
+						companyCountCache.set(
+							`${isBeta ? 'beta' : 'public'}:${companyId}`,
+							{
+								value: Math.max(1, isBeta ? approvedJobCount : publicApprovedJobCount),
+								expiresAt: Date.now() + COMPANY_COUNT_CACHE_MS,
+							},
+						);
+						await db.collection('companies').doc(companyId).set({
+							approvedJobCount,
+							publicApprovedJobCount,
+							approvedJobCountUpdatedAt: new Date(),
+						}, { merge: true });
+					}));
+				}
 			} catch {
-				// Best-effort cache warm; list already returned.
+				// Best-effort warm.
 			}
-		})).then(() => {
 			while (companyCountCache.size > 1_000) companyCountCache.delete(companyCountCache.keys().next().value);
-		});
+		})();
 	}
 	return jobs.map((job) => ({
 		...job,
@@ -451,19 +568,33 @@ export async function getJobStatusCountsV3(body = {}, { statusIndex = null } = {
 	if (!profileId) {
 		return { all, posted: all, 'bid-ready': 0, 'bid-completed': 0, applied: 0, scheduled: 0, declined: 0 };
 	}
-	// Prefer the already-warmed profile index (O(statuses in memory)) over
-	// downloading every job_statuses document again on each list request.
+	const cacheKey = `${profileId}:${isBeta ? 'beta' : 'public'}`;
+	const cached = statusCountCache.get(cacheKey);
+	if (cached?.expiresAt > Date.now()) {
+		const stored = cached.value;
+		const any = Math.min(all, Number(stored?.any || 0));
+		return {
+			all,
+			posted: Math.max(0, all - any),
+			'bid-ready': Number(stored?.['bid-ready'] || 0),
+			'bid-completed': Number(stored?.['bid-completed'] || 0),
+			applied: Number(stored?.applied || 0),
+			scheduled: Number(stored?.scheduled || 0),
+			declined: Number(stored?.declined || 0),
+		};
+	}
+	// Prefer in-memory index, then aggregation counts (source of truth for
+	// badges). Sharded counters lag for statuses written before projections.
 	let stored = countsFromStatusIndex(statusIndex)
-		|| await readMaterializedJobStatusCounts(profileId, { includeExtensionV2: isBeta });
+		|| await countJobStatusesByStateAggregated(profileId, { includeExtensionV2: isBeta });
+	if (!stored?.any) {
+		stored = await readMaterializedJobStatusCounts(profileId, { includeExtensionV2: isBeta });
+	}
 	if (!stored?.any) {
 		const live = await countLiveJobStatusesByState(profileId);
 		if (live?.any) stored = live;
-	} else if (!statusIndex) {
-		// Materialized counters can lag after migrations; only pay for a live
-		// recount when we did not already load the profile index.
-		const live = await countLiveJobStatusesByState(profileId);
-		if (live?.any && live.any > Number(stored.any || 0)) stored = live;
 	}
+	statusCountCache.set(cacheKey, { value: stored, expiresAt: Date.now() + COUNT_CACHE_MS });
 	const any = Math.min(all, Number(stored?.any || 0));
 	return {
 		all,
@@ -491,21 +622,50 @@ export async function listJobsV3(body = {}) {
 	const pageNumber = Math.max(1, Number(body.page || 1));
 	const tab = requestedStatus(body);
 	const { profileId, isBeta } = await resolveViewer(body);
-	const index = await viewerIndex(profileId, tab);
-	const statuses = index ? statusMap(index) : new Map();
 	const sources = selectedSources(body);
 	const hash = cursorHash({ ...body, cursor: undefined, applierName: body.applierName || null });
+	// New tab needs an anti-join. Prefer the warm in-memory index over per-page
+	// getAll. Applied/Bid tabs query status docs directly. All skips status I/O.
+	let statuses = new Map();
+	if (tab === 'new' && profileId) {
+		statuses = statusMap(await getProfileJobStatusIndex(profileId));
+	}
 	const context = { limit, tab, profileId, isBeta, statuses, sources, hash };
 	let page;
-	if (requiresAlgolia(body, sources)) page = await listAlgolia(body, context);
-	else if (!['all', 'new'].includes(tab)) page = await listStatusIndex(body, context);
-	else page = await listNative(body, context);
+	try {
+		if (requiresAlgolia(body, sources) || preferAlgoliaBrowse(body, sources, tab)) {
+			page = await listAlgolia(body, context);
+		} else if (!['all', 'new'].includes(tab)) {
+			page = await listStatusQuery(body, context);
+		} else {
+			page = await listNative(body, context);
+		}
+	} catch (error) {
+		const canFallbackNative = preferAlgoliaBrowse(body, sources, tab)
+			&& !requiresAlgolia(body, sources)
+			&& (error?.status === 503 || /algolia/i.test(String(error?.message || '')));
+		if (!canFallbackNative) throw error;
+		page = await listNative(body, context);
+	}
 	const [withCompanyCounts, statusCounts] = await Promise.all([
 		attachCompanyCounts(page.data, isBeta),
-		getJobStatusCountsV3(body, { statusIndex: index }),
+		getJobStatusCountsV3(body),
 	]);
 	page.data = withCompanyCounts;
-	const totalJobs = totalForTab(tab, statusCounts);
+	let totalJobs = totalForTab(tab, statusCounts);
+	// When sharded badges lag behind the list query, never advertise an empty
+	// page that still returned rows (Bid ready 0 + 3 cards).
+	const listedFloor = (pageNumber - 1) * limit + page.data.length + (page.hasMore ? 1 : 0);
+	if (page.data.length && totalJobs < listedFloor) {
+		totalJobs = listedFloor;
+		if (tab !== 'all' && tab !== 'new' && Object.hasOwn(statusCounts, tab)) {
+			statusCounts[tab] = Math.max(Number(statusCounts[tab] || 0), totalJobs);
+		}
+	}
+	const advertisedPages = Math.max(1, Math.ceil(Math.max(0, totalJobs) / limit));
+	const totalPages = page.hasMore
+		? Math.max(advertisedPages, pageNumber + 1)
+		: Math.max(1, Math.min(advertisedPages, Math.max(pageNumber, 1)));
 	return {
 		success: true,
 		data: page.data,
@@ -518,7 +678,7 @@ export async function listJobsV3(body = {}) {
 			limit,
 			total: totalJobs,
 			totalJobs,
-			totalPages: Math.max(1, Math.ceil(Math.max(0, totalJobs) / limit)),
+			totalPages,
 			unit: 'jobs',
 		},
 	};

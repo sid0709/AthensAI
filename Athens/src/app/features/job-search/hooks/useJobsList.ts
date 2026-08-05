@@ -448,7 +448,8 @@ export function useJobsList(
   const loading =
     !applierReady ||
     isDebouncing ||
-    ((requestInFlight || settledKey !== currentQueryKey) && rawGroups.length === 0);
+    requestInFlight ||
+    settledKey !== currentQueryKey;
 
   const settledKeyRef = useRef<string | null>(null);
   settledKeyRef.current = settledKey;
@@ -466,9 +467,8 @@ export function useJobsList(
     const cacheKey = currentQueryKey;
     let cached = listCache.get(currentQueryKey);
     let hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
-    const applyResponse = (res: ListResponse) => {
+    const applyResponse = (res: ListResponse, { allowEmptyMidPage = false } = {}) => {
       if (!res?.success || !Array.isArray(res.data)) return false;
-			setRawGroups(mapResponseGroups(res.data, applierRef.current));
       const tab = debouncedFilters.statusTab;
       const countTotal = res.statusCounts
         ? Number(
@@ -482,6 +482,17 @@ export function useJobsList(
       const responseTotal = res.pagination?.total
         ?? countTotal
         ?? ((page - 1) * pageSize + res.data.length + (res.hasMore ? 1 : 0));
+      // Catalog totals can diverge from the keyset page. An empty mid-page with a
+      // large total is a cursor/index failure — do not treat it as a settled hit.
+      if (
+        !allowEmptyMidPage
+        && page > 1
+        && res.data.length === 0
+        && responseTotal > (page - 1) * pageSize
+      ) {
+        return false;
+      }
+			setRawGroups(mapResponseGroups(res.data, applierRef.current));
       setTotal(responseTotal);
 			setTotalJobs(res.pagination?.totalJobs ?? countTotal ?? responseTotal);
       rememberNextCursor(listBody, page, res);
@@ -521,7 +532,12 @@ export function useJobsList(
         else delete requestBody.cursor;
         const res = await requestJobsPage(`${cacheKey}:${cursor || "first"}`, requestBody, request);
         if (cancelled) return;
-        if (!applyResponse(res)) throw new Error("The jobs response was incomplete");
+        if (!applyResponse(res)) {
+          if (page > 1 && Array.isArray(res?.data) && res.data.length === 0) {
+            pageCursors.delete(cursorFamilyKey(listBody));
+          }
+          throw new Error("The jobs response was incomplete");
+        }
         cacheListResponse(cacheKey, res);
       } catch (e) {
         const timedOut = (e as Error)?.name === "TimeoutError";

@@ -41,6 +41,44 @@ describe("Athens Lens app", () => {
   beforeEach(async () => {
     await resetWorkspaceCacheForTests();
     window.location.hash = "#jobs";
+    vi.stubGlobal("chrome", {
+      runtime: {
+        sendMessage: vi.fn(async (message: { type?: string; tabId?: number }) => {
+          if (message?.type === "ATHENS_LENS_START_RECORDING") {
+            return { ok: true, tabId: message.tabId ?? 42 };
+          }
+          if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
+            return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
+          }
+          if (message?.type === "ATHENS_LENS_READ_PAGE_TEXT") {
+            return {
+              ok: true,
+              tabId: 42,
+              pageContext: {
+                url: "https://example.com/apply",
+                title: "Application",
+                metaDescription: "",
+                visibleText: "Why are you interested in this role?\nWhat is your availability?",
+              },
+            };
+          }
+          return { ok: false, error: `Unhandled message ${message?.type || ""}` };
+        }),
+        lastError: undefined,
+      },
+      tabs: {
+        create: vi.fn((_options: { url: string }, callback?: (tab: { id: number }) => void) => {
+          callback?.({ id: 42 });
+        }),
+      },
+      tabCapture: {
+        getMediaStreamId: vi.fn(
+          (_options: { targetTabId: number }, callback: (streamId: string) => void) => {
+            callback("mock-stream-id");
+          },
+        ),
+      },
+    });
   });
 
   it("shows validation, signs in, navigates jobs, and logs out", async () => {
@@ -182,9 +220,24 @@ describe("Athens Lens app", () => {
     expect(inboxRepository.loadMessageBodies).toHaveBeenCalledWith(expect.anything(), [MOCK_INBOX_MESSAGES[0].id]);
   });
 
-  it("starts, restarts, completes, and reviews a mock bid recording", async () => {
+  it("starts, restarts, completes, and reviews a live bid recording", async () => {
     const user = userEvent.setup();
-    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      summary: "Application form detected.",
+      answers: [
+        {
+          question: "Why are you interested in this role?",
+          suggestedAnswer: "I am interested because the work matches my background.",
+          confidence: "high",
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
     render(
       <App
         authStore={makeAuthStore(makeSession())}
@@ -196,14 +249,14 @@ describe("Athens Lens app", () => {
     await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
     await user.click(screen.getByRole("button", { name: "Apply & record" }));
 
-    expect(openWindow).toHaveBeenCalledWith(MOCK_JOBS[0].applyUrl, "_blank", "noopener,noreferrer");
-    expect(screen.getByRole("complementary", { name: "Mock application recording" })).toBeInTheDocument();
-    expect(screen.getByText("Demo MP4 · 00:00")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Application recording" })).toBeInTheDocument();
+    expect(screen.getByText("Live tab capture · 00:00")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Restart" }));
     await user.click(screen.getAllByRole("button", { name: "Ask AI" })[0]!);
     expect(screen.getByRole("dialog", { name: "Form answers" })).toBeInTheDocument();
-    expect(screen.getByText("Detected questions")).toBeInTheDocument();
+    expect(await screen.findByText("Detected questions")).toBeInTheDocument();
+    expect(screen.getByText("Why are you interested in this role?")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close AI answers" }));
 
     await user.click(screen.getByRole("button", { name: /Gmail inbox/ }));
@@ -214,8 +267,6 @@ describe("Athens Lens app", () => {
     expect(screen.getByRole("dialog", { name: "Did you submit this bid?" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Yes, submitted" }));
     expect(screen.getByText("Bid marked as submitted")).toBeInTheDocument();
-
-    openWindow.mockRestore();
   });
 
   it("shows an empty state and retries a failed job load", async () => {

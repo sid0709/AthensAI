@@ -30,6 +30,7 @@ type JobListStickyBarProps = {
   page: number;
   pageSize: number;
   total: number;
+  itemCount?: number;
   totalJobs?: number | null;
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
@@ -65,6 +66,7 @@ export function JobListStickyBar({
   page,
   pageSize,
   total,
+  itemCount,
   totalJobs,
   onPageChange,
   onPageSizeChange,
@@ -108,11 +110,12 @@ export function JobListStickyBar({
             page={page}
             pageSize={pageSize}
             total={total}
+            itemCount={itemCount}
             onPageChange={onPageChange}
             onPageSizeChange={onPageSizeChange}
             pageSizeOptions={pageSizeOptions}
             detailed
-            unitLabel="companies"
+            unitLabel="jobs"
             secondaryTotal={totalJobs}
             secondaryLabel="matching jobs"
             loading={loading}

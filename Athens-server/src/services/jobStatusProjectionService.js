@@ -139,6 +139,10 @@ function counterRef(profileId, catalog, jobId) {
 	return getFirestoreDb().collection(COUNT_COLLECTION).doc(`${profileId}_${catalog}_${String(shard).padStart(2, '0')}`);
 }
 
+function summaryCounterRef(profileId, catalog) {
+	return getFirestoreDb().collection(COUNT_COLLECTION).doc(`${profileId}_${catalog}_summary`);
+}
+
 function contributionForProjection(projection) {
 	const row = projection ? statusRowFromProjection(projection) : null;
 	if (!row || projection?.visibleInJobSearch === false) {
@@ -157,13 +161,24 @@ function counterWrite({ profileId, catalog, jobId, previous, next, isPublic }) {
 	const delta = contributionDelta(previous, next);
 	const nested = Object.fromEntries(Object.entries(delta).map(([key, value]) => [key, FieldValue.increment(value)]));
 	const shard = counterShard(jobId);
+	const payload = {
+		schemaVersion: STATUS_PROJECTION_SCHEMA_VERSION,
+		profileId,
+		sourceCatalog: catalog,
+		shard,
+		all: nested,
+		...(isPublic ? { public: nested } : {}),
+		updatedAt: new Date(),
+	};
 	return {
 		ref: counterRef(profileId, catalog, jobId),
-		data: {
+		data: payload,
+		summaryRef: summaryCounterRef(profileId, catalog),
+		summaryData: {
 			schemaVersion: STATUS_PROJECTION_SCHEMA_VERSION,
 			profileId,
 			sourceCatalog: catalog,
-			shard,
+			kind: 'summary',
 			all: nested,
 			...(isPublic ? { public: nested } : {}),
 			updatedAt: new Date(),
@@ -339,6 +354,7 @@ export async function mutateJobStatus({
 		if (next) transaction.set(statusRef, next, { merge: false });
 		else transaction.delete(statusRef);
 		transaction.set(count.ref, count.data, { merge: true });
+		transaction.set(count.summaryRef, count.summaryData, { merge: true });
 		transaction.create(receiptRef, {
 			schemaVersion: 1,
 			profileId,
@@ -407,11 +423,15 @@ export async function mutateJobStatusesBulk({ jobs, applierName, transition, bul
 }
 
 function validProjection(profileId, raw) {
-	return raw
-		&& Number(raw.schemaVersion) === STATUS_PROJECTION_SCHEMA_VERSION
+	// Accept current and legacy projection schemas. Job Search already treats
+	// schemaVersion 2 / missing-field docs as visible; Athens Lens was empty
+	// because it required schemaVersion === 3 only.
+	return Boolean(
+		raw
 		&& String(raw.profileId || '') === String(profileId)
 		&& JOB_STATUS_STATES.includes(String(raw.state || ''))
-		&& statusRowFromProjection(raw);
+		&& statusRowFromProjection(raw),
+	);
 }
 
 export function authoritativeJobStatusBaseline(profileId, projectionRows = [], canonicalJobsById = new Map()) {
@@ -496,29 +516,58 @@ export async function publishStatusCache() {
 
 export async function readMaterializedJobStatusCounts(profileId, { includeExtensionV2 = true } = {}) {
 	if (!clean(profileId)) return null;
-	const snapshot = await getFirestoreDb().collection(COUNT_COLLECTION)
+	const db = getFirestoreDb();
+	const field = includeExtensionV2 ? 'all' : 'public';
+	const empty = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	const sumDocs = (documents) => {
+		const counts = { ...empty };
+		let usedNested = false;
+		for (const document of documents) {
+			if (!document?.exists) continue;
+			const data = document.data() || {};
+			const nested = data[field];
+			if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+				usedNested = true;
+				for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(nested[key]);
+				continue;
+			}
+			for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(data[key]);
+		}
+		if (!usedNested && counts.any === 0) {
+			for (const key of Object.keys(counts)) {
+				if (key !== 'any') counts.any += counts[key];
+			}
+		}
+		return counts;
+	};
+
+	// Prefer O(1) summary docs written alongside sharded counters.
+	const summaries = await db.getAll(
+		summaryCounterRef(profileId, 'market'),
+		summaryCounterRef(profileId, 'external'),
+	);
+	const summaryCounts = sumDocs(summaries);
+	if (summaryCounts.any > 0 || summaries.some((document) => document.exists)) {
+		return summaryCounts;
+	}
+
+	// Fall back to known shard ids (no collection query) then legacy where().
+	const shardRefs = [];
+	for (const catalog of ['market', 'external']) {
+		for (let shard = 0; shard < COUNTER_SHARDS; shard += 1) {
+			shardRefs.push(db.collection(COUNT_COLLECTION).doc(`${profileId}_${catalog}_${String(shard).padStart(2, '0')}`));
+		}
+	}
+	const shardSnapshots = await db.getAll(...shardRefs);
+	const shardCounts = sumDocs(shardSnapshots);
+	if (shardCounts.any > 0 || shardSnapshots.some((document) => document.exists)) {
+		return shardCounts;
+	}
+
+	const snapshot = await db.collection(COUNT_COLLECTION)
 		.where('profileId', '==', clean(profileId))
 		.get();
-	const field = includeExtensionV2 ? 'all' : 'public';
-	const counts = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
-	let usedNested = false;
-	for (const document of snapshot.docs) {
-		const data = document.data() || {};
-		const nested = data[field];
-		if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-			usedNested = true;
-			for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(nested[key]);
-			continue;
-		}
-		// Legacy flat counter docs store totals on the root (e.g. applied: 505).
-		for (const key of Object.keys(counts)) counts[key] += nonNegativeInteger(data[key]);
-	}
-	if (!usedNested && counts.any === 0) {
-		for (const key of Object.keys(counts)) {
-			if (key !== 'any') counts.any += counts[key];
-		}
-	}
-	return counts;
+	return sumDocs(snapshot.docs);
 }
 
 /** Live fallback when sharded counters are missing or stale. */
@@ -536,6 +585,43 @@ export async function countLiveJobStatusesByState(profileId) {
 		counts[state] += 1;
 		counts.any += 1;
 	}
+	return counts;
+}
+
+/**
+ * Accurate per-state totals via Firestore aggregation counts.
+ * Prefer this over sharded counters, which lag when statuses were written
+ * before counter projections existed (e.g. bid-ready shows 0 while docs exist).
+ */
+export async function countJobStatusesByStateAggregated(profileId, { includeExtensionV2 = true } = {}) {
+	if (!clean(profileId)) return null;
+	const db = getFirestoreDb();
+	const states = ['applied', 'scheduled', 'declined', 'bid-ready', 'bid-completed'];
+	const counts = { any: 0, applied: 0, scheduled: 0, declined: 0, 'bid-ready': 0, 'bid-completed': 0 };
+	await Promise.all(states.map(async (state) => {
+		let query = db.collection(STATUS_COLLECTION)
+			.where('profileId', '==', clean(profileId))
+			.where('state', '==', state);
+		// Non-beta viewers should not count extension-v2-only rows. Legacy docs
+		// omit the field; treat missing as public by counting all and subtracting
+		// explicit extensionV2=true when needed.
+		if (!includeExtensionV2) {
+			const [allSnap, extensionSnap] = await Promise.all([
+				query.count().get(),
+				db.collection(STATUS_COLLECTION)
+					.where('profileId', '==', clean(profileId))
+					.where('state', '==', state)
+					.where('extensionV2', '==', true)
+					.count()
+					.get(),
+			]);
+			counts[state] = Math.max(0, Number(allSnap.data().count || 0) - Number(extensionSnap.data().count || 0));
+		} else {
+			const snapshot = await query.count().get();
+			counts[state] = Math.max(0, Number(snapshot.data().count || 0));
+		}
+		counts.any += counts[state];
+	}));
 	return counts;
 }
 
@@ -574,6 +660,7 @@ export async function syncJobStatusVisibility(jobIds = []) {
 				});
 				transaction.set(statusDocument.ref, next, { merge: false });
 				transaction.set(count.ref, count.data, { merge: true });
+				transaction.set(count.summaryRef, count.summaryData, { merge: true });
 				return true;
 			});
 			if (changed) statuses += 1;
