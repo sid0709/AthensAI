@@ -16,7 +16,8 @@
 		"merge-companies": "node src/scripts/mergeCompanyIds.js",
 		"cleanup-job-market-fields": "node src/scripts/cleanupJobMarketFields.js",
 		"monitoring:rollup": "node src/scripts/rollupMonitoring.js",
-		"test:athens-lens": "node --test src/services/athensLens.test.js"
+		"test:athens-lens": "node --test src/services/athensLens.test.js",
+		"test:mail-imap": "node --test src/services/mail/imapRetry.test.js"
 	},
 	"dependencies": {
 		"@google-cloud/kms": "^5.4.0",

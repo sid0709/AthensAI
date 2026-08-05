@@ -146,7 +146,8 @@ export async function askAthensLensAi(req, res) {
 	try {
 		const pageContext = req.body?.pageContext;
 		const visibleText = String(pageContext?.visibleText || "").trim();
-		if (!pageContext || typeof pageContext !== "object" || !visibleText) {
+		const formTree = String(pageContext?.formTree || "").trim();
+		if (!pageContext || typeof pageContext !== "object" || (!visibleText && !formTree)) {
 			return res.status(400).json({
 				success: false,
 				code: "MISSING_PAGE_TEXT",
@@ -164,6 +165,7 @@ export async function askAthensLensAi(req, res) {
 					title: String(pageContext.title || ""),
 					metaDescription: String(pageContext.metaDescription || ""),
 					visibleText: visibleText.slice(0, 60_000),
+					formTree: formTree.slice(0, 60_000),
 					forms: Array.isArray(pageContext.forms) ? pageContext.forms.slice(0, 120) : [],
 				},
 				applierName: req.athensLensSession.applierName,

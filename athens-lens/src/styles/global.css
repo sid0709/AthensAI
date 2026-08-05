@@ -1322,6 +1322,10 @@ a:focus-visible {
   word-break: break-word;
 }
 
+.ai-debug-pre--oak {
+  max-height: min(42vh, 360px);
+}
+
 .ai-section-label {
   margin: var(--space-6) 0 var(--space-3);
   color: var(--color-text-muted);

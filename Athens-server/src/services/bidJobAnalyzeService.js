@@ -67,8 +67,9 @@ Return JSON with this exact shape:
 
 Rules:
 - Your job is NOT to summarize the role. Your job is to list every fillable prompt on the page and draft an answer for each.
-- Read the FULL page text (and form field hints if present). Treat labels like "Full name", "Email address", "Phone number", "Current company", "Years of experience", "Expected salary", dropdowns, checkboxes, textareas, and open-ended questions as questions.
-- formAnswers must include every distinct application question / field label you can see. Do not stop after a few. Do not skip short labels.
+- When an interactive DOM tree (Oak Analyze tree) is present, it is the SOURCE OF TRUTH for fillable controls. Answer every distinct fillable control you can identify: input, textarea, select, combobox, radio/checkbox groups, file upload, contenteditable, and required/aria-invalid fields. Use option / li role=option / aria-label text from the tree for dropdown values. Do not skip short labels. Do not stop after a few fields.
+- Surrounding page text is secondary context for question wording (e.g. "If Other…", essay prompts) when the tree alone is ambiguous.
+- When no DOM tree is present, discover questions from page text and any form field hints.
 - suggestedAnswer must be the text the applicant should type or select. Prefer exact PROFILE values when they map clearly (name, email, phone, location, LinkedIn, years of experience, etc.).
 - For salary / compensation questions, use PROFILE values when available; otherwise give a concise reasonable draft and mark confidence "low".
 - Never invent employers, dates, degrees, or credentials that are not in PROFILE. If PROFILE lacks a fact, answer briefly and honestly with confidence "low".
@@ -154,7 +155,20 @@ ${formatFormsText(pageContext)}`;
 
 function buildFormAnswerUserPrompt(pageContext, profileJson, jobTitle) {
 	const title = String(jobTitle || "").trim();
-	const visibleText = String(pageContext.visibleText || "").slice(0, 60_000);
+	const formTree = String(pageContext.formTree || "").trim().slice(0, 60_000);
+	const visibleText = String(pageContext.visibleText || "").slice(0, formTree ? 20_000 : 60_000);
+	const treeSection = formTree
+		? `Interactive DOM tree (SOURCE OF TRUTH for fillable controls — Oak Analyze format):
+${formTree}
+
+Surrounding page text (secondary — question wording / essays only):
+${visibleText || "(none)"}`
+		: `Page text (visible innerText only):
+${visibleText}
+
+Form field hints (optional; page text is authoritative):
+${formatFormsText(pageContext)}`;
+
 	return `APPLICANT PROFILE (JSON — use for all answers; secrets already removed):
 ${profileJson}
 
@@ -162,13 +176,9 @@ ${title ? `Application role title (context only): ${title}\n\n` : ""}=== OPEN PA
 URL: ${pageContext.url}
 Title: ${pageContext.title}
 
-Page text (visible innerText only):
-${visibleText}
+${treeSection}
 
-Form field hints (optional; page text is authoritative):
-${formatFormsText(pageContext)}
-
-Return every form question you can find with a suggestedAnswer for each.`;
+Return every form question / fillable control you can find with a suggestedAnswer for each.`;
 }
 
 function normalizeFormAnswers(entries) {

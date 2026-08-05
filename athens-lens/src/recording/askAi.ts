@@ -13,6 +13,8 @@ export interface PageContext {
   title: string;
   metaDescription?: string;
   visibleText: string;
+  /** Oak-style interactive DOM Analyze tree (source of truth for fillable controls). */
+  formTree?: string;
   forms?: Array<{
     label?: string;
     name?: string;
@@ -27,6 +29,9 @@ export interface PageContext {
     selectedFrameCount?: number;
     charCount?: number;
     formCount?: number;
+    formTreeChars?: number;
+    oakFrameCount?: number;
+    oakNodeCount?: number;
     truncated?: boolean;
     note?: string;
   };

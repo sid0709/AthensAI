@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { withPooledClient } from './imapPool.js';
+import { withImapRetry } from './imapRetry.js';
 import { mapPool } from '../../utils/concurrency.js';
 import {
 	ALL_MAIL_PATH,
@@ -16,6 +17,8 @@ import {
 	displayLabelName,
 	isSystemLabel,
 } from './folderMapper.js';
+
+export { formatImapError, isRetryableImapError, withImapRetry } from './imapRetry.js';
 
 const UNLABELED_SCAN_BATCH_SIZE = Math.max(
 	100,
@@ -650,52 +653,55 @@ export async function fetchMessageTextSnippets(
 	password,
 	uids,
 	mailboxPath = ALL_MAIL_PATH,
-	{ maxBytes = 2_048, maxChars = 1_000 } = {},
+	{ maxBytes = 2_048, maxChars = 1_000, signal } = {},
 ) {
 	const uniqueUids = [...new Set((uids || []).map(Number).filter(Number.isFinite))];
 	if (!uniqueUids.length) return [];
 	const byteLimit = Math.max(256, Number(maxBytes) || 2_048);
 	const charLimit = Math.max(120, Number(maxChars) || 1_000);
 
-	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		const structures = [];
-		for await (const message of client.fetch(
-			uniqueUids,
-			{ bodyStructure: true, uid: true },
-			{ uid: true },
-		)) {
-			structures.push(message);
-		}
-
-		const { groups, unresolved } = groupMessageTextParts(structures);
-		const resultMap = new Map(
-			unresolved.map((uid) => [uid, { uid, error: 'No text body part found' }]),
-		);
-
-		for (const group of groups) {
-			const nodeByUid = new Map(group.messages.map((message) => [message.uid, message.partNode]));
-			const groupUids = group.messages.map((message) => message.uid);
+	return withImapRetry(
+		() => withMailboxPath(email, password, mailboxPath, async (client) => {
+			const structures = [];
 			for await (const message of client.fetch(
-				groupUids,
-				{
-					bodyParts: [{ key: group.partId, start: 0, maxLength: byteLimit }],
-					uid: true,
-				},
+				uniqueUids,
+				{ bodyStructure: true, uid: true },
 				{ uid: true },
 			)) {
-				const raw = message?.bodyParts?.get(group.partId)
-					|| (message?.bodyParts?.size ? message.bodyParts.values().next().value : null);
-				let text = decodeBodyPartBuffer(raw, nodeByUid.get(Number(message.uid))).trim();
-				if (group.isHtml) text = stripHtml(text);
-				text = text.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().slice(0, charLimit);
-				resultMap.set(Number(message.uid), text
-					? { uid: Number(message.uid), bodyText: text, preview: text.slice(0, 240) }
-					: { uid: Number(message.uid), error: 'Text body part was empty' });
+				structures.push(message);
 			}
-		}
 
-		return uniqueUids.map((uid) => resultMap.get(uid) || { uid, error: 'Message not found' });
-	});
+			const { groups, unresolved } = groupMessageTextParts(structures);
+			const resultMap = new Map(
+				unresolved.map((uid) => [uid, { uid, error: 'No text body part found' }]),
+			);
+
+			for (const group of groups) {
+				const nodeByUid = new Map(group.messages.map((message) => [message.uid, message.partNode]));
+				const groupUids = group.messages.map((message) => message.uid);
+				for await (const message of client.fetch(
+					groupUids,
+					{
+						bodyParts: [{ key: group.partId, start: 0, maxLength: byteLimit }],
+						uid: true,
+					},
+					{ uid: true },
+				)) {
+					const raw = message?.bodyParts?.get(group.partId)
+						|| (message?.bodyParts?.size ? message.bodyParts.values().next().value : null);
+					let text = decodeBodyPartBuffer(raw, nodeByUid.get(Number(message.uid))).trim();
+					if (group.isHtml) text = stripHtml(text);
+					text = text.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().slice(0, charLimit);
+					resultMap.set(Number(message.uid), text
+						? { uid: Number(message.uid), bodyText: text, preview: text.slice(0, 240) }
+						: { uid: Number(message.uid), error: 'Text body part was empty' });
+				}
+			}
+
+			return uniqueUids.map((uid) => resultMap.get(uid) || { uid, error: 'Message not found' });
+		}),
+		{ signal },
+	);
 }
 
 export async function setMessageSeen(email, password, uid, seen, mailboxPath = ALL_MAIL_PATH) {
@@ -811,22 +817,33 @@ export async function deleteGmailLabel(email, password, labelPath) {
 	});
 }
 
-export async function addLabelsToMessage(email, password, uid, labelNames, mailboxPath = ALL_MAIL_PATH) {
-	return addLabelsToMessages(email, password, [uid], labelNames, mailboxPath);
+export async function addLabelsToMessage(email, password, uid, labelNames, mailboxPath = ALL_MAIL_PATH, options) {
+	return addLabelsToMessages(email, password, [uid], labelNames, mailboxPath, options);
 }
 
 /**
  * Add the same Gmail label(s) to many messages with one IMAP STORE command.
  * ImapFlow accepts a comma-delimited UID sequence, which avoids one network
  * round trip per message while preserving the single-message API above.
+ * Retries transient Gmail NO/BAD responses before surfacing an enriched error.
  */
-export async function addLabelsToMessages(email, password, uids, labelNames, mailboxPath = ALL_MAIL_PATH) {
+export async function addLabelsToMessages(
+	email,
+	password,
+	uids,
+	labelNames,
+	mailboxPath = ALL_MAIL_PATH,
+	{ signal } = {},
+) {
 	const tokens = (labelNames || []).map(toImapLabelToken).filter(Boolean);
 	const uidSet = [...new Set((uids || []).map(Number).filter(Number.isFinite))].join(',');
 	if (!tokens.length || !uidSet) return;
-	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		await client.messageFlagsAdd(uidSet, tokens, { uid: true, useLabels: true });
-	});
+	return withImapRetry(
+		() => withMailboxPath(email, password, mailboxPath, async (client) => {
+			await client.messageFlagsAdd(uidSet, tokens, { uid: true, useLabels: true });
+		}),
+		{ signal },
+	);
 }
 
 export async function removeLabelsFromMessage(email, password, uid, labelNames, mailboxPath = ALL_MAIL_PATH) {

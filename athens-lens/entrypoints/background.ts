@@ -1,6 +1,11 @@
 import { stripStylesheetNoise } from "../src/recording/pageTextSanitize";
 import { createCaptureReadyTracker } from "../src/recording/captureReadyTabs";
 import {
+  injectSerializePage,
+  MAX_FORM_TREE_CHARS,
+  type OakInjectSerializeResult,
+} from "../src/oak-forms";
+import {
   armResumeSessionOnTab,
   disarmResumeSessionOnTab,
   flushResumeAuditOutbox,
@@ -756,6 +761,94 @@ function formsAsVisibleText(
     .join("\n");
 }
 
+async function readFrameOakFormTree(
+  tabId: number,
+  frameId: number,
+): Promise<OakInjectSerializeResult | null> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      world: "MAIN",
+      func: injectSerializePage,
+    });
+    return results?.[0]?.result || null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeOakFormTrees(
+  frames: Array<OakInjectSerializeResult & { frameUrl?: string }>,
+  maxChars = MAX_FORM_TREE_CHARS,
+): { formTree: string; oakFrameCount: number; nodeCount: number } {
+  const usable = frames.filter((frame) => String(frame.formTree || "").trim());
+  if (!usable.length) return { formTree: "", oakFrameCount: 0, nodeCount: 0 };
+
+  const parts: string[] = [];
+  let total = 0;
+  let nodeCount = 0;
+
+  for (let index = 0; index < usable.length; index += 1) {
+    if (total >= maxChars) break;
+    const frame = usable[index]!;
+    nodeCount += Number(frame.nodeCount) || 0;
+    const header = usable.length > 1
+      ? `[oak frame ${index + 1}${frame.frameUrl || frame.url ? ` · ${frame.frameUrl || frame.url}` : ""}]\n`
+      : "";
+    const body = String(frame.formTree || "").trim();
+    const chunk = `${header}${body}`.slice(0, maxChars - total);
+    if (!chunk) continue;
+    parts.push(chunk);
+    total += chunk.length;
+  }
+
+  return {
+    formTree: parts.join("\n\n").slice(0, maxChars),
+    oakFrameCount: usable.length,
+    nodeCount,
+  };
+}
+
+async function readTabOakFormTree(tabId: number): Promise<{
+  formTree: string;
+  oakFrameCount: number;
+  nodeCount: number;
+  url: string;
+  title: string;
+}> {
+  const frameList = await listTabFrames(tabId);
+  const frameResults: Array<OakInjectSerializeResult & { frameUrl?: string }> = [];
+
+  for (const frame of frameList) {
+    const result = await readFrameOakFormTree(tabId, frame.frameId);
+    if (!result?.formTree?.trim()) continue;
+    frameResults.push({ ...result, frameUrl: frame.url || result.url });
+  }
+
+  if (!frameResults.length) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        world: "MAIN",
+        func: injectSerializePage,
+      });
+      for (const entry of results || []) {
+        if (entry?.result?.formTree?.trim()) frameResults.push(entry.result);
+      }
+    } catch {
+      // Keep empty.
+    }
+  }
+
+  const merged = mergeOakFormTrees(frameResults);
+  const primary = frameResults[0];
+  return {
+    ...merged,
+    url: primary?.url || "",
+    title: primary?.title || "",
+  };
+}
+
 async function readTabPageText(tabId: number) {
   const frameList = await listTabFrames(tabId);
   const frameResults: PageTextFrame[] = [];
@@ -808,25 +901,33 @@ async function readTabPageText(tabId: number) {
     tabUrl = "";
   }
 
-  if (!frameResults.length) {
+  const oak = await readTabOakFormTree(tabId);
+
+  if (!frameResults.length && !oak.formTree) {
     // Still return a context so the Ask AI panel can show empty innerText for debugging.
     return {
       url: tabUrl,
       title: "",
       metaDescription: "",
       visibleText: "",
+      formTree: "",
       forms: [],
       readMeta: {
         tabId,
         frameCount: 0,
         charCount: 0,
         formCount: 0,
-        note: "executeScript returned no frames with text or form fields",
+        formTreeChars: 0,
+        oakFrameCount: 0,
+        oakNodeCount: 0,
+        note: "executeScript returned no frames with text, form fields, or Oak tree",
       },
     };
   }
 
-  const { frames: selectedFrames, visibleText: mergedText } = mergeVisibleFrameText(frameResults);
+  const { frames: selectedFrames, visibleText: mergedText } = frameResults.length
+    ? mergeVisibleFrameText(frameResults)
+    : { frames: [] as PageTextFrame[], visibleText: "" };
   const allForms = (selectedFrames.length ? selectedFrames : frameResults)
     .flatMap((frame) => frame.forms || [])
     .slice(0, 120);
@@ -837,12 +938,13 @@ async function readTabPageText(tabId: number) {
   }
   visibleText = visibleText.slice(0, MAX_VISIBLE_TEXT_CHARS);
 
-  const primary = selectedFrames[0] || frameResults[0]!;
+  const primary = selectedFrames[0] || frameResults[0];
   return {
-    url: primary.url || tabUrl,
-    title: primary.title,
-    metaDescription: primary.metaDescription,
+    url: primary?.url || oak.url || tabUrl,
+    title: primary?.title || oak.title || "",
+    metaDescription: primary?.metaDescription || "",
     visibleText,
+    formTree: oak.formTree,
     forms: allForms,
     readMeta: {
       tabId,
@@ -850,16 +952,22 @@ async function readTabPageText(tabId: number) {
       selectedFrameCount: selectedFrames.length,
       charCount: visibleText.length,
       formCount: allForms.length,
-      truncated: frameResults.some((frame) => frame.visibleText.length > MAX_VISIBLE_TEXT_CHARS),
+      formTreeChars: oak.formTree.length,
+      oakFrameCount: oak.oakFrameCount,
+      oakNodeCount: oak.nodeCount,
+      truncated: frameResults.some((frame) => frame.visibleText.length > MAX_VISIBLE_TEXT_CHARS)
+        || oak.formTree.length >= MAX_FORM_TREE_CHARS,
     },
   };
 }
 
 async function resolveReadableTabId(preferredTabId?: number | null) {
-  const preferred = asTabId(preferredTabId) ?? captureReady.snapshot().lastInvokedTabId;
+  // Ask AI always targets the tab the user is looking at — not a prior
+  // recording / toolbar-invoked tab (those often still point at a JD page).
+  const [focused] = await tabsQuery({ active: true, lastFocusedWindow: true });
+  if (focused?.id != null && isCapturableUrl(focused.url)) return focused.id;
 
-  // Prefer the recording / invoked application tab when available — side panel
-  // clicks can make "focused" resolution flaky.
+  const preferred = asTabId(preferredTabId);
   if (preferred != null) {
     try {
       const tab = await tabsGet(preferred);
@@ -868,9 +976,6 @@ async function resolveReadableTabId(preferredTabId?: number | null) {
       // Fall through.
     }
   }
-
-  const [focused] = await tabsQuery({ active: true, lastFocusedWindow: true });
-  if (focused?.id != null && isCapturableUrl(focused.url)) return focused.id;
 
   const tabs = await tabsQuery({ lastFocusedWindow: true });
   const httpTab = tabs.find((tab) => tab.id != null && isCapturableUrl(tab.url));

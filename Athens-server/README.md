@@ -229,7 +229,7 @@ Copy from [`.env.example`](.env.example). Key groups:
 | `PUPPETEER_BROWSER_POOL` | Chromium processes for PDF (default **6**) |
 | `LLM_GLOBAL_CONCURRENCY` | Priority admission cap for all LLM calls (default **48**) |
 | `MAIL_AI_LABEL_CONCURRENCY` | Parallel AI-label metadata and rare body-fallback preparation (default **8**) |
-| `MAIL_AI_LABEL_AI_CONCURRENCY`, `MAIL_AI_LABEL_GMAIL_CONCURRENCY` | Parallel AI batches and grouped Gmail label writes (default **8** each) |
+| `MAIL_AI_LABEL_AI_CONCURRENCY`, `MAIL_AI_LABEL_GMAIL_CONCURRENCY` | Parallel AI batches (default **8**) and grouped Gmail label writes (default **3**) |
 | `MAIL_AI_LABEL_SNIPPET_MAX_CHARS`, `MAIL_AI_LABEL_SNIPPET_MAX_BYTES` | Hybrid first-pass text and IMAP download limits (defaults **1000 chars / 2048 bytes**) |
 | `MAIL_AI_LABEL_BODY_MAX_CHARS`, `MAIL_AI_LABEL_BODY_FETCH_MAX_BYTES` | Uncertain-message fallback prompt and IMAP download limits (defaults **4000 chars / 16384 bytes**) |
 | `IMAP_MAX_CONNS_PER_ACCOUNT` | IMAP pool size per Gmail account (default **8**) |

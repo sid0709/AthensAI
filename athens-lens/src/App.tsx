@@ -252,7 +252,7 @@ export function App({
       <AiAnswerPanel
         job={aiJob}
         session={session}
-        tabId={recording.state.tabId ?? focusedTabId}
+        tabId={focusedTabId}
         onAnswers={rememberAiAnswers}
         onClose={() => setAiJobForFocusedTab(null)}
       />

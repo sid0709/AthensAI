@@ -17,6 +17,7 @@ import {
 	fetchEnvelopeForUid,
 	fetchFlagsForUids,
 	fetchMessageTextSnippets,
+	formatImapError,
 } from './imapClient.js';
 import { ensureMessagePlainText, invalidateMailListCaches } from './mailSyncService.js';
 import {
@@ -33,7 +34,7 @@ const BODY_FETCH_MAX_BYTES = Math.max(4_096, Number(process.env.MAIL_AI_LABEL_BO
 const AI_BATCH_SIZE = Math.max(1, Math.min(20, Number(process.env.MAIL_AI_LABEL_BATCH_SIZE || 8)));
 const AI_BATCH_MAX_CHARS = Math.max(8_000, Number(process.env.MAIL_AI_LABEL_BATCH_MAX_CHARS || 32_000));
 const AI_BATCH_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_AI_CONCURRENCY || 8));
-const GMAIL_WRITE_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_GMAIL_CONCURRENCY || 8));
+const GMAIL_WRITE_CONCURRENCY = Math.max(1, Number(process.env.MAIL_AI_LABEL_GMAIL_CONCURRENCY || 3));
 
 function throwIfMailAborted(signal) {
 	if (!signal?.aborted) return;
@@ -449,12 +450,12 @@ async function fetchBoundedTextForMessages(messages, options) {
 				password,
 				mailboxMessages.map((message) => message.uid),
 				mailbox,
-				{ maxBytes, maxChars },
+				{ maxBytes, maxChars, signal },
 			);
 			throwIfMailAborted(signal);
 		} catch (error) {
 			if (isMailAbort(error, signal)) throw error;
-			const errorMessage = error?.message || String(error);
+			const errorMessage = formatImapError(error);
 			failed.push(...mailboxMessages.map((message) => ({ message, error: errorMessage })));
 			return;
 		}
@@ -681,12 +682,41 @@ export async function runMailAiLabelBatch({
 					group.messages.map((message) => message.uid),
 					[group.label],
 					group.mailbox,
+					{ signal },
 				);
 				throwIfMailAborted(signal);
-					return { ...group, ok: true };
-				} catch (error) {
-					if (isMailAbort(error, signal)) throw error;
-					return { ...group, ok: false, error: error?.message || String(error) };
+				return { ...group, successes: group.messages, failures: [] };
+			} catch (error) {
+				if (isMailAbort(error, signal)) throw error;
+				const batchError = formatImapError(error);
+				if (group.messages.length <= 1) {
+					return {
+						...group,
+						successes: [],
+						failures: group.messages.map((message) => ({ message, error: batchError })),
+					};
+				}
+				// One bad/throttled STORE must not fail every UID in the label group.
+				const successes = [];
+				const failures = [];
+				for (const message of group.messages) {
+					throwIfMailAborted(signal);
+					try {
+						await addLabelsToMessages(
+							email,
+							password,
+							[message.uid],
+							[group.label],
+							group.mailbox,
+							{ signal },
+						);
+						successes.push(message);
+					} catch (uidError) {
+						if (isMailAbort(uidError, signal)) throw uidError;
+						failures.push({ message, error: formatImapError(uidError) });
+					}
+				}
+				return { ...group, successes, failures };
 			} finally {
 				metrics.gmailWriteMs += Date.now() - writeStartedAt;
 			}
@@ -694,17 +724,16 @@ export async function runMailAiLabelBatch({
 
 		const optimisticUpdates = [];
 		for (const write of writes) {
-			for (const message of write.messages) {
-				if (!write.ok) {
-					finalize(message.id, {
-						uid: message.uid,
-						label: write.label,
-						applied: false,
-						reason: 'gmail_error',
-						error: write.error,
-					});
-					continue;
-				}
+			for (const { message, error } of write.failures) {
+				finalize(message.id, {
+					uid: message.uid,
+					label: write.label,
+					applied: false,
+					reason: 'gmail_error',
+					error,
+				});
+			}
+			for (const message of write.successes) {
 				const result = {
 					uid: message.uid,
 					label: write.label,

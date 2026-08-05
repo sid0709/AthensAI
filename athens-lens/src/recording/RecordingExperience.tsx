@@ -154,6 +154,9 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState("");
   const [answers, setAnswers] = useState<FormAnswer[]>([]);
+  const [formTree, setFormTree] = useState("");
+  const [captureMeta, setCaptureMeta] = useState<PageContext["readMeta"] | null>(null);
+  const [pageUrl, setPageUrl] = useState("");
 
   useEffect(() => {
     if (!job) return;
@@ -162,6 +165,9 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
     setError(null);
     setAnswers([]);
     setSummary("");
+    setFormTree("");
+    setCaptureMeta(null);
+    setPageUrl("");
 
     void (async () => {
       try {
@@ -169,7 +175,12 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
         if (cancelled) return;
 
         const visibleText = String(read.pageContext.visibleText || "").trim();
-        if (!visibleText) {
+        const tree = String(read.pageContext.formTree || "").trim();
+        setFormTree(tree);
+        setCaptureMeta(read.pageContext.readMeta ?? null);
+        setPageUrl(String(read.pageContext.url || "").trim());
+
+        if (!visibleText && !tree) {
           setError("No readable text on the focused tab. Click the application form page, then try Ask AI again.");
           setPhase("done");
           return;
@@ -211,6 +222,10 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
     window.setTimeout(() => setCopiedId(null), 1600);
   }
 
+  const oakNodeCount = captureMeta?.oakNodeCount ?? 0;
+  const oakFrameCount = captureMeta?.oakFrameCount ?? 0;
+  const showOakSection = phase !== "reading" || Boolean(formTree);
+
   return (
     <div className="assistant-backdrop" role="presentation">
       <aside className="ai-answer-panel" role="dialog" aria-modal="true" aria-labelledby="ai-panel-title">
@@ -229,9 +244,35 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
           <div className="ai-notice">
             <Video size={16} aria-hidden="true" />
             <p>
-              Drafted from the open page&apos;s text and your profile. Copy each answer into the form, then review before submitting.
+              Drafted from the open page&apos;s form tree and your profile. Copy each answer into the form, then review before submitting.
             </p>
           </div>
+
+          <section className="ai-debug-block" aria-label="Oak form capture">
+            <p className="ai-section-label">Form capture</p>
+            {phase === "reading" ? (
+              <div className="ai-loading" role="status">
+                <Loader2 size={18} className="spin" aria-hidden="true" />
+                <span>Capturing interactive form tree…</span>
+              </div>
+            ) : null}
+
+            {showOakSection && formTree ? (
+              <>
+                <p className="ai-debug-meta">
+                  {pageUrl ? `${pageUrl} · ` : ""}
+                  {oakNodeCount > 0 ? `${oakNodeCount} nodes` : "tree ready"}
+                  {oakFrameCount > 1 ? ` · ${oakFrameCount} frames` : ""}
+                  {" · algorithmic (no AI)"}
+                </p>
+                <pre className="ai-debug-pre ai-debug-pre--oak">{formTree}</pre>
+              </>
+            ) : null}
+
+            {phase !== "reading" && !formTree ? (
+              <p className="ai-summary">No interactive form tree on this tab — using page text only.</p>
+            ) : null}
+          </section>
 
           <section className="ai-debug-block" aria-label="AI response">
             <p className="ai-section-label">AI response</p>
@@ -240,8 +281,8 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
                 <Loader2 size={18} className="spin" aria-hidden="true" />
                 <span>
                   {phase === "reading"
-                    ? "Reading the focused tab…"
-                    : "Generating answers from the page + profile…"}
+                    ? "Waiting for form capture…"
+                    : "Generating answers from the form tree + profile…"}
                 </span>
               </div>
             ) : null}
