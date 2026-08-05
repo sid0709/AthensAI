@@ -50,6 +50,15 @@ describe("Athens Lens app", () => {
           if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
             return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
           }
+          if (message?.type === "ATHENS_LENS_RECORDING_DIGEST") {
+            return { ok: false, error: "No pending recording in tests." };
+          }
+          if (message?.type === "ATHENS_LENS_PUT_RECORDING") {
+            return { ok: false, error: "No pending recording in tests." };
+          }
+          if (message?.type === "ATHENS_LENS_DISCARD_RECORDING") {
+            return { ok: true };
+          }
           if (message?.type === "ATHENS_LENS_READ_PAGE_TEXT") {
             return {
               ok: true,
@@ -210,20 +219,35 @@ describe("Athens Lens app", () => {
 
   it("starts, restarts, completes, and reviews a live bid recording", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      success: true,
-      summary: "Application form detected.",
-      answers: [
-        {
-          question: "Why are you interested in this role?",
-          suggestedAnswer: "I am interested because the work matches my background.",
-          confidence: "high",
-        },
-      ],
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/athens-lens/ask-ai")) {
+        return new Response(JSON.stringify({
+          success: true,
+          summary: "Application form detected.",
+          answers: [
+            {
+              question: "Why are you interested in this role?",
+              suggestedAnswer: "I am interested because the work matches my background.",
+              confidence: "high",
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/athens-lens/bids/")) {
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ success: false, message: `Unhandled ${url}` }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(
@@ -259,7 +283,8 @@ describe("Athens Lens app", () => {
     await user.click(screen.getByRole("button", { name: "Complete Bid" }));
     expect(screen.getByRole("dialog", { name: "Did you submit this bid?" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Yes, submitted" }));
-    expect(screen.getByText("Bid marked as submitted")).toBeInTheDocument();
+    expect(await screen.findByText("Bid marked as submitted")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/athens-lens/bids/"))).toBe(true);
   });
 
   it("shows an empty state and retries a failed job load", async () => {

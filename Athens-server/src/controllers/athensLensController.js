@@ -156,24 +156,44 @@ export async function askAthensLensAi(req, res) {
 
 		await resolveLensAnalyzeModel(req.athensLensSession.applierName);
 
-		const { result, mode } = await answerApplicationFormPage({
-			pageContext: {
-				url: String(pageContext.url || ""),
-				title: String(pageContext.title || ""),
-				metaDescription: String(pageContext.metaDescription || ""),
-				visibleText: visibleText.slice(0, 60_000),
-				forms: Array.isArray(pageContext.forms) ? pageContext.forms.slice(0, 120) : [],
-			},
-			applierName: req.athensLensSession.applierName,
-			jobTitle: req.body?.jobTitle || req.body?.sessionContext?.jdSummary || null,
-			jobId: req.body?.jobId || null,
-		});
+		const jobId = String(req.body?.jobId || "").trim() || null;
+		const { result, mode, usage, requestId, provider, requestedModel, billedModel } =
+			await answerApplicationFormPage({
+				pageContext: {
+					url: String(pageContext.url || ""),
+					title: String(pageContext.title || ""),
+					metaDescription: String(pageContext.metaDescription || ""),
+					visibleText: visibleText.slice(0, 60_000),
+					forms: Array.isArray(pageContext.forms) ? pageContext.forms.slice(0, 120) : [],
+				},
+				applierName: req.athensLensSession.applierName,
+				jobTitle: req.body?.jobTitle || req.body?.sessionContext?.jdSummary || null,
+				jobId,
+			});
+
+		if (jobId) {
+			try {
+				const { persistBidPageAnalysis } = await import("../services/bidAiArtifactPersist.js");
+				await persistBidPageAnalysis({
+					applierName: req.athensLensSession.applierName,
+					jobId,
+					result,
+					usage,
+					mode,
+					call: { requestId, provider, requestedModel, billedModel },
+				});
+			} catch (persistError) {
+				console.warn("[athens-lens] ask-ai persist skipped", persistError?.message || persistError);
+			}
+		}
 
 		return res.json({
 			success: true,
 			mode,
 			summary: result.summary || "",
 			answers: Array.isArray(result.formAnswers) ? result.formAnswers : [],
+			pageUrl: result.pageUrl || pageContext.url || "",
+			pageTitle: result.pageTitle || pageContext.title || "",
 		});
 	} catch (error) {
 		console.error("[athens-lens] ask-ai failed", error?.message || error);

@@ -16,7 +16,29 @@ type ReadPageTextMessage = {
   tabId?: number | null;
 };
 
-type RuntimeMessage = StartRecordingMessage | StopRecordingMessage | ReadPageTextMessage;
+type RecordingDigestMessage = {
+  type: "ATHENS_LENS_RECORDING_DIGEST";
+  sessionId: string;
+};
+
+type PutRecordingMessage = {
+  type: "ATHENS_LENS_PUT_RECORDING";
+  sessionId: string;
+  uploadUrl: string;
+};
+
+type DiscardRecordingMessage = {
+  type: "ATHENS_LENS_DISCARD_RECORDING";
+  sessionId: string;
+};
+
+type RuntimeMessage =
+  | StartRecordingMessage
+  | StopRecordingMessage
+  | ReadPageTextMessage
+  | RecordingDigestMessage
+  | PutRecordingMessage
+  | DiscardRecordingMessage;
 
 type PageTextFrame = {
   url: string;
@@ -632,6 +654,67 @@ export default defineBackground(() => {
           error: error instanceof Error ? error.message : "Could not stop recording.",
         });
       });
+      return true;
+    }
+
+    if (message?.type === "ATHENS_LENS_RECORDING_DIGEST") {
+      void (async () => {
+        await ensureOffscreenDocument();
+        const response = await sendOffscreenMessage({
+          type: "OFFSCREEN_RECORDING_DIGEST",
+          sessionId: message.sessionId,
+        });
+        if (!response?.ok) {
+          sendResponse({ ok: false, error: response?.error || "Could not read recording." });
+          return;
+        }
+        sendResponse({
+          ok: true,
+          mimeType: response.mimeType,
+          byteLength: response.byteLength,
+          filename: response.filename,
+          sha256: response.sha256,
+        });
+      })().catch((error: unknown) => {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : "Could not read recording.",
+        });
+      });
+      return true;
+    }
+
+    if (message?.type === "ATHENS_LENS_PUT_RECORDING") {
+      void (async () => {
+        await ensureOffscreenDocument();
+        const response = await sendOffscreenMessage({
+          type: "OFFSCREEN_PUT_RECORDING",
+          sessionId: message.sessionId,
+          uploadUrl: message.uploadUrl,
+        });
+        if (!response?.ok) {
+          sendResponse({ ok: false, error: response?.error || "Could not upload recording." });
+          return;
+        }
+        sendResponse({ ok: true });
+      })().catch((error: unknown) => {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : "Could not upload recording.",
+        });
+      });
+      return true;
+    }
+
+    if (message?.type === "ATHENS_LENS_DISCARD_RECORDING") {
+      void (async () => {
+        await ensureOffscreenDocument();
+        await sendOffscreenMessage({
+          type: "OFFSCREEN_DISCARD_RECORDING",
+          sessionId: message.sessionId,
+        });
+        sendResponse({ ok: true });
+      })().catch(() => sendResponse({ ok: true }));
       return true;
     }
 

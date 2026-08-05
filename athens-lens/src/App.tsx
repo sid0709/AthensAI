@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { LoginScreen } from "./auth/LoginScreen";
 import { athensAuthStore } from "./auth/authStore";
 import { InboxWorkspace } from "./inbox/InboxWorkspace";
@@ -15,6 +15,7 @@ import {
   RecordingErrorToast,
   SubmissionDialog,
 } from "./recording/RecordingExperience";
+import type { FormAnswer, PageContext } from "./recording/askAi";
 import { useApplicationRecording } from "./recording/useApplicationRecording";
 import type { AuthStore, Credentials, InboxRepository, Job, JobsRepository, Session } from "./types";
 
@@ -28,6 +29,14 @@ type SessionState =
   | { status: "restoring" }
   | { status: "ready"; session: Session | null };
 
+type StoredAiAnswers = {
+  jobId: string;
+  answers: FormAnswer[];
+  summary: string;
+  pageContext: PageContext | null;
+  mode: string;
+};
+
 export function App({
   authStore = athensAuthStore,
   jobsRepository = athensJobsRepository,
@@ -35,8 +44,13 @@ export function App({
 }: AppProps) {
   const [sessionState, setSessionState] = useState<SessionState>({ status: "restoring" });
   const [aiJob, setAiJob] = useState<Job | null>(null);
+  const [aiAnswersByJob, setAiAnswersByJob] = useState<Record<string, StoredAiAnswers>>({});
   const { route, navigate } = useWorkspaceRoute();
   const recording = useApplicationRecording();
+
+  const rememberAiAnswers = useCallback((payload: StoredAiAnswers) => {
+    setAiAnswersByJob((current) => ({ ...current, [payload.jobId]: payload }));
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -82,9 +96,9 @@ export function App({
     return (
       <LoginScreen
         onSignIn={async (credentials: Credentials) => {
-          const session = await authStore.signIn(credentials);
-          setSessionState({ status: "ready", session });
-          return session;
+          const nextSession = await authStore.signIn(credentials);
+          setSessionState({ status: "ready", session: nextSession });
+          return nextSession;
         }}
       />
     );
@@ -97,6 +111,7 @@ export function App({
     useWorkspaceCache.getState().clearProfile(profileId);
     recording.reset();
     setAiJob(null);
+    setAiAnswersByJob({});
     setSessionState({ status: "ready", session: null });
   };
 
@@ -121,31 +136,50 @@ export function App({
       onNavigate={navigate}
       onNavigateView={navigateView}
       onApply={(job) => {
-        void recording.start(job);
+        void recording.start(job, session);
       }}
       onAskAi={setAiJob}
       onLogout={logout}
     />
   );
 
+  const storedAi = recording.state.job ? aiAnswersByJob[recording.state.job.id] : undefined;
+
   return (
     <>
       {workspace}
       <RecordingDock
         state={recording.state}
-        onRestart={() => void recording.restart()}
+        onRestart={() => void recording.restart(session)}
         onComplete={() => void recording.complete()}
         onAskAi={setAiJob}
       />
       <SubmissionDialog
         state={recording.state}
-        onResume={() => void recording.restart()}
-        onFinish={recording.finish}
+        onResume={() => void recording.restart(session)}
+        onFinish={async (submitted) => {
+          const jobId = recording.state.job?.id;
+          await recording.finish(submitted, {
+            session,
+            answers: storedAi?.answers,
+            summary: storedAi?.summary,
+            pageContext: storedAi?.pageContext,
+            mode: storedAi?.mode,
+          });
+          if (jobId) {
+            setAiAnswersByJob((current) => {
+              const next = { ...current };
+              delete next[jobId];
+              return next;
+            });
+          }
+        }}
       />
       <AiAnswerPanel
         job={aiJob}
         session={session}
         tabId={recording.state.tabId}
+        onAnswers={rememberAiAnswers}
         onClose={() => setAiJob(null)}
       />
       <BidOutcomeToast state={recording.state} onDismiss={recording.clearOutcome} />

@@ -44,11 +44,12 @@ export function RecordingDock({ state, onRestart, onComplete, onAskAi }: Recordi
 interface SubmissionDialogProps {
   state: ApplicationRecordingState;
   onResume(): void | Promise<void>;
-  onFinish(submitted: boolean): void;
+  onFinish(submitted: boolean): void | Promise<void>;
 }
 
 export function SubmissionDialog({ state, onResume, onFinish }: SubmissionDialogProps) {
-  if (state.status !== "review" || !state.job) return null;
+  if ((state.status !== "review" && state.status !== "saving") || !state.job) return null;
+  const saving = state.status === "saving";
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -61,14 +62,37 @@ export function SubmissionDialog({ state, onResume, onFinish }: SubmissionDialog
           Choose the outcome for {state.job.title}.
         </p>
         {state.error ? <p className="dialog-error" role="alert">{state.error}</p> : null}
+        {saving ? (
+          <p className="ai-loading" role="status">
+            <Loader2 size={18} className="spin" aria-hidden="true" />
+            <span>Saving recording and AI answers to Athens…</span>
+          </p>
+        ) : null}
         <div className="dialog-actions">
-          <button className="primary-button" type="button" onClick={() => onFinish(true)}>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={saving}
+            onClick={() => void onFinish(true)}
+          >
             Yes, submitted
           </button>
-          <button className="secondary-button" type="button" onClick={() => onFinish(false)}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={saving}
+            onClick={() => void onFinish(false)}
+          >
             No, not submitted
           </button>
-          <button className="text-button" type="button" onClick={() => void onResume()}>Keep recording</button>
+          <button
+            className="text-button"
+            type="button"
+            disabled={saving}
+            onClick={() => void onResume()}
+          >
+            Keep recording
+          </button>
         </div>
       </section>
     </div>
@@ -80,11 +104,18 @@ interface AiAnswerPanelProps {
   session: Session;
   tabId?: number | null;
   onClose(): void;
+  onAnswers?(payload: {
+    jobId: string;
+    answers: FormAnswer[];
+    summary: string;
+    pageContext: PageContext | null;
+    mode: string;
+  }): void;
 }
 
 type AskPhase = "reading" | "asking" | "done";
 
-export function AiAnswerPanel({ job, session, tabId = null, onClose }: AiAnswerPanelProps) {
+export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }: AiAnswerPanelProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [phase, setPhase] = useState<AskPhase>("reading");
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +153,13 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose }: AiAnswerP
         if (cancelled) return;
         setAnswers(result.answers);
         setSummary(result.summary);
+        onAnswers?.({
+          jobId: job.id,
+          answers: result.answers,
+          summary: result.summary,
+          pageContext: read.pageContext,
+          mode: result.mode,
+        });
         if (!result.answers.length) {
           setError("AI returned no form answers from the innerText above.");
         }
@@ -136,7 +174,7 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose }: AiAnswerP
     return () => {
       cancelled = true;
     };
-  }, [job, session, tabId]);
+  }, [job, session, tabId, onAnswers]);
 
   if (!job) return null;
 
