@@ -10,6 +10,7 @@ import {
 	completeAthensLensBid,
 	completeAthensLensRecordingUpload,
 	saveAthensLensBidAnalysis,
+	saveAthensLensResumeAudit,
 	skipAthensLensBid,
 	startAthensLensBid,
 } from "../controllers/athensLensBidsController.js";
@@ -29,6 +30,7 @@ router.post("/athens-lens/bids/start", requireAthensLensSession, startAthensLens
 router.post("/athens-lens/bids/complete", requireAthensLensSession, completeAthensLensBid);
 router.post("/athens-lens/bids/skip", requireAthensLensSession, skipAthensLensBid);
 router.post("/athens-lens/bids/analysis", requireAthensLensSession, saveAthensLensBidAnalysis);
+router.post("/athens-lens/bids/resume-audit", requireAthensLensSession, saveAthensLensResumeAudit);
 router.post("/athens-lens/bids/recordings/uploads", requireAthensLensSession, beginAthensLensRecordingUpload);
 router.post(
 	"/athens-lens/bids/recordings/uploads/:uploadId/complete",

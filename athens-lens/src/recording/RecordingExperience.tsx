@@ -30,6 +30,17 @@ export function RecordingDock({
           <strong>Recording application ({state.job.company})</strong>
           <small>Role · {state.job.title}</small>
           <small>Live tab capture · {formatRecordingTime(state.elapsedSeconds)}</small>
+          {state.resumeOriginalName ? (
+            <small className="recording-resume-line" aria-label="Uploaded résumé">
+              {state.resumeRenamed && state.resumeCleanedName
+                ? `Résumé · ${state.resumeOriginalName} → ${state.resumeCleanedName}`
+                : `Résumé · ${state.resumeOriginalName}`}
+            </small>
+          ) : (
+            <small className="recording-resume-line recording-resume-line--pending">
+              Waiting for résumé upload…
+            </small>
+          )}
           {otherCount > 0 ? (
             <small>
               {otherCount === 1
@@ -76,6 +87,13 @@ export function SubmissionDialog({ state, onResume, onFinish }: SubmissionDialog
           {state.savedFilename ? ` and saved as ${state.savedFilename}` : ""}.
           Choose the outcome for {state.job.title}.
         </p>
+        {state.resumeOriginalName ? (
+          <p className="dialog-resume-audit" aria-label="Uploaded résumé">
+            {state.resumeRenamed && state.resumeCleanedName
+              ? `Résumé uploaded as ${state.resumeCleanedName} (original ${state.resumeOriginalName})`
+              : `Résumé file · ${state.resumeOriginalName}`}
+          </p>
+        ) : null}
         {state.error ? <p className="dialog-error" role="alert">{state.error}</p> : null}
         {saving ? (
           <p className="ai-loading" role="status">

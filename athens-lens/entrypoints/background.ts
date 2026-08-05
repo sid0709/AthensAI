@@ -1,4 +1,13 @@
 import { stripStylesheetNoise } from "../src/recording/pageTextSanitize";
+import {
+  armResumeSessionOnTab,
+  disarmResumeSessionOnTab,
+  flushResumeAuditOutbox,
+  persistResumeAuditFromOutbox,
+  type ResumeSessionArmPayload,
+} from "../src/recording/resume/resumeAuditPersist";
+import type { RenameAuditPayload } from "../src/recording/resume/resumeFileTracking";
+import { RESUME_AUDIT_OUTBOX_PREFIX } from "../src/recording/resume/resumeFileTracking";
 
 type JobSnapshot = {
   id: string;
@@ -27,6 +36,9 @@ type StartRecordingMessage = {
   applyUrl: string;
   preferredTabId?: number | null;
   job?: JobSnapshot | null;
+  expectedResumeName?: string | null;
+  resumeSetFolder?: string | null;
+  bidderName?: string | null;
 };
 
 type StopRecordingMessage = {
@@ -59,6 +71,21 @@ type DiscardRecordingMessage = {
   sessionId: string;
 };
 
+type ResumeSelectedMessage = {
+  type: "ATHENS_LENS_RESUME_SELECTED";
+  payload: RenameAuditPayload;
+  outboxKey?: string;
+};
+
+type GetResumeSessionMessage = {
+  type: "ATHENS_LENS_GET_RESUME_SESSION";
+};
+
+type ShowToastMessage = {
+  type: "ATHENS_LENS_SHOW_TOAST";
+  message: string;
+};
+
 type RuntimeMessage =
   | StartRecordingMessage
   | StopRecordingMessage
@@ -66,12 +93,17 @@ type RuntimeMessage =
   | ReadPageTextMessage
   | RecordingDigestMessage
   | PutRecordingMessage
-  | DiscardRecordingMessage;
+  | DiscardRecordingMessage
+  | ResumeSelectedMessage
+  | GetResumeSessionMessage
+  | ShowToastMessage;
 
 type LiveRecordingSession = {
   sessionId: string;
   tabId: number;
   job: JobSnapshot | null;
+  expectedResumeName: string;
+  resumeSetFolder: string;
   startedAt: number;
 };
 
@@ -191,6 +223,7 @@ function forgetTab(tabId: number) {
     recordingTabs.delete(sessionId);
     liveSessions.delete(sessionId);
   }
+  void disarmResumeSessionOnTab(tabId).catch(() => undefined);
 }
 
 function listLiveSessions(): LiveRecordingSession[] {
@@ -261,13 +294,63 @@ function rememberLiveSession(
   sessionId: string,
   tabId: number,
   job: JobSnapshot | null | undefined,
+  expectedResumeName?: string | null,
+  resumeSetFolder?: string | null,
 ) {
   liveSessions.set(sessionId, {
     sessionId,
     tabId,
     job: job ?? null,
+    expectedResumeName: String(expectedResumeName || "").trim(),
+    resumeSetFolder: String(resumeSetFolder || "").trim(),
     startedAt: Date.now(),
   });
+}
+
+function liveSessionForTab(tabId: number): LiveRecordingSession | null {
+  for (const session of liveSessions.values()) {
+    if (session.tabId === tabId) return session;
+  }
+  return null;
+}
+
+function toArmPayload(session: LiveRecordingSession): ResumeSessionArmPayload {
+  return {
+    isRecording: true,
+    sessionId: session.sessionId,
+    jobId: session.job?.id || "",
+    expectedResumeName: session.expectedResumeName,
+    resumeSetFolder: session.resumeSetFolder,
+    companyName: session.job?.company || "",
+    jobTitle: session.job?.title || "",
+  };
+}
+
+async function armLiveSession(session: LiveRecordingSession) {
+  if (!session.expectedResumeName && !session.resumeSetFolder) return;
+  await armResumeSessionOnTab(session.tabId, toArmPayload(session));
+}
+
+function notifySidePanelResumeAudit(
+  payload: RenameAuditPayload,
+  tabId: number | null,
+) {
+  const originalName = String(payload.originalName || payload.originalFileName || "").trim();
+  if (!originalName) return;
+  try {
+    void chrome.runtime.sendMessage({
+      type: "ATHENS_LENS_RESUME_AUDIT",
+      tabId,
+      sessionId: payload.sessionId || null,
+      jobId: payload.jobId || null,
+      originalName,
+      cleanedName: String(payload.cleanedName || payload.submittedFileName || "").trim() || null,
+      expectedName: String(payload.expectedName || "").trim() || null,
+      renamed: Boolean(payload.renamed),
+    });
+  } catch {
+    // Side panel may be closed.
+  }
 }
 
 const MAX_VISIBLE_TEXT_CHARS = 60_000;
@@ -676,7 +759,14 @@ export default defineBackground(() => {
     forgetTab(tabId);
   });
 
-  chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
+  chrome.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
+    if (changeInfo.status !== "complete") return;
+    const session = liveSessionForTab(tabId);
+    if (session) void armLiveSession(session);
+  });
+
+  chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
+    const senderTabId = asTabId((sender as { tab?: { id?: number } } | null)?.tab?.id);
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
       const tabId = resolveCaptureTabId(message.preferredTabId);
       if (tabId == null) {
@@ -715,8 +805,19 @@ export default defineBackground(() => {
           capture.streamId,
           message.applyUrl,
         )
-          .then((recordedTabId) => {
-            rememberLiveSession(message.sessionId, recordedTabId, message.job);
+          .then(async (recordedTabId) => {
+            rememberLiveSession(
+              message.sessionId,
+              recordedTabId,
+              message.job,
+              message.expectedResumeName,
+              message.resumeSetFolder,
+            );
+            const live = liveSessions.get(message.sessionId);
+            if (live) {
+              // Apply URL navigation may still be loading — arm now and again on complete.
+              await armLiveSession(live);
+            }
             sendResponse({ ok: true, tabId: recordedTabId });
           })
           .catch((error: unknown) => {
@@ -735,8 +836,62 @@ export default defineBackground(() => {
       return false;
     }
 
+    if (message?.type === "ATHENS_LENS_GET_RESUME_SESSION") {
+      const tabId = senderTabId;
+      const live = tabId != null ? liveSessionForTab(tabId) : null;
+      sendResponse({
+        ok: true,
+        session: live ? toArmPayload(live) : null,
+      });
+      return false;
+    }
+
+    if (message?.type === "ATHENS_LENS_RESUME_SELECTED") {
+      void (async () => {
+        const outboxKey = String(message.outboxKey || "");
+        const payload = message.payload;
+        const tabId = senderTabId
+          ?? (payload.sessionId ? liveSessions.get(payload.sessionId)?.tabId ?? null : null)
+          ?? null;
+        notifySidePanelResumeAudit(payload, tabId);
+        if (outboxKey.startsWith(RESUME_AUDIT_OUTBOX_PREFIX)) {
+          sendResponse(await persistResumeAuditFromOutbox(outboxKey, payload));
+          return;
+        }
+        try {
+          await persistResumeAuditFromOutbox(
+            outboxKey || `${RESUME_AUDIT_OUTBOX_PREFIX}ephemeral`,
+            payload,
+          );
+          sendResponse({ ok: true, persisted: true });
+        } catch (error) {
+          sendResponse({
+            ok: false,
+            persisted: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+      return true;
+    }
+
+    if (message?.type === "ATHENS_LENS_SHOW_TOAST") {
+      const tabId = senderTabId;
+      const text = String(message.message || "").trim();
+      if (tabId != null && text) {
+        void chrome.tabs.sendMessage(tabId, { type: "ATHENS_LENS_SHOW_TOAST", message: text }, { frameId: 0 });
+      }
+      sendResponse({ ok: true });
+      return false;
+    }
+
     if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
       void (async () => {
+        const live = liveSessions.get(message.sessionId);
+        if (live) {
+          await disarmResumeSessionOnTab(live.tabId).catch(() => undefined);
+        }
+        await flushResumeAuditOutbox().catch(() => undefined);
         await ensureOffscreenDocument();
         const response = await sendOffscreenMessage({
           type: "OFFSCREEN_STOP_RECORDING",

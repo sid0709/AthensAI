@@ -15,6 +15,12 @@ export interface TabRecordingSession {
   savedFilename: string | null;
   recordedStartAt: string | null;
   recordedEndAt: string | null;
+  /** Local resume filename before ATS rename. */
+  resumeOriginalName: string | null;
+  /** Filename actually submitted to the ATS (profile name + original ext). */
+  resumeCleanedName: string | null;
+  resumeExpectedName: string | null;
+  resumeRenamed: boolean;
 }
 
 export function createIdleSession(tabId: number, overrides: Partial<TabRecordingSession> = {}): TabRecordingSession {
@@ -30,6 +36,10 @@ export function createIdleSession(tabId: number, overrides: Partial<TabRecording
     savedFilename: null,
     recordedStartAt: null,
     recordedEndAt: null,
+    resumeOriginalName: null,
+    resumeCleanedName: null,
+    resumeExpectedName: null,
+    resumeRenamed: false,
     ...overrides,
   };
 }
@@ -134,6 +144,10 @@ export function toApplicationRecordingState(
       savedFilename: null,
       recordedStartAt: null,
       recordedEndAt: null,
+      resumeOriginalName: null,
+      resumeCleanedName: null,
+      resumeExpectedName: null,
+      resumeRenamed: false,
     };
   }
   return session;

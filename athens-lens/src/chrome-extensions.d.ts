@@ -15,7 +15,28 @@ declare namespace chrome {
           sendResponse: (response?: any) => void,
         ) => boolean | void,
       ): void;
+      removeListener?(
+        callback: (
+          message: any,
+          sender: unknown,
+          sendResponse: (response?: any) => void,
+        ) => boolean | void,
+      ): void;
     };
+  }
+
+  namespace storage {
+    namespace local {
+      function get(
+        keys: string | string[] | null,
+        callback: (items: Record<string, any>) => void,
+      ): void;
+      function get(keys?: string | string[] | null): Promise<Record<string, any>>;
+      function set(items: Record<string, any>, callback?: () => void): void;
+      function set(items: Record<string, any>): Promise<void>;
+      function remove(keys: string | string[], callback?: () => void): void;
+      function remove(keys: string | string[]): Promise<void>;
+    }
   }
 
   namespace tabs {
@@ -57,6 +78,22 @@ declare namespace chrome {
         callback: (tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) => void,
       ): void;
     };
+    const onUpdated: {
+      addListener?(
+        callback: (
+          tabId: number,
+          changeInfo: { status?: string; url?: string },
+          tab: Tab,
+        ) => void,
+      ): void;
+    };
+    function sendMessage(tabId: number, message: unknown, responseCallback?: (response: any) => void): void;
+    function sendMessage(
+      tabId: number,
+      message: unknown,
+      options: { frameId?: number },
+      responseCallback?: (response: any) => void,
+    ): void;
   }
 
   namespace tabCapture {

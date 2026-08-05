@@ -3,6 +3,10 @@ import type { Job, Session } from "../types";
 import type { FormAnswer, PageContext } from "./askAi";
 import { finishAthensLensBid, startAthensLensBid } from "./bidPersist";
 import {
+  buildProfileResumeFileName,
+  profileNameToFileBase,
+} from "./resume/canonicalResumeName";
+import {
   createIdleSession,
   selectRecordingJobIds,
   toApplicationRecordingState,
@@ -115,6 +119,7 @@ function startTabRecording(
   sessionId: string,
   preferredTabId: number | null,
   job: Job,
+  session: Session,
 ): Promise<StartResponse> {
   const api = extensionApi();
   if (!api?.runtime?.sendMessage) {
@@ -124,6 +129,10 @@ function startTabRecording(
     });
   }
 
+  const bidderName = session.displayName || session.username;
+  const expectedResumeName = buildProfileResumeFileName(bidderName, ".pdf");
+  const resumeSetFolder = profileNameToFileBase(bidderName) || "";
+
   try {
     return Promise.resolve(
       api.runtime.sendMessage({
@@ -132,6 +141,9 @@ function startTabRecording(
         sessionId,
         preferredTabId,
         job: jobSnapshot(job),
+        expectedResumeName,
+        resumeSetFolder,
+        bidderName,
       }) as Promise<StartResponse | undefined>,
     ).then((response) => {
       if (response?.ok && response.tabId != null) {
@@ -305,10 +317,51 @@ export function useApplicationRecording() {
     api?.tabs?.onActivated?.addListener?.(onActivated);
     api?.tabs?.onRemoved?.addListener?.(onRemoved);
 
+    const onResumeAudit = (message: {
+      type?: string;
+      tabId?: number | null;
+      sessionId?: string | null;
+      jobId?: string | null;
+      originalName?: string | null;
+      cleanedName?: string | null;
+      expectedName?: string | null;
+      renamed?: boolean;
+    }) => {
+      if (message?.type !== "ATHENS_LENS_RESUME_AUDIT") return;
+      const store = useRecordingSessionsStore.getState();
+      const originalName = String(message.originalName || "").trim();
+      if (!originalName) return;
+
+      let tabId = typeof message.tabId === "number" ? message.tabId : null;
+      if (tabId == null && message.sessionId) {
+        const match = Object.values(store.sessionsByTabId).find(
+          (session) => session.sessionId === message.sessionId,
+        );
+        tabId = match?.tabId ?? null;
+      }
+      if (tabId == null && message.jobId) {
+        const match = Object.values(store.sessionsByTabId).find(
+          (session) => session.job?.id === message.jobId && session.status === "recording",
+        );
+        tabId = match?.tabId ?? null;
+      }
+      if (tabId == null) tabId = store.focusedTabId;
+      if (tabId == null) return;
+
+      store.patchSession(tabId, {
+        resumeOriginalName: originalName,
+        resumeCleanedName: String(message.cleanedName || "").trim() || null,
+        resumeExpectedName: String(message.expectedName || "").trim() || null,
+        resumeRenamed: Boolean(message.renamed),
+      });
+    };
+    api?.runtime?.onMessage?.addListener?.(onResumeAudit);
+
     return () => {
       cancelled = true;
       api?.tabs?.onActivated?.removeListener?.(onActivated);
       api?.tabs?.onRemoved?.removeListener?.(onRemoved);
+      api?.runtime?.onMessage?.removeListener?.(onResumeAudit);
     };
   }, []);
 
@@ -362,7 +415,7 @@ export function useApplicationRecording() {
           console.warn("Athens Lens: bid start failed", error);
         });
 
-        const response = await startTabRecording(job.applyUrl, sessionId, preferredTabId, job);
+        const response = await startTabRecording(job.applyUrl, sessionId, preferredTabId, job, session);
         if (!response?.ok) {
           const errorTabId = response?.tabId ?? preferredTabId;
           if (errorTabId != null) {
@@ -441,6 +494,7 @@ export function useApplicationRecording() {
           sessionId,
           tabId,
           current.job,
+          session,
         );
         if (!response?.ok) {
           useRecordingSessionsStore.getState().replaceSession(

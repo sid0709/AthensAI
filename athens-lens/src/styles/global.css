@@ -971,6 +971,26 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.recording-resume-line {
+  color: var(--color-text) !important;
+  font-weight: 500;
+}
+
+.recording-resume-line--pending {
+  color: var(--color-text-muted) !important;
+  font-weight: 400;
+  font-style: italic;
+}
+
+.dialog-resume-audit {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted, #f3f5f8);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
 .recording-dot {
   width: 10px;
   height: 10px;

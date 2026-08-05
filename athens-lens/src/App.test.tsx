@@ -78,6 +78,10 @@ describe("Athens Lens app", () => {
           }
           return { ok: false, error: `Unhandled message ${message?.type || ""}` };
         }),
+        onMessage: {
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+        },
         lastError: undefined,
       },
       tabs: {
@@ -362,6 +366,72 @@ describe("Athens Lens app", () => {
     expect(startCount).toBe(2);
     expect(useRecordingSessionsStore.getState().sessionsByTabId[42]?.job?.id).toBe(MOCK_JOBS[0].id);
     expect(useRecordingSessionsStore.getState().sessionsByTabId[43]?.job?.id).toBe(MOCK_JOBS[1].id);
+  });
+
+  it("shows the original résumé filename after an upload audit", async () => {
+    const user = userEvent.setup();
+    const listeners: Array<(message: unknown) => void> = [];
+    vi.stubGlobal("chrome", {
+      runtime: {
+        sendMessage: vi.fn(async (message: { type?: string }) => {
+          if (message?.type === "ATHENS_LENS_START_RECORDING") return { ok: true, tabId: 42 };
+          if (message?.type === "ATHENS_LENS_LIST_SESSIONS") return { ok: true, sessions: [] };
+          return { ok: false };
+        }),
+        onMessage: {
+          addListener: vi.fn((listener: (message: unknown) => void) => {
+            listeners.push(listener);
+          }),
+          removeListener: vi.fn(),
+        },
+        lastError: undefined,
+      },
+      tabs: {
+        query: vi.fn((_query: unknown, callback: (tabs: Array<{ id: number }>) => void) => {
+          callback([{ id: 42 }]);
+        }),
+        onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
+        onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/athens-lens/bids/")) {
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ success: false }), { status: 404 });
+    }));
+
+    render(
+      <App
+        authStore={makeAuthStore(makeSession())}
+        jobsRepository={jobsRepository}
+        inboxRepository={mockInboxRepository}
+      />
+    );
+
+    await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
+    await user.click(screen.getByRole("button", { name: "Apply & record" }));
+    expect(await screen.findByText("Waiting for résumé upload…")).toBeInTheDocument();
+
+    for (const listener of listeners) {
+      listener({
+        type: "ATHENS_LENS_RESUME_AUDIT",
+        tabId: 42,
+        sessionId: useRecordingSessionsStore.getState().sessionsByTabId[42]?.sessionId,
+        jobId: MOCK_JOBS[0].id,
+        originalName: "Backend.pdf",
+        cleanedName: "Alex Taylor.pdf",
+        expectedName: "Alex Taylor.pdf",
+        renamed: true,
+      });
+    }
+
+    expect(await screen.findByLabelText("Uploaded résumé")).toHaveTextContent(
+      "Résumé · Backend.pdf → Alex Taylor.pdf",
+    );
   });
 
   it("shows an empty state and retries a failed job load", async () => {

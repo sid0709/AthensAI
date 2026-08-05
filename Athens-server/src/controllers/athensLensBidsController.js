@@ -4,6 +4,7 @@ import {
 	skipBidResult,
 	beginBidRecordingUpload,
 	completeBidRecordingUpload,
+	saveResumeAudit,
 } from "./bidResultsController.js";
 import { persistBidPageAnalysis } from "../services/bidAiArtifactPersist.js";
 
@@ -121,4 +122,15 @@ export async function saveAthensLensBidAnalysis(req, res) {
 			message: error?.message || "Unable to save AI answers.",
 		});
 	}
+}
+
+/**
+ * POST /athens-lens/bids/resume-audit
+ * Same vendor_tasks resume* fields Bid-Monitor writes via /bid-results/resume-audit.
+ */
+export async function saveAthensLensResumeAudit(req, res) {
+	if (!withSessionApplier(req)) {
+		return res.status(401).json({ success: false, message: "Not signed in." });
+	}
+	return saveResumeAudit(req, res);
 }
