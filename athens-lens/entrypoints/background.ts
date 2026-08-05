@@ -1,3 +1,5 @@
+import { stripStylesheetNoise } from "../src/recording/pageTextSanitize";
+
 type StartRecordingMessage = {
   type: "ATHENS_LENS_START_RECORDING";
   sessionId: string;
@@ -277,11 +279,23 @@ function extractFrameContent() {
     }
   };
 
+  const isNonContentTag = (tag: string) =>
+    tag === "STYLE"
+    || tag === "SCRIPT"
+    || tag === "NOSCRIPT"
+    || tag === "TEMPLATE"
+    || tag === "LINK"
+    || tag === "META"
+    || tag === "HEAD";
+
   const shadowInnerText = (shadow: ShadowRoot) => {
     const parts: string[] = [];
     for (const node of Array.from(shadow.childNodes)) {
       if (node.nodeType === Node.ELEMENT_NODE) {
-        const text = ((node as HTMLElement).innerText || "").trim();
+        const el = node as HTMLElement;
+        // <style>.innerText returns the stylesheet (browser special-case) — skip it.
+        if (isNonContentTag(el.tagName)) continue;
+        const text = (el.innerText || "").trim();
         if (text) parts.push(text);
       } else if (node.nodeType === Node.TEXT_NODE) {
         const text = (node.textContent || "").replace(/\s+/g, " ").trim();
@@ -291,6 +305,7 @@ function extractFrameContent() {
     // Fallback: labels/headings if children produced nothing (odd hosts).
     if (!parts.length) {
       for (const el of Array.from(shadow.querySelectorAll("label, legend, h1, h2, h3, h4, p, li, button"))) {
+        if (isNonContentTag(el.tagName) || el.closest("style, script, noscript, template")) continue;
         const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
         if (text) parts.push(text);
       }
@@ -350,7 +365,10 @@ function fingerprintText(text: string) {
 
 function mergeVisibleFrameText(frames: PageTextFrame[], maxChars = MAX_VISIBLE_TEXT_CHARS) {
   const ranked = [...frames]
-    .map((frame) => ({ ...frame, visibleText: frame.visibleText.trim() }))
+    .map((frame) => ({
+      ...frame,
+      visibleText: stripStylesheetNoise(frame.visibleText).trim(),
+    }))
     .filter((frame) => frame.visibleText.length > 0)
     .sort((a, b) => b.visibleText.length - a.visibleText.length);
 
@@ -490,10 +508,11 @@ async function readTabPageText(tabId: number) {
     .flatMap((frame) => frame.forms || [])
     .slice(0, 120);
 
-  let visibleText = mergedText.trim();
+  let visibleText = stripStylesheetNoise(mergedText).trim();
   if (!visibleText && allForms.length) {
     visibleText = formsAsVisibleText(allForms).slice(0, MAX_VISIBLE_TEXT_CHARS);
   }
+  visibleText = visibleText.slice(0, MAX_VISIBLE_TEXT_CHARS);
 
   const primary = selectedFrames[0] || frameResults[0]!;
   return {
