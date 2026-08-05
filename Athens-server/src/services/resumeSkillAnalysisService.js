@@ -10,7 +10,6 @@ import {
 } from "./userKnowledgeGraph/index.js";
 import { mergeSkillProfiles } from "./resumeSkillMerge.js";
 import { parseSkillProfileJson } from "./resumeSkillProfile.js";
-import { invalidateRecommendationCache } from "./matching/matchingService.js";
 import { decryptAccountDoc } from "./autoBidProfileSecrets.js";
 import { updateAccountInfoById } from "./accountInfoStore.js";
 
@@ -289,7 +288,6 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false, 
   const profileGraph = await rebuildProfileGraph(ownerName);
 
   throwIfAborted(signal);
-  invalidateRecommendationCache(ownerName);
 	await firestoreMutationLimiter.run(() => syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack));
   throwIfAborted(signal);
 

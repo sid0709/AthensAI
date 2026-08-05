@@ -15,19 +15,12 @@ const LIVE_VPS_QUERIES = Object.fromEntries(
 );
 
 export const DEPENDENCY_QUERIES = {
-	redis: {
-		memoryBytes: 'max(redis_memory_used_bytes)',
-		rssBytes: 'max(redis_memory_used_rss_bytes)',
-		clients: 'max(redis_connected_clients)',
-		operationsPerSecond: 'sum(rate(redis_commands_processed_total[5m]))',
-		hitRatePercent: '100 * sum(rate(redis_keyspace_hits_total[5m])) / clamp_min(sum(rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m])), 1)',
-		evictionsPerSecond: 'sum(rate(redis_evicted_keys_total[5m]))',
+	'firestore-tasks': {
+		oldestQueueAgeSeconds: 'max(athens_background_queue_oldest_age_seconds)',
+		expiredLeaseCount: 'max(athens_background_expired_lease_count)',
 	},
-	qdrant: {
-		requestsPerSecond: 'sum(rate(rest_responses_total[5m])) or vector(0)',
-		errorRatePercent: '100 * (sum(rate(rest_responses_total{status=~"4..|5.."}[5m])) or vector(0)) / clamp_min((sum(rate(rest_responses_total[5m])) or vector(0)), 1)',
-		p95LatencyMs: '1000 * histogram_quantile(0.95, sum by (le) (rate(rest_responses_duration_seconds_bucket[5m])))',
-		memoryBytes: 'max(memory_active_bytes)',
+	'algolia-sync': {
+		outboxLagSeconds: 'max(athens_algolia_outbox_lag_seconds)',
 	},
 };
 

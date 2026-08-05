@@ -17,9 +17,8 @@ import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { runWithConcurrency } from "./lib/run-with-concurrency";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
-import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
+import { useJobsList } from "./hooks/useJobsList";
 import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
-import { useProfileMatchSkills } from "./hooks/useProfileMatchSkills";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
 import { JOB_SEARCH_PAGE_SIZES } from "./lib/jobSearchUrlState";
 
@@ -40,13 +39,11 @@ function JobSearchPageContent() {
     clampPage,
     setPageSize,
     setView,
-    setShowScores,
     setOpenJob,
     clearOpenJob,
   } = useJobSearchUrlState();
   const { filters, page, pageSize, groupId: expandedCompanyId, jobId: focusedJobId } = urlState;
   const showGrid = urlState.view === "grid";
-  const showScoresOnCards = urlState.showScores;
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(() => {
     try {
       return new Set(JSON.parse(localStorage.getItem("athens-job-bookmarks") ?? "[]") as string[]);
@@ -59,10 +56,8 @@ function JobSearchPageContent() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
-  const { profileVersion, matchContext } = useProfileMatchSkills();
-
-  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, resultsSettled, countsLoading, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, rescoreVisibleJobs, loadCompanyMembers, memberLoadingIds, memberErrors } =
-    useJobsList(filters, removedIds, profileVersion, page, pageSize);
+  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
+    useJobsList(filters, removedIds, page, pageSize);
 
   useEffect(() => {
     setActiveJobIds((previous) => {
@@ -118,7 +113,7 @@ function JobSearchPageContent() {
 
   useEffect(() => {
     clearSelection();
-  }, [profileVersion, requestKey, clearSelection]);
+  }, [requestKey, clearSelection]);
 
   useEffect(() => {
     const visibleIds = new Set(visibleJobs.map((job) => job.id));
@@ -126,10 +121,6 @@ function JobSearchPageContent() {
       if (!visibleIds.has(id)) deselectJob(id);
     }
   }, [deselectJob, selectedIds, visibleJobs]);
-
-  useEffect(() => {
-    if (matchContext) rescoreVisibleJobs(matchContext);
-  }, [matchContext, profileVersion, rescoreVisibleJobs]);
 
   useEffect(() => {
     if (!resultsSettled) return;
@@ -140,7 +131,7 @@ function JobSearchPageContent() {
   useEffect(() => {
     if (!expandedCompanyId || !resultsSettled) return;
     const group = groups.find((candidate) => candidate.companyId === expandedCompanyId);
-    if (!group || (group.matchingJobCount ?? group.jobs.length) < 2) {
+		if (!group || (group.matchingJobCount != null && group.matchingJobCount < 2)) {
       clearOpenJob();
       return;
     }
@@ -316,18 +307,6 @@ function JobSearchPageContent() {
     });
   };
 
-  const matchScoreHint =
-    filters.sort === "matchScore"
-      ? recommendationWarming
-          ? "Match scores are being recalculated for your profile — ranking will sharpen shortly."
-        : recommendationFallback
-          ? recommendationFallbackMessage(recommendationReason)
-          : "Best match ranks the most relevant jobs first; remaining jobs follow sorted by date."
-      : null;
-
-  const matchScoreHintVariant =
-    filters.sort === "matchScore" && recommendationFallback && !recommendationWarming ? "warning" : "info";
-
   return (
     <PageShell>
       <JobSearchFilterPanel
@@ -335,10 +314,6 @@ function JobSearchPageContent() {
         onChange={setFilters}
         statusCounts={statusCounts}
         countsLoading={countsLoading}
-        showScoresOnCards={showScoresOnCards}
-        onShowScoresOnCardsChange={setShowScores}
-        matchScoreHint={matchScoreHint}
-        matchScoreHintVariant={matchScoreHintVariant}
       />
 
       <JobListStickyBar
@@ -439,7 +414,6 @@ function JobSearchPageContent() {
             layout={showGrid ? "grid" : "list"}
             selectedIds={selectedIds}
             onSelectJob={selectJob}
-            showScores={showScoresOnCards}
             bookmarkedIds={bookmarkedIds}
             onToggleBookmark={toggleBookmark}
             isJobPending={isPending}
@@ -448,7 +422,6 @@ function JobSearchPageContent() {
             onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
             onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
             onCancel={(job) => void cancelJobStatus(job)}
-            onJobScoresUpdated={patchJob}
             resumeStates={resumeStates}
             onGenerateResume={(job) => {
               void generateForJob(job);

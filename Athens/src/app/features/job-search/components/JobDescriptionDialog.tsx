@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Briefcase,
   Building2,
@@ -10,7 +10,7 @@ import {
   Users,
   Wifi,
 } from "lucide-react";
-import { Av, Badge, Score } from "../../../components/ui";
+import { Av, Badge } from "../../../components/ui";
 import { Button } from "../../../components/ui/button";
 import {
   Dialog,
@@ -22,16 +22,12 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { Separator } from "../../../components/ui/separator";
 import { Skeleton } from "../../../components/ui/skeleton";
-import { cn } from "../../../lib/utils";
-import { alignJobScoreForDisplay } from "../../../lib/skill-match";
 import type { Job, WorkMode } from "../../../types";
 import { useJobDetail } from "../hooks/useJobDetail";
 import { useJobResumeRank, useJobSkillRadar } from "../hooks/useJobSkillRadar";
-import { useProfileMatchSkills } from "../hooks/useProfileMatchSkills";
 import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
 import { DetectedSkillsPanel } from "./DetectedSkillsPanel";
 import { JobStatusActions } from "./JobStatusActions";
-import { AddProfileSkillPanel, pendingSkillFromJobRequirement, type PendingProfileSkill } from "./AddProfileSkillDialog";
 
 const WORK_MODE_LABELS: Record<WorkMode, string> = {
   remote: "Remote",
@@ -49,7 +45,6 @@ type JobDescriptionDialogProps = {
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
-  onJobScoresUpdated?: (job: Job) => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -114,20 +109,13 @@ export function JobDescriptionDialog({
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
-  onJobScoresUpdated,
 }: JobDescriptionDialogProps) {
   const { displayJob: detailJob, loading, error } = useJobDetail(job, open);
-  const [localJob, setLocalJob] = useState<Job | null>(null);
-  const j = localJob ?? detailJob ?? job;
+  const j = detailJob ?? job;
   const [skillMatchOpen, setSkillMatchOpen] = useState(false);
-  const [addSkillOpen, setAddSkillOpen] = useState(false);
-  const [pendingSkill, setPendingSkill] = useState<PendingProfileSkill>(() =>
-    pendingSkillFromJobRequirement(""),
-  );
-  const { skills: userSkills, boostingSkill, boostSkillForJob, matchContext } = useProfileMatchSkills(open);
 
   const jobId = j.backendId || j.id;
-  const { data: resumeRank, loading: resumeRankLoading } = useJobResumeRank(jobId, open && !addSkillOpen);
+  const { data: resumeRank, loading: resumeRankLoading } = useJobResumeRank(jobId, open);
   const {
     data: radarData,
     loading: radarLoading,
@@ -142,37 +130,9 @@ export function JobDescriptionDialog({
   useEffect(() => {
     if (!open) {
       setSkillMatchOpen(false);
-      setAddSkillOpen(false);
-      setPendingSkill(pendingSkillFromJobRequirement(""));
     }
   }, [open]);
-
-  useEffect(() => {
-    if (open) setLocalJob(null);
-  }, [open, job.id, detailJob?.id]);
-
-  const handleRequestAddSkill = (skill: { name: string; category: string; requirement: number }) => {
-    setPendingSkill(pendingSkillFromJobRequirement(skill.name, skill.category, skill.requirement));
-    setAddSkillOpen(true);
-  };
-
-  const handleConfirmAddSkill = async (skill: PendingProfileSkill) => {
-    const updated = await boostSkillForJob(skill.name.trim(), j, {
-      category: skill.category,
-      level: skill.level,
-    });
-    if (updated) {
-      setLocalJob(updated);
-      onJobScoresUpdated?.(updated);
-      setAddSkillOpen(false);
-      setPendingSkill(pendingSkillFromJobRequirement(""));
-    }
-  };
-
-  const displayJob = useMemo(() => {
-    if (localJob) return localJob;
-    return alignJobScoreForDisplay(j, matchContext);
-  }, [j, localJob, matchContext]);
+  const displayJob = j;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -200,9 +160,6 @@ export function JobDescriptionDialog({
                     {j.company}
                     <ExternalLink className="size-3 shrink-0 opacity-60" />
                   </a>
-                </div>
-                <div className="shrink-0 mr-2">
-                  <Score score={displayJob.scores.skill} />
                 </div>
               </div>
               <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -244,13 +201,6 @@ export function JobDescriptionDialog({
         <div className="flex-1 overflow-y-auto px-6 py-5 subtle-scroll space-y-6">
           <DetectedSkillsPanel
             aiSkills={displayJob.aiSkills}
-            matchContext={matchContext}
-            userSkills={userSkills}
-            score={displayJob.scores.skill}
-            covered={displayJob.scores.skillsCovered}
-            required={displayJob.scores.skillsRequired}
-            onRequestAddSkill={handleRequestAddSkill}
-            boostingSkill={boostingSkill}
           />
 
           {displayJob.industries.length > 0 ? (
@@ -310,14 +260,6 @@ export function JobDescriptionDialog({
         </div>
 
         <DialogFooter className="border-t border-border bg-card px-6 py-4 sm:justify-between">
-          <div className="hidden sm:flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-            <span className={cn("rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40")}>
-              Skill {displayJob.scores.skill}
-              {displayJob.scores.skillsRequired
-                ? ` (${displayJob.scores.skillsCovered ?? 0}/${displayJob.scores.skillsRequired})`
-                : ""}
-            </span>
-          </div>
           <div className="flex w-full sm:w-auto items-center justify-end gap-2">
             <Button
               variant={skillMatchOpen ? "secondary" : "outline"}
@@ -351,14 +293,6 @@ export function JobDescriptionDialog({
             )}
           </div>
         </DialogFooter>
-
-        <AddProfileSkillPanel
-          open={addSkillOpen}
-          onOpenChange={setAddSkillOpen}
-          initialSkill={pendingSkill}
-          onConfirm={handleConfirmAddSkill}
-          saving={Boolean(boostingSkill)}
-        />
         </div>
       </DialogContent>
     </Dialog>

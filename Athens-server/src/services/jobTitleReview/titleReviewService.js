@@ -110,7 +110,11 @@ function failurePatch(error, now) {
 				failedAt: now,
 			},
 		},
-		$unset: { 'titleReview.lease': '' },
+		$unset: {
+			'titleReview.lease': '',
+			'titleReview.label': '',
+			'titleReview.aiLabel': '',
+		},
 	};
 }
 

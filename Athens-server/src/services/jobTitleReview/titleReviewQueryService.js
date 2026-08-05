@@ -3,7 +3,7 @@ import { getFirestoreDb } from '../firebase/firebaseAdmin.js';
 export const TITLE_REVIEW_TABS = new Set(['unreviewed', 'review_required', 'failed']);
 export const TITLE_REVIEW_SORTS = new Set(['confidence_desc', 'newest', 'oldest']);
 
-const PHYSICAL_JOBS_COLLECTION = 'jobs';
+const PHYSICAL_JOBS_COLLECTION = 'job_market';
 const SOURCE_CATALOG = 'market';
 const QUERY_TIMEOUT_MS = Math.max(500, Math.min(5_000, Number(process.env.TITLE_REVIEW_QUERY_TIMEOUT_MS || 4_500)));
 const BASE_LIST_FIELDS = [
@@ -200,7 +200,7 @@ export async function getTitleReviewCountsNative({ db = getFirestoreDb(), timeou
 	const base = () => collection.where('sourceCatalog', '==', SOURCE_CATALOG);
 	try {
 		const snapshots = await withQueryTimeout(Promise.all([
-			base().where('titleReview.processingState', 'in', ['pending', 'failed']).count().get(),
+			base().where('titleReview.processingState', 'in', ['pending', 'scanning']).count().get(),
 			base().where('titleReview.processingState', 'in', ['pending', 'scanning']).count().get(),
 			base().where('titleReview.label', '==', 'REVIEW_REQUIRED').count().get(),
 			base().where('titleReview.processingState', '==', 'failed').count().get(),

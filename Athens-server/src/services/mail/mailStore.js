@@ -6,14 +6,25 @@ import {
 import { createHash } from 'node:crypto';
 import { ALL_MAIL_PATH, extractCustomLabels } from './folderMapper.js';
 import { deleteStoredObject, putBinaryObject, readStoredObject, storageSlug } from '../firebase/objectStore.js';
-import { getRedis, isRedisReady } from '../../db/redis.js';
 
 const MAIL_INLINE_BODY_BYTES = 350 * 1024;
 const MAIL_LABEL_MARKER_VERSION = 1;
 const labelMarkerBackfills = new Map();
+const labelDefinitionsCache = new Map();
+const LABEL_DEFINITIONS_CACHE_MS = 10 * 60 * 1_000;
+const LABEL_DEFINITIONS_CACHE_MAX = 200;
 
 function labelDefinitionsCacheKey(applierName) {
-	return `mail:v2:label-definitions:${String(applierName).trim().toLowerCase()}`;
+	return String(applierName).trim().toLowerCase();
+}
+
+function rememberLabelDefinitions(applierName, definitions) {
+	const key = labelDefinitionsCacheKey(applierName);
+	labelDefinitionsCache.delete(key);
+	labelDefinitionsCache.set(key, { definitions, expiresAt: Date.now() + LABEL_DEFINITIONS_CACHE_MS });
+	while (labelDefinitionsCache.size > LABEL_DEFINITIONS_CACHE_MAX) {
+		labelDefinitionsCache.delete(labelDefinitionsCache.keys().next().value);
+	}
 }
 
 function withCustomLabelMarker(patch) {
@@ -511,23 +522,18 @@ export function normalizeLabelDefinitions(raw) {
  */
 export async function getUserLabelDefinitions(applierName, legacyDefinitions = null) {
 	if (!mailUserLabelsCollection) return normalizeLabelDefinitions(legacyDefinitions);
-	if (isRedisReady()) {
-		const cached = await getRedis().get(labelDefinitionsCacheKey(applierName)).catch(() => null);
-		if (cached) {
-			try {
-				return normalizeLabelDefinitions(JSON.parse(cached));
-			} catch {
-				await getRedis().del(labelDefinitionsCacheKey(applierName)).catch(() => undefined);
-			}
-		}
+	const cacheKey = labelDefinitionsCacheKey(applierName);
+	const cached = labelDefinitionsCache.get(cacheKey);
+	if (cached?.expiresAt > Date.now()) {
+		rememberLabelDefinitions(applierName, cached.definitions);
+		return cached.definitions;
 	}
+	labelDefinitionsCache.delete(cacheKey);
 
 	const doc = await mailUserLabelsCollection.findOne({ applierName });
 	if (doc?.definitions && typeof doc.definitions === 'object') {
 		const definitions = normalizeLabelDefinitions(doc.definitions);
-		if (isRedisReady()) {
-			await getRedis().setEx(labelDefinitionsCacheKey(applierName), 600, JSON.stringify(definitions)).catch(() => undefined);
-		}
+		rememberLabelDefinitions(applierName, definitions);
 		return definitions;
 	}
 
@@ -555,9 +561,7 @@ export async function saveUserLabelDefinitions(applierName, definitions) {
 		{ $set: { applierName, definitions: normalized, updatedAt } },
 		{ upsert: true },
 	);
-	if (isRedisReady()) {
-		await getRedis().setEx(labelDefinitionsCacheKey(applierName), 600, JSON.stringify(normalized)).catch(() => undefined);
-	}
+	rememberLabelDefinitions(applierName, normalized);
 	return normalized;
 }
 

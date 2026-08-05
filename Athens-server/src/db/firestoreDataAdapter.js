@@ -8,9 +8,8 @@ const UNIQUE_KEYS = {
 	account_info: [["name"], ["usernameKey"]], personal_info: ["name"], vendor_tasks: [["applierName", "jobId"], ["applierName", "applyUrl"]],
 	mail_messages: ["applierName", "mailbox", "uid"], mail_sync_state: ["applierName"], mail_user_labels: ["applierName"],
 	resume_generator_config: ["applierName"], rules: ["name"],
-	job_match_scores: ["applierName", "jobId"], match_profile_state: ["applierName"],
 	external_scraped_jobs: [["jobID"], ["jobLink"]],
-	user_skills: ["applierName", "nameCanonical"], skill_dictionary: ["nameCanonical"],
+	skill_dictionary: ["nameCanonical"],
 	skill_enrichment_queue: ["normalizedKey"], skill_cooccurrence: ["pairKey"],
 	user_knowledge_graphs: ["applierName", "resumeId"], avalon_apply_runs: ["runId"],
 	monitor_current_status: ["component"], monitor_daily_rollups: ["date", "component"],
@@ -967,11 +966,8 @@ class FirestoreCollection {
 		return ref.id;
 	}
 	_kickOutbox(outboxId) {
-		if (!outboxId) return;
-		if (process.env.BACKGROUND_WORKERS_MODE !== "tasks") return;
-		void import("../services/cloudTasks.js")
-			.then(({ enqueueSearchOutboxTask }) => enqueueSearchOutboxTask(outboxId))
-			.catch((error) => console.warn("[search-outbox] task enqueue failed; scheduler will retry:", error?.message || error));
+		// The Firestore outbox worker claims pending records directly.
+		void outboxId;
 	}
 	async deleteOne(filter) {
 		const doc = await this.findOne(filter); if (!doc) return { acknowledged: true, deletedCount: 0 };

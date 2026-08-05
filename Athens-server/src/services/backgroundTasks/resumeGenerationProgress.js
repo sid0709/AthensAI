@@ -23,7 +23,7 @@ function upsertStep(current, raw, status, fallbackIndex = null) {
 		.slice(0, MAX_GENERATION_STEPS);
 }
 
-/** Keep a cumulative, Redis-safe checklist as parallel model events arrive. */
+/** Keep a compact, serializable checklist as parallel model events arrive. */
 export function mergeResumeGenerationSteps(existing, event) {
 	let current = Array.isArray(existing) ? existing : [];
 	if (!event || typeof event !== 'object') return current;

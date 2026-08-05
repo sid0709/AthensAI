@@ -1,4 +1,4 @@
-import type { UserSkillCategory } from "../../job-search/hooks/useProfileMatchSkills";
+export type UserSkillCategory = "hard" | "soft" | "devops" | "tools" | "domain";
 
 export const CATEGORY_META: Record<UserSkillCategory, { label: string; chip: string }> = {
   hard: { label: "Hard skills", chip: "border-violet-500/40 bg-violet-500/10" },

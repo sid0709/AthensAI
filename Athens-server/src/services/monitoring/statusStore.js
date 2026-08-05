@@ -19,8 +19,8 @@ const COMPONENTS = [
 	{ id: 'athens-api', name: 'Athens API', failureStatus: 'major_outage' },
 	{ id: 'ai-bff', name: 'AI services', failureStatus: 'partial_outage' },
 	{ id: 'avalon-relay', name: 'Avalon relay', failureStatus: 'partial_outage' },
-	{ id: 'redis', name: 'Redis cache', failureStatus: 'degraded' },
-	{ id: 'qdrant', name: 'Qdrant vector search', failureStatus: 'degraded' },
+	{ id: 'firestore-tasks', name: 'Firestore task workers', failureStatus: 'degraded' },
+	{ id: 'algolia-sync', name: 'Algolia search synchronization', failureStatus: 'degraded' },
 	{ id: 'vps', name: 'VPS infrastructure', failureStatus: 'degraded' },
 	{ id: 'public-api', name: 'Public API request path', failureStatus: 'major_outage' },
 ];

@@ -35,16 +35,6 @@ export interface SkillAnalysis {
   usage?: SkillAnalysisUsage | null;
 }
 
-export interface JobScores {
-  overall: number;
-  skill: number;
-  /** Skills covered vs required (Best Match containment). */
-  skillsCovered?: number;
-  skillsRequired?: number;
-  /** Semantic similarity component when hybrid ranking is active. */
-  vector?: number | null;
-}
-
 export interface Job {
   id: string;
   /** Firestore _id when loaded from Athens-server API */
@@ -63,9 +53,6 @@ export interface Job {
   experience?: string;
   industries: string[];
   status: JobStatus;
-  scores: JobScores;
-  /** @deprecated use scores.overall */
-  matchScore: number;
   posted: string;
   postedAt: string;
   /** Human-readable relative time from source (e.g. "2 hours ago"). */
@@ -79,11 +66,6 @@ export interface Job {
   applicantsText?: string;
   applyUrl: string;
   skillAnalysis?: SkillAnalysis;
-  /** Tech stack of the resume that best matched this job (recommendation API). */
-  bestResumeTechStack?: string;
-  bestResumeId?: string;
-  /** Per-skill match flags for UI (from list-time Best Match scoring). */
-  skillHighlights?: { name: string; matched: boolean }[];
   /** AI-detected skills with category + requirement (1-5), when analyzed. */
   aiSkills?: { name: string; category: string; requirement: number }[];
   /** Total detected skills when list responses include only the top chips. */

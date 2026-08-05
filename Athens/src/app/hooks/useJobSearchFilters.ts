@@ -2,20 +2,9 @@ import { useMemo } from "react";
 import type { Job, JobStatus } from "../types/job";
 import { JOBS } from "../data/jobs";
 
-export type JobSortKey =
-  | "newest"
-  | "oldest"
-  | "matchScore"
-  | "title";
+export type JobSortKey = "newest";
 
 export type JobStatusTab = "all" | JobStatus;
-
-export type ScoreRange = { min: number; max: number };
-
-export type JobScoreFilters = {
-  overall: ScoreRange;
-  skill: ScoreRange;
-};
 
 export type JobSearchFilterState = {
   statusTab: JobStatusTab;
@@ -30,15 +19,12 @@ export type JobSearchFilterState = {
   industry: string;
   postedFrom: string;
   postedTo: string;
-  scores: JobScoreFilters;
   sort: JobSortKey;
   /** Show only jobs whose skills have been AI-extracted. */
   aiExtractedOnly: boolean;
   /** Legacy flag: external_scraped_jobs merge (off — job_market is the sole catalog). */
   includeExternalScraped: boolean;
 };
-
-export const DEFAULT_SCORE_RANGE: ScoreRange = { min: 0, max: 100 };
 
 export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
   statusTab: "all",
@@ -51,18 +37,10 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
   industry: "all",
   postedFrom: "",
   postedTo: "",
-  scores: {
-    overall: { ...DEFAULT_SCORE_RANGE },
-    skill: { ...DEFAULT_SCORE_RANGE },
-  },
-  sort: "matchScore",
+  sort: "newest",
   aiExtractedOnly: false,
   includeExternalScraped: false,
 };
-
-function inScoreRange(value: number, range: ScoreRange) {
-  return value >= range.min && value <= range.max;
-}
 
 function matchesBaseFilters(job: Job, filters: JobSearchFilterState, includeStatus: boolean) {
   if (includeStatus && filters.statusTab !== "all" && job.status !== filters.statusTab) return false;
@@ -90,27 +68,12 @@ function matchesBaseFilters(job: Job, filters: JobSearchFilterState, includeStat
   if (filters.postedFrom && job.postedAt < filters.postedFrom) return false;
   if (filters.postedTo && job.postedAt > filters.postedTo) return false;
 
-  const { scores } = job;
-  if (!inScoreRange(scores.overall, filters.scores.overall)) return false;
-  if (!inScoreRange(scores.skill, filters.scores.skill)) return false;
-
   return true;
 }
 
-function sortJobs(jobs: Job[], sort: JobSortKey) {
+function sortJobs(jobs: Job[], _sort: JobSortKey) {
   return [...jobs].sort((a, b) => {
-    switch (sort) {
-      case "newest":
-        return b.postedAt.localeCompare(a.postedAt);
-      case "oldest":
-        return a.postedAt.localeCompare(b.postedAt);
-      case "matchScore":
-        return b.scores.overall - a.scores.overall;
-      case "title":
-        return a.title.localeCompare(b.title);
-      default:
-        return 0;
-    }
+    return b.postedAt.localeCompare(a.postedAt) || b.id.localeCompare(a.id);
   });
 }
 
@@ -146,7 +109,7 @@ export function countJobsByStatus(
 }
 
 export function countActiveFilters(filters: JobSearchFilterState): number {
-  return countAttributeFilters(filters) + countScoreFilters(filters);
+  return countAttributeFilters(filters);
 }
 
 export function countAttributeFilters(filters: JobSearchFilterState): number {
@@ -157,15 +120,6 @@ export function countAttributeFilters(filters: JobSearchFilterState): number {
   if (filters.seniority.length) n++;
   if (filters.industry !== "all") n++;
   if (filters.postedFrom || filters.postedTo) n++;
-  return n;
-}
-
-export function countScoreFilters(filters: JobSearchFilterState): number {
-  let n = 0;
-  for (const key of Object.keys(filters.scores) as (keyof JobScoreFilters)[]) {
-    const r = filters.scores[key];
-    if (r.min !== 0 || r.max !== 100) n++;
-  }
   return n;
 }
 
@@ -182,18 +136,8 @@ export function clearAttributeFilters(filters: JobSearchFilterState): JobSearchF
   };
 }
 
-export function clearScoreFilters(filters: JobSearchFilterState): JobSearchFilterState {
-  return {
-    ...filters,
-    scores: {
-      overall: { ...DEFAULT_SCORE_RANGE },
-      skill: { ...DEFAULT_SCORE_RANGE },
-    },
-  };
-}
-
 export function clearAllFilters(filters: JobSearchFilterState): JobSearchFilterState {
-  return clearScoreFilters(clearAttributeFilters({ ...filters, jobQuery: "", companyQuery: "" }));
+  return clearAttributeFilters({ ...filters, jobQuery: "", companyQuery: "" });
 }
 
 export type ActiveFilterChip = {
@@ -262,25 +206,6 @@ export function getActiveFilterChips(filters: JobSearchFilterState): ActiveFilte
     });
   }
 
-  const scoreLabels: Record<keyof JobScoreFilters, string> = {
-    overall: "Overall",
-    skill: "Skill",
-  };
-
-  for (const key of Object.keys(filters.scores) as (keyof JobScoreFilters)[]) {
-    const r = filters.scores[key];
-    if (r.min !== 0 || r.max !== 100) {
-      chips.push({
-        id: `score-${key}`,
-        label: `${scoreLabels[key]} ${r.min}–${r.max}`,
-        apply: (f) => ({
-          ...f,
-          scores: { ...f.scores, [key]: { ...DEFAULT_SCORE_RANGE } },
-        }),
-      });
-    }
-  }
-
   return chips;
 }
 
@@ -324,7 +249,7 @@ export function jobSearchFilterFn(job: Job, query: string) {
 }
 
 export function exportJobsCsv(jobs: Job[]): string {
-  const header = "Link,Title,Company,Location,Status,Match,Skill,Posted,Salary,Source";
+  const header = "Link,Title,Company,Location,Status,Posted,Salary,Source";
   const rows = jobs.map((j) =>
     [
       j.applyUrl,
@@ -332,8 +257,6 @@ export function exportJobsCsv(jobs: Job[]): string {
       j.company,
       j.location,
       j.status,
-      j.scores.overall,
-      j.scores.skill,
       j.postedAt,
       j.salary,
       j.source,

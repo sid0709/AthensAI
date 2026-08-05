@@ -3,15 +3,11 @@ import { externalScrapedJobsCollection } from "../../db/dataStore.js";
 import { chatCompletion } from "../llm/llmService.js";
 import { EXTERNAL_JOB_ENRICHMENT_PROMPT } from "../../config/externalJobEnrichmentPrompt.js";
 import { JOB_MARKET_MODEL_VERSION } from "../../config/jobMarketSchema.js";
-import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from "../matching/skillIndex.js";
+import { normalizeJobSkills, jobSkillTokens } from "../matching/skillIndex.js";
 import { enrichJobSkillsFromTitle } from "../matching/jobSkillExtraction.js";
 import { recordJobSkills } from "../skillDictionary/skillDictionaryStore.js";
-import { indexOneJobRanking } from "../matching/jobRankingIndex.js";
 import { parseJobSkillsJson, MAX_ATTEMPTS } from "./aiExtractService.js";
-import {
-	firestoreMutationLimiter,
-	indexMutationLimiter,
-} from "../backgroundTasks/resourceLimits.js";
+import { firestoreMutationLimiter } from "../backgroundTasks/resourceLimits.js";
 
 const MAX_CHARS = Number(process.env.JOB_SKILL_EXTRACT_MAX_CHARS || 8000);
 
@@ -20,19 +16,6 @@ function throwIfAborted(signal) {
 	throw signal.reason instanceof Error
 		? signal.reason
 		: Object.assign(new Error("External skill enrichment cancelled"), { name: "AbortError" });
-}
-
-async function optionalIndexWrite(signal, operation) {
-	try {
-		await indexMutationLimiter.run(async () => {
-			throwIfAborted(signal);
-			await operation();
-			throwIfAborted(signal);
-		});
-	} catch (error) {
-		if (signal?.aborted || error?.name === "AbortError") throw error;
-		// Firestore remains authoritative; a later backfill repairs derived indexes.
-	}
 }
 
 const SENIORITY_VALUES = new Set([
@@ -204,7 +187,6 @@ export async function extractAndPersistExternalJob(job, auth, { signal } = {}) {
 				aiSkillsHash: externalDescriptionHash(job),
 				aiSkillExtractedAt: now,
 				aiSkillError: null,
-				matchScoreStatus: "pending",
 				modelVersion: JOB_MARKET_MODEL_VERSION,
 				updatedAt: new Date(),
 				},
@@ -214,16 +196,7 @@ export async function extractAndPersistExternalJob(job, auth, { signal } = {}) {
 	});
 
 	throwIfAborted(signal);
-	await optionalIndexWrite(signal, () => indexJobInRedis(jobId, skillsNormalized, tokens));
-	await optionalIndexWrite(signal, () => recordJobSkills(aiSkills));
-	await optionalIndexWrite(signal, () => indexOneJobRanking({
-		...job,
-		title: titleForFallback,
-		aiSkills,
-		skills: displaySkills,
-		details: metadata.details,
-		company: buildCompanyBlock(job, metadata.industryTags),
-	}, { catalog: 'external' }));
+	await recordJobSkills(aiSkills);
 	throwIfAborted(signal);
 
 	return { jobId, skillCount: aiSkills.length, usage };
@@ -253,7 +226,7 @@ export async function recordExternalExtractionFailure(job, err, { signal } = {})
 	return { attempts, terminal };
 }
 
-/** Normalize an external doc for match scoring (title/postedAt fields). */
+/** Normalize an external document for consumers that expect market field names. */
 export function normalizeExternalJobForScoring(doc) {
 	if (!doc) return doc;
 	return {

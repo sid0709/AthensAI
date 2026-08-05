@@ -2,7 +2,7 @@ import {
 	USER_SKILL_CATEGORIES,
 	USER_SKILL_LEVEL_MIN,
 	USER_SKILL_LEVEL_MAX,
-} from '../config/graphAndVectorConfig.js';
+} from '../config/resumeSkillConfig.js';
 import {
 	RESUME_SKILL_CATEGORY_LIMITS,
 	RESUME_SKILL_TOTAL_LIMIT,

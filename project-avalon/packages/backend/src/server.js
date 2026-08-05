@@ -60,7 +60,6 @@ async function shutdown(signal) {
 
 	try {
 		io.close();
-		await Promise.all((io.redisClients || []).map((client) => client.quit().catch(() => undefined)));
 	} catch {
 		/* ignore */
 	}

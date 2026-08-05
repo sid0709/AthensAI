@@ -53,7 +53,7 @@ export type TitleReviewJob = {
 };
 
 export type TitleReviewListMeta = {
-  cacheSource: "memory" | "redis" | "firestore";
+  cacheSource: "memory" | "firestore" | "algolia";
   revision: string;
   snapshotRevision?: string;
   stale: boolean;

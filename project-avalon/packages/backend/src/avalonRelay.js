@@ -8,8 +8,6 @@ import {
 	DEFAULT_SESSION_ID,
 	SOCKET_EVENTS,
 } from "@avalon/shared";
-import { createAdapter } from "@socket.io/redis-adapter";
-import { createClient } from "redis";
 
 const sessions = new Map();
 const DEFAULT_PROFILE_ID = "default";
@@ -156,22 +154,6 @@ export async function initAvalonRelay(httpServer) {
 		},
 		maxHttpBufferSize: 1e8,
 	});
-	const redisUrl = String(process.env.REDIS_URL || "").trim();
-	if (redisUrl) {
-		const pubClient = createClient({ url: redisUrl });
-		const subClient = pubClient.duplicate();
-		pubClient.on("error", (error) => {
-			console.error("[avalon-relay] Redis publisher error:", error?.message || error);
-		});
-		subClient.on("error", (error) => {
-			console.error("[avalon-relay] Redis subscriber error:", error?.message || error);
-		});
-		await Promise.all([pubClient.connect(), subClient.connect()]);
-		io.adapter(createAdapter(pubClient, subClient, { key: "avalon-relay" }));
-		io.redisClients = [pubClient, subClient];
-		console.log("[avalon-relay] Redis Socket.IO adapter connected");
-	}
-
 	io.on("connection", (socket) => {
 		let boundSession = null;
 		console.log(`[avalon-relay] connect ${socket.id}`);

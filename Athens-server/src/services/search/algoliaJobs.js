@@ -7,6 +7,7 @@ function config() {
 		appId: String(process.env.ALGOLIA_APP_ID || "").trim(),
 		apiKey: String(process.env.ALGOLIA_ADMIN_API_KEY || "").trim(),
 		indexName: String(process.env.ALGOLIA_JOBS_INDEX || "athens_jobs").trim(),
+		latestIndexName: String(process.env.ALGOLIA_JOBS_LATEST_INDEX || process.env.ALGOLIA_JOBS_INDEX || "athens_jobs").trim(),
 	};
 }
 function getClient() {
@@ -41,6 +42,31 @@ export async function searchJobIds(query, limit = 5000) {
 	return result.hits.map((hit) => String(hit.objectID));
 }
 
+/** Search the newest-sorted Algolia replica and return one stable hit page. */
+export async function searchNewestJobPage(query, { page = 0, hitsPerPage = 100 } = {}) {
+	const search = getClient();
+	if (!search) {
+		if (process.env.NODE_ENV === "production") throw new Error("Algolia is required for production job search");
+		return null;
+	}
+	const { latestIndexName } = config();
+	const result = await search.searchSingleIndex({
+		indexName: latestIndexName,
+		searchParams: {
+			query: String(query || ""),
+			page: Math.max(0, Number(page) || 0),
+			hitsPerPage: Math.max(1, Math.min(1000, Number(hitsPerPage) || 100)),
+			attributesToRetrieve: ["objectID"],
+		},
+	});
+	return {
+		ids: result.hits.map((hit) => String(hit.objectID)),
+		page: Number(result.page || 0),
+		nbPages: Number(result.nbPages || 0),
+		nbHits: Number(result.nbHits || 0),
+	};
+}
+
 export async function processAlgoliaOutbox(limit = 100) {
 	const search = getClient();
 	if (!search) throw new Error("Algolia configuration is missing");
@@ -50,7 +76,7 @@ export async function processAlgoliaOutbox(limit = 100) {
 	for (const outbox of snapshot.docs) {
 		const item = outbox.data();
 		try {
-			const job = await db.collection("jobs").doc(String(item.jobId)).get();
+			const job = await db.collection("job_market").doc(String(item.jobId)).get();
 			if (item.operation === "delete" || !job.exists) {
 				await search.deleteObject({ indexName: config().indexName, objectID: String(item.jobId) });
 			} else {
@@ -76,7 +102,7 @@ export async function processAlgoliaOutbox(limit = 100) {
 export async function rebuildAlgoliaJobs() {
 	const search = getClient();
 	if (!search) throw new Error("Algolia configuration is missing");
-	const snapshot = await getFirestoreDb().collection("jobs").get();
+	const snapshot = await getFirestoreDb().collection("job_market").get();
 	const objects = snapshot.docs.map((doc) => record(doc.id, doc.data()));
 	await search.replaceAllObjects({ indexName: config().indexName, objects, waitForTasks: true });
 	return { indexed: objects.length };

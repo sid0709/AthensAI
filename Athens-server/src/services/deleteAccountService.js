@@ -1,8 +1,7 @@
 /**
- * Full account wipe: profile, résumés, agent history, bid data, mail, disk, Firebase, Qdrant.
+ * Full account wipe: profile, résumés, agent history, bid data, mail, disk and Firebase.
  * Login identity is account_info.name (applierName).
  */
-import { createHash } from "node:crypto";
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,9 +14,6 @@ import {
 	resumeGenerationsCollection,
 	resumeGeneratorConfigCollection,
 	userKnowledgeGraphsCollection,
-	userSkillsCollection,
-	jobMatchScoresCollection,
-	matchProfileStateCollection,
 	mailMessagesCollection,
 	mailSyncStateCollection,
 	mailUserLabelsCollection,
@@ -30,22 +26,18 @@ import {
 } from "../db/dataStore.js";
 import { deleteAccountInfoByName } from "./accountInfoStore.js";
 import { clearJobBidStatus, listBidQueueJobs } from "./jobBidStatusService.js";
-import { deleteScoresForApplier } from "./matching/matchScoreStore.js";
-import { removeResumeEmbedding } from "./embeddings/embeddingIngest.js";
-import { deleteProfileVector } from "./vectorStore/qdrantClient.js";
 import { deleteStoredObject, storageSlug } from "./firebase/objectStore.js";
 import { getFirebaseMeta, getFirestoreDb, getStorageBucket } from "./firebase/firebaseAdmin.js";
-import { getRedis, isRedisReady } from "../db/redis.js";
 import { invalidateMailAccountCache } from "./mail/credentials.js";
 import { invalidateMailListCaches } from "./mail/mailSyncService.js";
 import { evictAccountPool } from "./mail/imapPool.js";
 import { invalidateLiveProjectedStatusCount } from "./jobStatusProjectionService.js";
-import { unregisterJobListProfile } from "./jobListReadModelService.js";
-import { backgroundTaskKeys } from "./backgroundTasks/redisKeys.js";
+import { invalidateProfileJobStatusIndex } from "./jobStatusIndexService.js";
 import {
 	acknowledgeBackgroundTaskCancellation,
 	flushBackgroundTaskMirrors,
 	getBackgroundTask,
+	listBackgroundTasks,
 	requestBackgroundTaskCancellation,
 } from "./backgroundTasks/taskStore.js";
 import { TERMINAL_TASK_STATUSES } from "./backgroundTasks/taskTypes.js";
@@ -72,14 +64,8 @@ async function purgeUserResumes(ownerName) {
 	let objects = 0;
 	for (const doc of docs) {
 		if (await deleteStoredObject(doc)) objects += 1;
-		await removeResumeEmbedding(String(doc._id)).catch(() => {});
 	}
 	const res = await userResumesCollection.deleteMany({ ownerName });
-	try {
-		await deleteProfileVector(ownerName);
-	} catch {
-		/* qdrant optional */
-	}
 	return { resumes: res.deletedCount ?? 0, objects };
 }
 
@@ -236,7 +222,7 @@ async function deleteFirestoreQuery(query) {
 	return snapshot.size;
 }
 
-async function purgeFirebaseData(applierName, profileId, uid) {
+async function purgeFirebaseData(applierName, profileId, uid, taskIds = []) {
 	const db = getFirestoreDb();
 	const slug = storageSlug(applierName);
 	let prefixes = [];
@@ -253,94 +239,67 @@ async function purgeFirebaseData(applierName, profileId, uid) {
 		];
 		for (const prefix of prefixes) await bucket.deleteFiles({ prefix });
 	}
-	const [avalonLogChunks, uploadSessions, jobStatuses, statusOutbox, profileAccess] = await Promise.all([
+	const [
+		avalonLogChunks,
+		uploadSessions,
+		jobStatuses,
+		statusCounts,
+		operationReceipts,
+		sessionsByProfile,
+		sessionsByAccount,
+		taskReservations,
+		backgroundTasks,
+		profileAccess,
+	] = await Promise.all([
 		deleteFirestoreQuery(db.collection("avalon_run_log_chunks").where("applierName", "==", applierName)),
 		deleteFirestoreQuery(db.collection("upload_sessions").where("applierName", "==", applierName)),
 		profileId ? deleteFirestoreQuery(db.collection("job_statuses").where("profileId", "==", profileId)) : 0,
-		profileId ? deleteFirestoreQuery(db.collection("job_status_outbox").where("profileId", "==", profileId)) : 0,
+		profileId ? deleteFirestoreQuery(db.collection("job_status_counts").where("profileId", "==", profileId)) : 0,
+		profileId ? deleteFirestoreQuery(db.collection("operation_receipts").where("profileId", "==", profileId)) : 0,
+		profileId ? deleteFirestoreQuery(db.collection("athens_lens_sessions").where("profileId", "==", profileId)) : 0,
+		profileId ? deleteFirestoreQuery(db.collection("athens_lens_sessions").where("accountId", "==", profileId)) : 0,
+		profileId ? deleteFirestoreQuery(db.collection("background_task_reservations").where("profileId", "==", profileId)) : 0,
+		profileId ? deleteFirestoreQuery(db.collection("background_tasks").where("profileId", "==", profileId)) : 0,
 		profileId ? deleteFirestoreQuery(db.collection("profile_access").where("profileId", "==", profileId)) : 0,
 	]);
+	let backgroundTaskInputs = 0;
+	for (const taskId of taskIds) {
+		const ref = db.collection("background_task_inputs").doc(String(taskId));
+		const snapshot = await ref.get();
+		if (!snapshot.exists) continue;
+		await ref.delete();
+		backgroundTaskInputs += 1;
+	}
 	return {
 		ok: true,
 		prefixes,
 		avalonLogChunks,
 		uploadSessions,
 		jobStatuses,
-		statusOutbox,
+		statusCounts,
+		operationReceipts,
+		sessions: sessionsByProfile + sessionsByAccount,
+		taskReservations,
+		backgroundTasks,
+		backgroundTaskInputs,
 		profileAccess,
 		uid: uid || null,
 	};
-}
-
-function redisGlobEscape(value) {
-	return String(value).replace(/[\\*?\[\]]/g, "\\$&");
-}
-
-async function scanRedisKeys(redis, pattern) {
-	const keys = new Set();
-	for await (const result of redis.scanIterator({ MATCH: pattern, COUNT: 500 })) {
-		for (const key of Array.isArray(result) ? result : [result]) if (key) keys.add(String(key));
-	}
-	return [...keys];
 }
 
 async function purgeProfileCaches(applierName, profileId) {
 	await Promise.all([
 		invalidateMailAccountCache(applierName),
 		invalidateMailListCaches(applierName),
-		unregisterJobListProfile({ profileId, applierName }),
 	]);
 	invalidateLiveProjectedStatusCount(profileId);
-	if (!isRedisReady()) return { deleted: 0 };
-
-	const redis = getRedis();
-	const lowerName = applierName.toLowerCase();
-	const ranking16 = createHash("sha256").update(applierName).digest("hex").slice(0, 16);
-	const ranking20 = createHash("sha256").update(applierName).digest("hex").slice(0, 20);
-	const encodedProfileId = encodeURIComponent(profileId);
-	const taskIds = profileId
-		? await redis.zRange(backgroundTaskKeys.profileTasks(profileId), 0, -1).catch(() => [])
-		: [];
-	const exact = [
-		`mail:v2:account:${lowerName}`,
-		`mail:v2:label-definitions:${lowerName}`,
-		`mail:v2:unlabeled-revision:${lowerName}`,
-		`profile:skills:${applierName}`,
-		`profile:match:${applierName}`,
-		`profile:skill-docs:${applierName}`,
-		`profile:skills-revision:${applierName}`,
-		`ranking:v2:profile-version:${ranking20}`,
-		...(profileId ? [`ranking:v2:status-revision:${profileId}`] : []),
-		...taskIds.flatMap((taskId) => [backgroundTaskKeys.task(taskId), backgroundTaskKeys.cancel(taskId)]),
-	];
-	const patterns = [
-		`mail:v9:unlabeled-page:${redisGlobEscape(lowerName)}:*`,
-		`mail:v9:unlabeled-catalog:${redisGlobEscape(lowerName)}:*`,
-		`ranking:v2:${ranking16}:*`,
-		`jobs:list:v2:ranking:${ranking20}:*`,
-		...(profileId ? [
-			`ranking:v5:job-status*:firestore:${redisGlobEscape(profileId)}:*`,
-			`athens:background:v1:request:${redisGlobEscape(encodedProfileId)}:*`,
-			`athens:background:v1:active:${redisGlobEscape(encodedProfileId)}:*`,
-			`athens:background:v1:profile:${redisGlobEscape(encodedProfileId)}:*`,
-		] : []),
-	];
-	const matched = new Set(exact);
-	for (const pattern of patterns) {
-		for (const key of await scanRedisKeys(redis, pattern)) matched.add(key);
-	}
-	const keys = [...matched];
-	let deleted = 0;
-	for (let index = 0; index < keys.length; index += 500) {
-		deleted += Number(await redis.del(keys.slice(index, index + 500))) || 0;
-	}
-	return { deleted };
+	if (profileId) invalidateProfileJobStatusIndex(profileId);
+	return { evicted: true };
 }
 
 async function quiesceBackgroundTasks(profileId) {
-	if (!profileId || !isRedisReady()) return { taskIds: [], cancelled: 0 };
-	const redis = getRedis();
-	const taskIds = await redis.zRange(backgroundTaskKeys.profileTasks(profileId), 0, -1).catch(() => []);
+	if (!profileId) return { taskIds: [], cancelled: 0 };
+	const taskIds = (await listBackgroundTasks(profileId, { limit: 500 })).map((task) => task.id);
 	let cancelled = 0;
 	for (const taskId of taskIds) {
 		const current = await getBackgroundTask(taskId);
@@ -393,9 +352,6 @@ export async function wipeAccountData({ name, accountId, uid = null }) {
 		generations: 0,
 		generatorConfig: 0,
 		knowledgeGraphs: 0,
-		skills: 0,
-		matchScores: 0,
-		matchProfileState: 0,
 		mailMessages: 0,
 		mailObjects: 0,
 		mailSyncState: 0,
@@ -427,11 +383,6 @@ export async function wipeAccountData({ name, accountId, uid = null }) {
 	summary.generations = await deleteManySafe(resumeGenerationsCollection, { applierName });
 	summary.generatorConfig = await deleteManySafe(resumeGeneratorConfigCollection, { applierName });
 	summary.knowledgeGraphs = await deleteManySafe(userKnowledgeGraphsCollection, { applierName });
-	summary.skills = await deleteManySafe(userSkillsCollection, { applierName });
-
-	const scoreWipe = await deleteScoresForApplier(applierName);
-	summary.matchScores = scoreWipe.deleted ?? 0;
-	summary.matchProfileState = await deleteManySafe(matchProfileStateCollection, { applierName });
 
 	const mail = await purgeMailMessages(applierName);
 	summary.mailMessages = mail.messages;
@@ -454,7 +405,7 @@ export async function wipeAccountData({ name, accountId, uid = null }) {
 
 	summary.disk = await purgeDiskArtifacts(applierName);
 	summary.caches = await purgeProfileCaches(applierName, profileId);
-	summary.firebase = await purgeFirebaseData(applierName, profileId, uid);
+	summary.firebase = await purgeFirebaseData(applierName, profileId, uid, background.taskIds);
 
 	// Account row last (includes nested autoBidProfile / resumeCatalog / secrets).
 	const accountResult = await deleteAccountInfoByName(applierName);

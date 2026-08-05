@@ -97,7 +97,7 @@ test("Athens Lens mapping rejects unsafe application schemes", () => {
 	assert.equal(result.applyUrl, "");
 });
 
-test("Athens Lens bearer tokens are parsed and hashed before Redis lookup", () => {
+test("Athens Lens bearer tokens are parsed and hashed before Firestore lookup", () => {
 	assert.equal(
 		athensLensAuthTest.bearerToken({ headers: { authorization: "Bearer session-secret" } }),
 		"session-secret",

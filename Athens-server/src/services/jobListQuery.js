@@ -5,8 +5,6 @@ import { JobSourceTitles } from '../config/jobSources.js';
 import { isBetaTier } from '../lib/betaTier.js';
 import { buildCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
 import { searchJobIds } from './search/algoliaJobs.js';
-import { getRedis, isRedisReady } from '../db/redis.js';
-import { createHash } from 'node:crypto';
 
 const SCORE_DIMENSIONS = {
 	overall: 'overallScore',
@@ -151,11 +149,6 @@ function finalizeQuery(query) {
 const APPLIER_CACHE_TTL_MS = 60 * 60 * 1000;
 const applierCache = new Map();
 
-function applierCacheKey(name) {
-	const digest = createHash('sha256').update(String(name)).digest('hex').slice(0, 20);
-	return `jobs:applier-context:${digest}`;
-}
-
 /** Resolve applier document id + beta tier (cached briefly). */
 export async function resolveApplierContext(applierName) {
 	if (!applierName || !accountInfoCollection) {
@@ -166,48 +159,18 @@ export async function resolveApplierContext(applierName) {
 	if (cached && cached.expiresAt > Date.now()) {
 		return { id: cached.id, isBeta: cached.isBeta };
 	}
-	if (isRedisReady()) {
-		const raw = await getRedis().get(applierCacheKey(name));
-		if (raw) {
-			try {
-				const stored = JSON.parse(raw);
-				const id = /^[a-f0-9]{24}$/i.test(String(stored.id || ''))
-					? new DocumentId(String(stored.id))
-					: stored.id || null;
-				const value = { id, isBeta: Boolean(stored.isBeta) };
-				applierCache.set(name, { ...value, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
-				return value;
-			} catch {
-				/* refresh from the authoritative account document */
-			}
-		}
-	}
-
 	const applierDoc = await accountInfoCollection.findOne({ name });
 	const id = applierDoc?._id || null;
 	const isBeta = Boolean(id) && isBetaTier(applierDoc?.tier);
 	applierCache.set(name, { id, isBeta, expiresAt: Date.now() + APPLIER_CACHE_TTL_MS });
-	if (isRedisReady()) {
-		await getRedis().setEx(
-			applierCacheKey(name),
-			Math.ceil(APPLIER_CACHE_TTL_MS / 1000),
-			JSON.stringify({ id: id ? String(id) : null, isBeta }),
-		);
-	}
 	return { id, isBeta };
 }
 
-/** Clear local and Redis tier/id context after an account mutation. */
+/** Clear the bounded process-local tier/id context after an account mutation. */
 export async function invalidateApplierContextCache(applierName) {
 	const name = String(applierName || '').trim();
 	if (!name) return false;
 	applierCache.delete(name);
-	if (!isRedisReady()) return true;
-	try {
-		await getRedis().del(applierCacheKey(name));
-	} catch (error) {
-		console.warn('[jobs] failed to invalidate applier context cache:', error?.message || error);
-	}
 	return true;
 }
 
@@ -375,5 +338,5 @@ export const STATUS_TABS = ['all', 'posted', 'bid-ready', 'bid-completed', 'appl
 /** Fields omitted from list responses to reduce payload size. */
 export const JOB_LIST_PROJECTION = { description: 0, jobDescription: 0 };
 
-/** Full job detail — omit only heavy embedding vectors. */
-export const JOB_DETAIL_PROJECTION = { embedding: 0 };
+/** Full job detail; list-only projections are intentionally not reused here. */
+export const JOB_DETAIL_PROJECTION = {};
