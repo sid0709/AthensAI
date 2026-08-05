@@ -20,7 +20,8 @@ describe("athensInboxRepository", () => {
       accountEmail: "alex@example.com",
       messages: MOCK_INBOX_MESSAGES,
       total: MOCK_INBOX_MESSAGES.length,
-      unreadCount: MOCK_UNREAD_COUNT
+      unreadCount: MOCK_UNREAD_COUNT,
+      hasMore: false,
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
@@ -32,8 +33,15 @@ describe("athensInboxRepository", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(athensInboxRepository.listMessages(SESSION)).resolves.toEqual(snapshot);
-    const [, request] = fetchMock.mock.calls[0]!;
+    await expect(athensInboxRepository.listMessages(SESSION)).resolves.toEqual({
+      ...snapshot,
+      page: 1,
+      pageSize: 15,
+      hasMore: false,
+    });
+    const [url, request] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toContain("/athens-lens/gmail/messages?");
+    expect(String(url)).toContain("label=Notify%2FUnnecessary");
     expect(new Headers(request?.headers).get("Authorization")).toBe("Bearer gmail-token");
   });
 
@@ -55,6 +63,7 @@ describe("athensInboxRepository", () => {
       .resolves.toEqual([MOCK_INBOX_MESSAGES[0]]);
     const [url, request] = fetchMock.mock.calls[0]!;
     expect(String(url)).toContain("/athens-lens/gmail/message-bodies?ids=42%2C43");
+    expect(String(url)).toContain("label=Notify%2FUnnecessary");
     expect(new Headers(request?.headers).get("Authorization")).toBe("Bearer gmail-token");
   });
 });

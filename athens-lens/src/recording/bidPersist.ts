@@ -15,7 +15,7 @@ function extensionApi() {
 }
 
 type DigestResponse =
-  | { ok: true; mimeType: string; byteLength: number; filename: string; sha256: string }
+  | { ok: true; mimeType: string; byteLength: number; filename: string }
   | { ok: false; error?: string };
 
 type PutResponse = { ok: true } | { ok: false; error?: string };
@@ -154,7 +154,6 @@ export async function uploadAthensLensRecording(
       contentType: digest.mimeType || "video/webm",
       fileName: digest.filename,
       byteCount: digest.byteLength,
-      sha256: digest.sha256,
     }),
   });
 

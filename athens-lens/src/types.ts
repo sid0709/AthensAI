@@ -62,7 +62,7 @@ export interface InboxMessage {
 }
 
 export interface InboxRepository {
-  listMessages(session: Session): Promise<InboxSnapshot>;
+  listMessages(session: Session, options?: { page?: number; pageSize?: number }): Promise<InboxSnapshot>;
   loadMessageBodies(session: Session, messageIds: readonly string[]): Promise<readonly InboxMessage[]>;
 }
 
@@ -71,4 +71,8 @@ export interface InboxSnapshot {
   messages: readonly InboxMessage[];
   total: number;
   unreadCount: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+  label?: string;
 }

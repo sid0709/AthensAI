@@ -24,6 +24,7 @@ interface WorkspaceCacheState {
   hydrated: boolean;
   setJobs(profileId: string, jobs: readonly Job[], refreshedAt?: number): void;
   setInbox(profileId: string, snapshot: InboxSnapshot, refreshedAt?: number): void;
+  appendInbox(profileId: string, page: InboxSnapshot, refreshedAt?: number): void;
   setMessageBodies(profileId: string, messages: readonly InboxMessage[], refreshedAt?: number): void;
   clearProfile(profileId: string): void;
   setHydrated(): void;
@@ -121,6 +122,34 @@ export const useWorkspaceCache = create<WorkspaceCacheState>()(
               ...state.bodiesByProfile,
               [profileId]: retainedBodies
             }
+          };
+        });
+      },
+      appendInbox: (profileId, page, refreshedAt = Date.now()) => {
+        runtimeInboxWrites.add(profileId);
+        set((state) => {
+          const current = state.inboxByProfile[profileId]?.data;
+          const existing = current?.messages ?? [];
+          const seen = new Set(existing.map((message) => message.id));
+          const mergedMessages = [
+            ...existing,
+            ...page.messages.filter((message) => !seen.has(message.id)),
+          ];
+          const snapshot: InboxSnapshot = {
+            accountEmail: page.accountEmail || current?.accountEmail || "",
+            messages: mergedMessages,
+            total: page.total || current?.total || mergedMessages.length,
+            unreadCount: mergedMessages.filter((message) => message.isUnread).length,
+            page: page.page,
+            pageSize: page.pageSize,
+            hasMore: Boolean(page.hasMore),
+            label: page.label || current?.label,
+          };
+          return {
+            inboxByProfile: {
+              ...state.inboxByProfile,
+              [profileId]: { data: snapshot, refreshedAt },
+            },
           };
         });
       },

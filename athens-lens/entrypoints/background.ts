@@ -673,7 +673,6 @@ export default defineBackground(() => {
           mimeType: response.mimeType,
           byteLength: response.byteLength,
           filename: response.filename,
-          sha256: response.sha256,
         });
       })().catch((error: unknown) => {
         sendResponse({

@@ -1,14 +1,16 @@
 import { resolveMailCredentials } from "../services/mail/credentials.js";
 import {
 	fetchInboxBodiesByUid,
-	fetchRecentInboxEnvelopes,
+	fetchLabelMailboxEnvelopes,
 } from "../services/mail/imapClient.js";
 import { extractVerificationCode } from "../services/mail/verificationCode.js";
 
-const DEFAULT_MESSAGE_LIMIT = 15;
-const MAX_MESSAGE_LIMIT = 25;
-const MAX_BODY_BATCH_SIZE = 15;
+const DEFAULT_PAGE_SIZE = 15;
+const MAX_PAGE_SIZE = 40;
+const MAX_BODY_BATCH_SIZE = 8;
 const MAX_MESSAGE_TEXT_LENGTH = 100_000;
+/** Gmail label mailbox used by Athens Lens (IMAP folder path). */
+const ATHENS_LENS_GMAIL_LABEL = "Notify/Unnecessary";
 
 function text(value) {
 	return typeof value === "string" ? value.trim() : "";
@@ -83,20 +85,28 @@ export async function listAthensLensGmailMessages(req, res) {
 		const credentials = await mailCredentials(req, res);
 		if (!credentials) return;
 
-		const requestedLimit = Number.parseInt(String(req.query?.limit || DEFAULT_MESSAGE_LIMIT), 10);
-		const limit = Math.max(1, Math.min(MAX_MESSAGE_LIMIT, requestedLimit || DEFAULT_MESSAGE_LIMIT));
-		const liveMessages = await fetchRecentInboxEnvelopes(
+		const page = Math.max(1, Number.parseInt(String(req.query?.page || "1"), 10) || 1);
+		const requestedSize = Number.parseInt(String(req.query?.pageSize || DEFAULT_PAGE_SIZE), 10);
+		const pageSize = Math.max(1, Math.min(MAX_PAGE_SIZE, requestedSize || DEFAULT_PAGE_SIZE));
+		const label = text(req.query?.label) || ATHENS_LENS_GMAIL_LABEL;
+
+		const live = await fetchLabelMailboxEnvelopes(
 			credentials.email,
 			credentials.password,
-			limit,
+			label,
+			{ page, pageSize },
 		);
-		const messages = liveMessages.map(mapAthensLensGmailEnvelope).filter((message) => message.id);
+		const messages = (live.messages || []).map(mapAthensLensGmailEnvelope).filter((message) => message.id);
 
 		return res.json({
 			success: true,
 			accountEmail: credentials.email,
+			label,
+			page,
+			pageSize,
+			hasMore: Boolean(live.hasMore),
 			messages,
-			total: messages.length,
+			total: Number(live.total) || messages.length,
 			unreadCount: messages.filter((message) => message.isUnread).length,
 		});
 	} catch (error) {
@@ -104,7 +114,7 @@ export async function listAthensLensGmailMessages(req, res) {
 		return res.status(502).json({
 			success: false,
 			code: "GMAIL_UNAVAILABLE",
-			message: "Gmail could not be loaded. Check the profile email and Google app password.",
+			message: "Gmail could not be loaded. Check the profile email, Google app password, and Notify/Unnecessary label.",
 		});
 	}
 }
@@ -128,7 +138,13 @@ export async function listAthensLensGmailMessageBodies(req, res) {
 
 		const credentials = await mailCredentials(req, res);
 		if (!credentials) return;
-		const liveMessages = await fetchInboxBodiesByUid(credentials.email, credentials.password, ids);
+		const label = text(req.query?.label) || ATHENS_LENS_GMAIL_LABEL;
+		const liveMessages = await fetchInboxBodiesByUid(
+			credentials.email,
+			credentials.password,
+			ids,
+			{ mailboxPath: label },
+		);
 		const messages = liveMessages.map(mapAthensLensGmailMessage).filter((message) => message.id);
 		return res.json({ success: true, messages });
 	} catch (error) {
@@ -141,4 +157,4 @@ export async function listAthensLensGmailMessageBodies(req, res) {
 	}
 }
 
-export const athensLensMailControllerTest = { isoDate, paragraphs };
+export const athensLensMailControllerTest = { isoDate, paragraphs, ATHENS_LENS_GMAIL_LABEL };

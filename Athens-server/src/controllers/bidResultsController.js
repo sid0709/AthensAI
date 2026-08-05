@@ -23,6 +23,7 @@ import {
 	beginBidRecordingResumableUpload,
 	completeBidRecordingResumableUpload,
 } from "../services/firebase/bidRecordingUpload.js";
+import { getSignedStorageUrl } from "../services/firebase/firebaseExplorer.js";
 import {
 	appendBidReviewEvent,
 	listBidReviewEvents,
@@ -555,6 +556,47 @@ export async function getBidResultStats(req, res) {
 			success: false,
 			error: err.message || "Failed to load bid stats.",
 		});
+	}
+}
+
+/**
+ * GET /bid-results/recording-url?applierName=&path=
+ * Sign a bid-recording Storage path for Bid Management playback (not admin-only).
+ */
+export async function getBidRecordingUrl(req, res) {
+	try {
+		const applierName = String(req.query.applierName ?? "").trim();
+		const storagePath = String(req.query.path ?? "").trim().replace(/^\/+/, "");
+		if (!applierName) {
+			return res.status(400).json({ success: false, error: "applierName is required." });
+		}
+		if (!storagePath || storagePath.includes("..")) {
+			return res.status(400).json({ success: false, error: "path is required." });
+		}
+		if (!storagePath.startsWith("bid-recordings/")) {
+			return res.status(400).json({ success: false, error: "Only bid recording paths are allowed." });
+		}
+
+		const collection = getVendorTasksCollection();
+		if (!collection) {
+			return res.status(503).json({ success: false, error: "Firestore is not connected." });
+		}
+
+		const doc = await collection.findOne({
+			applierName,
+			recordingPath: storagePath,
+		});
+		if (!doc) {
+			return res.status(404).json({ success: false, error: "Recording was not found for this profile." });
+		}
+
+		const signed = await getSignedStorageUrl(storagePath);
+		return res.json({ success: true, ...signed });
+	} catch (err) {
+		console.error("[bid-results] recording-url failed", err);
+		const message = err.message || "Failed to sign recording URL.";
+		const status = /not found/i.test(message) ? 404 : 500;
+		return res.status(status).json({ success: false, error: message });
 	}
 }
 

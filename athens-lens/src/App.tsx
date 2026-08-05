@@ -7,7 +7,7 @@ import { JobsWorkspace } from "./jobs/JobsWorkspace";
 import { athensJobsRepository } from "./jobs/jobsRepository";
 import { useWorkspaceRoute } from "./navigation/routes";
 import { useWorkspaceCache } from "./state/workspaceCache";
-import { invalidateWorkspaceRequests, warmWorkspaceLists } from "./state/workspaceData";
+import { invalidateWorkspaceRequests, refreshJobs, warmWorkspaceLists } from "./state/workspaceData";
 import {
   AiAnswerPanel,
   BidOutcomeToast,
@@ -173,6 +173,9 @@ export function App({
               return next;
             });
           }
+          // Bid-complete jobs drop out of Bid Ready — refresh the Lens jobs list.
+          invalidateWorkspaceRequests(session.profileId);
+          void refreshJobs(session, jobsRepository).catch(() => undefined);
         }}
       />
       <AiAnswerPanel

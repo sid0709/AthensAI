@@ -45,7 +45,7 @@ export function refreshInbox(session: Session, repository: InboxRepository): Pro
   if (existing) return existing;
   const version = nextVersion(inboxRequestVersion, session.profileId);
 
-  const request = Promise.resolve().then(() => repository.listMessages(session)).then((snapshot) => {
+  const request = Promise.resolve().then(() => repository.listMessages(session, { page: 1 })).then((snapshot) => {
     if (inboxRequestVersion.get(session.profileId) === version) {
       useWorkspaceCache.getState().setInbox(session.profileId, snapshot);
     }
@@ -55,6 +55,18 @@ export function refreshInbox(session: Session, repository: InboxRepository): Pro
   });
   requests.set(session.profileId, request);
   return request;
+}
+
+export async function loadMoreInbox(
+  session: Session,
+  repository: InboxRepository,
+): Promise<InboxSnapshot> {
+  const current = useWorkspaceCache.getState().inboxByProfile[session.profileId]?.data;
+  const nextPage = Math.max(1, (current?.page ?? 1) + 1);
+  const pageSize = current?.pageSize ?? 15;
+  const snapshot = await repository.listMessages(session, { page: nextPage, pageSize });
+  useWorkspaceCache.getState().appendInbox(session.profileId, snapshot);
+  return snapshot;
 }
 
 export async function loadInboxBodies(

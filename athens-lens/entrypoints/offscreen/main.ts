@@ -53,6 +53,7 @@ function pickMimeType(): string {
 
 async function getTabStream(streamId: string): Promise<MediaStream> {
   // Chrome tab capture requires the legacy mandatory constraint shape.
+  // Keep resolution/fps low — recordings are for review, not archival quality.
   return navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
@@ -60,9 +61,9 @@ async function getTabStream(streamId: string): Promise<MediaStream> {
       mandatory: {
         chromeMediaSource: "tab",
         chromeMediaSourceId: streamId,
-        maxWidth: 1280,
-        maxHeight: 720,
-        maxFrameRate: 15,
+        maxWidth: 640,
+        maxHeight: 360,
+        maxFrameRate: 6,
       },
     },
   });
@@ -70,11 +71,6 @@ async function getTabStream(streamId: string): Promise<MediaStream> {
 
 function stopStream(stream: MediaStream | null | undefined) {
   stream?.getTracks().forEach((track) => track.stop());
-}
-
-async function sha256Hex(blob: Blob): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 async function putResumable(uploadUrl: string, blob: Blob) {
@@ -107,7 +103,7 @@ async function startRecording(sessionId: string, streamId: string) {
   const mimeType = pickMimeType();
   const mediaRecorder = new MediaRecorder(stream, {
     mimeType,
-    videoBitsPerSecond: 900_000,
+    videoBitsPerSecond: 180_000,
   });
   mediaRecorder.ondataavailable = (event) => {
     if (event.data?.size) chunks.push(event.data);
@@ -172,7 +168,6 @@ async function recordingDigest(sessionId: string) {
     mimeType: pending.mimeType,
     byteLength: pending.blob.size,
     filename: pending.filename,
-    sha256: await sha256Hex(pending.blob),
   };
 }
 

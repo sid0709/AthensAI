@@ -19,7 +19,7 @@ export default defineConfig({
     return {
       name: "Athens Lens",
       description: "A focused job search assistant in your Chrome side panel.",
-      version: "0.3.0",
+      version: "0.3.1",
       minimum_chrome_version: "116",
       permissions: ["sidePanel", "storage", "tabs", "activeTab", "tabCapture", "scripting", "offscreen", "downloads", "webNavigation"],
       host_permissions: [...apiHosts, "http://*/*", "https://*/*", "<all_urls>"],

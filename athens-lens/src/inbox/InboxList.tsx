@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import { WorkspaceSidebar } from "../navigation/WorkspaceSidebar";
 import type { WorkspaceView } from "../navigation/routes";
 import type { InboxMessage, Session } from "../types";
@@ -9,6 +10,10 @@ interface InboxListProps {
   jobsCount: number;
   inboxUnreadCount: number;
   session: Session;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  loadMoreError?: string | null;
+  onLoadMore?(): void;
   onSelect(messageId: string): void;
   onNavigate(view: WorkspaceView): void;
   onLogout(): void;
@@ -44,6 +49,10 @@ export function InboxList({
   jobsCount,
   inboxUnreadCount,
   session,
+  hasMore = false,
+  loadingMore = false,
+  loadMoreError = null,
+  onLoadMore,
   onSelect,
   onNavigate,
   onLogout
@@ -53,7 +62,7 @@ export function InboxList({
       activeView="inbox"
       title="Inbox"
       count={messages.length}
-      countLabel={`${messages.length} messages`}
+      countLabel={`${messages.length} · Notify/Unnecessary`}
       jobsCount={jobsCount}
       inboxUnreadCount={inboxUnreadCount}
       session={session}
@@ -76,11 +85,27 @@ export function InboxList({
                 <time dateTime={message.receivedAt}>{formatMessageTime(message.receivedAt)}</time>
               </span>
               <span className="inbox-subject">{message.subject}</span>
-              <span>{message.preview || (message.bodyLoaded ? "" : "Loading preview…")}</span>
+              <span>{message.preview || (message.bodyLoaded ? "" : "Open to load body")}</span>
             </span>
           </button>
         ))}
       </nav>
+      {hasMore || loadMoreError ? (
+        <div className="inbox-load-more">
+          {loadMoreError ? <p className="ai-error" role="alert">{loadMoreError}</p> : null}
+          {hasMore ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={loadingMore}
+              onClick={() => onLoadMore?.()}
+            >
+              {loadingMore ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null}
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </WorkspaceSidebar>
   );
 }

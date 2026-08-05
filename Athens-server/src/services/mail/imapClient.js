@@ -221,6 +221,56 @@ export async function fetchRecentInboxEnvelopes(email, password, count = 15) {
 	});
 }
 
+/**
+ * Page envelopes from a Gmail label mailbox (labels are IMAP folders).
+ * Newest-first; page 1 is the latest pageSize messages.
+ */
+export async function fetchLabelMailboxEnvelopes(
+	email,
+	password,
+	mailboxPath,
+	{ page = 1, pageSize = 15 } = {},
+) {
+	const path = String(mailboxPath || '').trim();
+	if (!path) throw new Error('mailboxPath is required');
+	return withMailboxPath(email, password, path, async (client) => {
+		const total = client.mailbox.exists ?? 0;
+		if (total === 0) return { messages: [], total: 0, hasMore: false };
+
+		const size = Math.min(Math.max(Number(pageSize) || 15, 1), 50);
+		const pageNumber = Math.max(1, Number(page) || 1);
+		const end = total - (pageNumber - 1) * size;
+		const start = Math.max(1, end - size + 1);
+		if (end < 1) return { messages: [], total, hasMore: false };
+
+		const messages = [];
+		for await (const message of client.fetch(`${start}:${end}`, {
+			envelope: true,
+			flags: true,
+			uid: true,
+		})) {
+			const from = message.envelope?.from?.[0];
+			messages.push({
+				uid: message.uid,
+				from: from?.address || '',
+				fromName: from?.name || from?.address || '',
+				subject: message.envelope?.subject || '',
+				date: message.envelope?.date ?? null,
+				seen: message.flags?.has('\\Seen') ?? false,
+			});
+		}
+
+		messages.sort((left, right) =>
+			new Date(right.date || 0).getTime() - new Date(left.date || 0).getTime(),
+		);
+		return {
+			messages,
+			total,
+			hasMore: start > 1,
+		};
+	});
+}
+
 async function parseInboxSource(message) {
 	if (!message?.source) return null;
 	try {
@@ -248,8 +298,8 @@ async function readStreamText(stream) {
 	return Buffer.concat(chunks).toString('utf-8').trim();
 }
 
-async function fetchInboxBodyByUid(email, password, uid, maxBytes) {
-	return withMailboxPath(email, password, 'INBOX', async (client) => {
+async function fetchInboxBodyByUid(email, password, uid, maxBytes, mailboxPath = 'INBOX') {
+	return withMailboxPath(email, password, mailboxPath, async (client) => {
 		const meta = await client.fetchOne(uid, {
 			bodyStructure: true,
 			envelope: true,
@@ -289,14 +339,19 @@ async function fetchInboxBodyByUid(email, password, uid, maxBytes) {
 }
 
 /** Fetch only decoded text MIME parts across pooled connections, never attachments. */
-export async function fetchInboxBodiesByUid(email, password, uids = [], { maxBytes = 100_000 } = {}) {
+export async function fetchInboxBodiesByUid(
+	email,
+	password,
+	uids = [],
+	{ maxBytes = 100_000, mailboxPath = 'INBOX' } = {},
+) {
 	const requested = [...new Set((Array.isArray(uids) ? uids : [])
 		.map(Number)
 		.filter((uid) => Number.isSafeInteger(uid) && uid > 0))];
 	if (!requested.length) return [];
 
 	const results = await Promise.allSettled(
-		requested.map((uid) => fetchInboxBodyByUid(email, password, uid, maxBytes)),
+		requested.map((uid) => fetchInboxBodyByUid(email, password, uid, maxBytes, mailboxPath)),
 	);
 	return results.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
 }

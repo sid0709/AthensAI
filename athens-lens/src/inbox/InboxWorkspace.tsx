@@ -3,12 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { AthensApiError } from "../api/athensApi";
 import type { WorkspaceRoute, WorkspaceView } from "../navigation/routes";
 import { mergeCachedInboxBodies, useWorkspaceCache } from "../state/workspaceCache";
-import { loadInboxBodies, refreshInbox } from "../state/workspaceData";
+import { loadInboxBodies, loadMoreInbox, refreshInbox } from "../state/workspaceData";
 import type { InboxRepository, Session } from "../types";
 import { InboxList } from "./InboxList";
 import { MessageDetail } from "./MessageDetail";
-
-const BACKGROUND_BODY_BATCH_SIZE = 5;
 
 interface InboxWorkspaceProps {
   session: Session;
@@ -39,6 +37,8 @@ export function InboxWorkspace({
   const [bodyError, setBodyError] = useState<{ key: string; message: string } | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [bodyAttempt, setBodyAttempt] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const listRequestKey = `${session.profileId}:${loadAttempt}`;
 
   useEffect(() => {
@@ -63,6 +63,7 @@ export function InboxWorkspace({
   const selectedMessage = messages.find((message) => message.id === selectedMessageId) ?? messages[0] ?? null;
   const bodyRequestKey = `${selectedMessageId ?? "none"}:${bodyAttempt}`;
 
+  // Only load the selected message body — keeps inbox list snappy.
   useEffect(() => {
     if (!selectedMessage || selectedMessage.bodyLoaded) return;
     let isActive = true;
@@ -79,25 +80,27 @@ export function InboxWorkspace({
     };
   }, [bodyRequestKey, inboxRepository, selectedMessage, session]);
 
-  useEffect(() => {
-    if (!snapshot) return;
-    const remainingIds = snapshot.messages
-      .filter((message) => message.id !== selectedMessageId && !message.bodyLoaded)
-      .map((message) => message.id);
-    for (let offset = 0; offset < remainingIds.length; offset += BACKGROUND_BODY_BATCH_SIZE) {
-      const batch = remainingIds.slice(offset, offset + BACKGROUND_BODY_BATCH_SIZE);
-      void loadInboxBodies(session, inboxRepository, batch).catch(() => undefined);
-    }
-  }, [inboxRepository, selectedMessageId, session, snapshot]);
-
   const currentLoadError = loadError?.key === listRequestKey ? loadError.message : null;
   const currentBodyError = bodyError?.key === bodyRequestKey ? bodyError.message : null;
+
+  async function handleLoadMore() {
+    if (loadingMore || !snapshot?.hasMore) return;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    try {
+      await loadMoreInbox(session, inboxRepository);
+    } catch (error) {
+      setLoadMoreError(error instanceof Error ? error.message : "Could not load more messages.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   if (!snapshot && !currentLoadError) {
     return (
       <main className="app-status" role="status">
         <div className="status-logo"><MailStatusIcon /></div>
-        <p>Loading Gmail inbox…</p>
+        <p>Loading Notify/Unnecessary…</p>
       </main>
     );
   }
@@ -127,6 +130,10 @@ export function InboxWorkspace({
         jobsCount={jobsCount}
         inboxUnreadCount={snapshot?.unreadCount ?? 0}
         session={session}
+        hasMore={Boolean(snapshot?.hasMore)}
+        loadingMore={loadingMore}
+        loadMoreError={loadMoreError}
+        onLoadMore={() => void handleLoadMore()}
         onSelect={(messageId) => onNavigate({ view: "inbox", itemId: messageId })}
         onNavigate={onNavigateView}
         onLogout={() => void onLogout()}

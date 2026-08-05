@@ -39,6 +39,7 @@ import { MediaPlayerModal } from "./components/MediaPlayerModal";
 import { BidDetailPane } from "./components/BidDetailPane";
 import { useBidResults } from "./hooks/useBidResults";
 import { useRecordingUrl } from "./hooks/useRecordingUrl";
+import { useApplier } from "@/context/applier-context";
 import "./bid-management.css";
 
 const DND_TYPE = "application/x-bid-result-id";
@@ -378,6 +379,7 @@ function promptRejectReason(): string | null {
 }
 
 export function BidManagementPage() {
+  const { applier } = useApplier();
   const {
     results: allResults,
     stats,
@@ -444,6 +446,7 @@ export function BidManagementPage() {
     error: playingUrlError,
   } = useRecordingUrl(
     playing ? playingResult?.recording?.storagePath || null : null,
+    applier?.name || null,
   );
 
   const openDay = (dayKey: string) => {

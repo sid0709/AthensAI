@@ -115,6 +115,26 @@ function normalizeBidResult(row: BidResult): BidResult {
   };
 }
 
+export async function fetchBidRecordingUrl(
+  applierName: string,
+  storagePath: string,
+): Promise<{
+  bucket: string;
+  path: string;
+  url: string;
+  expiresInMs: number;
+  contentType: string | null;
+  size: number;
+  name: string;
+}> {
+  const params = new URLSearchParams({
+    applierName,
+    path: storagePath,
+  });
+  const res = await fetch(`${API_BASE}/bid-results/recording-url?${params}`);
+  return parseJson(res);
+}
+
 export async function fetchBidResults(applierName: string): Promise<BidResult[]> {
   const params = new URLSearchParams({ applierName });
   const res = await fetch(`${API_BASE}/bid-results?${params}`);
