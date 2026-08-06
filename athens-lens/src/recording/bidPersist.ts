@@ -158,7 +158,7 @@ export async function uploadAthensLensRecording(
       sessionId: input.recordingSessionId,
       applyUrl: input.applyUrl || undefined,
       bidderName: session.displayName || session.username,
-      contentType: digest.mimeType || "video/webm",
+      contentType: digest.mimeType || "video/mp4",
       fileName: digest.filename,
       byteCount: digest.byteLength,
     }),

@@ -77,7 +77,7 @@ function installChromeStub(overrides?: {
       };
     }
     if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
-      return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
+      return { ok: true, tabId: 42, filename: "athens-lens-recording-test.mp4" };
     }
     if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
       return { ok: true, sessions: [] };

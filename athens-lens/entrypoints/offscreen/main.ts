@@ -1,3 +1,11 @@
+import {
+  pickRecordingMimeType,
+  recordingCaptureMandatory,
+  recordingFileExtension,
+  RECORDING_VIDEO_BITS_PER_SECOND,
+  fitRecordingFrame,
+} from "../../src/recording/recordingCapture";
+
 type StartMessage = {
   type: "OFFSCREEN_START_RECORDING";
   sessionId: string;
@@ -50,34 +58,40 @@ const recorders = new Map<string, RecorderState>();
 const pendingRecordings = new Map<string, PendingRecording>();
 const relayPeers = new Map<string, RTCPeerConnection>();
 
-function pickMimeType(): string {
-  const candidates = [
-    "video/webm;codecs=vp9",
-    "video/webm;codecs=vp8",
-    "video/webm",
-  ];
-  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "video/webm";
-}
-
 async function getCaptureStream(
   streamId: string,
   captureSource: "tab" | "desktop",
 ): Promise<MediaStream> {
   // Chrome capture stream IDs require the legacy mandatory constraint shape.
-  // Keep resolution/fps low — recordings are for review, not archival quality.
+  // maxWidth/maxHeight cap at 1024×768; Chrome preserves aspect ratio inside that box.
   return navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
       // @ts-expect-error Chrome tab-capture constraints are not in the DOM typings.
-      mandatory: {
-        chromeMediaSource: captureSource,
-        chromeMediaSourceId: streamId,
-        maxWidth: 640,
-        maxHeight: 360,
-        maxFrameRate: 6,
-      },
+      mandatory: recordingCaptureMandatory(captureSource, streamId),
     },
   });
+}
+
+/** If the track is larger than our cap, ask for a downscale (ratio preserved). */
+async function clampTrackToRecordingFrame(stream: MediaStream) {
+  const track = stream.getVideoTracks()[0];
+  if (!track) return;
+  const settings = track.getSettings?.() || {};
+  const width = Number(settings.width) || 0;
+  const height = Number(settings.height) || 0;
+  if (width <= 0 || height <= 0) return;
+  const fitted = fitRecordingFrame(width, height);
+  if (fitted.width === width && fitted.height === height) return;
+  try {
+    await track.applyConstraints({
+      width: { ideal: fitted.width, max: fitted.width },
+      height: { ideal: fitted.height, max: fitted.height },
+      frameRate: { ideal: 15, max: 15 },
+    });
+  } catch {
+    // Some chromeMediaSource tracks reject applyConstraints — capture max* still applies.
+  }
 }
 
 function stopStream(stream: MediaStream | null | undefined) {
@@ -110,6 +124,7 @@ async function startRecording(
   captureSource: "tab" | "desktop" = "tab",
 ) {
   const stream = await getCaptureStream(streamId, captureSource);
+  await clampTrackToRecordingFrame(stream);
   startRecordingFromStream(sessionId, stream);
 }
 
@@ -119,10 +134,10 @@ function startRecordingFromStream(sessionId: string, stream: MediaStream) {
   }
   pendingRecordings.delete(sessionId);
   const chunks: Blob[] = [];
-  const mimeType = pickMimeType();
+  const mimeType = pickRecordingMimeType();
   const mediaRecorder = new MediaRecorder(stream, {
     mimeType,
-    videoBitsPerSecond: 180_000,
+    videoBitsPerSecond: RECORDING_VIDEO_BITS_PER_SECOND,
   });
   mediaRecorder.ondataavailable = (event) => {
     if (event.data?.size) chunks.push(event.data);
@@ -172,6 +187,7 @@ async function startRelayRecording(
       throw new Error("The selected tab did not provide a video track.");
     }
 
+    await clampTrackToRecordingFrame(stream);
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
     await waitForIceGathering(peer);
@@ -210,7 +226,7 @@ async function stopRecording(sessionId: string, filename?: string) {
   relayPeers.get(sessionId)?.close();
   relayPeers.delete(sessionId);
 
-  const extension = recorder.mimeType.includes("mp4") ? "mp4" : "webm";
+  const extension = recordingFileExtension(recorder.mimeType);
   const downloadName = filename || `athens-lens-recording-${Date.now()}.${extension}`;
   pendingRecordings.set(sessionId, {
     blob,

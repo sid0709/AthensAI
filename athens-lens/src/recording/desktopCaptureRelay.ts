@@ -1,3 +1,5 @@
+import { recordingCaptureMandatory } from "./recordingCapture";
+
 export type DesktopCaptureRelay = {
   offer: RTCSessionDescriptionInit;
   connect(answer: RTCSessionDescriptionInit): Promise<void>;
@@ -40,13 +42,7 @@ export async function createDesktopCaptureRelay(
     audio: false,
     video: {
       // @ts-expect-error Chrome desktop-capture constraints are not in DOM typings.
-      mandatory: {
-        chromeMediaSource: "desktop",
-        chromeMediaSourceId: streamId,
-        maxWidth: 640,
-        maxHeight: 360,
-        maxFrameRate: 6,
-      },
+      mandatory: recordingCaptureMandatory("desktop", streamId),
     },
   });
   const peer = new RTCPeerConnection({ iceServers: [] });
