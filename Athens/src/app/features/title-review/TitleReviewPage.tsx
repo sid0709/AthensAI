@@ -98,35 +98,29 @@ function TitleReviewRow({
   selected: boolean;
   onSelect: (id: string, shiftKey: boolean) => void;
 }) {
-  const selectable = tab !== "unreviewed";
   const scanning = job.titleReview?.processingState === "scanning";
   return (
     <article
-      role={selectable ? "button" : undefined}
-      tabIndex={selectable ? 0 : undefined}
-      aria-pressed={selectable ? selected : undefined}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
       onClick={(event) => {
-        if (!selectable || (event.target as HTMLElement).closest("a,button")) return;
+        if ((event.target as HTMLElement).closest("a,button")) return;
         onSelect(job.id, event.shiftKey);
       }}
       onKeyDown={(event) => {
-        if (!selectable) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onSelect(job.id, event.shiftKey);
         }
       }}
       className={cn(
-        "grid gap-2 border-b border-border/60 px-3 py-2 transition-colors lg:items-center",
-        selectable
-          ? "cursor-pointer lg:grid-cols-[auto_minmax(12rem,1.2fr)_minmax(15rem,2fr)_auto]"
-          : "lg:grid-cols-[minmax(12rem,1.2fr)_minmax(15rem,2fr)_auto]",
+        "grid cursor-pointer gap-2 border-b border-border/60 px-3 py-2 transition-colors lg:items-center",
+        "lg:grid-cols-[auto_minmax(12rem,1.2fr)_minmax(15rem,2fr)_auto]",
         selected ? "bg-primary/[0.05]" : "hover:bg-muted/30",
       )}
     >
-      {selectable ? (
-        <Checkbox checked={selected} className="pointer-events-none mt-1 lg:mt-0" aria-label={`Select ${job.title}`} />
-      ) : null}
+      <Checkbox checked={selected} className="pointer-events-none mt-1 lg:mt-0" aria-label={`Select ${job.title}`} />
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
           <h2 className="truncate text-xs font-semibold leading-4 text-foreground"><ExtensionSafeText value={job.title} /></h2>
@@ -649,31 +643,30 @@ export function TitleReviewPage() {
 
           <div className="flex flex-wrap items-center gap-2 border-b border-border/60 bg-muted/20 px-3 py-2.5">
             {tab === "unreviewed" ? (
-              <span className="text-xs text-muted-foreground">These jobs remain hidden until title review finishes.</span>
-            ) : (
-              <>
-                <label className="flex cursor-pointer items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={allOnPageSelected ? true : selectedOnPage > 0 ? "indeterminate" : false}
-                    onCheckedChange={() => selectAllOnPage(pageIds, allOnPageSelected)}
-                    disabled={loading || jobs.length === 0}
-                  />
-                  <ExtensionSafeText value={selectedIds.size ? `${selectedIds.size} selected` : "Select page"} />
-                </label>
-                <div className="ml-auto flex items-center gap-2">
-                  {tab === "review_required" ? (
-                    <Button size="sm" className="h-8 gap-1.5" onClick={() => void approveSelected()} disabled={!selectedIds.size || mutation !== null}>
-                      {mutation === "approve" ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                      Approve
-                    </Button>
-                  ) : null}
-                  <Button variant="outline" size="sm" className="h-8 gap-1.5 text-destructive" onClick={() => setDeleteOpen(true)} disabled={!selectedIds.size || mutation !== null}>
-                    {mutation === "remove" ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                    Remove
-                  </Button>
-                </div>
-              </>
-            )}
+              <span className="text-xs text-muted-foreground">
+                Hidden from Job Search until approved. Approve manually or wait for AI review.
+              </span>
+            ) : null}
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <Checkbox
+                checked={allOnPageSelected ? true : selectedOnPage > 0 ? "indeterminate" : false}
+                onCheckedChange={() => selectAllOnPage(pageIds, allOnPageSelected)}
+                disabled={loading || jobs.length === 0}
+              />
+              <ExtensionSafeText value={selectedIds.size ? `${selectedIds.size} selected` : "Select page"} />
+            </label>
+            <div className="ml-auto flex items-center gap-2">
+              {tab === "failed" ? null : (
+                <Button size="sm" className="h-8 gap-1.5" onClick={() => void approveSelected()} disabled={!selectedIds.size || mutation !== null}>
+                  {mutation === "approve" ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+                  Approve
+                </Button>
+              )}
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-destructive" onClick={() => setDeleteOpen(true)} disabled={!selectedIds.size || mutation !== null}>
+                {mutation === "remove" ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                Remove
+              </Button>
+            </div>
           </div>
 
           {deletionProgress ? (

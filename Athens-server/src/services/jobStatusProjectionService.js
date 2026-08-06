@@ -194,6 +194,7 @@ function projectionFromRow({ profileId, jobId, job, row, mutationId, existing = 
 		profileId: String(profileId),
 		jobId: String(jobId),
 		sourceCatalog: canonicalJobCatalog(job?.sourceCatalog),
+		source: String(job?.source || existing?.source || '').trim() || null,
 		state,
 		...projectionDates(row),
 		postedAt: asDate(job?.postedAt || job?._createdAt || job?.createdAt) || now,
@@ -647,6 +648,7 @@ export async function syncJobStatusVisibility(jobIds = []) {
 					visibleInJobSearch,
 					isPublic: job ? publicJob(job) : previous.isPublic === true,
 					extensionV2: job ? isExtensionV2Job(job) : previous.extensionV2 === true,
+					source: job ? (String(job.source || '').trim() || previous.source || null) : previous.source || null,
 					postedAt: asDate(job?.postedAt || job?._createdAt || job?.createdAt) || previous.postedAt || new Date(),
 					updatedAt: new Date(),
 				};

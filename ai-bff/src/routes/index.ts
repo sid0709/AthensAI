@@ -34,11 +34,12 @@ export function createRoutes(kit: AiKit) {
     asyncHandler(async (req, res) => {
       const body = mergeCorrelation(req, parseChatRequest(req.body));
       const withKeys = applyBearerApiKeys(req, body);
-      if (withKeys.stream) {
-        throw new HttpError(501, 'Streaming is not implemented yet. Set stream: false.');
-      }
       const requestAbort = requestAbortController(req, res);
       try {
+        if (withKeys.stream) {
+          await writeOpenAiChatStream(kit, withKeys, req, res, requestAbort.signal);
+          return;
+        }
         const result = await kit.chat(withKeys, { signal: requestAbort.signal });
         if (!res.writableEnded && !res.destroyed) res.json(result);
       } catch (error) {
@@ -82,12 +83,12 @@ export function createRoutes(kit: AiKit) {
       }));
       const withKeys = applyBearerApiKeys(req, mapped);
 
-      if (withKeys.stream) {
-        throw new HttpError(501, 'Streaming is not implemented yet. Set stream: false.');
-      }
-
       const requestAbort = requestAbortController(req, res);
       try {
+        if (withKeys.stream) {
+          await writeOpenAiChatStream(kit, withKeys, req, res, requestAbort.signal);
+          return;
+        }
         const result = await kit.chat(withKeys, { signal: requestAbort.signal });
         if (!res.writableEnded && !res.destroyed) res.json(toOpenAiCompletion(result));
       } catch (error) {
@@ -122,6 +123,61 @@ export function createRoutes(kit: AiKit) {
   );
 
   return router;
+}
+
+async function writeOpenAiChatStream(
+  kit: AiKit,
+  request: import('../types.js').ChatRequest,
+  _req: import('express').Request,
+  res: import('express').Response,
+  signal: AbortSignal,
+) {
+  const write = (payload: unknown) => {
+    if (res.writableEnded || res.destroyed) return;
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const beginSse = () => {
+    if (res.headersSent) return;
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof (res as { flushHeaders?: () => void }).flushHeaders === 'function') {
+      (res as { flushHeaders: () => void }).flushHeaders();
+    }
+  };
+
+  try {
+    let started = false;
+    for await (const { chunk } of kit.chatStream(request, { signal })) {
+      if (signal.aborted || res.writableEnded || res.destroyed) break;
+      if (!started) {
+        beginSse();
+        started = true;
+      }
+      write(chunk);
+    }
+    if (!started) {
+      // Empty upstream stream — still emit a valid SSE envelope.
+      beginSse();
+    }
+    if (!res.writableEnded && !res.destroyed && !signal.aborted) {
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  } catch (error) {
+    if (signal.aborted || res.writableEnded || res.destroyed) return;
+    if (!res.headersSent) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    // Headers already sent — surface as an SSE error payload, not a JSON 500.
+    write({
+      error: { message, type: 'server_error' },
+    });
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }
 }
 
 function requestAbortController(

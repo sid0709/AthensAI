@@ -1,6 +1,12 @@
 import { stripStylesheetNoise } from "../src/recording/pageTextSanitize";
 import { createCaptureReadyTracker } from "../src/recording/captureReadyTabs";
 import {
+  injectSerializePage,
+  MAX_FORM_TREE_CHARS,
+  isNoiseFrameUrl,
+  type OakInjectSerializeResult,
+} from "../src/oak-forms";
+import {
   armResumeSessionOnTab,
   disarmResumeSessionOnTab,
   flushResumeAuditOutbox,
@@ -38,6 +44,8 @@ type StartRecordingMessage = {
   /** Pre-captured from the side panel click turn (open new tab → getMediaStreamId). */
   tabId?: number | null;
   streamId?: string | null;
+  captureSource?: "tab" | "desktop" | "desktop-relay";
+  relayOffer?: RTCSessionDescriptionInit | null;
   preferredTabId?: number | null;
   job?: JobSnapshot | null;
   expectedResumeName?: string | null;
@@ -151,15 +159,9 @@ type PageTextFrame = {
 const recordingTabs = new Map<string, number>();
 const liveSessions = new Map<string, LiveRecordingSession>();
 const captureReady = createCaptureReadyTracker();
-/** Queued when side-panel Record cannot capture (needs toolbar gesture). */
+/** Queued only when Record was clicked before this tab received an action grant. */
 let pendingRecord: PendingRecord | null = null;
 const CAPTURE_READY_STORAGE_KEY = "athensLensCaptureReadyTabs";
-
-function isActiveTabCaptureError(message: string | undefined | null) {
-  return /activeTab|invoked for the current page|Chrome pages cannot be captured/i.test(
-    message || "",
-  );
-}
 
 function notifyRecordingStarted(session: LiveRecordingSession) {
   void chrome.runtime.sendMessage({
@@ -364,13 +366,14 @@ async function beginOffscreenRecording(
   tabId: number,
   streamId: string,
   applyUrl: string,
-  options?: { navigate?: boolean },
+  options?: { navigate?: boolean; captureSource?: "tab" | "desktop" },
 ) {
   await ensureOffscreenDocument();
   const response = await sendOffscreenMessage({
     type: "OFFSCREEN_START_RECORDING",
     sessionId,
     streamId,
+    captureSource: options?.captureSource || "tab",
   });
   if (!response?.ok) {
     throw new Error(response?.error || "Could not start the recorder.");
@@ -381,6 +384,24 @@ async function beginOffscreenRecording(
     await tabsUpdate(tabId, applyUrl);
   }
   return tabId;
+}
+
+async function beginOffscreenRelayRecording(
+  sessionId: string,
+  tabId: number,
+  offer: RTCSessionDescriptionInit,
+) {
+  await ensureOffscreenDocument();
+  const response = await sendOffscreenMessage({
+    type: "OFFSCREEN_START_RELAY_RECORDING",
+    sessionId,
+    offer,
+  });
+  if (!response?.ok || !response.answer) {
+    throw new Error(response?.error || "Could not connect the selected tab to the recorder.");
+  }
+  recordingTabs.set(sessionId, tabId);
+  return response.answer as RTCSessionDescriptionInit;
 }
 
 function finishStartRecording(
@@ -395,7 +416,10 @@ function finishStartRecording(
     tabId,
     streamId,
     message.applyUrl,
-    { navigate: options.navigate },
+    {
+      navigate: options.navigate,
+      captureSource: message.captureSource === "desktop" ? "desktop" : "tab",
+    },
   )
     .then(async (recordedTabId) => {
       captureReady.remember(recordedTabId, message.applyUrl);
@@ -412,6 +436,36 @@ function finishStartRecording(
         await armLiveSession(live);
       }
       sendResponse({ ok: true, tabId: recordedTabId });
+    })
+    .catch((error: unknown) => {
+      sendResponse({
+        ok: false,
+        tabId,
+        error: error instanceof Error ? error.message : "Could not start recording.",
+      });
+    });
+}
+
+function finishRelayStartRecording(
+  message: StartRecordingMessage,
+  tabId: number,
+  offer: RTCSessionDescriptionInit,
+  sendResponse: (response: unknown) => void,
+) {
+  void beginOffscreenRelayRecording(message.sessionId, tabId, offer)
+    .then(async (answer) => {
+      captureReady.remember(tabId, message.applyUrl);
+      persistCaptureReady();
+      rememberLiveSession(
+        message.sessionId,
+        tabId,
+        message.job,
+        message.expectedResumeName,
+        message.resumeSetFolder,
+      );
+      const live = liveSessions.get(message.sessionId);
+      if (live) await armLiveSession(live);
+      sendResponse({ ok: true, tabId, relayAnswer: answer });
     })
     .catch((error: unknown) => {
       sendResponse({
@@ -693,6 +747,7 @@ function mergeVisibleFrameText(frames: PageTextFrame[], maxChars = MAX_VISIBLE_T
       visibleText: stripStylesheetNoise(frame.visibleText).trim(),
     }))
     .filter((frame) => frame.visibleText.length > 0)
+    .filter((frame) => !isNoiseFrameUrl(frame.url))
     .sort((a, b) => b.visibleText.length - a.visibleText.length);
 
   const selected: PageTextFrame[] = [];
@@ -756,6 +811,113 @@ function formsAsVisibleText(
     .join("\n");
 }
 
+async function readFrameOakFormTree(
+  tabId: number,
+  frameId: number,
+): Promise<OakInjectSerializeResult | null> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      world: "MAIN",
+      func: injectSerializePage,
+    });
+    return results?.[0]?.result || null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeOakFormTrees(
+  frames: Array<OakInjectSerializeResult & { frameUrl?: string }>,
+  maxChars = MAX_FORM_TREE_CHARS,
+): { formTree: string; oakFrameCount: number; nodeCount: number; fieldCount: number } {
+  const usable = frames.filter((frame) => {
+    const url = frame.frameUrl || frame.url;
+    if (isNoiseFrameUrl(url)) return false;
+    return Boolean(String(frame.formTree || "").trim());
+  });
+  if (!usable.length) return { formTree: "", oakFrameCount: 0, nodeCount: 0, fieldCount: 0 };
+
+  // Prefer the densest application frame first (usually the top page).
+  usable.sort((a, b) => (Number(b.fieldCount) || 0) - (Number(a.fieldCount) || 0));
+
+  const parts: string[] = [];
+  let total = 0;
+  let nodeCount = 0;
+  let fieldCount = 0;
+
+  for (let index = 0; index < usable.length; index += 1) {
+    if (total >= maxChars) break;
+    const frame = usable[index]!;
+    nodeCount += Number(frame.nodeCount) || 0;
+    fieldCount += Number(frame.fieldCount) || 0;
+    const header = usable.length > 1
+      ? `[frame ${index + 1}${frame.frameUrl || frame.url ? ` · ${frame.frameUrl || frame.url}` : ""}]\n`
+      : "";
+    const body = String(frame.formTree || "").trim();
+    const chunk = `${header}${body}`.slice(0, maxChars - total);
+    if (!chunk) continue;
+    parts.push(chunk);
+    total += chunk.length;
+  }
+
+  return {
+    formTree: parts.join("\n\n").slice(0, maxChars),
+    oakFrameCount: usable.length,
+    nodeCount,
+    fieldCount,
+  };
+}
+
+async function readTabOakFormTree(tabId: number): Promise<{
+  formTree: string;
+  oakFrameCount: number;
+  nodeCount: number;
+  fieldCount: number;
+  url: string;
+  title: string;
+}> {
+  const frameList = await listTabFrames(tabId);
+  const frameResults: Array<OakInjectSerializeResult & { frameUrl?: string }> = [];
+
+  for (const frame of frameList) {
+    if (isNoiseFrameUrl(frame.url)) continue;
+    const result = await readFrameOakFormTree(tabId, frame.frameId);
+    if (!result?.formTree?.trim()) continue;
+    if (isNoiseFrameUrl(result.url)) continue;
+    frameResults.push({ ...result, frameUrl: frame.url || result.url });
+  }
+
+  if (!frameResults.length) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        world: "MAIN",
+        func: injectSerializePage,
+      });
+      for (const entry of results || []) {
+        const result = entry?.result;
+        if (!result?.formTree?.trim()) continue;
+        if (isNoiseFrameUrl(result.url)) continue;
+        frameResults.push(result);
+      }
+    } catch {
+      // Keep empty.
+    }
+  }
+
+  const merged = mergeOakFormTrees(frameResults);
+  const primary = [...frameResults]
+    .filter((frame) => !isNoiseFrameUrl(frame.frameUrl || frame.url))
+    .sort((a, b) => (Number(b.fieldCount) || 0) - (Number(a.fieldCount) || 0))[0]
+    || frameResults[0];
+  return {
+    ...merged,
+    url: primary?.url || "",
+    title: primary?.title || "",
+  };
+}
+
 async function readTabPageText(tabId: number) {
   const frameList = await listTabFrames(tabId);
   const frameResults: PageTextFrame[] = [];
@@ -808,25 +970,34 @@ async function readTabPageText(tabId: number) {
     tabUrl = "";
   }
 
-  if (!frameResults.length) {
+  const oak = await readTabOakFormTree(tabId);
+
+  if (!frameResults.length && !oak.formTree) {
     // Still return a context so the Ask AI panel can show empty innerText for debugging.
     return {
       url: tabUrl,
       title: "",
       metaDescription: "",
       visibleText: "",
+      formTree: "",
       forms: [],
       readMeta: {
         tabId,
         frameCount: 0,
         charCount: 0,
         formCount: 0,
-        note: "executeScript returned no frames with text or form fields",
+        formTreeChars: 0,
+        oakFrameCount: 0,
+        oakNodeCount: 0,
+        oakFieldCount: 0,
+        note: "executeScript returned no frames with text, form fields, or Oak tree",
       },
     };
   }
 
-  const { frames: selectedFrames, visibleText: mergedText } = mergeVisibleFrameText(frameResults);
+  const { frames: selectedFrames, visibleText: mergedText } = frameResults.length
+    ? mergeVisibleFrameText(frameResults)
+    : { frames: [] as PageTextFrame[], visibleText: "" };
   const allForms = (selectedFrames.length ? selectedFrames : frameResults)
     .flatMap((frame) => frame.forms || [])
     .slice(0, 120);
@@ -837,12 +1008,15 @@ async function readTabPageText(tabId: number) {
   }
   visibleText = visibleText.slice(0, MAX_VISIBLE_TEXT_CHARS);
 
-  const primary = selectedFrames[0] || frameResults[0]!;
+  const contentPrimary = selectedFrames.find((frame) => !isNoiseFrameUrl(frame.url))
+    || frameResults.find((frame) => !isNoiseFrameUrl(frame.url));
+  const pageUrl = (oak.formTree && oak.url) || contentPrimary?.url || tabUrl || "";
   return {
-    url: primary.url || tabUrl,
-    title: primary.title,
-    metaDescription: primary.metaDescription,
+    url: pageUrl,
+    title: (oak.formTree && oak.title) || contentPrimary?.title || oak.title || "",
+    metaDescription: contentPrimary?.metaDescription || "",
     visibleText,
+    formTree: oak.formTree,
     forms: allForms,
     readMeta: {
       tabId,
@@ -850,16 +1024,23 @@ async function readTabPageText(tabId: number) {
       selectedFrameCount: selectedFrames.length,
       charCount: visibleText.length,
       formCount: allForms.length,
-      truncated: frameResults.some((frame) => frame.visibleText.length > MAX_VISIBLE_TEXT_CHARS),
+      formTreeChars: oak.formTree.length,
+      oakFrameCount: oak.oakFrameCount,
+      oakNodeCount: oak.nodeCount,
+      oakFieldCount: oak.fieldCount,
+      truncated: frameResults.some((frame) => frame.visibleText.length > MAX_VISIBLE_TEXT_CHARS)
+        || oak.formTree.length >= MAX_FORM_TREE_CHARS,
     },
   };
 }
 
 async function resolveReadableTabId(preferredTabId?: number | null) {
-  const preferred = asTabId(preferredTabId) ?? captureReady.snapshot().lastInvokedTabId;
+  // Ask AI always targets the tab the user is looking at — not a prior
+  // recording / toolbar-invoked tab (those often still point at a JD page).
+  const [focused] = await tabsQuery({ active: true, lastFocusedWindow: true });
+  if (focused?.id != null && isCapturableUrl(focused.url)) return focused.id;
 
-  // Prefer the recording / invoked application tab when available — side panel
-  // clicks can make "focused" resolution flaky.
+  const preferred = asTabId(preferredTabId);
   if (preferred != null) {
     try {
       const tab = await tabsGet(preferred);
@@ -868,9 +1049,6 @@ async function resolveReadableTabId(preferredTabId?: number | null) {
       // Fall through.
     }
   }
-
-  const [focused] = await tabsQuery({ active: true, lastFocusedWindow: true });
-  if (focused?.id != null && isCapturableUrl(focused.url)) return focused.id;
 
   const tabs = await tabsQuery({ lastFocusedWindow: true });
   const httpTab = tabs.find((tab) => tab.id != null && isCapturableUrl(tab.url));
@@ -881,18 +1059,27 @@ async function resolveReadableTabId(preferredTabId?: number | null) {
 export default defineBackground(() => {
   restoreCaptureReady();
 
-  // Chrome only grants tabCapture after the extension is invoked for the page
-  // (toolbar icon). Side-panel Record alone is not enough — capture here when
-  // a pending Record is waiting for this tab.
+  // The action click grants capture access for this tab. Do not request and
+  // discard a stream ID merely to open the panel: stream IDs are one-use and
+  // expire quickly. Record can consume the retained tab grant from the panel.
+  // If Record was clicked first, consume this action gesture immediately for
+  // that queued request.
   browser.action.onClicked.addListener((tab) => {
     if (tab?.windowId != null) {
       browser.sidePanel.open({ windowId: tab.windowId }).catch((error: unknown) => {
         console.error("Unable to open the Athens Lens side panel", error);
       });
     }
-    if (tab?.id == null) return;
+    const tabId = asTabId(tab?.id);
+    if (tabId == null) return;
 
-    chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+    const hasPendingRecord = pendingRecord?.tabId === tabId;
+    if (!hasPendingRecord) {
+      void rememberInvokedTabFromAction(tab);
+      return;
+    }
+
+    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
       const captureError = chrome.runtime.lastError?.message;
       void handleLensActionClick(tab, captureError ? null : (streamId || null));
     });
@@ -1002,6 +1189,24 @@ export default defineBackground(() => {
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
       const providedStreamId = typeof message.streamId === "string" ? message.streamId.trim() : "";
       const providedTabId = asTabId(message.tabId);
+
+      if (
+        message.captureSource === "desktop-relay"
+        && message.relayOffer
+        && providedTabId != null
+      ) {
+        if (sessionIdForTab(providedTabId)) {
+          sendResponse({
+            ok: false,
+            tabId: providedTabId,
+            error: "This tab is already recording. Complete that bid first.",
+          });
+          return false;
+        }
+        if (pendingRecord?.tabId === providedTabId) pendingRecord = null;
+        finishRelayStartRecording(message, providedTabId, message.relayOffer, sendResponse);
+        return true;
+      }
 
       // Preferred path: side panel opened apply URL and captured in the click turn.
       if (providedStreamId && providedTabId != null) {

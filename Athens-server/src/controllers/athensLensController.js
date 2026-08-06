@@ -1,35 +1,17 @@
 import bcrypt from "bcrypt";
 import { accountInfoCollection } from "../db/dataStore.js";
 import { listAthensLensJobs } from "../services/athensLensJobsService.js";
-import { answerApplicationFormPage } from "../services/bidJobAnalyzeService.js";
+import {
+	answerApplicationFormPage,
+	streamApplicationFormPage,
+} from "../services/bidJobAnalyzeService.js";
 import {
 	createAthensLensSession,
 	revokeAthensLensSession,
 } from "../services/athensLensSessionService.js";
-import { loadDecryptedAutoBidProfile } from "../services/autoBidProfileSecrets.js";
-import { resolveDefaultModel } from "../services/llm/llmService.js";
 
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-async function resolveLensAnalyzeModel(applierName) {
-	const profile = (await loadDecryptedAutoBidProfile(applierName)) || {};
-	const resolved = resolveDefaultModel(profile);
-	if (resolved.error || !resolved.configured || !resolved.model) {
-		throw Object.assign(
-			new Error(resolved.error || "Set a default AI provider and model in Settings → Profile."),
-			{ status: 400 },
-		);
-	}
-	if (!resolved.apiKey) {
-		const keyLabel = resolved.provider === "openai" ? "OpenAI" : "DeepSeek";
-		throw Object.assign(
-			new Error(`Add your ${keyLabel} API key in Settings → Profile to use Ask AI.`),
-			{ status: 400 },
-		);
-	}
-	return resolved;
 }
 
 async function findAccountByUsername(username) {
@@ -143,31 +125,134 @@ export async function listAthensLensJobsHandler(req, res) {
 }
 
 export async function askAthensLensAi(req, res) {
-	try {
-		const pageContext = req.body?.pageContext;
-		const visibleText = String(pageContext?.visibleText || "").trim();
-		if (!pageContext || typeof pageContext !== "object" || !visibleText) {
-			return res.status(400).json({
-				success: false,
-				code: "MISSING_PAGE_TEXT",
-				message: "Open the application page and try Ask AI again.",
-			});
+	const pageContext = req.body?.pageContext;
+	const visibleText = String(pageContext?.visibleText || "").trim();
+	const formTree = String(pageContext?.formTree || "").trim();
+	if (!pageContext || typeof pageContext !== "object" || (!visibleText && !formTree)) {
+		return res.status(400).json({
+			success: false,
+			code: "MISSING_PAGE_TEXT",
+			message: "Open the application page and try Ask AI again.",
+		});
+	}
+
+	const wantStream = req.body?.stream !== false
+		&& (req.body?.stream === true || String(req.headers.accept || "").includes("text/event-stream"));
+
+	const normalizedContext = {
+		url: String(pageContext.url || ""),
+		title: String(pageContext.title || ""),
+		metaDescription: String(pageContext.metaDescription || ""),
+		visibleText: visibleText.slice(0, 12_000),
+		formTree: formTree.slice(0, 12_000),
+		forms: Array.isArray(pageContext.forms) ? pageContext.forms.slice(0, 120) : [],
+	};
+	const jobId = String(req.body?.jobId || "").trim() || null;
+	const jobTitle = req.body?.jobTitle || req.body?.sessionContext?.jdSummary || null;
+	const applierName = req.athensLensSession.applierName;
+
+	if (wantStream) {
+		res.writeHead(200, {
+			"Content-Type": "text/event-stream; charset=utf-8",
+			"Cache-Control": "no-cache, no-transform",
+			Connection: "keep-alive",
+			"X-Accel-Buffering": "no",
+		});
+		const send = (event, data) => {
+			if (res.destroyed || res.writableEnded) return;
+			res.write(`event: ${event}\n`);
+			res.write(`data: ${JSON.stringify(data)}\n\n`);
+		};
+		let closed = false;
+		req.once("close", () => { closed = true; });
+		const abort = new AbortController();
+		req.once("close", () => abort.abort());
+
+		try {
+			let finalPayload = null;
+			for await (const event of streamApplicationFormPage({
+				pageContext: normalizedContext,
+				applierName,
+				jobTitle,
+				jobId,
+				signal: abort.signal,
+			})) {
+				if (closed) break;
+				if (event.type === "delta") {
+					send("token", { text: event.text || "" });
+					continue;
+				}
+				if (event.type === "answers") {
+					send("answers", { answers: event.answers || [] });
+					continue;
+				}
+				if (event.type === "done") {
+					finalPayload = event;
+					send("done", {
+						success: true,
+						mode: event.mode || "llm-stream",
+						summary: event.summary || "",
+						answers: event.answers || [],
+						pageUrl: normalizedContext.url,
+						pageTitle: normalizedContext.title,
+						usage: event.usage || null,
+						timing: {
+							llmMs: event.durationMs ?? null,
+							ttftMs: event.ttftMs ?? null,
+							model: event.billedModel || event.requestedModel || null,
+						},
+					});
+				}
+			}
+
+			if (jobId && finalPayload) {
+				try {
+					const { persistBidPageAnalysis } = await import("../services/bidAiArtifactPersist.js");
+					await persistBidPageAnalysis({
+						applierName,
+						jobId,
+						result: {
+							summary: finalPayload.summary || "",
+							formAnswers: finalPayload.answers || [],
+							formCount: (finalPayload.answers || []).length,
+							answeredCount: (finalPayload.answers || []).length,
+							pageUrl: normalizedContext.url,
+							pageTitle: normalizedContext.title,
+							applierName,
+						},
+						usage: finalPayload.usage,
+						mode: finalPayload.mode || "llm-stream",
+						call: {
+							requestId: finalPayload.requestId,
+							provider: finalPayload.provider,
+							requestedModel: finalPayload.requestedModel,
+							billedModel: finalPayload.billedModel,
+						},
+					});
+				} catch (persistError) {
+					console.warn("[athens-lens] ask-ai stream persist skipped", persistError?.message || persistError);
+				}
+			}
+		} catch (error) {
+			console.error("[athens-lens] ask-ai stream failed", error?.message || error);
+			if (!closed) {
+				send("error", {
+					message: String(error?.message || "Unable to analyze the open page"),
+					status: error?.status || 500,
+				});
+			}
+		} finally {
+			if (!res.destroyed && !res.writableEnded) res.end();
 		}
+		return;
+	}
 
-		await resolveLensAnalyzeModel(req.athensLensSession.applierName);
-
-		const jobId = String(req.body?.jobId || "").trim() || null;
+	try {
 		const { result, mode, usage, requestId, provider, requestedModel, billedModel } =
 			await answerApplicationFormPage({
-				pageContext: {
-					url: String(pageContext.url || ""),
-					title: String(pageContext.title || ""),
-					metaDescription: String(pageContext.metaDescription || ""),
-					visibleText: visibleText.slice(0, 60_000),
-					forms: Array.isArray(pageContext.forms) ? pageContext.forms.slice(0, 120) : [],
-				},
-				applierName: req.athensLensSession.applierName,
-				jobTitle: req.body?.jobTitle || req.body?.sessionContext?.jdSummary || null,
+				pageContext: normalizedContext,
+				applierName,
+				jobTitle,
 				jobId,
 			});
 
@@ -175,7 +260,7 @@ export async function askAthensLensAi(req, res) {
 			try {
 				const { persistBidPageAnalysis } = await import("../services/bidAiArtifactPersist.js");
 				await persistBidPageAnalysis({
-					applierName: req.athensLensSession.applierName,
+					applierName,
 					jobId,
 					result,
 					usage,

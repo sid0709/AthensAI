@@ -158,7 +158,7 @@ export async function uploadAthensLensRecording(
       sessionId: input.recordingSessionId,
       applyUrl: input.applyUrl || undefined,
       bidderName: session.displayName || session.username,
-      contentType: digest.mimeType || "video/webm",
+      contentType: digest.mimeType || "video/mp4",
       fileName: digest.filename,
       byteCount: digest.byteLength,
     }),
@@ -215,6 +215,14 @@ export async function finishAthensLensBid(input: {
         }]
       : [];
 
+  // "No, not submitted" — throw away local clips only. No Athens API / DB writes.
+  if (!submitted) {
+    for (const part of parts) {
+      await discardRecording(part.recordingSessionId);
+    }
+    return { outcome: "abandoned" as const, uploadedCount: 0 };
+  }
+
   if (input.answers?.length) {
     try {
       await saveAthensLensAnalysis(session, {
@@ -227,14 +235,6 @@ export async function finishAthensLensBid(input: {
     } catch (error) {
       console.warn("Athens Lens: could not persist Ask AI answers", error);
     }
-  }
-
-  if (!submitted) {
-    for (const part of parts) {
-      await discardRecording(part.recordingSessionId);
-    }
-    await skipAthensLensBid(session, jobId);
-    return { outcome: "skipped" as const, uploadedCount: 0 };
   }
 
   if (parts.length > 0) {

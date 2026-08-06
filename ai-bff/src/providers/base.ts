@@ -1,7 +1,9 @@
 import OpenAI from 'openai';
 import type {
   ChatCompletion,
+  ChatCompletionChunk,
   ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions';
 import { resolveModelPricing } from '../pricing.js';
@@ -29,10 +31,52 @@ export interface AiProvider {
   isConfigured(): boolean;
   supportsModel(model: string): boolean;
   chat(params: ProviderChatParams): Promise<ProviderRunResult>;
+  streamChat(params: ProviderChatParams): AsyncGenerator<ChatCompletionChunk, void, unknown>;
 }
 
 function isOpenAiReasoningModel(model: string) {
   return /^(gpt-5|o1|o3|o4)/i.test(model);
+}
+
+function buildChatBody(
+  id: AiProviderId,
+  params: ProviderChatParams,
+  stream: boolean,
+): ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming {
+  // Streaming + json_object often delays first tokens. Prefer prompt-only JSON guidance.
+  let messages = params.messages;
+  let responseFormat: ChatCompletionCreateParamsNonStreaming['response_format'] | undefined;
+  if (stream) {
+    if (params.responseSchema) {
+      messages = preparePromptOnlyStructured(params.messages, params.responseSchema);
+    }
+    responseFormat = undefined;
+  } else {
+    const structured = prepareStructuredChat(id, params.messages, params.responseSchema);
+    messages = structured.messages;
+    responseFormat = structured.responseFormat
+      ?? (params.jsonMode ? { type: 'json_object' as const } : undefined);
+  }
+
+  return {
+    model: params.model,
+    messages,
+    stream,
+    ...(stream ? { stream_options: { include_usage: true } } : {}),
+    ...(params.temperature != null ? { temperature: params.temperature } : {}),
+    ...(id === 'openai'
+      && isOpenAiReasoningModel(params.model)
+      && params.reasoningEffort
+      ? {
+          reasoning_effort: params.reasoningEffort as OpenAiReasoningEffort,
+        }
+      : {}),
+    top_p: params.topP,
+    stop: params.stop,
+    tools: params.tools,
+    tool_choice: params.toolChoice,
+    response_format: responseFormat,
+  };
 }
 
 async function createCompletion(
@@ -72,11 +116,13 @@ export function createOpenAiCompatibleProvider(
         model: params.model,
         messages: structured.messages,
         ...(params.temperature != null ? { temperature: params.temperature } : {}),
-        ...(id === 'openai' && isOpenAiReasoningModel(params.model)
+        ...(id === 'openai'
+          && isOpenAiReasoningModel(params.model)
+          && params.reasoningEffort
           ? {
-              // The installed SDK's union can lag newly released effort values;
-              // OpenAI validates model-specific support at request time.
-              reasoning_effort: params.reasoningEffort as OpenAiReasoningEffort | undefined,
+              // Only send when callers explicitly set an effort. Omitting the
+              // field is the "no reasoning effort" path for gpt-5-nano / Ask AI.
+              reasoning_effort: params.reasoningEffort as OpenAiReasoningEffort,
             }
           : {}),
         top_p: params.topP,
@@ -144,6 +190,17 @@ export function createOpenAiCompatibleProvider(
         cachedTokens,
         raw: completion,
       };
+    },
+
+    async *streamChat(params: ProviderChatParams): AsyncGenerator<ChatCompletionChunk, void, unknown> {
+      if (!client) {
+        throw new Error(`${id} API key is not configured`);
+      }
+      const body = buildChatBody(id, params, true) as ChatCompletionCreateParamsStreaming;
+      const stream = await client.chat.completions.create(body, { signal: params.signal });
+      for await (const chunk of stream) {
+        yield chunk;
+      }
     },
   };
 }

@@ -8,8 +8,9 @@ import {
 import {
 	createBackgroundTask,
 	findActiveBackgroundTask,
+	forceCancelBackgroundTask,
+	isStaleBackgroundTask,
 	listBackgroundTasks,
-	requestBackgroundTaskCancellation,
 } from '../services/backgroundTasks/taskStore.js';
 import { BACKGROUND_TASK_TYPES, publicTaskSnapshot } from '../services/backgroundTasks/taskTypes.js';
 import {
@@ -21,6 +22,7 @@ import { syncJobTitleReviewUpdates } from '../services/jobTitleReview/titleRevie
 import { normalizeJobRemovalIds } from '../services/jobRemovalService.js';
 import { observeHistogram } from '../services/monitoring/metrics.js';
 import { invalidateJobListCountCache } from './jobController.js';
+import { releaseTitleReviewTaskLeases } from '../services/jobTitleReview/titleReviewSession.js';
 
 async function requireBetaApplierName(applierNameRaw, res) {
 	const applierName = String(applierNameRaw || '').trim();
@@ -55,6 +57,17 @@ async function latestTitleTask(profileId) {
 	if (active) return active;
 	const tasks = await listBackgroundTasks(profileId, { limit: 20 });
 	return tasks.find((task) => task.type === BACKGROUND_TASK_TYPES.TITLE_REVIEW) || null;
+}
+
+/** Clear zombie title-review tasks that survive process restarts with Stop forever on. */
+async function recoverStaleTitleReviewTask(profileId) {
+	const active = await findActiveBackgroundTask(profileId, BACKGROUND_TASK_TYPES.TITLE_REVIEW);
+	if (!active || !isStaleBackgroundTask(active)) return active;
+	const cancelled = await forceCancelBackgroundTask(active.id, {
+		reason: 'Stale title review recovered after worker/server restart',
+	});
+	await releaseTitleReviewTaskLeases(active.id).catch(() => 0);
+	return cancelled;
 }
 
 function titleSession(task, counts = {}) {
@@ -113,8 +126,11 @@ export async function getTitleReviewStatus(req, res) {
 		const applierName = await requireBetaApplierName(req.query?.applierName, res);
 		if (!applierName) return;
 		const identity = titleTaskIdentity(req, applierName);
+		const recovered = await recoverStaleTitleReviewTask(identity.profileId);
 		const [task, counts] = await Promise.all([
-			latestTitleTask(identity.profileId),
+			recovered && !['queued', 'running', 'cancelling'].includes(recovered.status)
+				? Promise.resolve(recovered)
+				: latestTitleTask(identity.profileId),
 			getTitleReviewCounts(),
 		]);
 		return res.json({ success: true, ...titleSession(task, counts) });
@@ -159,8 +175,15 @@ export async function stopTitleReview(req, res) {
 		const identity = titleTaskIdentity(req, applierName);
 		const task = await findActiveBackgroundTask(identity.profileId, BACKGROUND_TASK_TYPES.TITLE_REVIEW);
 		if (!task) return res.json({ success: true, stopped: false, message: 'No active session' });
-		const next = await requestBackgroundTaskCancellation(task.id);
-		return res.status(202).json({ success: true, stopped: true, sessionId: next.id, status: next.status });
+		const next = await forceCancelBackgroundTask(task.id, { reason: 'Title review stopped' });
+		await releaseTitleReviewTaskLeases(task.id).catch(() => 0);
+		return res.status(202).json({
+			success: true,
+			stopped: true,
+			sessionId: next?.id || task.id,
+			status: next?.status || 'cancelled',
+			task: next ? publicTaskSnapshot(next) : undefined,
+		});
 	} catch (error) {
 		console.error('POST /api/jobs/title-review/stop error', error);
 		return res.status(500).json({ success: false, error: error.message });
@@ -207,7 +230,11 @@ export async function getTitleReviewBootstrap(req, res) {
 		if (!applierName) return;
 		const result = await listTitleReviewReadModel(req.query || {});
 		const identity = titleTaskIdentity(req, applierName);
-		const session = titleSession(await latestTitleTask(identity.profileId), result.counts || {});
+		const recovered = await recoverStaleTitleReviewTask(identity.profileId);
+		const task = recovered && !['queued', 'running', 'cancelling'].includes(recovered.status)
+			? recovered
+			: await latestTitleTask(identity.profileId);
+		const session = titleSession(task, result.counts || {});
 		const totalMs = performance.now() - startedAt;
 		result.meta.serverDurationMs = totalMs;
 		setReviewTiming(res, {
@@ -233,15 +260,21 @@ export async function approveTitleReviewJobs(req, res) {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const ids = normalizeJobRemovalIds(req.body);
 		if (!ids.length) return res.status(400).json({ success: false, error: 'Missing ids array' });
-		const eligible = await jobsCollection.find({
-			_id: { $in: ids },
-			'titleReview.label': 'REVIEW_REQUIRED',
-		}, { projection: { _id: 1 } }).toArray();
+		const existing = await jobsCollection.find(
+			{ _id: { $in: ids } },
+			{ projection: { _id: 1, titleReview: 1 } },
+		).toArray();
+		const eligible = existing.filter((job) => {
+			const state = job.titleReview?.processingState;
+			return job.titleReview?.label === 'REVIEW_REQUIRED'
+				|| state === 'pending'
+				|| state === 'scanning';
+		});
 		const now = new Date().toISOString();
 		const writes = await Promise.all(eligible.map(async (job) => ({
 			id: String(job._id),
 			result: await jobsCollection.updateOne(
-				{ _id: job._id, 'titleReview.label': 'REVIEW_REQUIRED' },
+				{ _id: job._id },
 				{
 					$set: {
 						'titleReview.processingState': 'completed',
@@ -286,9 +319,12 @@ export async function removeTitleReviewJobs(req, res) {
 		const existingById = new Map(existing.map((job) => [String(job._id), job]));
 		const safeIds = requestedIds.filter((id) => {
 			const job = existingById.get(id);
+			const state = job?.titleReview?.processingState;
 			return !job
 				|| job.titleReview?.label === 'REVIEW_REQUIRED'
-				|| job.titleReview?.processingState === 'failed';
+				|| state === 'failed'
+				|| state === 'pending'
+				|| state === 'scanning';
 		});
 		if (!safeIds.length) {
 			return res.json({

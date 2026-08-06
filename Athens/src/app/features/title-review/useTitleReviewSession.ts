@@ -7,6 +7,23 @@ import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 
 function taskSession(task: BackgroundTask | null, fallback: TitleReviewSession) {
   if (!task) return fallback;
+  // Status/bootstrap recovery can force-cancel a zombie while the local task
+  // cache still mirrors queued/running/cancelling from before the restart.
+  if (
+    fallback.running === false
+    && fallback.sessionId
+    && fallback.sessionId === task.id
+    && ["queued", "running", "cancelling"].includes(task.status)
+  ) {
+    return {
+      ...fallback,
+      sessionId: task.id,
+      pending: fallback.pending,
+      unreviewedCount: fallback.unreviewedCount,
+      reviewRequiredCount: fallback.reviewRequiredCount,
+      failedCount: fallback.failedCount,
+    };
+  }
   const progress = task.progress || {};
   const status = task.status === "queued"
     ? "running"
@@ -85,13 +102,14 @@ export function useTitleReviewSession({
     setLoading(true);
     try {
       await cancelTask(task.id);
-      toast.info("Stopping title review…");
+      await refresh();
+      toast.info("Title review stopped");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to stop title review");
     } finally {
       setLoading(false);
     }
-  }, [cancelTask, task]);
+  }, [cancelTask, refresh, task]);
 
   const hydrate = useCallback((next: TitleReviewSession) => setFallback(next), []);
 

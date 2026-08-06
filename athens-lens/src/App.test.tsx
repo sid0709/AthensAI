@@ -40,7 +40,14 @@ const jobsRepository: JobsRepository = {
 };
 
 function installChromeStub(overrides?: {
-  sendMessage?: (message: { type?: string; tabId?: number; preferredTabId?: number | null; streamId?: string }) => unknown | Promise<unknown>;
+  sendMessage?: (message: {
+    type?: string;
+    tabId?: number;
+    preferredTabId?: number | null;
+    streamId?: string;
+    captureSource?: string;
+    relayOffer?: RTCSessionDescriptionInit;
+  }) => unknown | Promise<unknown>;
   activeTab?: { id: number; url?: string } | (() => { id: number; url?: string });
   createTabId?: number | (() => number);
   streamId?: string | null;
@@ -63,10 +70,14 @@ function installChromeStub(overrides?: {
     preferredTabId?: number | null;
   }) => {
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
-      return { ok: true, tabId: message.tabId ?? message.preferredTabId ?? 42 };
+      return {
+        ok: true,
+        tabId: message.tabId ?? message.preferredTabId ?? 42,
+        relayAnswer: { type: "answer", sdp: "mock-answer" },
+      };
     }
     if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
-      return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
+      return { ok: true, tabId: 42, filename: "athens-lens-recording-test.mp4" };
     }
     if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
       return { ok: true, sessions: [] };
@@ -142,10 +153,56 @@ function installChromeStub(overrides?: {
         callback(overrides?.streamId ?? "mock-stream-id");
       }),
     },
+    desktopCapture: {
+      chooseDesktopMedia: vi.fn((
+        _sources: Array<"screen" | "window" | "tab" | "audio">,
+        callback: (streamId: string, options: { canRequestAudioTrack: boolean }) => void,
+      ) => {
+        if (overrides?.captureError || overrides?.streamId === null) {
+          chromeApi.runtime.lastError = overrides?.captureError
+            ? { message: overrides.captureError }
+            : undefined;
+          callback("", { canRequestAudioTrack: false });
+          chromeApi.runtime.lastError = undefined;
+          return 1;
+        }
+        callback(overrides?.streamId ?? "mock-stream-id", { canRequestAudioTrack: false });
+        return 1;
+      }),
+      cancelChooseDesktopMedia: vi.fn(),
+    },
   };
 
   vi.stubGlobal("chrome", chromeApi);
   return chromeApi;
+}
+
+function installMediaRelayStub() {
+  const track = { stop: vi.fn() };
+  const stream = { getTracks: () => [track] } as unknown as MediaStream;
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia: vi.fn(async () => stream) },
+  });
+
+  class MockPeerConnection {
+    iceGatheringState: RTCIceGatheringState = "complete";
+    localDescription: RTCSessionDescription | null = null;
+
+    addTrack() {}
+    addEventListener() {}
+    removeEventListener() {}
+    close() {}
+    async createOffer(): Promise<RTCSessionDescriptionInit> {
+      return { type: "offer", sdp: "mock-offer" };
+    }
+    async setLocalDescription(description: RTCSessionDescriptionInit) {
+      this.localDescription = description as RTCSessionDescription;
+    }
+    async setRemoteDescription() {}
+  }
+
+  vi.stubGlobal("RTCPeerConnection", MockPeerConnection);
 }
 
 describe("Athens Lens app", () => {
@@ -154,6 +211,7 @@ describe("Athens Lens app", () => {
     useRecordingSessionsStore.getState().clearAll();
     useTabWorkspaceStore.getState().clearAll();
     window.location.hash = "#jobs";
+    installMediaRelayStub();
     installChromeStub();
   });
 
@@ -304,19 +362,20 @@ describe("Athens Lens app", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/athens-lens/ask-ai")) {
-        return new Response(JSON.stringify({
-          success: true,
-          summary: "Application form detected.",
-          answers: [
-            {
-              question: "Why are you interested in this role?",
-              suggestedAnswer: "I am interested because the work matches my background.",
-              confidence: "high",
-            },
-          ],
-        }), {
+        const sse = [
+          "event: token",
+          'data: {"text":"{\\"formAnswers\\":["}',
+          "",
+          "event: answers",
+          'data: {"answers":[{"question":"Why are you interested in this role?","suggestedAnswer":"I am interested because the work matches my background.","confidence":"high"}]}',
+          "",
+          "event: done",
+          'data: {"success":true,"mode":"llm-stream","summary":"Application form detected.","answers":[{"question":"Why are you interested in this role?","suggestedAnswer":"I am interested because the work matches my background.","confidence":"high"}]}',
+          "",
+        ].join("\n");
+        return new Response(sse, {
           status: 200,
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "text/event-stream" },
         });
       }
       if (url.includes("/athens-lens/bids/")) {
@@ -375,7 +434,11 @@ describe("Athens Lens app", () => {
       sendMessage: async (message) => {
         if (message?.type === "ATHENS_LENS_START_RECORDING") {
           startCount += 1;
-          return { ok: true, tabId: message.tabId ?? activeTabId };
+          return {
+            ok: true,
+            tabId: message.tabId ?? activeTabId,
+            relayAnswer: { type: "answer", sdp: "mock-answer" },
+          };
         }
         return undefined;
       },
@@ -417,15 +480,16 @@ describe("Athens Lens app", () => {
 
     await user.click(screen.getByRole("button", { name: "Record" }));
     expect(await screen.findByText(`Recording application (${MOCK_JOBS[0].company})`)).toBeInTheDocument();
-    expect(chromeApi.tabCapture.getMediaStreamId).toHaveBeenCalledWith(
-      { targetTabId: 42 },
+    expect(chromeApi.desktopCapture.chooseDesktopMedia).toHaveBeenCalledWith(
+      ["tab"],
       expect.any(Function),
     );
     expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "ATHENS_LENS_START_RECORDING",
         tabId: 42,
-        streamId: "mock-stream-id",
+        captureSource: "desktop-relay",
+        relayOffer: { type: "offer", sdp: "mock-offer" },
       }),
     );
 
@@ -494,23 +558,12 @@ describe("Athens Lens app", () => {
     );
   });
 
-  it("shows an error toast when Record cannot capture the focused tab", async () => {
+  it("shows an error toast when the tab picker is canceled", async () => {
     const user = userEvent.setup();
     const chromeApi = installChromeStub({
       activeTab: { id: 99, url: "https://example.com/apply" },
       streamId: null,
-      captureError: "Extension has not been invoked for the current page (see activeTab permission). Chrome pages cannot be captured.",
-      sendMessage: async (message) => {
-        if (message?.type === "ATHENS_LENS_PENDING_RECORD") {
-          return {
-            ok: true,
-            tabId: 99,
-            pending: true,
-            message: "Click the Athens Lens icon on this tab to start recording.",
-          };
-        }
-        return undefined;
-      },
+      captureError: "Tab selection was canceled.",
     });
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: true }), {
       status: 200,
@@ -531,10 +584,11 @@ describe("Athens Lens app", () => {
     });
     await user.click(screen.getByRole("button", { name: "Record" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /Click the Athens Lens icon on this tab to start recording/,
+      /Tab selection was canceled/,
     );
-    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "ATHENS_LENS_PENDING_RECORD", tabId: 99 }),
+    expect(chromeApi.desktopCapture.chooseDesktopMedia).toHaveBeenCalledWith(
+      ["tab"],
+      expect.any(Function),
     );
   });
 

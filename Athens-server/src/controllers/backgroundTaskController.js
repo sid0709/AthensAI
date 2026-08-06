@@ -1,6 +1,7 @@
 import { normalizeBackgroundTaskPayload } from '../services/backgroundTasks/taskPayload.js';
 import {
 	createBackgroundTask,
+	forceCancelBackgroundTask,
 	getBackgroundTask,
 	listBackgroundTasks,
 	requestBackgroundTaskCancellation,
@@ -161,7 +162,19 @@ export async function cancelTask(req, res) {
 		const task = await getBackgroundTask(req.params.taskId);
 		if (!task) return res.status(404).json({ success: false, error: 'Background task not found' });
 		if (!canAccessTask(req, task)) return res.status(403).json({ success: false, error: 'Background task access denied' });
-		const next = await requestBackgroundTaskCancellation(task.id);
+		const force = req.body?.force === true
+			|| task.status === 'cancelling'
+			|| task.type === 'title_review'
+			|| task.type === 'skill_extraction';
+		const next = force
+			? await forceCancelBackgroundTask(task.id, {
+				reason: task.type === 'title_review'
+					? 'Title review stopped'
+					: task.type === 'skill_extraction'
+						? 'Skill extraction stopped'
+						: 'Task force cancelled',
+			})
+			: await requestBackgroundTaskCancellation(task.id);
 		return res.status(202).json({ success: true, accepted: true, task: publicTaskSnapshot(next) });
 	} catch (error) {
 		return errorResponse(res, error);

@@ -75,12 +75,60 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "extensionV2",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "source",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "postedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "aiSkillStatus",
           "order": "ASCENDING"
         },
         {
           "fieldPath": "postedAt",
           "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "aiSkillStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "extensionV2",
+          "order": "ASCENDING"
         }
       ]
     },

@@ -498,6 +498,8 @@ export function useJobsList(
       rememberNextCursor(listBody, page, res);
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
+        // Keep countsLoading for /counts to refine Applied/Bid under filters.
+        // List may embed provisional All/New only.
       }
       setSettledKey(currentQueryKey);
       return true;
@@ -515,18 +517,29 @@ export function useJobsList(
 
     (async () => {
       try {
-        if (!cached || cached.staleAt <= Date.now()) {
-          cached = await readPersistentListResponse(cacheKey) ?? undefined;
-          hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
-          if (hasFreshCache && cached && !cancelled) applyResponse(cached.response);
-        } else if (cached && !cancelled) {
+        // Paint from memory/IDB if present, but never block the network list on IDB.
+        const idbPromise = (!cached || cached.staleAt <= Date.now())
+          ? readPersistentListResponse(cacheKey)
+          : Promise.resolve(null);
+        const cursorPromise = resolvePageCursor(listBody, page, request);
+
+        if (cached && !cancelled) {
           applyResponse(cached.response);
-        }
-        if (cached && cached.staleAt > Date.now() && cached.expiresAt <= Date.now() && !cancelled) {
-          setStaleResults(true);
+          if (cached.staleAt > Date.now() && cached.expiresAt <= Date.now()) setStaleResults(true);
         }
 
-        const cursor = await resolvePageCursor(listBody, page, request);
+        const idbEntry = await idbPromise;
+        if (idbEntry && !cancelled) {
+          cached = idbEntry;
+          hasFreshCache = idbEntry.expiresAt > Date.now();
+          if (hasFreshCache) applyResponse(idbEntry.response);
+          else if (idbEntry.staleAt > Date.now()) {
+            applyResponse(idbEntry.response);
+            setStaleResults(true);
+          }
+        }
+
+        const cursor = await cursorPromise;
         const requestBody = { ...listBody };
         if (cursor) requestBody.cursor = cursor;
         else delete requestBody.cursor;
@@ -588,7 +601,8 @@ export function useJobsList(
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
     const loadCounts = async (attempt = 0) => {
-      if (!cancelled) setCountsLoading(true);
+      // Soft refresh only — never blank badges while a successful list already rendered counts.
+      if (!cancelled && attempt === 0) setCountsLoading(true);
       try {
         const res = await retryTransient(
           () => request(JOB_COUNTS_ENDPOINT, {
@@ -604,7 +618,7 @@ export function useJobsList(
           retryTimer = setTimeout(() => void loadCounts(attempt + 1), 1_500);
         }
       } catch {
-        /* counts are optional */
+        /* counts are optional; keep list-embedded badges */
       } finally {
         if (!cancelled) setCountsLoading(false);
       }
@@ -615,7 +629,7 @@ export function useJobsList(
       controller.abort();
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [countsKey, applierReady, request, isDebouncing]);
+  }, [countsKey, applierReady, request, isDebouncing, countsBody]);
 
   const patchJob = useCallback(
     (updated: Job) => {

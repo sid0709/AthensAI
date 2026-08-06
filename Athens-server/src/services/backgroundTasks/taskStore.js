@@ -615,6 +615,81 @@ export async function requestBackgroundTaskCancellation(taskId) {
 	});
 }
 
+/**
+ * Immediately terminate an active task without waiting for a worker ack.
+ * Used for zombie singleton AI tasks (title review / skill extract) after
+ * server restarts or dead workers leave queued/running/cancelling forever.
+ */
+export async function forceCancelBackgroundTask(taskId, {
+	reason = 'Force cancelled',
+} = {}) {
+	const firestore = getFirestoreDb();
+	const ref = firestore.collection(TASKS).doc(clean(taskId));
+	return firestore.runTransaction(async (transaction) => {
+		const snapshot = await transaction.get(ref);
+		if (!snapshot.exists) return null;
+		const task = snapshotTask(snapshot);
+		if (terminal(task.status)) return task;
+		const at = nowDate();
+		await deleteSingletonReservation(transaction, task);
+		transaction.update(ref, {
+			status: BACKGROUND_TASK_STATUS.CANCELLED,
+			error: String(reason || 'Force cancelled').slice(0, 1_000),
+			cancelRequestedAt: asDate(task.cancelRequestedAt) || at,
+			cancelAcknowledgedAt: at,
+			finishedAt: at,
+			updatedAt: at,
+			leaseOwner: null,
+			leaseToken: null,
+			leaseExpiresAt: null,
+			heartbeatAt: null,
+			expiresAt: new Date(at.getTime() + retentionSeconds() * 1_000),
+			lastEvent: { type: 'task-force-cancelled', at: at.toISOString() },
+			eventSequence: FieldValue.increment(1),
+		});
+		incrementCounter('athens_background_task_force_cancels_total', { type: task.type, lane: task.lane });
+		return {
+			...task,
+			status: BACKGROUND_TASK_STATUS.CANCELLED,
+			error: String(reason || 'Force cancelled').slice(0, 1_000),
+			cancelAcknowledgedAt: at.toISOString(),
+			finishedAt: at.toISOString(),
+			updatedAt: at.toISOString(),
+		};
+	});
+}
+
+/** True when an active task has no live worker lease / has been cancelling too long. */
+export function isStaleBackgroundTask(task, {
+	now = Date.now(),
+	cancellingGraceMs = 30_000,
+	runningGraceMs = 3 * 60_000,
+	preparingGraceMs = 60_000,
+} = {}) {
+	if (!task || !ACTIVE_TASK_STATUSES.has(task.status)) return false;
+	const leaseExpiresAt = Date.parse(task.leaseExpiresAt || '');
+	if (Number.isFinite(leaseExpiresAt) && leaseExpiresAt <= now) return true;
+	const updatedAt = Date.parse(task.updatedAt || task.startedAt || task.createdAt || '');
+	if (task.status === BACKGROUND_TASK_STATUS.CANCELLING) {
+		const cancelAt = Date.parse(task.cancelRequestedAt || task.updatedAt || '');
+		return !Number.isFinite(cancelAt) || (now - cancelAt) >= cancellingGraceMs;
+	}
+	if (task.status === BACKGROUND_TASK_STATUS.QUEUED) {
+		const createdAt = Date.parse(task.createdAt || task.updatedAt || '');
+		return Number.isFinite(createdAt) && (now - createdAt) >= runningGraceMs;
+	}
+	const progress = task.progress && typeof task.progress === 'object' ? task.progress : {};
+	if (
+		(task.type === 'title_review' || task.type === 'skill_extraction')
+		&& (progress.phase === 'preparing' || progress.phase === 'starting')
+		&& Number(progress.completed || 0) === 0
+	) {
+		const startedAt = Date.parse(task.startedAt || task.createdAt || '');
+		return Number.isFinite(startedAt) && (now - startedAt) >= preparingGraceMs;
+	}
+	return Number.isFinite(updatedAt) && (now - updatedAt) >= runningGraceMs;
+}
+
 export async function acknowledgeBackgroundTaskCancellation(taskId, { progress = null } = {}) {
 	const task = await getBackgroundTask(taskId);
 	if (!task) return null;

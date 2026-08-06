@@ -7,7 +7,7 @@ import { skillExtractionSessionFromTask } from "../lib/skillExtractionState";
 
 export function useJobSkillExtraction() {
   const { applier } = useApplier();
-  const { latestTask, startTask, cancelTask, waitForTask } = useBackgroundTasks();
+  const { latestTask, startTask, cancelTask } = useBackgroundTasks();
   const task = latestTask("skill_extraction");
   const [fallback, setFallback] = useState<SkillExtractSession>({ running: false, status: "idle" });
   const [pending, setPending] = useState<number | null>(null);
@@ -33,43 +33,14 @@ export function useJobSkillExtraction() {
     if (task && !task.status.match(/^(queued|running|cancelling)$/)) void refresh();
   }, [refresh, task?.id, task?.status]);
 
-  useEffect(() => {
-    if (!task || !["queued", "running", "cancelling"].includes(task.status)) return;
-    const controller = new AbortController();
-    void waitForTask(task.id, controller.signal).then((terminal) => {
-      const result = skillExtractionSessionFromTask(terminal);
-      if (terminal.status === "failed") {
-        toast.error("Skill extraction failed", {
-          description: terminal.error || "The extraction worker stopped unexpectedly.",
-        });
-      } else if (terminal.status === "cancelled") {
-        toast.info("Skill extraction stopped");
-      } else if ((result?.failed ?? 0) > 0) {
-        toast.warning("Skill extraction finished with errors", {
-          description: `${result?.processed ?? 0} processed · ${result?.failed ?? 0} failed.`,
-        });
-      } else {
-        toast.success("Skill extraction completed", {
-          description: `${result?.extracted ?? result?.processed ?? 0} job(s) updated.`,
-        });
-      }
-      void refresh();
-    }).catch((error) => {
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
-        toast.error("Unable to monitor skill extraction");
-      }
-    });
-    return () => controller.abort();
-  }, [refresh, task?.id, waitForTask]);
-
   const start = useCallback(async () => {
     setLoading(true);
     try {
       const created = await startTask("skill_extraction", {});
       toast.success("Skill extraction queued", {
         description: pending != null
-          ? `${pending} job(s) waiting. Live progress is shown in the toolbar.`
-          : "Live progress is shown in the toolbar.",
+          ? `${pending} job(s) waiting. Progress continues if you leave this page.`
+          : "Progress continues if you leave this page.",
       });
       return created;
     } catch (error) {

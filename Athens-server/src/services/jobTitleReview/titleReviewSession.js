@@ -137,48 +137,42 @@ function throwIfCancelled(signal) {
 		: Object.assign(new Error('Title review cancelled'), { name: 'AbortError' });
 }
 
+/**
+ * Claim the next pending titles directly from the indexed query.
+ * Preloading the entire queue blocked the UI in "Preparing… 0/0" for large
+ * Firestore catalogs; skill extraction already claims in waves for the same reason.
+ * Only `pending` rows are claimed — `scanning` leases are recovered separately.
+ */
 async function claimBatch(session, limit, signal) {
 	if (!jobsCollection || limit <= 0) return [];
-	const claimedJobs = [];
-	while (claimedJobs.length < limit && session.queue.length) {
-		throwIfCancelled(signal);
-		const candidates = session.queue.splice(0, limit - claimedJobs.length);
-		const claimedAt = new Date().toISOString();
-		const claimedIds = await firestoreMutationLimiter.run(async () => {
-			throwIfCancelled(signal);
-			return jobsCollection.atomicClaimMany(
-				candidates.map((job) => job._id),
-				pendingTitleReviewQuery(),
-				{
-					$set: {
-						'titleReview.processingState': 'scanning',
-						'titleReview.lease.sessionId': session.id,
-						'titleReview.lease.claimedAt': claimedAt,
-					},
-				},
-			);
-		});
-		const claimed = new Set(claimedIds.map(String));
-		claimedJobs.push(...candidates.filter((job) => claimed.has(String(job._id))));
-	}
-	return claimedJobs;
-}
+	throwIfCancelled(signal);
+	const claimQuery = { 'titleReview.processingState': 'pending' };
+	const candidates = await jobsCollection
+		.find(claimQuery)
+		.project(CLAIM_PROJECTION)
+		.limit(limit * 4)
+		.toArray();
+	throwIfCancelled(signal);
+	if (!candidates.length) return [];
 
-async function loadPendingQueue(signal) {
-	const queue = [];
-	for await (const job of jobsCollection.findPaged(pendingTitleReviewQuery(), {
-		projection: CLAIM_PROJECTION,
-		pageSize: 1_000,
-	})) {
+	const slice = candidates.slice(0, limit);
+	const claimedAt = new Date().toISOString();
+	const claimedIds = await firestoreMutationLimiter.run(async () => {
 		throwIfCancelled(signal);
-		queue.push(job);
-	}
-	queue.sort((left, right) => {
-		const leftTime = Date.parse(left.postedAt || 0) || 0;
-		const rightTime = Date.parse(right.postedAt || 0) || 0;
-		return rightTime - leftTime || String(right._id).localeCompare(String(left._id));
+		return jobsCollection.atomicClaimMany(
+			slice.map((job) => job._id),
+			claimQuery,
+			{
+				$set: {
+					'titleReview.processingState': 'scanning',
+					'titleReview.lease.sessionId': session.id,
+					'titleReview.lease.claimedAt': claimedAt,
+				},
+			},
+		);
 	});
-	return queue;
+	const claimed = new Set(claimedIds.map(String));
+	return slice.filter((job) => claimed.has(String(job._id)));
 }
 
 async function releaseBatch(jobs, sessionId) {
@@ -259,7 +253,9 @@ async function processBatch(session, auth, jobs, { signal, onProgress } = {}) {
 	} finally {
 		signal?.removeEventListener('abort', abortFromParent);
 		session.processed += jobs.length;
-		session.remaining = Math.max(0, session.total - session.processed);
+		session.remaining = session.total == null
+			? null
+			: Math.max(0, Number(session.total) - session.processed);
 		invalidateTitleReviewCounts();
 		await onProgress?.(taskSessionSnapshot(session));
 	}
@@ -306,22 +302,31 @@ async function runSession(session, { signal, onProgress } = {}) {
 	try {
 		session.phase = 'preparing';
 		await onProgress?.(taskSessionSnapshot(session));
-		session.queue = await loadPendingQueue(signal);
-		if (session.limit != null) session.queue = session.queue.slice(0, session.limit);
-		session.total = session.queue.length;
+		const counts = await getTitleReviewCounts();
+		const pending = Number(counts?.pending ?? counts?.unreviewedCount ?? 0);
+		if (session.limit != null) {
+			session.total = Math.min(session.limit, Math.max(0, pending));
+		} else {
+			session.total = Number.isFinite(pending) ? pending : null;
+		}
 		session.remaining = session.total;
 		session.phase = 'processing';
 		await onProgress?.(taskSessionSnapshot(session));
 		console.log(
 			`[job-title-review] starting — ${auth.providerId}/${auth.model}, ` +
-			`${TITLE_REVIEW_CONCURRENCY}× batches of ≤${TITLE_REVIEW_BATCH_SIZE}, ${session.total} job(s)`,
+			`${TITLE_REVIEW_CONCURRENCY}× batches of ≤${TITLE_REVIEW_BATCH_SIZE}, ` +
+			`${session.total == null ? 'until the queue is empty' : `${session.total} job(s)`}`,
 		);
 		while (!cancellationRequested(signal)) {
 			const batches = [];
 			for (let index = 0; index < TITLE_REVIEW_CONCURRENCY; index += 1) {
-				const remaining = session.total - session.processed - batches.reduce((sum, batch) => sum + batch.length, 0);
-				if (remaining <= 0) break;
-				const batch = await claimBatch(session, Math.min(TITLE_REVIEW_BATCH_SIZE, remaining), signal);
+				let take = TITLE_REVIEW_BATCH_SIZE;
+				if (session.limit != null) {
+					const reserved = batches.reduce((sum, batch) => sum + batch.length, 0);
+					take = Math.min(take, session.limit - session.processed - reserved);
+					if (take <= 0) break;
+				}
+				const batch = await claimBatch(session, take, signal);
 				if (!batch.length) break;
 				batches.push(batch);
 			}
@@ -330,6 +335,10 @@ async function runSession(session, { signal, onProgress } = {}) {
 			if (!cancellationRequested(signal)) await markTitleReviewReadModelChanged({ rebuild: false });
 		}
 	} finally {
+		if (!cancellationRequested(signal)) {
+			session.total = session.processed;
+			session.remaining = 0;
+		}
 		finalizeTitleReviewSession(session, { cancelled: cancellationRequested(signal) });
 		await onProgress?.(taskSessionSnapshot(session));
 		console.log(
@@ -361,7 +370,6 @@ export async function runTitleReviewTask({
 		id,
 		applierName: name,
 		profileId: String(profileId || '').trim() || null,
-		queue: [],
 		limit: parsedLimit,
 		running: true,
 		status: 'running',
