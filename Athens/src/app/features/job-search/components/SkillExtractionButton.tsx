@@ -57,6 +57,7 @@ export function SkillExtractionButton() {
                   ? ` · ${session.concurrency} batches × ${session.batchSize}`
                   : ""}`
                 : "Preparing the next batch"}
+            {" · survives navigation"}
           </span>
         </div>
         <Button
@@ -85,10 +86,10 @@ export function SkillExtractionButton() {
       title={failed
         ? session.error || "The last skill extraction failed. Click to retry."
         : pending === 0
-          ? "All jobs have AI skills"
+          ? "All Job Search titles have AI skills"
           : pending == null
-            ? "Extract missing or failed job skills with AI (shared for all users)"
-            : `${pending} job(s) pending or failed — extraction is shared globally`}
+            ? "Extract missing or failed skills for APPROVED Job Search titles"
+            : `${pending} APPROVED job(s) pending or failed — extraction is shared globally`}
     >
       {loading
         ? <Loader2 className="w-4 h-4 animate-spin" />

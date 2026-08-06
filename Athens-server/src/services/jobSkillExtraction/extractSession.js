@@ -41,8 +41,12 @@ const PENDING_COUNT_CACHE_MS = Math.max(
 );
 
 export function pendingExtractionQuery(includeV2) {
-  // Failed extractions are globally retriable — once extracted, every user benefits.
-  const status = { aiSkillStatus: { $in: ['pending', 'failed'] } };
+  // Job Search only lists APPROVED titles. Pending extraction badges and claims
+  // must use the same visibility rule or the toolbar count diverges from the list.
+  const status = {
+    aiSkillStatus: { $in: ['pending', 'failed'] },
+    'titleReview.label': 'APPROVED',
+  };
   if (includeV2) return status;
   return { ...status, ...excludeExtensionV2JobsFilter() };
 }
@@ -53,6 +57,7 @@ async function countPendingInCollection(collection, includeV2) {
     let query = getFirestoreDb()
       .collection('jobs')
       .where('sourceCatalog', '==', 'market')
+      .where('titleReview.label', '==', 'APPROVED')
       .where('aiSkillStatus', 'in', ['pending', 'failed']);
     if (!includeV2) query = query.where('extensionV2', '==', false);
     return (await query.count().get()).data().count;
@@ -139,7 +144,10 @@ export async function claimPendingJobs(collection, jobs, {
       throwIfCancelled(signal);
       return collection.atomicClaimMany(
         jobs.map((job) => job._id),
-        { aiSkillStatus: { $in: ['pending', 'failed'] } },
+        {
+          aiSkillStatus: { $in: ['pending', 'failed'] },
+          'titleReview.label': 'APPROVED',
+        },
         claimUpdate,
       );
     }));
@@ -157,7 +165,11 @@ export async function claimPendingJobs(collection, jobs, {
       const result = await firestoreMutationLimiter.run(async () => {
         throwIfCancelled(signal);
         return collection.updateOne(
-          { _id: job._id, aiSkillStatus: { $in: ['pending', 'failed'] } },
+          {
+            _id: job._id,
+            aiSkillStatus: { $in: ['pending', 'failed'] },
+            'titleReview.label': 'APPROVED',
+          },
           claimUpdate,
         );
       });

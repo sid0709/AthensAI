@@ -1,6 +1,12 @@
 /**
  * MAIN-world page hook: renames resume uploads to the profile ATS name and
  * emits original/cleaned filename audits (Bid-Monitor page-hook port).
+ *
+ * Critical for Lever (and similar analyze-on-select widgets):
+ * Never swap `input.files` or re-dispatch synthetic change/input. That races
+ * their upload/parser and leaves "Analyzing resume…" spinning forever.
+ * Instead: leave the native File selection alone, audit on select, and only
+ * override the multipart filename when the page builds FormData / sends it.
  */
 import {
   buildRenameAudit,
@@ -98,24 +104,14 @@ function installAthensLensResumeHook() {
     return typeof value === "string" && value.length ? value : null;
   }
 
-  function renameFile(file: File, newName: string, originalName: string): File {
-    if (file.name === newName) {
-      return stampOriginalName(file, originalName || getStampedOriginal(file) || file.name);
-    }
-    const next = new File([file], newName, {
-      type: file.type || "application/octet-stream",
-      lastModified: file.lastModified ?? Date.now(),
-    });
-    return stampOriginalName(next, originalName || getStampedOriginal(file) || file.name);
-  }
-
   function shouldRename() {
     return isRecording && (expectedResumeName.length > 0 || resumeSetFolder.length > 0);
   }
 
-  function prepareFile(file: File) {
+  /** Resolve original → ATS submitted name without cloning the File. */
+  function resolveNames(file: File) {
     if (!shouldRename() || !isFileValue(file)) {
-      return { file, originalName: file?.name || "", submittedName: file?.name || "" };
+      return { originalName: file?.name || "", submittedName: file?.name || "" };
     }
     const provisionalName = buildSubmittedFileName(
       file.name,
@@ -132,21 +128,8 @@ function installAthensLensResumeHook() {
       expectedResumeName,
       resumeSetFolder,
     );
-    return {
-      file: renameFile(file, submittedName, originalName),
-      originalName,
-      submittedName,
-    };
-  }
-
-  function replaceInputFiles(input: HTMLInputElement, files: File[]) {
-    if (!(input instanceof HTMLInputElement) || input.type !== "file") return false;
-    const dt = new DataTransfer();
-    for (const file of files) dt.items.add(file);
-    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
-    if (descriptor?.set) descriptor.set.call(input, dt.files);
-    else input.files = dt.files;
-    return true;
+    stampOriginalName(file, originalName);
+    return { originalName, submittedName };
   }
 
   function notifyResumeSelected(payload: Record<string, unknown>) {
@@ -190,8 +173,9 @@ function installAthensLensResumeHook() {
     const originalName = resumeBasename(
       resolvedOriginalName || getStampedOriginal(file) || file.name,
     );
-    const cleanedName = resumeBasename(file.name);
-    const expected = resumeBasename(submittedName || cleanedName);
+    // Wire / ATS name — may differ from file.name when we only override multipart.
+    const cleanedName = resumeBasename(submittedName || file.name);
+    const expected = cleanedName;
     const payload = buildRenameAudit({
       sessionId: activeSessionId,
       jobId: activeJobId,
@@ -219,21 +203,13 @@ function installAthensLensResumeHook() {
     }
   }
 
-  function processFiles(fileList: FileList | File[], source: string) {
-    if (!shouldRename() || !fileList?.length) return null;
-    const originalFiles = Array.from(fileList);
-    const renamedFiles: File[] = [];
-    for (const file of originalFiles) {
-      const prepared = prepareFile(file);
-      renamedFiles.push(prepared.file);
-      emitAuditForFile(
-        prepared.file,
-        source,
-        prepared.originalName,
-        prepared.submittedName,
-      );
+  function auditFileList(fileList: FileList | File[], source: string) {
+    if (!shouldRename() || !fileList?.length) return;
+    for (const file of Array.from(fileList)) {
+      if (!isFileValue(file)) continue;
+      const { originalName, submittedName } = resolveNames(file);
+      emitAuditForFile(file, source, originalName, submittedName);
     }
-    return renamedFiles;
   }
 
   function handleFileInputEvent(event: Event) {
@@ -241,10 +217,10 @@ function installAthensLensResumeHook() {
       const input = event.target;
       if (!shouldRename() || !(input instanceof HTMLInputElement) || input.type !== "file") return;
       if (!input.files?.length) return;
-      const renamedFiles = processFiles(input.files, "file-input");
-      if (renamedFiles) replaceInputFiles(input, renamedFiles);
+      // Audit only — do not mutate files or stopPropagation (breaks Lever analyze).
+      auditFileList(input.files, "file-input");
     } catch (err) {
-      console.warn("Athens Lens: resume rename failed", err);
+      console.warn("Athens Lens: resume audit failed", err);
     }
   }
 
@@ -255,44 +231,43 @@ function installAthensLensResumeHook() {
         /\.(pdf|docx)$/i.test(file.name),
       );
       if (!files.length) return;
-      const renamed = processFiles(files, "drag-drop");
-      if (!renamed) return;
-
-      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-      const input = path.find(
-        (node): node is HTMLInputElement =>
-          node instanceof HTMLInputElement && node.type === "file",
-      );
-      if (input) replaceInputFiles(input, renamed);
-
-      try {
-        const dt = new DataTransfer();
-        for (const file of renamed) dt.items.add(file);
-        Object.defineProperty(event, "dataTransfer", {
-          configurable: true,
-          value: dt,
-        });
-      } catch {
-        // Some browsers block redefining dataTransfer.
-      }
+      auditFileList(files, "drag-drop");
     } catch (err) {
-      console.warn("Athens Lens: drag-drop rename failed", err);
+      console.warn("Athens Lens: drag-drop resume audit failed", err);
     }
   }
 
-  function handleSubmitEvent(event: Event) {
-    try {
-      if (!shouldRename()) return;
-      const form = event.target;
-      if (!(form instanceof HTMLFormElement)) return;
-      for (const input of form.querySelectorAll('input[type="file"]')) {
-        if (!(input instanceof HTMLInputElement) || !input.files?.length) continue;
-        const renamedFiles = processFiles(input.files, "form-submit");
-        if (renamedFiles) replaceInputFiles(input, renamedFiles);
-      }
-    } catch (err) {
-      console.warn("Athens Lens: submit-time resume audit failed", err);
+  function appendWithAtsName(
+    method: (name: string, value: string | Blob, fileName?: string) => void,
+    form: FormData,
+    name: string,
+    value: File,
+  ) {
+    const { originalName, submittedName } = resolveNames(value);
+    emitAuditForFile(value, "formdata", originalName, submittedName);
+    // Keep the same Blob/File bytes + mime; only override Content-Disposition filename.
+    if (submittedName && submittedName !== value.name) {
+      return method.call(form, name, value, submittedName);
     }
+    return method.call(form, name, value);
+  }
+
+  let nativeFormDataAppend: (name: string, value: string | Blob, fileName?: string) => void = (
+    FormData.prototype.append as (name: string, value: string | Blob, fileName?: string) => void
+  ).bind(FormData.prototype);
+
+  function rewriteFormData(body: FormData): FormData {
+    if (!shouldRename()) return body;
+    const next = new FormData();
+    for (const [key, value] of body.entries()) {
+      if (isFileValue(value)) {
+        // Use native append — never the patched prototype (avoids recursion).
+        appendWithAtsName(nativeFormDataAppend, next, key, value);
+      } else {
+        nativeFormDataAppend.call(next, key, value);
+      }
+    }
+    return next;
   }
 
   function patchFormData() {
@@ -303,6 +278,7 @@ function installAthensLensResumeHook() {
     if (proto.__athensLensPatched) return;
     const originalAppend = FormData.prototype.append.bind(FormData.prototype);
     const originalSet = FormData.prototype.set.bind(FormData.prototype);
+    nativeFormDataAppend = originalAppend;
 
     function wrap(method: (name: string, value: string | Blob, fileName?: string) => void) {
       return function (
@@ -312,14 +288,7 @@ function installAthensLensResumeHook() {
         fileName?: string,
       ) {
         if (shouldRename() && isFileValue(value)) {
-          const prepared = prepareFile(value);
-          emitAuditForFile(
-            prepared.file,
-            "formdata",
-            prepared.originalName,
-            prepared.submittedName,
-          );
-          return method.call(this, name, prepared.file, prepared.file.name);
+          return appendWithAtsName(method, this, name, value);
         }
         if (arguments.length >= 3 && value instanceof Blob) {
           return method.call(this, name, value, fileName);
@@ -333,11 +302,46 @@ function installAthensLensResumeHook() {
     proto.__athensLensPatched = true;
   }
 
+  function patchNetwork() {
+    const g = globalThis as typeof globalThis & {
+      __athensLensNetworkPatched?: boolean;
+      fetch: typeof fetch;
+      XMLHttpRequest: typeof XMLHttpRequest;
+    };
+    if (g.__athensLensNetworkPatched) return;
+    g.__athensLensNetworkPatched = true;
+
+    if (typeof g.fetch === "function") {
+      const originalFetch = g.fetch.bind(g);
+      g.fetch = function athensLensFetch(
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> {
+        if (shouldRename() && init?.body instanceof FormData) {
+          return originalFetch(input, { ...init, body: rewriteFormData(init.body) });
+        }
+        return originalFetch(input, init);
+      } as typeof fetch;
+    }
+
+    if (typeof g.XMLHttpRequest === "function") {
+      const originalSend = g.XMLHttpRequest.prototype.send;
+      g.XMLHttpRequest.prototype.send = function athensLensXhrSend(
+        this: XMLHttpRequest,
+        body?: Document | XMLHttpRequestBodyInit | null,
+      ) {
+        if (shouldRename() && body instanceof FormData) {
+          return originalSend.call(this, rewriteFormData(body));
+        }
+        return originalSend.call(this, body);
+      };
+    }
+  }
+
   document.addEventListener("change", handleFileInputEvent, true);
-  document.addEventListener("input", handleFileInputEvent, true);
   document.addEventListener("drop", handleDropEvent, true);
-  document.addEventListener("submit", handleSubmitEvent, true);
   patchFormData();
+  patchNetwork();
 }
 
 export default defineContentScript({

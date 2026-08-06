@@ -97,6 +97,28 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "aiSkillStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "extensionV2",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sourceCatalog",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "titleReview.label",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "details.remote",
           "order": "ASCENDING"
         },

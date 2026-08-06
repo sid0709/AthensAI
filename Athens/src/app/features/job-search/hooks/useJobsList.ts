@@ -498,6 +498,8 @@ export function useJobsList(
       rememberNextCursor(listBody, page, res);
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
+        // Keep countsLoading for /counts to refine Applied/Bid under filters.
+        // List may embed provisional All/New only.
       }
       setSettledKey(currentQueryKey);
       return true;
@@ -588,7 +590,8 @@ export function useJobsList(
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
     const loadCounts = async (attempt = 0) => {
-      if (!cancelled) setCountsLoading(true);
+      // Soft refresh only — never blank badges while a successful list already rendered counts.
+      if (!cancelled && attempt === 0) setCountsLoading(true);
       try {
         const res = await retryTransient(
           () => request(JOB_COUNTS_ENDPOINT, {
@@ -604,7 +607,7 @@ export function useJobsList(
           retryTimer = setTimeout(() => void loadCounts(attempt + 1), 1_500);
         }
       } catch {
-        /* counts are optional */
+        /* counts are optional; keep list-embedded badges */
       } finally {
         if (!cancelled) setCountsLoading(false);
       }
@@ -615,7 +618,7 @@ export function useJobsList(
       controller.abort();
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [countsKey, applierReady, request, isDebouncing]);
+  }, [countsKey, applierReady, request, isDebouncing, countsBody]);
 
   const patchJob = useCallback(
     (updated: Job) => {

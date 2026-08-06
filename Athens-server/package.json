@@ -17,7 +17,8 @@
 		"cleanup-job-market-fields": "node src/scripts/cleanupJobMarketFields.js",
 		"monitoring:rollup": "node src/scripts/rollupMonitoring.js",
 		"test:athens-lens": "node --test src/services/athensLens.test.js",
-		"test:mail-imap": "node --test src/services/mail/imapRetry.test.js"
+		"test:mail-imap": "node --test src/services/mail/imapRetry.test.js",
+		"test:job-list-counts": "node --test src/services/jobListV3FilteredCounts.test.js src/services/search/algoliaRecord.test.js"
 	},
 	"dependencies": {
 		"@google-cloud/kms": "^5.4.0",

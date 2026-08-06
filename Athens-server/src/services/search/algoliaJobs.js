@@ -17,7 +17,27 @@ function getClient() {
 	return client;
 }
 
-function record(id, data) {
+function asIso(value) {
+	if (!value) return null;
+	if (typeof value?.toDate === "function") return value.toDate().toISOString();
+	if (value instanceof Date) return value.toISOString();
+	const text = String(value).trim();
+	return text || null;
+}
+
+/**
+ * Fields used for Job Search facet / numeric filters.
+ * Ops: enable attributesForFaceting on the Algolia index for:
+ *   filterOnly(source), filterOnly(sourceCatalog), filterOnly(titleReviewLabel),
+ *   filterOnly(remote), filterOnly(seniority), filterOnly(time), filterOnly(position),
+ *   filterOnly(companyId), filterOnly(aiSkillStatus), filterOnly(extensionV2)
+ * and ensure postedAtMs is a numeric attribute for date-range filters.
+ * Then rebuild via rebuildAlgoliaJobs / search_outbox so existing docs catch up.
+ */
+export function record(id, data) {
+	const details = data.details && typeof data.details === "object" ? data.details : {};
+	const postedAt = asIso(data.postedAt || data.createdAt);
+	const postedAtMs = postedAt ? Date.parse(postedAt) : NaN;
 	return {
 		objectID: id,
 		title: data.title || "",
@@ -25,9 +45,17 @@ function record(id, data) {
 		description: data.description || data.jobDescription || "",
 		source: data.source || "",
 		sourceCatalog: data.sourceCatalog || "market",
-		postedAt: data.postedAt || data.createdAt || null,
+		postedAt,
+		postedAtMs: Number.isFinite(postedAtMs) ? postedAtMs : 0,
 		titleReviewLabel: data.titleReview?.label || "",
 		skills: data.skills || data.aiSkills?.map?.((skill) => skill.name) || [],
+		remote: String(details.remote || ""),
+		seniority: String(details.seniority || ""),
+		time: String(details.time || ""),
+		position: String(details.position || ""),
+		companyId: String(data.companyId || ""),
+		aiSkillStatus: String(data.aiSkillStatus || ""),
+		extensionV2: data.extensionV2 === true,
 	};
 }
 
@@ -52,6 +80,7 @@ export async function searchNewestJobPage(query, {
 	page = 0,
 	hitsPerPage = 100,
 	facetFilters = null,
+	numericFilters = null,
 } = {}) {
 	const search = getClient();
 	if (!search) {
@@ -67,6 +96,9 @@ export async function searchNewestJobPage(query, {
 	};
 	if (Array.isArray(facetFilters) && facetFilters.length) {
 		searchParams.facetFilters = facetFilters;
+	}
+	if (Array.isArray(numericFilters) && numericFilters.length) {
+		searchParams.numericFilters = numericFilters;
 	}
 	const result = await search.searchSingleIndex({
 		indexName: latestIndexName,

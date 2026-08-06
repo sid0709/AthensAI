@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from "react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { TopNav } from "../components/layout/TopNav";
 import { ApplyProgressOverlay } from "../components/ApplyProgressOverlay";
+import { BackgroundAiProgressOverlay } from "../components/BackgroundAiProgressOverlay";
 import { pathForView, viewFromPathname, type NavigateOptions } from "../config/routes";
 import { AgentRunProvider } from "../context/AgentRunContext";
 import { AgentSessionsProvider } from "../features/agents/context/AgentSessionsContext";
@@ -115,6 +116,7 @@ export function AppLayout() {
           </main>
         </div>
         <ApplyProgressOverlay />
+        <BackgroundAiProgressOverlay />
       </div>
     </AppProviders>
   );

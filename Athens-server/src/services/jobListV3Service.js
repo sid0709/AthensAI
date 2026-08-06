@@ -23,10 +23,17 @@ const PAGE_LIMIT_MAX = 100;
 const SCAN_BATCH_SIZE = 100;
 const MAX_SCAN_BATCHES = 20;
 const COUNT_CACHE_MS = Math.max(1_000, Number(process.env.JOB_LIST_V3_COUNT_CACHE_MS || 60_000));
+const FILTERED_COUNT_CACHE_MS = Math.max(1_000, Number(process.env.JOB_LIST_V3_FILTERED_COUNT_CACHE_MS || 15_000));
+/** List must not wait on status invert; return All/New from index within this budget. */
+const FILTERED_COUNT_LIST_BUDGET_MS = Math.max(50, Number(process.env.JOB_LIST_V3_FILTERED_COUNT_BUDGET_MS || 450));
+const HYDRATE_CHUNK = 30;
+const HYDRATE_CONCURRENCY = Math.max(2, Math.min(16, Number(process.env.JOB_LIST_V3_HYDRATE_CONCURRENCY || 8)));
 const COMPANY_COUNT_CACHE_MS = Math.max(COUNT_CACHE_MS, Number(process.env.JOB_LIST_V3_COMPANY_COUNT_CACHE_MS || 300_000));
 const catalogCountCache = new Map();
 const companyCountCache = new Map();
 const statusCountCache = new Map();
+const filteredCountCache = new Map();
+const filteredCountInflight = new Map();
 
 const STATUS_FROM_API = {
 	Applied: 'applied',
@@ -182,8 +189,286 @@ function requiresAlgolia(body, sources) {
 	return exact > 1;
 }
 
-function preferAlgoliaBrowse(_body, _sources, tab) {
-	return isAlgoliaConfigured() && ['all', 'new'].includes(tab);
+function preferAlgoliaBrowse(body, sources, tab) {
+	if (!isAlgoliaConfigured() || !['all', 'new'].includes(tab)) return false;
+	// Single Firestore equality/in facet (source, remote, …) is exact and indexed.
+	// Prefer it over Algolia until attributesForFaceting is live — facetFilters are
+	// silent no-ops otherwise and the list post-scans the full newest catalog.
+	if (!requiresAlgolia(body, sources) && nativeFacet(body, sources)) return false;
+	return true;
+}
+
+/** Exported for tests: which path listJobsV3 uses for All/New pages. */
+export function shouldUseAlgoliaList(body = {}, tab = 'all') {
+	const sources = selectedSources(body);
+	return requiresAlgolia(body, sources) || preferAlgoliaBrowse(body, sources, tab);
+}
+
+/** True when request filters shrink the Job Search catalog below the full APPROVED set. */
+export function bodyHasRestrictiveFilters(body = {}) {
+	const sources = selectedSources(body);
+	return Boolean(
+		String(body.q || '').trim()
+		|| body['company.name']
+		|| body['details.position']
+		|| body['details.seniority']
+		|| body['company.tags']
+		|| body['details.remote']
+		|| body['details.time']
+		|| body.companyId
+		|| body.aiExtracted === true
+		|| body.aiExtracted === 'true'
+		|| body.postedAtFrom
+		|| body.postedAtTo
+		|| sources,
+	);
+}
+
+function emptyFilteredCounts() {
+	return {
+		all: 0,
+		posted: 0,
+		'bid-ready': 0,
+		'bid-completed': 0,
+		applied: 0,
+		scheduled: 0,
+		declined: 0,
+	};
+}
+
+function algoliaQuery(body) {
+	return [body.q, body['company.name']].map((value) => String(value || '').trim()).filter(Boolean).join(' ');
+}
+
+/** Facet filters shared by list + filtered All counts. */
+export function buildAlgoliaFacetFilters(body = {}, sources = null, { isBeta = true } = {}) {
+	const facetFilters = [['titleReviewLabel:APPROVED']];
+	if (sources?.length) facetFilters.push(sources.map((source) => `source:${source}`));
+	if (!isBeta) facetFilters.push('extensionV2:false');
+	if (body.aiExtracted === true || body.aiExtracted === 'true') {
+		facetFilters.push('aiSkillStatus:extracted');
+	}
+	if (body['details.remote']) facetFilters.push(`remote:${String(body['details.remote'])}`);
+	if (body['details.time']) facetFilters.push(`time:${String(body['details.time'])}`);
+	if (body.companyId) facetFilters.push(`companyId:${String(body.companyId)}`);
+	if (body['details.seniority']) {
+		const allowed = String(body['details.seniority']).split(',').map((value) => value.trim()).filter(Boolean);
+		if (allowed.length) facetFilters.push(allowed.map((value) => `seniority:${value}`));
+	}
+	if (body['details.position']) facetFilters.push(`position:${String(body['details.position'])}`);
+	return facetFilters;
+}
+
+export function buildAlgoliaNumericFilters(body = {}) {
+	const filters = [];
+	const from = asDate(body.postedAtFrom);
+	const to = asDate(body.postedAtTo);
+	if (from) filters.push(`postedAtMs>=${from.getTime()}`);
+	if (to) {
+		const end = new Date(to);
+		if (String(body.postedAtTo).length <= 10) end.setUTCHours(23, 59, 59, 999);
+		filters.push(`postedAtMs<=${end.getTime()}`);
+	}
+	return filters;
+}
+
+function onlyCompanyIdFilter(body = {}, sources = null) {
+	if (!body.companyId) return false;
+	if (sources) return false;
+	if (String(body.q || '').trim() || body['company.name']) return false;
+	if (body['details.position'] || body['details.seniority'] || body['company.tags']) return false;
+	if (body['details.remote'] || body['details.time']) return false;
+	if (body.aiExtracted === true || body.aiExtracted === 'true') return false;
+	if (body.postedAtFrom || body.postedAtTo) return false;
+	return true;
+}
+
+async function companyApprovedCount(companyId, isBeta) {
+	const id = String(companyId || '').trim();
+	if (!id) return null;
+	const key = `${isBeta ? 'beta' : 'public'}:${id}`;
+	const cached = companyCountCache.get(key);
+	if (cached?.expiresAt > Date.now()) return cached.value;
+	const snapshot = await getFirestoreDb().collection('companies').doc(id).get();
+	const data = snapshot.exists ? (snapshot.data() || {}) : {};
+	const value = Number(isBeta ? data.approvedJobCount : data.publicApprovedJobCount);
+	if (!Number.isFinite(value) || value < 0) return null;
+	companyCountCache.set(key, { value, expiresAt: Date.now() + COMPANY_COUNT_CACHE_MS });
+	return value;
+}
+
+async function nativeApprovedCount(body, sources, isBeta) {
+	// Firestore .count() cannot express free-text / multi-value includes filters.
+	if (String(body.q || '').trim() || body['company.name'] || body['details.position']
+		|| body['details.seniority'] || body['company.tags']) {
+		return null;
+	}
+	const facet = nativeFacet(body, sources);
+	const exactExtras = [
+		sources,
+		body['details.remote'],
+		body['details.time'],
+		body.companyId,
+		body.aiExtracted === true || body.aiExtracted === 'true',
+	].filter(Boolean).length;
+	// nativeFacet only encodes a single equality/in. Multiple exact facets need Algolia.
+	if (exactExtras > 1) return null;
+	try {
+		let query = marketJobs().where('titleReview.label', '==', 'APPROVED');
+		if (!isBeta) query = query.where('extensionV2', '==', false);
+		if (facet) query = query.where(facet.field, facet.operator, facet.value);
+		const from = asDate(body.postedAtFrom);
+		const to = asDate(body.postedAtTo);
+		if (from) query = query.where('postedAt', '>=', from);
+		if (to) {
+			const end = new Date(to);
+			if (String(body.postedAtTo).length <= 10) end.setUTCHours(23, 59, 59, 999);
+			query = query.where('postedAt', '<=', end);
+		}
+		const snapshot = await query.count().get();
+		return Number(snapshot.data().count || 0);
+	} catch {
+		return null;
+	}
+}
+
+async function filteredCatalogAllCount(body, sources, isBeta) {
+	if (onlyCompanyIdFilter(body, sources)) {
+		const companyCount = await companyApprovedCount(body.companyId, isBeta);
+		if (companyCount != null) return companyCount;
+	}
+	if (isAlgoliaConfigured()) {
+		const result = await searchNewestJobPage(algoliaQuery(body), {
+			page: 0,
+			hitsPerPage: 1,
+			facetFilters: buildAlgoliaFacetFilters(body, sources, { isBeta }),
+			numericFilters: buildAlgoliaNumericFilters(body),
+		});
+		if (result) return Number(result.nbHits || 0);
+	}
+	const native = await nativeApprovedCount(body, sources, isBeta);
+	if (native != null) return native;
+	return null;
+}
+
+/**
+ * Status-tab badges under filters: intersect the small per-profile status set
+ * with the filtered catalog (hydrate status IDs only, never the full catalog).
+ */
+async function countFilteredStatusBuckets(body, sources, { profileId, isBeta, statuses = null } = {}) {
+	const buckets = emptyFilteredCounts();
+	if (!profileId) return buckets;
+	const statusRows = statuses || statusMap(await getProfileJobStatusIndex(profileId));
+	const jobIds = [];
+	const rowById = new Map();
+	for (const row of statusRows.values()) {
+		const jobId = String(row?.jobId || '').trim();
+		if (!jobId || row.visibleInJobSearch === false) continue;
+		const state = String(row.state || '').trim();
+		if (!state || state === 'posted' || !Object.hasOwn(buckets, state)) continue;
+		jobIds.push(jobId);
+		rowById.set(jobId, row);
+	}
+	if (!jobIds.length) return buckets;
+	const jobs = await hydrateJobIds(jobIds, { fields: FILTER_MATCH_JOB_FIELDS });
+	for (const jobId of jobIds) {
+		const job = jobs.get(jobId);
+		if (!job || !matchesFilters(job, body, { isBeta, sources })) continue;
+		const state = String(rowById.get(jobId)?.state || '').trim();
+		if (state && Object.hasOwn(buckets, state)) buckets[state] += 1;
+	}
+	return buckets;
+}
+
+/**
+ * Fast filtered badge counts: All from index nbHits / Firestore count; status
+ * tabs from inverted join over the profile status set.
+ */
+export function assembleFilteredStatusCounts(allCount, statusBuckets = emptyFilteredCounts()) {
+	const counts = emptyFilteredCounts();
+	const any = (
+		Number(statusBuckets['bid-ready'] || 0)
+		+ Number(statusBuckets['bid-completed'] || 0)
+		+ Number(statusBuckets.applied || 0)
+		+ Number(statusBuckets.scheduled || 0)
+		+ Number(statusBuckets.declined || 0)
+	);
+	const all = allCount == null ? any : Math.max(0, Number(allCount) || 0);
+	counts.all = all;
+	counts.posted = Math.max(0, all - any);
+	counts['bid-ready'] = Number(statusBuckets['bid-ready'] || 0);
+	counts['bid-completed'] = Number(statusBuckets['bid-completed'] || 0);
+	counts.applied = Number(statusBuckets.applied || 0);
+	counts.scheduled = Number(statusBuckets.scheduled || 0);
+	counts.declined = Number(statusBuckets.declined || 0);
+	return counts;
+}
+
+function filteredCountsCacheKey(body, profileId, isBeta) {
+	return `${profileId || 'anon'}:${isBeta ? 'beta' : 'public'}:${cursorHash({
+		...body,
+		applierName: undefined,
+		profileId: undefined,
+	})}`;
+}
+
+async function computeFilteredStatusCountsUncached(body, { profileId, isBeta, statuses = null } = {}) {
+	const sources = selectedSources(body);
+	const [allCount, statusBuckets] = await Promise.all([
+		filteredCatalogAllCount(body, sources, isBeta),
+		countFilteredStatusBuckets(body, sources, { profileId, isBeta, statuses }),
+	]);
+	return assembleFilteredStatusCounts(allCount, statusBuckets);
+}
+
+export async function computeFilteredStatusCounts(body = {}, { profileId, isBeta, statuses = null } = {}) {
+	const cacheKey = filteredCountsCacheKey(body, profileId, isBeta);
+	const cached = filteredCountCache.get(cacheKey);
+	if (cached?.expiresAt > Date.now()) return { ...cached.value };
+
+	const existing = filteredCountInflight.get(cacheKey);
+	if (existing) return { ...(await existing) };
+
+	const pending = (async () => {
+		const counts = await computeFilteredStatusCountsUncached(body, { profileId, isBeta, statuses });
+		filteredCountCache.set(cacheKey, { value: counts, expiresAt: Date.now() + FILTERED_COUNT_CACHE_MS });
+		while (filteredCountCache.size > 500) filteredCountCache.delete(filteredCountCache.keys().next().value);
+		return counts;
+	})();
+	filteredCountInflight.set(cacheKey, pending);
+	try {
+		return { ...(await pending) };
+	} finally {
+		if (filteredCountInflight.get(cacheKey) === pending) filteredCountInflight.delete(cacheKey);
+	}
+}
+
+/**
+ * List path: never block on hydrating the whole status set. Return index All/New
+ * within a short budget; warm full status badges into cache for /counts.
+ */
+async function statusCountsForListPage(body, { profileId, isBeta, statuses = null } = {}) {
+	if (!bodyHasRestrictiveFilters(body)) {
+		return getJobStatusCountsV3(body);
+	}
+
+	const cacheKey = filteredCountsCacheKey(body, profileId, isBeta);
+	const cached = filteredCountCache.get(cacheKey);
+	if (cached?.expiresAt > Date.now()) return { ...cached.value };
+
+	const sources = selectedSources(body);
+	const allCount = await filteredCatalogAllCount(body, sources, isBeta);
+	const fullPromise = computeFilteredStatusCounts(body, { profileId, isBeta, statuses })
+		.catch(() => null);
+	const raced = await Promise.race([
+		fullPromise,
+		new Promise((resolve) => {
+			setTimeout(() => resolve(null), FILTERED_COUNT_LIST_BUDGET_MS);
+		}),
+	]);
+	if (raced) return raced;
+	// Provisional All/New from index; Applied/Bid… fill in via /counts or cache warm.
+	return assembleFilteredStatusCounts(allCount, emptyFilteredCounts());
 }
 
 function statusMap(index) {
@@ -257,6 +542,22 @@ const LIST_JOB_FIELDS = [
 	'sourceCatalog',
 ];
 
+/** Lean fields for filter-match / badge invert (no apply links / titles). */
+const FILTER_MATCH_JOB_FIELDS = [
+	'source',
+	'companyId',
+	'company',
+	'companyName',
+	'postedAt',
+	'_createdAt',
+	'createdAt',
+	'extensionV2',
+	'aiSkillStatus',
+	'details',
+	'titleReview',
+	'sourceCatalog',
+];
+
 function nativeJobsQuery(body, facet, { isBeta = false } = {}) {
 	// Physical documents live in `jobs` with sourceCatalog=market; `job_market`
 	// is only the adapter alias and is empty as a native collection.
@@ -319,26 +620,26 @@ async function listNative(body, context) {
 	};
 }
 
-async function hydrateJobIds(ids) {
+async function hydrateJobIds(ids, { fields = LIST_JOB_FIELDS, concurrency = HYDRATE_CONCURRENCY } = {}) {
 	if (!ids.length) return new Map();
 	const db = getFirestoreDb();
 	const unique = [...new Set(ids.map(String))];
 	const out = new Map();
-	// Prefer ranged `in` + select over getAll so Applied/Scheduled tabs do not
-	// download full job descriptions for every card.
-	for (let offset = 0; offset < unique.length; offset += 30) {
-		const chunk = unique.slice(offset, offset + 30);
-		const snapshot = await db.collection(JOB_COLLECTION)
-			.where(FieldPath.documentId(), 'in', chunk)
-			.select(...LIST_JOB_FIELDS)
-			.get();
-		for (const document of snapshot.docs) out.set(document.id, decodeJob(document));
+	const chunks = [];
+	for (let offset = 0; offset < unique.length; offset += HYDRATE_CHUNK) {
+		chunks.push(unique.slice(offset, offset + HYDRATE_CHUNK));
+	}
+	for (let offset = 0; offset < chunks.length; offset += concurrency) {
+		const batch = chunks.slice(offset, offset + concurrency);
+		await Promise.all(batch.map(async (chunk) => {
+			const snapshot = await db.collection(JOB_COLLECTION)
+				.where(FieldPath.documentId(), 'in', chunk)
+				.select(...fields)
+				.get();
+			for (const document of snapshot.docs) out.set(document.id, decodeJob(document));
+		}));
 	}
 	return out;
-}
-
-function algoliaQuery(body) {
-	return [body.q, body['company.name']].map((value) => String(value || '').trim()).filter(Boolean).join(' ');
 }
 
 async function listAlgolia(body, context) {
@@ -348,10 +649,14 @@ async function listAlgolia(body, context) {
 	let offset = Number(cursor.offset || 0);
 	let hasMore = true;
 	const data = [];
+	const facetFilters = buildAlgoliaFacetFilters(body, sources, { isBeta });
+	const numericFilters = buildAlgoliaNumericFilters(body);
 	for (let scannedPages = 0; scannedPages < MAX_SCAN_BATCHES && data.length < limit; scannedPages += 1) {
 		const result = await searchNewestJobPage(algoliaQuery(body), {
 			page,
 			hitsPerPage: SCAN_BATCH_SIZE,
+			facetFilters,
+			numericFilters,
 		});
 		if (!result) throw Object.assign(new Error('Algolia is required for this Job Search filter'), { status: 503, retryable: true });
 		const ids = result.ids.slice(offset);
@@ -470,6 +775,8 @@ export function invalidateJobListV3Counts() {
 	catalogCountCache.clear();
 	companyCountCache.clear();
 	statusCountCache.clear();
+	filteredCountCache.clear();
+	filteredCountInflight.clear();
 }
 
 async function attachCompanyCounts(jobs, isBeta) {
@@ -564,37 +871,37 @@ function countsFromStatusIndex(index) {
 
 export async function getJobStatusCountsV3(body = {}, { statusIndex = null } = {}) {
 	const { profileId, isBeta } = await resolveViewer(body);
+	const restrictive = bodyHasRestrictiveFilters(body);
+
+	// When filters are active, badges must use the same match rules as the list.
+	// Catalog/status inventory totals are wrong for filtered Job Search.
+	if (restrictive) {
+		return computeFilteredStatusCounts(body, { profileId, isBeta });
+	}
+
 	const all = await approvedCatalogCount(isBeta);
 	if (!profileId) {
 		return { all, posted: all, 'bid-ready': 0, 'bid-completed': 0, applied: 0, scheduled: 0, declined: 0 };
 	}
 	const cacheKey = `${profileId}:${isBeta ? 'beta' : 'public'}`;
 	const cached = statusCountCache.get(cacheKey);
+	let stored;
 	if (cached?.expiresAt > Date.now()) {
-		const stored = cached.value;
-		const any = Math.min(all, Number(stored?.any || 0));
-		return {
-			all,
-			posted: Math.max(0, all - any),
-			'bid-ready': Number(stored?.['bid-ready'] || 0),
-			'bid-completed': Number(stored?.['bid-completed'] || 0),
-			applied: Number(stored?.applied || 0),
-			scheduled: Number(stored?.scheduled || 0),
-			declined: Number(stored?.declined || 0),
-		};
+		stored = cached.value;
+	} else {
+		// Prefer in-memory index, then aggregation counts (source of truth for
+		// badges). Sharded counters lag for statuses written before projections.
+		stored = countsFromStatusIndex(statusIndex)
+			|| await countJobStatusesByStateAggregated(profileId, { includeExtensionV2: isBeta });
+		if (!stored?.any) {
+			stored = await readMaterializedJobStatusCounts(profileId, { includeExtensionV2: isBeta });
+		}
+		if (!stored?.any) {
+			const live = await countLiveJobStatusesByState(profileId);
+			if (live?.any) stored = live;
+		}
+		statusCountCache.set(cacheKey, { value: stored, expiresAt: Date.now() + COUNT_CACHE_MS });
 	}
-	// Prefer in-memory index, then aggregation counts (source of truth for
-	// badges). Sharded counters lag for statuses written before projections.
-	let stored = countsFromStatusIndex(statusIndex)
-		|| await countJobStatusesByStateAggregated(profileId, { includeExtensionV2: isBeta });
-	if (!stored?.any) {
-		stored = await readMaterializedJobStatusCounts(profileId, { includeExtensionV2: isBeta });
-	}
-	if (!stored?.any) {
-		const live = await countLiveJobStatusesByState(profileId);
-		if (live?.any) stored = live;
-	}
-	statusCountCache.set(cacheKey, { value: stored, expiresAt: Date.now() + COUNT_CACHE_MS });
 	const any = Math.min(all, Number(stored?.any || 0));
 	return {
 		all,
@@ -701,7 +1008,7 @@ export async function listJobsV3(body = {}) {
 	}
 	const [withCompanyCounts, statusCounts] = await Promise.all([
 		attachCompanyCounts(page.data, isBeta),
-		getJobStatusCountsV3(body),
+		statusCountsForListPage(body, { profileId, isBeta, statuses }),
 	]);
 	page.data = await attachRecommendFields(withCompanyCounts, body.applierName);
 	let totalJobs = totalForTab(tab, statusCounts);
