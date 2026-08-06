@@ -44,7 +44,8 @@ type StartRecordingMessage = {
   /** Pre-captured from the side panel click turn (open new tab → getMediaStreamId). */
   tabId?: number | null;
   streamId?: string | null;
-  captureSource?: "tab" | "desktop";
+  captureSource?: "tab" | "desktop" | "desktop-relay";
+  relayOffer?: RTCSessionDescriptionInit | null;
   preferredTabId?: number | null;
   job?: JobSnapshot | null;
   expectedResumeName?: string | null;
@@ -385,6 +386,24 @@ async function beginOffscreenRecording(
   return tabId;
 }
 
+async function beginOffscreenRelayRecording(
+  sessionId: string,
+  tabId: number,
+  offer: RTCSessionDescriptionInit,
+) {
+  await ensureOffscreenDocument();
+  const response = await sendOffscreenMessage({
+    type: "OFFSCREEN_START_RELAY_RECORDING",
+    sessionId,
+    offer,
+  });
+  if (!response?.ok || !response.answer) {
+    throw new Error(response?.error || "Could not connect the selected tab to the recorder.");
+  }
+  recordingTabs.set(sessionId, tabId);
+  return response.answer as RTCSessionDescriptionInit;
+}
+
 function finishStartRecording(
   message: StartRecordingMessage,
   tabId: number,
@@ -397,7 +416,10 @@ function finishStartRecording(
     tabId,
     streamId,
     message.applyUrl,
-    { navigate: options.navigate, captureSource: message.captureSource || "tab" },
+    {
+      navigate: options.navigate,
+      captureSource: message.captureSource === "desktop" ? "desktop" : "tab",
+    },
   )
     .then(async (recordedTabId) => {
       captureReady.remember(recordedTabId, message.applyUrl);
@@ -414,6 +436,36 @@ function finishStartRecording(
         await armLiveSession(live);
       }
       sendResponse({ ok: true, tabId: recordedTabId });
+    })
+    .catch((error: unknown) => {
+      sendResponse({
+        ok: false,
+        tabId,
+        error: error instanceof Error ? error.message : "Could not start recording.",
+      });
+    });
+}
+
+function finishRelayStartRecording(
+  message: StartRecordingMessage,
+  tabId: number,
+  offer: RTCSessionDescriptionInit,
+  sendResponse: (response: unknown) => void,
+) {
+  void beginOffscreenRelayRecording(message.sessionId, tabId, offer)
+    .then(async (answer) => {
+      captureReady.remember(tabId, message.applyUrl);
+      persistCaptureReady();
+      rememberLiveSession(
+        message.sessionId,
+        tabId,
+        message.job,
+        message.expectedResumeName,
+        message.resumeSetFolder,
+      );
+      const live = liveSessions.get(message.sessionId);
+      if (live) await armLiveSession(live);
+      sendResponse({ ok: true, tabId, relayAnswer: answer });
     })
     .catch((error: unknown) => {
       sendResponse({
@@ -1137,6 +1189,24 @@ export default defineBackground(() => {
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
       const providedStreamId = typeof message.streamId === "string" ? message.streamId.trim() : "";
       const providedTabId = asTabId(message.tabId);
+
+      if (
+        message.captureSource === "desktop-relay"
+        && message.relayOffer
+        && providedTabId != null
+      ) {
+        if (sessionIdForTab(providedTabId)) {
+          sendResponse({
+            ok: false,
+            tabId: providedTabId,
+            error: "This tab is already recording. Complete that bid first.",
+          });
+          return false;
+        }
+        if (pendingRecord?.tabId === providedTabId) pendingRecord = null;
+        finishRelayStartRecording(message, providedTabId, message.relayOffer, sendResponse);
+        return true;
+      }
 
       // Preferred path: side panel opened apply URL and captured in the click turn.
       if (providedStreamId && providedTabId != null) {

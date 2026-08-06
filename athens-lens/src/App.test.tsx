@@ -40,7 +40,14 @@ const jobsRepository: JobsRepository = {
 };
 
 function installChromeStub(overrides?: {
-  sendMessage?: (message: { type?: string; tabId?: number; preferredTabId?: number | null; streamId?: string }) => unknown | Promise<unknown>;
+  sendMessage?: (message: {
+    type?: string;
+    tabId?: number;
+    preferredTabId?: number | null;
+    streamId?: string;
+    captureSource?: string;
+    relayOffer?: RTCSessionDescriptionInit;
+  }) => unknown | Promise<unknown>;
   activeTab?: { id: number; url?: string } | (() => { id: number; url?: string });
   createTabId?: number | (() => number);
   streamId?: string | null;
@@ -63,7 +70,11 @@ function installChromeStub(overrides?: {
     preferredTabId?: number | null;
   }) => {
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
-      return { ok: true, tabId: message.tabId ?? message.preferredTabId ?? 42 };
+      return {
+        ok: true,
+        tabId: message.tabId ?? message.preferredTabId ?? 42,
+        relayAnswer: { type: "answer", sdp: "mock-answer" },
+      };
     }
     if (message?.type === "ATHENS_LENS_STOP_RECORDING") {
       return { ok: true, tabId: 42, filename: "athens-lens-recording-test.webm" };
@@ -166,12 +177,41 @@ function installChromeStub(overrides?: {
   return chromeApi;
 }
 
+function installMediaRelayStub() {
+  const track = { stop: vi.fn() };
+  const stream = { getTracks: () => [track] } as unknown as MediaStream;
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia: vi.fn(async () => stream) },
+  });
+
+  class MockPeerConnection {
+    iceGatheringState: RTCIceGatheringState = "complete";
+    localDescription: RTCSessionDescription | null = null;
+
+    addTrack() {}
+    addEventListener() {}
+    removeEventListener() {}
+    close() {}
+    async createOffer(): Promise<RTCSessionDescriptionInit> {
+      return { type: "offer", sdp: "mock-offer" };
+    }
+    async setLocalDescription(description: RTCSessionDescriptionInit) {
+      this.localDescription = description as RTCSessionDescription;
+    }
+    async setRemoteDescription() {}
+  }
+
+  vi.stubGlobal("RTCPeerConnection", MockPeerConnection);
+}
+
 describe("Athens Lens app", () => {
   beforeEach(async () => {
     await resetWorkspaceCacheForTests();
     useRecordingSessionsStore.getState().clearAll();
     useTabWorkspaceStore.getState().clearAll();
     window.location.hash = "#jobs";
+    installMediaRelayStub();
     installChromeStub();
   });
 
@@ -394,7 +434,11 @@ describe("Athens Lens app", () => {
       sendMessage: async (message) => {
         if (message?.type === "ATHENS_LENS_START_RECORDING") {
           startCount += 1;
-          return { ok: true, tabId: message.tabId ?? activeTabId };
+          return {
+            ok: true,
+            tabId: message.tabId ?? activeTabId,
+            relayAnswer: { type: "answer", sdp: "mock-answer" },
+          };
         }
         return undefined;
       },
@@ -444,8 +488,8 @@ describe("Athens Lens app", () => {
       expect.objectContaining({
         type: "ATHENS_LENS_START_RECORDING",
         tabId: 42,
-        streamId: "mock-stream-id",
-        captureSource: "desktop",
+        captureSource: "desktop-relay",
+        relayOffer: { type: "offer", sdp: "mock-offer" },
       }),
     );
 

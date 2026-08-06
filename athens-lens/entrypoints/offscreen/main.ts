@@ -5,6 +5,12 @@ type StartMessage = {
   captureSource?: "tab" | "desktop";
 };
 
+type RelayStartMessage = {
+  type: "OFFSCREEN_START_RELAY_RECORDING";
+  sessionId: string;
+  offer: RTCSessionDescriptionInit;
+};
+
 type StopMessage = {
   type: "OFFSCREEN_STOP_RECORDING";
   sessionId: string;
@@ -42,6 +48,7 @@ type PendingRecording = {
 
 const recorders = new Map<string, RecorderState>();
 const pendingRecordings = new Map<string, PendingRecording>();
+const relayPeers = new Map<string, RTCPeerConnection>();
 
 function pickMimeType(): string {
   const candidates = [
@@ -102,11 +109,15 @@ async function startRecording(
   streamId: string,
   captureSource: "tab" | "desktop" = "tab",
 ) {
+  const stream = await getCaptureStream(streamId, captureSource);
+  startRecordingFromStream(sessionId, stream);
+}
+
+function startRecordingFromStream(sessionId: string, stream: MediaStream) {
   if (recorders.has(sessionId)) {
     throw new Error("A recording is already active for this session.");
   }
   pendingRecordings.delete(sessionId);
-  const stream = await getCaptureStream(streamId, captureSource);
   const chunks: Blob[] = [];
   const mimeType = pickMimeType();
   const mediaRecorder = new MediaRecorder(stream, {
@@ -118,6 +129,63 @@ async function startRecording(
   };
   mediaRecorder.start(2000);
   recorders.set(sessionId, { mediaRecorder, stream, chunks, mimeType });
+}
+
+function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
+  if (peer.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(finish, 2_000);
+    function finish() {
+      window.clearTimeout(timeout);
+      peer.removeEventListener("icegatheringstatechange", onStateChange);
+      resolve();
+    }
+    function onStateChange() {
+      if (peer.iceGatheringState === "complete") finish();
+    }
+    peer.addEventListener("icegatheringstatechange", onStateChange);
+  });
+}
+
+async function startRelayRecording(
+  sessionId: string,
+  offer: RTCSessionDescriptionInit,
+): Promise<RTCSessionDescriptionInit> {
+  if (recorders.has(sessionId) || relayPeers.has(sessionId)) {
+    throw new Error("A recording is already active for this session.");
+  }
+
+  const peer = new RTCPeerConnection({ iceServers: [] });
+  const stream = new MediaStream();
+  peer.ontrack = (event) => {
+    if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
+  };
+
+  try {
+    await peer.setRemoteDescription(offer);
+    for (const receiver of peer.getReceivers()) {
+      if (receiver.track && !stream.getTracks().includes(receiver.track)) {
+        stream.addTrack(receiver.track);
+      }
+    }
+    if (!stream.getVideoTracks().length) {
+      throw new Error("The selected tab did not provide a video track.");
+    }
+
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    await waitForIceGathering(peer);
+    startRecordingFromStream(sessionId, stream);
+    relayPeers.set(sessionId, peer);
+
+    const description = peer.localDescription;
+    if (!description) throw new Error("Could not connect the selected tab to the recorder.");
+    return { type: description.type, sdp: description.sdp };
+  } catch (error) {
+    stopStream(stream);
+    peer.close();
+    throw error;
+  }
 }
 
 async function stopRecording(sessionId: string, filename?: string) {
@@ -139,6 +207,8 @@ async function stopRecording(sessionId: string, filename?: string) {
 
   stopStream(recorder.stream);
   recorders.delete(sessionId);
+  relayPeers.get(sessionId)?.close();
+  relayPeers.delete(sessionId);
 
   const extension = recorder.mimeType.includes("mp4") ? "mp4" : "webm";
   const downloadName = filename || `athens-lens-recording-${Date.now()}.${extension}`;
@@ -187,16 +257,30 @@ async function putRecording(sessionId: string, uploadUrl: string) {
 
 function discardRecording(sessionId: string) {
   pendingRecordings.delete(sessionId);
+  relayPeers.get(sessionId)?.close();
+  relayPeers.delete(sessionId);
 }
 
 chrome.runtime.onMessage.addListener((
-  message: StartMessage | StopMessage | DigestMessage | PutMessage | DiscardMessage,
+  message: StartMessage | RelayStartMessage | StopMessage | DigestMessage | PutMessage | DiscardMessage,
   _sender: unknown,
   sendResponse: (response?: unknown) => void,
 ) => {
   if (message?.type === "OFFSCREEN_START_RECORDING") {
     void startRecording(message.sessionId, message.streamId, message.captureSource)
       .then(() => sendResponse({ ok: true }))
+      .catch((error: unknown) => {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : "Could not start recording.",
+        });
+      });
+    return true;
+  }
+
+  if (message?.type === "OFFSCREEN_START_RELAY_RECORDING") {
+    void startRelayRecording(message.sessionId, message.offer)
+      .then((answer) => sendResponse({ ok: true, answer }))
       .catch((error: unknown) => {
         sendResponse({
           ok: false,

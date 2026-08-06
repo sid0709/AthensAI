@@ -16,6 +16,11 @@ import {
   type TabRecordingSession,
 } from "./recordingSessionsStore";
 import { useTabWorkspaceStore } from "../state/tabWorkspaceStore";
+import {
+  closeDesktopCaptureRelay,
+  createDesktopCaptureRelay,
+  keepDesktopCaptureRelay,
+} from "./desktopCaptureRelay";
 
 export type { ApplicationRecordingState, RecordingStatus };
 export { selectRecordingJobIds };
@@ -42,7 +47,7 @@ type JobSnapshot = {
 };
 
 type StartResponse =
-  | { ok: true; tabId: number }
+  | { ok: true; tabId: number; relayAnswer?: RTCSessionDescriptionInit }
   | { ok: false; tabId?: number; error?: string };
 
 type StopResponse =
@@ -202,7 +207,7 @@ function openApplyTab(
 function chooseTabCaptureStream(
   api: NonNullable<ReturnType<typeof extensionApi>>,
 ): Promise<
-  { ok: true; streamId: string; captureSource: "desktop" }
+  { ok: true; streamId: string }
   | { ok: false; error: string }
 > {
   if (!api.desktopCapture?.chooseDesktopMedia) {
@@ -223,7 +228,7 @@ function chooseTabCaptureStream(
           });
           return;
         }
-        resolve({ ok: true, streamId, captureSource: "desktop" });
+        resolve({ ok: true, streamId });
       });
     } catch (error) {
       resolve({
@@ -236,7 +241,7 @@ function chooseTabCaptureStream(
 
 function normalizeStartResponse(response: StartResponse | undefined): StartResponse {
   if (response?.ok && response.tabId != null) {
-    return { ok: true, tabId: response.tabId };
+    return { ok: true, tabId: response.tabId, relayAnswer: response.relayAnswer };
   }
   return {
     ok: false,
@@ -295,6 +300,8 @@ async function stopTabRecording(sessionId: string): Promise<StopResponse> {
       ok: false,
       error: error instanceof Error ? error.message : "Could not stop recording.",
     };
+  } finally {
+    closeDesktopCaptureRelay(sessionId);
   }
 }
 
@@ -605,35 +612,49 @@ export function useApplicationRecording() {
           return;
         }
 
-        void startAthensLensBid(session, {
-          jobId: job.id,
-          sessionId,
-          applyUrl: applyUrl || undefined,
-        }).catch((error: unknown) => {
-          console.warn("Athens Lens: bid start failed", error);
-        });
+        const relay = await createDesktopCaptureRelay(captured.streamId);
+        let relayKept = false;
 
-        const response = await sendStartRecording(api, applyUrl, sessionId, job, session, {
-          tabId,
-          streamId: captured.streamId,
-          captureSource: captured.captureSource,
-        });
-        if (!response?.ok) {
-          showStartError(response?.error || "Could not start tab recording.");
-          return;
+        try {
+          void startAthensLensBid(session, {
+            jobId: job.id,
+            sessionId,
+            applyUrl: applyUrl || undefined,
+          }).catch((error: unknown) => {
+            console.warn("Athens Lens: bid start failed", error);
+          });
+
+          const response = await sendStartRecording(api, applyUrl, sessionId, job, session, {
+            tabId,
+            captureSource: "desktop-relay",
+            relayOffer: relay.offer,
+          });
+          if (!response?.ok || !response.relayAnswer) {
+            showStartError(
+              response?.ok
+                ? "Could not connect the selected tab to the recorder."
+                : (response?.error || "Could not start tab recording."),
+            );
+            return;
+          }
+          await relay.connect(response.relayAnswer);
+          keepDesktopCaptureRelay(sessionId, relay);
+          relayKept = true;
+
+          const nextStore = useRecordingSessionsStore.getState();
+          nextStore.setPanelError(null);
+          nextStore.setFocusedTabId(response.tabId);
+          nextStore.replaceSession(response.tabId, createIdleSession(response.tabId, {
+            status: "recording",
+            job,
+            sessionId,
+            elapsedSeconds: 0,
+            restartCount: 0,
+            recordedStartAt,
+          }));
+        } finally {
+          if (!relayKept) relay.close();
         }
-
-        const nextStore = useRecordingSessionsStore.getState();
-        nextStore.setPanelError(null);
-        nextStore.setFocusedTabId(response.tabId);
-        nextStore.replaceSession(response.tabId, createIdleSession(response.tabId, {
-          status: "recording",
-          job,
-          sessionId,
-          elapsedSeconds: 0,
-          restartCount: 0,
-          recordedStartAt,
-        }));
       } catch (error) {
         showStartError(
           error instanceof Error ? error.message : "Could not start tab recording.",
@@ -687,48 +708,60 @@ export function useApplicationRecording() {
           return;
         }
 
-        void startAthensLensBid(session, {
-          jobId: current.job.id,
-          sessionId,
-          applyUrl: applyUrl || undefined,
-        }).catch((error: unknown) => {
-          console.warn("Athens Lens: bid restart start failed", error);
-        });
+        const relay = await createDesktopCaptureRelay(captured.streamId);
+        let relayKept = false;
 
-        const response = await sendStartRecording(
-          api,
-          applyUrl,
-          sessionId,
-          current.job,
-          session,
-          {
-            tabId,
-            streamId: captured.streamId,
-            captureSource: captured.captureSource,
-          },
-        );
-        if (!response?.ok) {
+        try {
+          void startAthensLensBid(session, {
+            jobId: current.job.id,
+            sessionId,
+            applyUrl: applyUrl || undefined,
+          }).catch((error: unknown) => {
+            console.warn("Athens Lens: bid restart start failed", error);
+          });
+
+          const response = await sendStartRecording(
+            api,
+            applyUrl,
+            sessionId,
+            current.job,
+            session,
+            {
+              tabId,
+              captureSource: "desktop-relay",
+              relayOffer: relay.offer,
+            },
+          );
+          if (!response?.ok || !response.relayAnswer) {
+            useRecordingSessionsStore.getState().replaceSession(
+              tabId,
+              createIdleSession(tabId, {
+                job: current.job,
+                restartCount,
+                error: response?.ok
+                  ? "Could not connect the selected tab to the recorder."
+                  : (response?.error || "Could not restart tab recording."),
+              }),
+            );
+            return;
+          }
+          await relay.connect(response.relayAnswer);
+          keepDesktopCaptureRelay(sessionId, relay);
+          relayKept = true;
+          useRecordingSessionsStore.getState().setFocusedTabId(response.tabId);
           useRecordingSessionsStore.getState().replaceSession(
-            tabId,
-            createIdleSession(tabId, {
+            response.tabId,
+            createIdleSession(response.tabId, {
+              status: "recording",
               job: current.job,
+              sessionId,
               restartCount,
-              error: response?.error || "Could not restart tab recording.",
+              recordedStartAt,
             }),
           );
-          return;
+        } finally {
+          if (!relayKept) relay.close();
         }
-        useRecordingSessionsStore.getState().setFocusedTabId(response.tabId);
-        useRecordingSessionsStore.getState().replaceSession(
-          response.tabId,
-          createIdleSession(response.tabId, {
-            status: "recording",
-            job: current.job,
-            sessionId,
-            restartCount,
-            recordedStartAt,
-          }),
-        );
       } catch (error) {
         useRecordingSessionsStore.getState().replaceSession(
           tabId,
