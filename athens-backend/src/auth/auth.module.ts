@@ -14,6 +14,6 @@ import { PasswordService } from './password.service';
     AccountInfoRepository,
     PasswordService,
   ],
-  exports: [AccountInfoService, PasswordService],
+  exports: [AccountInfoService, AccountInfoRepository, PasswordService],
 })
 export class AuthModule {}

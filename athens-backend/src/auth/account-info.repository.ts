@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AccountInfo } from '@prisma/client';
+import { AccountInfo, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -16,6 +16,10 @@ const ACCOUNT_INFO_COLLECTION = 'account_info';
 @Injectable()
 export class AccountInfoRepository {
   constructor(private readonly prisma: PrismaService) {}
+
+  findById(id: string): Promise<AccountInfo | null> {
+    return this.prisma.accountInfo.findUnique({ where: { id } });
+  }
 
   findByExactName(name: string): Promise<AccountInfo | null> {
     return this.prisma.accountInfo.findUnique({ where: { name } });
@@ -63,6 +67,68 @@ export class AccountInfoRepository {
           {
             q: { _id: { $oid: id } },
             u: { $set: { password } },
+            multi: false,
+          },
+        ],
+      });
+    }
+  }
+
+  async updateAutoBidProfile(
+    id: string,
+    autoBidProfile: Prisma.InputJsonValue,
+    vendorAllowed: boolean,
+  ): Promise<void> {
+    try {
+      await this.prisma.accountInfo.update({
+        where: { id },
+        data: { autoBidProfile, vendorAllowed },
+      });
+    } catch (error) {
+      if (!isReplicaSetRequired(error)) throw error;
+      await this.prisma.$runCommandRaw({
+        update: ACCOUNT_INFO_COLLECTION,
+        updates: [
+          {
+            q: { _id: { $oid: id } },
+            u: { $set: { autoBidProfile, vendorAllowed } },
+            multi: false,
+          },
+        ],
+      });
+    }
+  }
+
+  /** Merge a few autoBidProfile fields without clobbering the rest. */
+  async patchAutoBidProfileFields(
+    id: string,
+    fields: Record<string, unknown>,
+  ): Promise<void> {
+    const current = await this.findById(id);
+    if (!current) return;
+    const base =
+      current.autoBidProfile &&
+      typeof current.autoBidProfile === 'object' &&
+      !Array.isArray(current.autoBidProfile)
+        ? { ...(current.autoBidProfile as Record<string, unknown>) }
+        : {};
+    const autoBidProfile = {
+      ...base,
+      ...fields,
+    } as Prisma.InputJsonValue;
+    try {
+      await this.prisma.accountInfo.update({
+        where: { id },
+        data: { autoBidProfile },
+      });
+    } catch (error) {
+      if (!isReplicaSetRequired(error)) throw error;
+      await this.prisma.$runCommandRaw({
+        update: ACCOUNT_INFO_COLLECTION,
+        updates: [
+          {
+            q: { _id: { $oid: id } },
+            u: { $set: { autoBidProfile } },
             multi: false,
           },
         ],

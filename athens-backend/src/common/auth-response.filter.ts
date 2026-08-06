@@ -15,6 +15,7 @@ export class AuthResponseFilter implements ExceptionFilter {
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
+    let error: string | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -22,15 +23,25 @@ export class AuthResponseFilter implements ExceptionFilter {
       if (typeof body === 'string') {
         message = body;
       } else if (body && typeof body === 'object') {
-        const payload = body as { message?: string | string[] };
+        const payload = body as {
+          message?: string | string[];
+          error?: string;
+        };
         message = Array.isArray(payload.message)
           ? payload.message.join(', ')
           : String(payload.message || message);
+        if (typeof payload.error === 'string' && payload.error) {
+          error = payload.error;
+        }
       }
     } else if (exception instanceof Error) {
       message = exception.message;
     }
 
-    res.status(status).json({ success: false, message });
+    res.status(status).json({
+      success: false,
+      message,
+      error: error ?? message,
+    });
   }
 }

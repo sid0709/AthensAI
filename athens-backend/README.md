@@ -1,6 +1,6 @@
 # athens-backend
 
-NestJS + Prisma API for Athens. Replaces `Athens-server` for the Athens app, starting with authentication against MongoDB `AthensDB.account_info`.
+NestJS + Prisma API for Athens. Replaces `Athens-server` for the Athens app, starting with authentication and Settings auto-bid profile against MongoDB `AthensDB.account_info`.
 
 ## Stack
 
@@ -38,6 +38,21 @@ Default listen: `http://127.0.0.1:8980/api`
 | GET | `/api/account_info/by/:name` | — |
 
 Sign-in / sign-up responses: `{ success, user: { _id, name, tier, permission }, message }`.
+
+## Profile contract (Athens-compatible)
+
+| Method | Path | Notes |
+|--------|------|------|
+| GET | `/api/personal/auto-bid-profile?applierName=&profileId=` | Returns `{ success, accountExists, vendorAllowed, vendorPasswordSet, profile }` |
+| PUT | `/api/personal/auto-bid-profile` | Body: `{ applierName, profileId?, vendorAllowed?, ...profileFields }` |
+
+Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultPassword`, …) use local `enc:v1:` via `API_KEYS_ENCRYPTION_KEY` only.
+
+| Method | Path | Notes |
+|--------|------|------|
+| GET | `/api/personal/llm-models?provider=&applierName=&profileId=` | OpenAI catalog (needs decrypted profile key) or DeepSeek fixed list |
+| POST | `/api/personal/default-model` | `{ applierName, provider, model, profileId? }` — validates key then saves |
+| POST | `/api/personal/llm-key-check` | `{ provider, apiKey?, applierName? }` |
 
 ## Verify
 
