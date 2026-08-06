@@ -1,0 +1,27 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+/// Shared with Athens-server / Firestore sync shape. Collection: account_info.
+model AccountInfo {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  name              String  @unique
+  /// Lowercased login key. Not unique in Prisma — legacy rows may share null.
+  usernameKey       String?
+  password          String?
+  tier              String?
+  permission        String?
+  vendorAllowed     Boolean?
+  vendorPassword    String?
+  autoBidProfile    Json?
+  notificationPrefs Json?
+  notionIntegration Json?
+
+  @@index([usernameKey])
+  @@map("account_info")
+}

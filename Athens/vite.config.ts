@@ -39,7 +39,7 @@ function figmaAssetResolver() {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const backendPort = env.VITE_BACKEND_PORT || '8979'
+  const backendPort = env.VITE_BACKEND_PORT || '8980'
   const proxyTarget =
     env.VITE_DEV_PROXY_TARGET ||
     (env.SERVER_API_URL ? originFromApiUrl(env.SERVER_API_URL) : '') ||
