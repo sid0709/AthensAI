@@ -699,6 +699,7 @@ function mergeVisibleFrameText(frames: PageTextFrame[], maxChars = MAX_VISIBLE_T
       visibleText: stripStylesheetNoise(frame.visibleText).trim(),
     }))
     .filter((frame) => frame.visibleText.length > 0)
+    .filter((frame) => !isNoiseFrameUrl(frame.url))
     .sort((a, b) => b.visibleText.length - a.visibleText.length);
 
   const selected: PageTextFrame[] = [];
@@ -959,11 +960,13 @@ async function readTabPageText(tabId: number) {
   }
   visibleText = visibleText.slice(0, MAX_VISIBLE_TEXT_CHARS);
 
-  const primary = selectedFrames[0] || frameResults[0];
+  const contentPrimary = selectedFrames.find((frame) => !isNoiseFrameUrl(frame.url))
+    || frameResults.find((frame) => !isNoiseFrameUrl(frame.url));
+  const pageUrl = (oak.formTree && oak.url) || contentPrimary?.url || tabUrl || "";
   return {
-    url: primary?.url || oak.url || tabUrl,
-    title: primary?.title || oak.title || "",
-    metaDescription: primary?.metaDescription || "",
+    url: pageUrl,
+    title: (oak.formTree && oak.title) || contentPrimary?.title || oak.title || "",
+    metaDescription: contentPrimary?.metaDescription || "",
     visibleText,
     formTree: oak.formTree,
     forms: allForms,

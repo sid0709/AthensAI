@@ -589,6 +589,12 @@ export async function* chatCompletionStream({
       }
       if (parsed?.model) billedModel = parsed.model;
       if (parsed?.usage) usageRaw = parsed.usage;
+      if (parsed?.error) {
+        const providerMessage = typeof parsed.error === 'string'
+          ? parsed.error
+          : parsed.error?.message;
+        throw new Error(providerMessage || `${p.label} stream failed`);
+      }
       const delta = parsed?.choices?.[0]?.delta?.content
         ?? parsed?.choices?.[0]?.text
         ?? '';

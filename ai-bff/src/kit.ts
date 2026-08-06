@@ -224,6 +224,125 @@ export class AiKit {
     };
   }
 
+  /**
+   * OpenAI-compatible SSE chunks for stream:true clients.
+   * Yields raw ChatCompletionChunk objects; caller writes `data: …\n\n`.
+   */
+  async *chatStream(request: ChatRequest, { signal }: { signal?: AbortSignal } = {}) {
+    const requestedModel = request.model ?? this.config.defaultModel ?? 'gpt-4o-mini';
+    const requestId = request.requestId || randomUUID();
+    const openaiKey =
+      normalizeApiKey(request.apiKeys?.openai) ?? this.config.openaiApiKey;
+    const deepseekKey =
+      normalizeApiKey(request.apiKeys?.deepseek) ?? this.config.deepseekApiKey;
+    const providers = createProviders({
+      ...this.config,
+      openaiApiKey: openaiKey,
+      deepseekApiKey: deepseekKey,
+    });
+    const provider = resolveProvider(providers, requestedModel);
+    const apiKey = provider.id === 'deepseek' ? deepseekKey || '' : openaiKey || '';
+    const messages = buildMessages(request);
+    const feature = request.feature || 'ai-bff-chat';
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs);
+
+    log.llm({
+      msg: 'chat stream started',
+      requestId,
+      feature,
+      provider: provider.id,
+      requestedModel,
+      runId: request.runId,
+      applierName: request.applierName,
+      messageCount: messages.length,
+    });
+
+    let billedModel = requestedModel;
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let totalTokens = 0;
+    let cachedTokens = 0;
+    let success = false;
+    let errorMessage = '';
+    const release = await this.admission.acquire(admissionLane(request), signal);
+
+    try {
+      const stream = provider.streamChat({
+        model: requestedModel,
+        messages,
+        temperature: request.temperature,
+        reasoningEffort: request.reasoningEffort,
+        topP: request.topP,
+        stop: request.stop,
+        tools: request.tools,
+        toolChoice: request.toolChoice,
+        responseSchema: request.responseSchema,
+        jsonMode: request.jsonMode,
+        stream: true,
+        signal,
+      });
+
+      for await (const chunk of stream) {
+        if (chunk.model) billedModel = chunk.model;
+        if (chunk.usage) {
+          promptTokens = chunk.usage.prompt_tokens ?? promptTokens;
+          completionTokens = chunk.usage.completion_tokens ?? completionTokens;
+          totalTokens = chunk.usage.total_tokens ?? totalTokens;
+          cachedTokens = Number(chunk.usage.prompt_tokens_details?.cached_tokens ?? cachedTokens) || 0;
+        }
+        yield { requestId, provider: provider.id, requestedModel, chunk };
+      }
+      success = true;
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+      throw err;
+    } finally {
+      release();
+      const elapsedMs = Date.now() - startedAtMs;
+      const tokenUsage = {
+        promptTokens,
+        completionTokens,
+        totalTokens: totalTokens || promptTokens + completionTokens,
+        cachedTokens,
+      };
+      const entry = buildAiApiUsageEntry({
+        requestId,
+        feature,
+        provider: provider.id,
+        requestedModel,
+        billedModel,
+        apiKey,
+        rawUsage: tokensToRawUsage(tokenUsage),
+        startedAt,
+        durationMs: elapsedMs,
+        success,
+        httpStatus: success ? 200 : undefined,
+        error: success ? undefined : errorMessage,
+        runId: request.runId,
+        applierName: request.applierName,
+        jobId: request.jobId,
+        path: '/v1/chat/completions',
+      });
+      try {
+        await getRecordAiApiUsage()(entry);
+      } catch (recordErr) {
+        const message = recordErr instanceof Error ? recordErr.message : String(recordErr);
+        log.warn('firestore', 'ai_api_usage write failed', { requestId, error: message });
+      }
+      log.llm({
+        msg: success ? 'chat stream completed' : 'chat stream failed',
+        requestId,
+        feature,
+        provider: provider.id,
+        requestedModel,
+        billedModel,
+        durationMs: elapsedMs,
+        error: success ? undefined : errorMessage,
+      });
+    }
+  }
+
   getAdmissionSnapshot() {
     return this.admission.snapshot();
   }
