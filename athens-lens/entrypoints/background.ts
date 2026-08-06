@@ -157,15 +157,9 @@ type PageTextFrame = {
 const recordingTabs = new Map<string, number>();
 const liveSessions = new Map<string, LiveRecordingSession>();
 const captureReady = createCaptureReadyTracker();
-/** Queued when side-panel Record cannot capture (needs toolbar gesture). */
+/** Queued only when Record was clicked before this tab received an action grant. */
 let pendingRecord: PendingRecord | null = null;
 const CAPTURE_READY_STORAGE_KEY = "athensLensCaptureReadyTabs";
-
-function isActiveTabCaptureError(message: string | undefined | null) {
-  return /activeTab|invoked for the current page|Chrome pages cannot be captured/i.test(
-    message || "",
-  );
-}
 
 function notifyRecordingStarted(session: LiveRecordingSession) {
   void chrome.runtime.sendMessage({
@@ -1011,18 +1005,27 @@ async function resolveReadableTabId(preferredTabId?: number | null) {
 export default defineBackground(() => {
   restoreCaptureReady();
 
-  // Chrome only grants tabCapture after the extension is invoked for the page
-  // (toolbar icon). Side-panel Record alone is not enough — capture here when
-  // a pending Record is waiting for this tab.
+  // The action click grants capture access for this tab. Do not request and
+  // discard a stream ID merely to open the panel: stream IDs are one-use and
+  // expire quickly. Record can consume the retained tab grant from the panel.
+  // If Record was clicked first, consume this action gesture immediately for
+  // that queued request.
   browser.action.onClicked.addListener((tab) => {
     if (tab?.windowId != null) {
       browser.sidePanel.open({ windowId: tab.windowId }).catch((error: unknown) => {
         console.error("Unable to open the Athens Lens side panel", error);
       });
     }
-    if (tab?.id == null) return;
+    const tabId = asTabId(tab?.id);
+    if (tabId == null) return;
 
-    chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+    const hasPendingRecord = pendingRecord?.tabId === tabId;
+    if (!hasPendingRecord) {
+      void rememberInvokedTabFromAction(tab);
+      return;
+    }
+
+    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
       const captureError = chrome.runtime.lastError?.message;
       void handleLensActionClick(tab, captureError ? null : (streamId || null));
     });

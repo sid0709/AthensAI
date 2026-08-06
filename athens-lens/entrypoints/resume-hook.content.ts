@@ -2,11 +2,12 @@
  * MAIN-world page hook: renames resume uploads to the profile ATS name and
  * emits original/cleaned filename audits (Bid-Monitor page-hook port).
  *
- * Critical for Lever (and similar analyze-on-select widgets):
- * Never swap `input.files` or re-dispatch synthetic change/input. That races
- * their upload/parser and leaves "Analyzing resume…" spinning forever.
- * Instead: leave the native File selection alone, audit on select, and only
- * override the multipart filename when the page builds FormData / sends it.
+ * Critical for Lever / Greenhouse analyze-on-select widgets:
+ * - Rename during the original capture-phase change event, before ATS code runs.
+ * - Never re-dispatch synthetic change/input events.
+ * - Never `.bind()` native FormData/XHR methods — bound natives ignore
+ *   `.call(instance)` and throw "Illegal invocation".
+ * - Preserve the same file bytes, mime type, and last-modified timestamp.
  */
 import {
   buildRenameAudit,
@@ -30,6 +31,13 @@ type SessionDetail = {
   jobTitle?: string;
 };
 
+type FormDataWrite = (
+  this: FormData,
+  name: string,
+  value: string | Blob,
+  fileName?: string,
+) => void;
+
 function installAthensLensResumeHook() {
   const root = globalThis as typeof globalThis & {
     __athensLensPageHook?: boolean;
@@ -47,6 +55,10 @@ function installAthensLensResumeHook() {
   let isRecording = false;
   const fileTracker = createTracker();
   const pendingAuditPayloads = new Map<string, Record<string, unknown>>();
+
+  // Unbound natives — always invoke via `.call(formInstance, …)`.
+  const nativeAppend = FormData.prototype.append as FormDataWrite;
+  const nativeSet = FormData.prototype.set as FormDataWrite;
 
   window.addEventListener(SESSION_EVENT, ((event: CustomEvent<SessionDetail>) => {
     const detail = event.detail || {};
@@ -173,7 +185,6 @@ function installAthensLensResumeHook() {
     const originalName = resumeBasename(
       resolvedOriginalName || getStampedOriginal(file) || file.name,
     );
-    // Wire / ATS name — may differ from file.name when we only override multipart.
     const cleanedName = resumeBasename(submittedName || file.name);
     const expected = cleanedName;
     const payload = buildRenameAudit({
@@ -212,15 +223,41 @@ function installAthensLensResumeHook() {
     }
   }
 
+  function forceRenameInputFiles(input: HTMLInputElement) {
+    const selectedFiles = Array.from(input.files || []);
+    if (!selectedFiles.length) return;
+
+    const transfer = new DataTransfer();
+    let renamedAny = false;
+
+    for (const file of selectedFiles) {
+      const { originalName, submittedName } = resolveNames(file);
+      emitAuditForFile(file, "file-input", originalName, submittedName);
+
+      if (submittedName && submittedName !== file.name) {
+        const renamedFile = new File([file], submittedName, {
+          type: file.type,
+          lastModified: file.lastModified,
+        });
+        stampOriginalName(renamedFile, originalName);
+        transfer.items.add(renamedFile);
+        renamedAny = true;
+      } else {
+        transfer.items.add(file);
+      }
+    }
+
+    if (renamedAny) input.files = transfer.files;
+  }
+
   function handleFileInputEvent(event: Event) {
     try {
       const input = event.target;
       if (!shouldRename() || !(input instanceof HTMLInputElement) || input.type !== "file") return;
       if (!input.files?.length) return;
-      // Audit only — do not mutate files or stopPropagation (breaks Lever analyze).
-      auditFileList(input.files, "file-input");
+      forceRenameInputFiles(input);
     } catch (err) {
-      console.warn("Athens Lens: resume audit failed", err);
+      console.warn("Athens Lens: enforced resume rename failed", err);
     }
   }
 
@@ -237,37 +274,66 @@ function installAthensLensResumeHook() {
     }
   }
 
-  function appendWithAtsName(
-    method: (name: string, value: string | Blob, fileName?: string) => void,
+  function writeFilePart(
+    write: FormDataWrite,
     form: FormData,
     name: string,
     value: File,
+    auditSource: string,
   ) {
     const { originalName, submittedName } = resolveNames(value);
-    emitAuditForFile(value, "formdata", originalName, submittedName);
-    // Keep the same Blob/File bytes + mime; only override Content-Disposition filename.
+    emitAuditForFile(value, auditSource, originalName, submittedName);
+    // Same File bytes + mime; only override Content-Disposition filename.
     if (submittedName && submittedName !== value.name) {
-      return method.call(form, name, value, submittedName);
+      write.call(form, name, value, submittedName);
+      return;
     }
-    return method.call(form, name, value);
+    write.call(form, name, value);
   }
-
-  let nativeFormDataAppend: (name: string, value: string | Blob, fileName?: string) => void = (
-    FormData.prototype.append as (name: string, value: string | Blob, fileName?: string) => void
-  ).bind(FormData.prototype);
 
   function rewriteFormData(body: FormData): FormData {
     if (!shouldRename()) return body;
     const next = new FormData();
     for (const [key, value] of body.entries()) {
       if (isFileValue(value)) {
-        // Use native append — never the patched prototype (avoids recursion).
-        appendWithAtsName(nativeFormDataAppend, next, key, value);
+        writeFilePart(nativeAppend, next, key, value, "formdata-send");
       } else {
-        nativeFormDataAppend.call(next, key, value);
+        nativeAppend.call(next, key, value);
       }
     }
     return next;
+  }
+
+  /**
+   * Native `<form>` submissions do not necessarily call page-owned `fetch`,
+   * XHR, or `FormData.prototype.append`. The browser emits `formdata` with the
+   * exact multipart payload immediately before it sends it, which is the last
+   * safe point to replace only each file part's wire filename.
+   */
+  function handleNativeFormData(event: Event) {
+    try {
+      if (!shouldRename() || !(event instanceof FormDataEvent)) return;
+
+      const entries = Array.from(event.formData.entries());
+      const fileFields = new Set(
+        entries.filter(([, value]) => isFileValue(value)).map(([name]) => name),
+      );
+      if (!fileFields.size) return;
+
+      // `set` would discard additional files that share a field name. Rebuild
+      // only affected fields with native `append` to preserve every selection.
+      for (const name of fileFields) event.formData.delete(name);
+      for (const [name, value] of entries) {
+        if (!fileFields.has(name)) continue;
+        if (isFileValue(value)) {
+          writeFilePart(nativeAppend, event.formData, name, value, "native-form-submit");
+        } else {
+          nativeAppend.call(event.formData, name, value);
+        }
+      }
+    } catch (err) {
+      console.warn("Athens Lens: native form resume rename failed", err);
+    }
   }
 
   function patchFormData() {
@@ -276,29 +342,41 @@ function installAthensLensResumeHook() {
       __athensLensPatched?: boolean;
     };
     if (proto.__athensLensPatched) return;
-    const originalAppend = FormData.prototype.append.bind(FormData.prototype);
-    const originalSet = FormData.prototype.set.bind(FormData.prototype);
-    nativeFormDataAppend = originalAppend;
 
-    function wrap(method: (name: string, value: string | Blob, fileName?: string) => void) {
-      return function (
-        this: FormData,
-        name: string,
-        value: string | Blob,
-        fileName?: string,
-      ) {
-        if (shouldRename() && isFileValue(value)) {
-          return appendWithAtsName(method, this, name, value);
-        }
-        if (arguments.length >= 3 && value instanceof Blob) {
-          return method.call(this, name, value, fileName);
-        }
-        return method.call(this, name, value);
-      };
-    }
+    proto.append = function athensLensFormDataAppend(
+      this: FormData,
+      name: string,
+      value: string | Blob,
+      fileName?: string,
+    ) {
+      if (shouldRename() && isFileValue(value)) {
+        writeFilePart(nativeAppend, this, name, value, "formdata");
+        return;
+      }
+      if (arguments.length >= 3 && value instanceof Blob) {
+        nativeAppend.call(this, name, value, fileName);
+        return;
+      }
+      nativeAppend.call(this, name, value);
+    } as typeof FormData.prototype.append;
 
-    FormData.prototype.append = wrap(originalAppend) as typeof FormData.prototype.append;
-    FormData.prototype.set = wrap(originalSet) as typeof FormData.prototype.set;
+    proto.set = function athensLensFormDataSet(
+      this: FormData,
+      name: string,
+      value: string | Blob,
+      fileName?: string,
+    ) {
+      if (shouldRename() && isFileValue(value)) {
+        writeFilePart(nativeSet, this, name, value, "formdata");
+        return;
+      }
+      if (arguments.length >= 3 && value instanceof Blob) {
+        nativeSet.call(this, name, value, fileName);
+        return;
+      }
+      nativeSet.call(this, name, value);
+    } as typeof FormData.prototype.set;
+
     proto.__athensLensPatched = true;
   }
 
@@ -340,6 +418,9 @@ function installAthensLensResumeHook() {
 
   document.addEventListener("change", handleFileInputEvent, true);
   document.addEventListener("drop", handleDropEvent, true);
+  // Capture covers `formdata` events even when an ATS dispatches them from a
+  // nested form without bubbling through a page framework.
+  document.addEventListener("formdata", handleNativeFormData, true);
   patchFormData();
   patchNetwork();
 }
