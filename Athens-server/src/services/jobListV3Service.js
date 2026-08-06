@@ -24,10 +24,8 @@ const SCAN_BATCH_SIZE = 100;
 const MAX_SCAN_BATCHES = 20;
 const COUNT_CACHE_MS = Math.max(1_000, Number(process.env.JOB_LIST_V3_COUNT_CACHE_MS || 60_000));
 const FILTERED_COUNT_CACHE_MS = Math.max(1_000, Number(process.env.JOB_LIST_V3_FILTERED_COUNT_CACHE_MS || 15_000));
-/** List must not wait on status invert; return All/New from index within this budget. */
-const FILTERED_COUNT_LIST_BUDGET_MS = Math.max(50, Number(process.env.JOB_LIST_V3_FILTERED_COUNT_BUDGET_MS || 450));
 const HYDRATE_CHUNK = 30;
-const HYDRATE_CONCURRENCY = Math.max(2, Math.min(16, Number(process.env.JOB_LIST_V3_HYDRATE_CONCURRENCY || 8)));
+const HYDRATE_CONCURRENCY = Math.max(2, Math.min(24, Number(process.env.JOB_LIST_V3_HYDRATE_CONCURRENCY || 12)));
 const COMPANY_COUNT_CACHE_MS = Math.max(COUNT_CACHE_MS, Number(process.env.JOB_LIST_V3_COMPANY_COUNT_CACHE_MS || 300_000));
 const catalogCountCache = new Map();
 const companyCountCache = new Map();
@@ -170,7 +168,8 @@ function matchesFilters(job, body, { isBeta, sources }) {
 
 function nativeFacet(body, sources) {
 	const facets = [];
-	if (sources) facets.push({ field: 'source', operator: 'in', value: sources });
+	if (sources?.length === 1) facets.push({ field: 'source', operator: '==', value: sources[0] });
+	else if (sources?.length) facets.push({ field: 'source', operator: 'in', value: sources });
 	if (body.aiExtracted === true || body.aiExtracted === 'true') facets.push({ field: 'aiSkillStatus', operator: '==', value: 'extracted' });
 	if (body['details.remote']) facets.push({ field: 'details.remote', operator: '==', value: String(body['details.remote']) });
 	if (body['details.time']) facets.push({ field: 'details.time', operator: '==', value: String(body['details.time']) });
@@ -315,7 +314,8 @@ async function nativeApprovedCount(body, sources, isBeta) {
 	if (exactExtras > 1) return null;
 	try {
 		let query = marketJobs().where('titleReview.label', '==', 'APPROVED');
-		if (!isBeta) query = query.where('extensionV2', '==', false);
+		// Same index rule as nativeJobsQuery: don't combine extensionV2 + source.
+		if (!isBeta && !facet) query = query.where('extensionV2', '==', false);
 		if (facet) query = query.where(facet.field, facet.operator, facet.value);
 		const from = asDate(body.postedAtFrom);
 		const to = asDate(body.postedAtTo);
@@ -353,25 +353,71 @@ async function filteredCatalogAllCount(body, sources, isBeta) {
 
 /**
  * Status-tab badges under filters: intersect the small per-profile status set
- * with the filtered catalog (hydrate status IDs only, never the full catalog).
+ * with the filtered catalog. Prefer projection fields (source/extensionV2) so
+ * source-only filters never hydrate thousands of job docs.
  */
+function filtersNeedJobHydration(body = {}) {
+	return Boolean(
+		String(body.q || '').trim()
+		|| body['company.name']
+		|| body['details.position']
+		|| body['details.seniority']
+		|| body['company.tags']
+		|| body['details.remote']
+		|| body['details.time']
+		|| body.companyId
+		|| body.aiExtracted === true
+		|| body.aiExtracted === 'true'
+		|| body.postedAtFrom
+		|| body.postedAtTo
+	);
+}
+
+/** @returns {boolean|null} true/false match, null if projection lacks fields */
+function projectionMatchesFilters(row, { isBeta, sources }) {
+	if (row?.visibleInJobSearch === false) return false;
+	if (!isBeta && row?.extensionV2 === true) return false;
+	if (sources?.length) {
+		const source = String(row?.source || '').trim();
+		if (!source) return null;
+		if (!sources.includes(source)) return false;
+	}
+	return true;
+}
+
 async function countFilteredStatusBuckets(body, sources, { profileId, isBeta, statuses = null } = {}) {
 	const buckets = emptyFilteredCounts();
 	if (!profileId) return buckets;
-	const statusRows = statuses || statusMap(await getProfileJobStatusIndex(profileId));
-	const jobIds = [];
-	const rowById = new Map();
+	const statusRows = (statuses && statuses.size)
+		? statuses
+		: statusMap(await getProfileJobStatusIndex(profileId));
+	const candidates = [];
 	for (const row of statusRows.values()) {
 		const jobId = String(row?.jobId || '').trim();
 		if (!jobId || row.visibleInJobSearch === false) continue;
 		const state = String(row.state || '').trim();
 		if (!state || state === 'posted' || !Object.hasOwn(buckets, state)) continue;
-		jobIds.push(jobId);
-		rowById.set(jobId, row);
+		candidates.push({ jobId, state, row });
 	}
-	if (!jobIds.length) return buckets;
-	const jobs = await hydrateJobIds(jobIds, { fields: FILTER_MATCH_JOB_FIELDS });
-	for (const jobId of jobIds) {
+	if (!candidates.length) return buckets;
+
+	const needHydrate = filtersNeedJobHydration(body);
+	const hydrateIds = [];
+	const rowById = new Map();
+	for (const candidate of candidates) {
+		rowById.set(candidate.jobId, candidate);
+		if (needHydrate) {
+			hydrateIds.push(candidate.jobId);
+			continue;
+		}
+		const match = projectionMatchesFilters(candidate.row, { isBeta, sources });
+		if (match === true) buckets[candidate.state] += 1;
+		else if (match === null) hydrateIds.push(candidate.jobId);
+	}
+	if (!hydrateIds.length) return buckets;
+
+	const jobs = await hydrateJobIds(hydrateIds, { fields: FILTER_MATCH_JOB_FIELDS });
+	for (const jobId of hydrateIds) {
 		const job = jobs.get(jobId);
 		if (!job || !matchesFilters(job, body, { isBeta, sources })) continue;
 		const state = String(rowById.get(jobId)?.state || '').trim();
@@ -444,10 +490,10 @@ export async function computeFilteredStatusCounts(body = {}, { profileId, isBeta
 }
 
 /**
- * List path: never block on hydrating the whole status set. Return index All/New
- * within a short budget; warm full status badges into cache for /counts.
+ * List path: never block on status invert or badge hydration. All/New come from
+ * an index count; Applied/Bid… fill via /counts (and cache).
  */
-async function statusCountsForListPage(body, { profileId, isBeta, statuses = null } = {}) {
+async function statusCountsForListPage(body, { profileId, isBeta } = {}) {
 	if (!bodyHasRestrictiveFilters(body)) {
 		return getJobStatusCountsV3(body);
 	}
@@ -458,16 +504,6 @@ async function statusCountsForListPage(body, { profileId, isBeta, statuses = nul
 
 	const sources = selectedSources(body);
 	const allCount = await filteredCatalogAllCount(body, sources, isBeta);
-	const fullPromise = computeFilteredStatusCounts(body, { profileId, isBeta, statuses })
-		.catch(() => null);
-	const raced = await Promise.race([
-		fullPromise,
-		new Promise((resolve) => {
-			setTimeout(() => resolve(null), FILTERED_COUNT_LIST_BUDGET_MS);
-		}),
-	]);
-	if (raced) return raced;
-	// Provisional All/New from index; Applied/Bid… fill in via /counts or cache warm.
 	return assembleFilteredStatusCounts(allCount, emptyFilteredCounts());
 }
 
@@ -562,9 +598,10 @@ function nativeJobsQuery(body, facet, { isBeta = false } = {}) {
 	// Physical documents live in `jobs` with sourceCatalog=market; `job_market`
 	// is only the adapter alias and is empty as a native collection.
 	let query = marketJobs().where('titleReview.label', '==', 'APPROVED');
-	// Non-beta viewers must not spend scan budget on extension-v2 rows that
-	// matchesFilters would discard. Counts already use this same predicate.
-	if (!isBeta) query = query.where('extensionV2', '==', false);
+	// Prefer already-deployed indexes. Combining extensionV2 + source without a
+	// composite index makes Firestore zigzag-merge (multi-second). When a source
+	// (or other) facet is present, leave extensionV2 to matchesFilters on the page.
+	if (!isBeta && !facet) query = query.where('extensionV2', '==', false);
 	if (facet) query = query.where(facet.field, facet.operator, facet.value);
 	const from = asDate(body.postedAtFrom);
 	const to = asDate(body.postedAtTo);
@@ -583,12 +620,17 @@ function nativeJobsQuery(body, facet, { isBeta = false } = {}) {
 async function listNative(body, context) {
 	const { limit, tab, hash, sources, isBeta, statuses, profileId } = context;
 	const cursor = decodeCursor(body.cursor, hash, 'jobs');
-	let query = startAfterIsoPoint(nativeJobsQuery(body, nativeFacet(body, sources), { isBeta }), cursor);
+	const facet = nativeFacet(body, sources);
+	let query = startAfterIsoPoint(nativeJobsQuery(body, facet, { isBeta }), cursor);
 	const data = [];
 	let lastScanned = cursor ? cursorPoint(cursor.postedAtMs ?? cursor.postedAt, cursor.id) : null;
 	const fetchLimit = limit + 1;
+	// Exact facet + All: nearly every doc matches — pull only the page, not 100.
+	const batchSize = (tab === 'all' && facet && !filtersNeedJobHydration(body))
+		? fetchLimit
+		: SCAN_BATCH_SIZE;
 	for (let batch = 0; batch < MAX_SCAN_BATCHES && data.length < fetchLimit; batch += 1) {
-		const snapshot = await query.limit(SCAN_BATCH_SIZE).get();
+		const snapshot = await query.limit(Math.min(batchSize, SCAN_BATCH_SIZE)).get();
 		if (snapshot.empty) break;
 		const pageStatuses = (tab === 'all' || !profileId)
 			? new Map()
@@ -604,8 +646,8 @@ async function listNative(body, context) {
 			if (data.length === fetchLimit) break;
 		}
 		if (data.length === fetchLimit) break;
-		if (snapshot.size < SCAN_BATCH_SIZE) break;
-		query = startAfterIsoPoint(nativeJobsQuery(body, nativeFacet(body, sources), { isBeta }), lastScanned);
+		if (snapshot.size < Math.min(batchSize, SCAN_BATCH_SIZE)) break;
+		query = startAfterIsoPoint(nativeJobsQuery(body, facet, { isBeta }), lastScanned);
 	}
 	const hasMore = data.length > limit;
 	const pageData = hasMore ? data.slice(0, limit) : data;
@@ -972,7 +1014,17 @@ async function attachRecommendFields(jobs, applierName) {
 	});
 }
 
+function withBudget(promise, ms, fallback) {
+	return Promise.race([
+		promise,
+		new Promise((resolve) => {
+			setTimeout(() => resolve(fallback), ms);
+		}),
+	]);
+}
+
 export async function listJobsV3(body = {}) {
+	const started = Date.now();
 	const requestedSort = String(body.sort || 'newest');
 	if (!['newest', 'postedAt_desc'].includes(requestedSort)) {
 		throw Object.assign(new Error('Job Search supports newest sort only'), { status: 400 });
@@ -990,27 +1042,37 @@ export async function listJobsV3(body = {}) {
 		statuses = statusMap(await getProfileJobStatusIndex(profileId));
 	}
 	const context = { limit, tab, profileId, isBeta, statuses, sources, hash };
-	let page;
-	try {
-		if (requiresAlgolia(body, sources) || preferAlgoliaBrowse(body, sources, tab)) {
-			page = await listAlgolia(body, context);
-		} else if (!['all', 'new'].includes(tab)) {
-			page = await listStatusQuery(body, context);
-		} else {
-			page = await listNative(body, context);
+
+	const fetchPage = async () => {
+		try {
+			if (requiresAlgolia(body, sources) || preferAlgoliaBrowse(body, sources, tab)) {
+				return await listAlgolia(body, context);
+			}
+			if (!['all', 'new'].includes(tab)) {
+				return await listStatusQuery(body, context);
+			}
+			return await listNative(body, context);
+		} catch (error) {
+			const canFallbackNative = preferAlgoliaBrowse(body, sources, tab)
+				&& !requiresAlgolia(body, sources)
+				&& (error?.status === 503 || /algolia/i.test(String(error?.message || '')));
+			if (!canFallbackNative) throw error;
+			return listNative(body, context);
 		}
-	} catch (error) {
-		const canFallbackNative = preferAlgoliaBrowse(body, sources, tab)
-			&& !requiresAlgolia(body, sources)
-			&& (error?.status === 503 || /algolia/i.test(String(error?.message || '')));
-		if (!canFallbackNative) throw error;
-		page = await listNative(body, context);
-	}
-	const [withCompanyCounts, statusCounts] = await Promise.all([
-		attachCompanyCounts(page.data, isBeta),
-		statusCountsForListPage(body, { profileId, isBeta, statuses }),
+	};
+
+	// Page + cheap All count in parallel — never wait on status invert here.
+	const [page, statusCounts] = await Promise.all([
+		fetchPage(),
+		statusCountsForListPage(body, { profileId, isBeta }),
 	]);
-	page.data = await attachRecommendFields(withCompanyCounts, body.applierName);
+	const withCompanyCounts = await attachCompanyCounts(page.data, isBeta);
+	// Recommend enrichment is optional chrome; don't let vendor_tasks I/O dominate TTFB.
+	page.data = await withBudget(
+		attachRecommendFields(withCompanyCounts, body.applierName),
+		150,
+		withCompanyCounts,
+	);
 	let totalJobs = totalForTab(tab, statusCounts);
 	// When sharded badges lag behind the list query, never advertise an empty
 	// page that still returned rows (Bid ready 0 + 3 cards).
@@ -1025,6 +1087,16 @@ export async function listJobsV3(body = {}) {
 	const totalPages = page.hasMore
 		? Math.max(advertisedPages, pageNumber + 1)
 		: Math.max(1, Math.min(advertisedPages, Math.max(pageNumber, 1)));
+	const elapsedMs = Date.now() - started;
+	if (elapsedMs >= 1_500) {
+		console.warn('[list/v3] slow', {
+			elapsedMs,
+			tab,
+			sources: sources || 'all',
+			rows: page.data.length,
+			restrictive: bodyHasRestrictiveFilters(body),
+		});
+	}
 	return {
 		success: true,
 		data: page.data,

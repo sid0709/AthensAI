@@ -517,18 +517,29 @@ export function useJobsList(
 
     (async () => {
       try {
-        if (!cached || cached.staleAt <= Date.now()) {
-          cached = await readPersistentListResponse(cacheKey) ?? undefined;
-          hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
-          if (hasFreshCache && cached && !cancelled) applyResponse(cached.response);
-        } else if (cached && !cancelled) {
+        // Paint from memory/IDB if present, but never block the network list on IDB.
+        const idbPromise = (!cached || cached.staleAt <= Date.now())
+          ? readPersistentListResponse(cacheKey)
+          : Promise.resolve(null);
+        const cursorPromise = resolvePageCursor(listBody, page, request);
+
+        if (cached && !cancelled) {
           applyResponse(cached.response);
-        }
-        if (cached && cached.staleAt > Date.now() && cached.expiresAt <= Date.now() && !cancelled) {
-          setStaleResults(true);
+          if (cached.staleAt > Date.now() && cached.expiresAt <= Date.now()) setStaleResults(true);
         }
 
-        const cursor = await resolvePageCursor(listBody, page, request);
+        const idbEntry = await idbPromise;
+        if (idbEntry && !cancelled) {
+          cached = idbEntry;
+          hasFreshCache = idbEntry.expiresAt > Date.now();
+          if (hasFreshCache) applyResponse(idbEntry.response);
+          else if (idbEntry.staleAt > Date.now()) {
+            applyResponse(idbEntry.response);
+            setStaleResults(true);
+          }
+        }
+
+        const cursor = await cursorPromise;
         const requestBody = { ...listBody };
         if (cursor) requestBody.cursor = cursor;
         else delete requestBody.cursor;

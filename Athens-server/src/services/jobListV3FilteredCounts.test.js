@@ -82,3 +82,10 @@ test('multi exact facets require Algolia list path', () => {
 		true,
 	);
 });
+
+test('assembleFilteredStatusCounts provisional All keeps status tabs at zero', () => {
+	const counts = assembleFilteredStatusCounts(8500, {});
+	assert.equal(counts.all, 8500);
+	assert.equal(counts.posted, 8500);
+	assert.equal(counts.applied, 0);
+});
