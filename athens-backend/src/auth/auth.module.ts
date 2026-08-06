@@ -1,12 +1,19 @@
 import { Module } from '@nestjs/common';
+import { AccountInfoController } from './account-info.controller';
+import { AccountInfoRepository } from './account-info.repository';
+import { AccountInfoService } from './account-info.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { AccountInfoService } from './account-info.service';
-import { AccountInfoController } from '../account-info/account-info.controller';
+import { PasswordService } from './password.service';
 
 @Module({
   controllers: [AuthController, AccountInfoController],
-  providers: [AuthService, AccountInfoService],
-  exports: [AccountInfoService],
+  providers: [
+    AuthService,
+    AccountInfoService,
+    AccountInfoRepository,
+    PasswordService,
+  ],
+  exports: [AccountInfoService, PasswordService],
 })
 export class AuthModule {}

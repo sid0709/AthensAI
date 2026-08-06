@@ -2,21 +2,18 @@
 
 NestJS + Prisma API for Athens. Replaces `Athens-server` for the Athens app, starting with authentication against MongoDB `AthensDB.account_info`.
 
-**Engineering rules:** read [`rule.md`](rule.md) before changing this package (small files, no hardcoding, Nest/Prisma practice, no default test suites).
-
 ## Stack
 
 - NestJS 11
-- Prisma 6 (schema + index management for MongoDB `AthensDB`)
-- Native `mongodb` driver for `account_info` reads/writes (Prisma Client writes require a replica set; this host is standalone)
-- bcrypt (cost 10, same as Athens-server)
-- TypeScript as the primary safety net (`npm run build` / lint) — do not add Jest/spec files unless explicitly requested
+- Prisma 6 (MongoDB — Prisma 7 does not support Mongo yet)
+- bcrypt cost 10 (Athens-server contract)
+- Acceptance criteria: [`athens-backend-rules.md`](athens-backend-rules.md)
 
 ## Setup
 
 ```bash
 cp .env.example .env
-# Set DATABASE_URL to your Mongo host with database name AthensDB
+# Set DATABASE_URL — database name must be AthensDB
 npm install
 npm run prisma:generate
 npm run start:dev
@@ -24,15 +21,11 @@ npm run start:dev
 
 Default listen: `http://127.0.0.1:8980/api`
 
-## Scripts
+### Mongo notes
 
-| Script | Purpose |
-|--------|---------|
-| `npm run start:dev` | Watch mode API |
-| `npm run build` | Typecheck + compile (default verification) |
-| `npm run lint` | ESLint |
-| `npm run prisma:generate` | Regenerate Prisma Client after schema changes |
-| `npm run prisma:push` | Push schema to Mongo (dev) |
+- Schema and indexes: `prisma/schema.prisma` + `npm run prisma:push`
+- Reads use typed Prisma Client via `PrismaService`
+- Standalone Mongo (no replica set) cannot run Prisma transactional writes; `AccountInfoRepository` falls back to `$runCommandRaw` for create/password update only. Prefer enabling a replica set in production so typed writes succeed.
 
 ## Auth contract (Athens-compatible)
 
@@ -46,16 +39,9 @@ Default listen: `http://127.0.0.1:8980/api`
 
 Sign-in / sign-up responses: `{ success, user: { _id, name, tier, permission }, message }`.
 
-## Layout
+## Verify
 
-```text
-src/
-  auth/           # sign-in, sign-up, password
-  account-info/   # account_info reads
-  prisma/         # PrismaModule / PrismaService
-  common/         # shared filters / pipes
-prisma/
-  schema.prisma   # sole DB shape source of truth
+```bash
+npm run build
+npm run lint
 ```
-
-Keep feature folders thin and split files when they grow — see `rule.md`.

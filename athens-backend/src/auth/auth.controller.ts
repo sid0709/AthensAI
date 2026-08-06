@@ -7,7 +7,9 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { ChangePasswordDto, SignInDto, SignUpDto } from './dto/auth.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { SignInDto } from './dto/signin.dto';
+import { SignUpDto } from './dto/signup.dto';
 
 @Controller('auth')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
