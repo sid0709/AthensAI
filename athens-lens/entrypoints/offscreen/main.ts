@@ -2,6 +2,7 @@ type StartMessage = {
   type: "OFFSCREEN_START_RECORDING";
   sessionId: string;
   streamId: string;
+  captureSource?: "tab" | "desktop";
 };
 
 type StopMessage = {
@@ -51,15 +52,18 @@ function pickMimeType(): string {
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "video/webm";
 }
 
-async function getTabStream(streamId: string): Promise<MediaStream> {
-  // Chrome tab capture requires the legacy mandatory constraint shape.
+async function getCaptureStream(
+  streamId: string,
+  captureSource: "tab" | "desktop",
+): Promise<MediaStream> {
+  // Chrome capture stream IDs require the legacy mandatory constraint shape.
   // Keep resolution/fps low — recordings are for review, not archival quality.
   return navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
       // @ts-expect-error Chrome tab-capture constraints are not in the DOM typings.
       mandatory: {
-        chromeMediaSource: "tab",
+        chromeMediaSource: captureSource,
         chromeMediaSourceId: streamId,
         maxWidth: 640,
         maxHeight: 360,
@@ -93,12 +97,16 @@ async function putResumable(uploadUrl: string, blob: Blob) {
   }
 }
 
-async function startRecording(sessionId: string, streamId: string) {
+async function startRecording(
+  sessionId: string,
+  streamId: string,
+  captureSource: "tab" | "desktop" = "tab",
+) {
   if (recorders.has(sessionId)) {
     throw new Error("A recording is already active for this session.");
   }
   pendingRecordings.delete(sessionId);
-  const stream = await getTabStream(streamId);
+  const stream = await getCaptureStream(streamId, captureSource);
   const chunks: Blob[] = [];
   const mimeType = pickMimeType();
   const mediaRecorder = new MediaRecorder(stream, {
@@ -187,7 +195,7 @@ chrome.runtime.onMessage.addListener((
   sendResponse: (response?: unknown) => void,
 ) => {
   if (message?.type === "OFFSCREEN_START_RECORDING") {
-    void startRecording(message.sessionId, message.streamId)
+    void startRecording(message.sessionId, message.streamId, message.captureSource)
       .then(() => sendResponse({ ok: true }))
       .catch((error: unknown) => {
         sendResponse({

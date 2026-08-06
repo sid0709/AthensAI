@@ -134,6 +134,8 @@ export function SubmissionDialog({ state, onResume, onFinish }: SubmissionDialog
           The recording stopped at {formatRecordingTime(state.elapsedSeconds)}
           {state.savedFilename ? ` and saved as ${state.savedFilename}` : ""}.
           Choose the outcome for {state.job.title}.
+          {" "}
+          “No, not submitted” discards the recording and returns to the job list without uploading.
         </p>
         {state.resumeOriginalName ? (
           <p className="dialog-resume-audit" aria-label="Uploaded résumé">

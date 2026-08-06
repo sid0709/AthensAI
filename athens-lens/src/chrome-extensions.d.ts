@@ -115,6 +115,15 @@ declare namespace chrome {
     ): void;
   }
 
+  namespace desktopCapture {
+    type SourceType = "screen" | "window" | "tab" | "audio";
+    function chooseDesktopMedia(
+      sources: SourceType[],
+      callback: (streamId: string, options: { canRequestAudioTrack: boolean }) => void,
+    ): number;
+    function cancelChooseDesktopMedia(desktopMediaRequestId: number): void;
+  }
+
   namespace scripting {
     function executeScript<T>(injection: {
       target: { tabId: number; allFrames?: boolean; frameIds?: number[] };

@@ -44,6 +44,7 @@ type StartRecordingMessage = {
   /** Pre-captured from the side panel click turn (open new tab → getMediaStreamId). */
   tabId?: number | null;
   streamId?: string | null;
+  captureSource?: "tab" | "desktop";
   preferredTabId?: number | null;
   job?: JobSnapshot | null;
   expectedResumeName?: string | null;
@@ -364,13 +365,14 @@ async function beginOffscreenRecording(
   tabId: number,
   streamId: string,
   applyUrl: string,
-  options?: { navigate?: boolean },
+  options?: { navigate?: boolean; captureSource?: "tab" | "desktop" },
 ) {
   await ensureOffscreenDocument();
   const response = await sendOffscreenMessage({
     type: "OFFSCREEN_START_RECORDING",
     sessionId,
     streamId,
+    captureSource: options?.captureSource || "tab",
   });
   if (!response?.ok) {
     throw new Error(response?.error || "Could not start the recorder.");
@@ -395,7 +397,7 @@ function finishStartRecording(
     tabId,
     streamId,
     message.applyUrl,
-    { navigate: options.navigate },
+    { navigate: options.navigate, captureSource: message.captureSource || "tab" },
   )
     .then(async (recordedTabId) => {
       captureReady.remember(recordedTabId, message.applyUrl);

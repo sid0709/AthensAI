@@ -127,16 +127,7 @@ function normalizeApplyUrl(url: string | undefined | null): string | null {
 }
 
 
-function isActiveTabCaptureError(message: string | undefined | null) {
-  return /activeTab|invoked for the current page|Chrome pages cannot be captured/i.test(
-    message || "",
-  );
-}
-
 function friendlyCaptureError(message: string | undefined | null) {
-  if (isActiveTabCaptureError(message)) {
-    return "Click the Athens Lens icon on this tab to start recording.";
-  }
   return message || "Could not capture this tab.";
 }
 
@@ -205,14 +196,16 @@ function openApplyTab(
 }
 
 /**
- * Capture an existing focused tab in the click turn (Bid-Monitor style).
- * Must run before any await that would drop the user gesture.
+ * Open Chrome's tab-only capture picker in the Record click turn. This path
+ * does not require an activeTab grant from the toolbar action.
  */
-function captureTabStream(
+function chooseTabCaptureStream(
   api: NonNullable<ReturnType<typeof extensionApi>>,
-  tabId: number,
-): Promise<{ ok: true; streamId: string } | { ok: false; error: string }> {
-  if (!api.tabCapture?.getMediaStreamId) {
+): Promise<
+  { ok: true; streamId: string; captureSource: "desktop" }
+  | { ok: false; error: string }
+> {
+  if (!api.desktopCapture?.chooseDesktopMedia) {
     return Promise.resolve({
       ok: false,
       error: "Tab recording is only available in the Athens Lens Chrome extension.",
@@ -220,17 +213,24 @@ function captureTabStream(
   }
 
   return new Promise((resolve) => {
-    api.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
-      const captureError = api.runtime?.lastError?.message;
-      if (captureError || !streamId) {
-        resolve({
-          ok: false,
-          error: captureError || "Could not capture this tab. Focus a normal http(s) page and try Record again.",
-        });
-        return;
-      }
-      resolve({ ok: true, streamId });
-    });
+    try {
+      api.desktopCapture.chooseDesktopMedia(["tab"], (streamId) => {
+        const captureError = api.runtime?.lastError?.message;
+        if (captureError || !streamId) {
+          resolve({
+            ok: false,
+            error: captureError || "Tab selection was canceled.",
+          });
+          return;
+        }
+        resolve({ ok: true, streamId, captureSource: "desktop" });
+      });
+    } catch (error) {
+      resolve({
+        ok: false,
+        error: error instanceof Error ? error.message : "Could not open the tab selector.",
+      });
+    }
   });
 }
 
@@ -579,8 +579,8 @@ export function useApplicationRecording() {
         return;
       }
 
-      // Capture immediately — before any await — to preserve the user gesture.
-      const capturePromise = captureTabStream(api, tabId);
+      // Open the picker immediately in the button's user-gesture turn.
+      const capturePromise = chooseTabCaptureStream(api);
 
       const applyUrl = normalizeApplyUrl(job.applyUrl) || job.applyUrl || "";
       const sessionId = createSessionId(job.id);
@@ -601,36 +601,6 @@ export function useApplicationRecording() {
 
         const captured = await capturePromise;
         if (!captured.ok) {
-          // Side-panel clicks usually cannot grant tabCapture — queue a pending
-          // record and ask for one toolbar icon click (Bid-Monitor pattern).
-          if (isActiveTabCaptureError(captured.error)) {
-            const bidderName = session.displayName || session.username;
-            const expectedResumeName = buildProfileResumeFileName(bidderName, ".pdf");
-            const resumeSetFolder = profileNameToFileBase(bidderName) || "";
-            try {
-              await api.runtime.sendMessage({
-                type: "ATHENS_LENS_PENDING_RECORD",
-                tabId,
-                sessionId,
-                applyUrl,
-                job: jobSnapshot(job),
-                expectedResumeName,
-                resumeSetFolder,
-                bidderName,
-              });
-            } catch {
-              // Still show the toolbar hint.
-            }
-            void startAthensLensBid(session, {
-              jobId: job.id,
-              sessionId,
-              applyUrl: applyUrl || undefined,
-            }).catch((error: unknown) => {
-              console.warn("Athens Lens: bid start failed", error);
-            });
-            showStartError(friendlyCaptureError(captured.error));
-            return;
-          }
           showStartError(friendlyCaptureError(captured.error));
           return;
         }
@@ -646,6 +616,7 @@ export function useApplicationRecording() {
         const response = await sendStartRecording(api, applyUrl, sessionId, job, session, {
           tabId,
           streamId: captured.streamId,
+          captureSource: captured.captureSource,
         });
         if (!response?.ok) {
           showStartError(response?.error || "Could not start tab recording.");
@@ -686,8 +657,8 @@ export function useApplicationRecording() {
         }
       }
 
-      // Capture the same tab again in this click turn.
-      const capturePromise = captureTabStream(api, tabId);
+      // Ask the user which tab to capture again in this click turn.
+      const capturePromise = chooseTabCaptureStream(api);
       const applyUrl = normalizeApplyUrl(current.job.applyUrl) || current.job.applyUrl || "";
       const sessionId = createSessionId(current.job.id);
       const recordedStartAt = new Date().toISOString();
@@ -704,23 +675,6 @@ export function useApplicationRecording() {
         const captured = await capturePromise;
         if (!captured.ok) {
           const message = friendlyCaptureError(captured.error);
-          if (isActiveTabCaptureError(captured.error)) {
-            const bidderName = session.displayName || session.username;
-            try {
-              await api.runtime.sendMessage({
-                type: "ATHENS_LENS_PENDING_RECORD",
-                tabId,
-                sessionId,
-                applyUrl,
-                job: jobSnapshot(current.job),
-                expectedResumeName: buildProfileResumeFileName(bidderName, ".pdf"),
-                resumeSetFolder: profileNameToFileBase(bidderName) || "",
-                bidderName,
-              });
-            } catch {
-              // Still show the toolbar hint.
-            }
-          }
           useRecordingSessionsStore.getState().replaceSession(
             tabId,
             createIdleSession(tabId, {
@@ -747,7 +701,11 @@ export function useApplicationRecording() {
           sessionId,
           current.job,
           session,
-          { tabId, streamId: captured.streamId },
+          {
+            tabId,
+            streamId: captured.streamId,
+            captureSource: captured.captureSource,
+          },
         );
         if (!response?.ok) {
           useRecordingSessionsStore.getState().replaceSession(
@@ -823,9 +781,7 @@ export function useApplicationRecording() {
         if (tabId != null) {
           useRecordingSessionsStore.getState().replaceSession(
             tabId,
-            createIdleSession(tabId, {
-              lastOutcome: submitted ? "submitted" : "not-submitted",
-            }),
+            createIdleSession(tabId, submitted ? { lastOutcome: "submitted" } : {}),
           );
         }
         return;
@@ -833,10 +789,6 @@ export function useApplicationRecording() {
 
       const jobId = current.job.id;
       const store = useRecordingSessionsStore.getState();
-      store.patchSession(tabId, {
-        status: "saving",
-        error: null,
-      });
 
       // Gather every tab session for this job so multi-tab Workday clips upload together.
       const related = Object.values(store.sessionsByTabId).filter(
@@ -858,13 +810,8 @@ export function useApplicationRecording() {
                 : session.savedFilename,
             });
           } catch {
-            // Best-effort stop; upload may still find a digest.
+            // Best-effort stop.
           }
-        } else if (session.tabId !== tabId) {
-          useRecordingSessionsStore.getState().patchSession(session.tabId, {
-            status: "saving",
-            error: null,
-          });
         }
       }
 
@@ -877,13 +824,48 @@ export function useApplicationRecording() {
         recordedEndAt: session.recordedEndAt || new Date().toISOString(),
       }));
 
+      // "No, not submitted" — discard local clips and clear UI only (no Athens API).
+      if (!submitted) {
+        try {
+          await finishAthensLensBid({
+            session: context.session,
+            jobId,
+            recordingSessions,
+            submitted: false,
+          });
+        } catch {
+          // Local discard is best-effort.
+        }
+        const nextStore = useRecordingSessionsStore.getState();
+        for (const session of freshRelated) {
+          nextStore.replaceSession(session.tabId, createIdleSession(session.tabId));
+        }
+        if (!freshRelated.some((session) => session.tabId === tabId)) {
+          nextStore.replaceSession(tabId, createIdleSession(tabId));
+        }
+        return;
+      }
+
+      store.patchSession(tabId, {
+        status: "saving",
+        error: null,
+      });
+      for (const session of freshRelated) {
+        if (session.tabId !== tabId) {
+          useRecordingSessionsStore.getState().patchSession(session.tabId, {
+            status: "saving",
+            error: null,
+          });
+        }
+      }
+
       try {
         const result = await finishAthensLensBid({
           session: context.session,
           jobId,
           applyUrl: current.job.applyUrl,
           recordingSessions,
-          submitted,
+          submitted: true,
           answers: context.answers,
           summary: context.summary,
           pageContext: context.pageContext,
@@ -895,7 +877,7 @@ export function useApplicationRecording() {
           nextStore.replaceSession(
             session.tabId,
             createIdleSession(session.tabId, {
-              lastOutcome: submitted ? "submitted" : "not-submitted",
+              lastOutcome: "submitted",
               job: current.job,
               error: session.tabId === tabId ? (result.uploadError || null) : null,
             }),

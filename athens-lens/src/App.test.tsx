@@ -142,6 +142,24 @@ function installChromeStub(overrides?: {
         callback(overrides?.streamId ?? "mock-stream-id");
       }),
     },
+    desktopCapture: {
+      chooseDesktopMedia: vi.fn((
+        _sources: Array<"screen" | "window" | "tab" | "audio">,
+        callback: (streamId: string, options: { canRequestAudioTrack: boolean }) => void,
+      ) => {
+        if (overrides?.captureError || overrides?.streamId === null) {
+          chromeApi.runtime.lastError = overrides?.captureError
+            ? { message: overrides.captureError }
+            : undefined;
+          callback("", { canRequestAudioTrack: false });
+          chromeApi.runtime.lastError = undefined;
+          return 1;
+        }
+        callback(overrides?.streamId ?? "mock-stream-id", { canRequestAudioTrack: false });
+        return 1;
+      }),
+      cancelChooseDesktopMedia: vi.fn(),
+    },
   };
 
   vi.stubGlobal("chrome", chromeApi);
@@ -418,8 +436,8 @@ describe("Athens Lens app", () => {
 
     await user.click(screen.getByRole("button", { name: "Record" }));
     expect(await screen.findByText(`Recording application (${MOCK_JOBS[0].company})`)).toBeInTheDocument();
-    expect(chromeApi.tabCapture.getMediaStreamId).toHaveBeenCalledWith(
-      { targetTabId: 42 },
+    expect(chromeApi.desktopCapture.chooseDesktopMedia).toHaveBeenCalledWith(
+      ["tab"],
       expect.any(Function),
     );
     expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(
@@ -427,6 +445,7 @@ describe("Athens Lens app", () => {
         type: "ATHENS_LENS_START_RECORDING",
         tabId: 42,
         streamId: "mock-stream-id",
+        captureSource: "desktop",
       }),
     );
 
@@ -495,23 +514,12 @@ describe("Athens Lens app", () => {
     );
   });
 
-  it("shows an error toast when Record cannot capture the focused tab", async () => {
+  it("shows an error toast when the tab picker is canceled", async () => {
     const user = userEvent.setup();
     const chromeApi = installChromeStub({
       activeTab: { id: 99, url: "https://example.com/apply" },
       streamId: null,
-      captureError: "Extension has not been invoked for the current page (see activeTab permission). Chrome pages cannot be captured.",
-      sendMessage: async (message) => {
-        if (message?.type === "ATHENS_LENS_PENDING_RECORD") {
-          return {
-            ok: true,
-            tabId: 99,
-            pending: true,
-            message: "Click the Athens Lens icon on this tab to start recording.",
-          };
-        }
-        return undefined;
-      },
+      captureError: "Tab selection was canceled.",
     });
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: true }), {
       status: 200,
@@ -532,10 +540,11 @@ describe("Athens Lens app", () => {
     });
     await user.click(screen.getByRole("button", { name: "Record" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /Click the Athens Lens icon on this tab to start recording/,
+      /Tab selection was canceled/,
     );
-    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "ATHENS_LENS_PENDING_RECORD", tabId: 99 }),
+    expect(chromeApi.desktopCapture.chooseDesktopMedia).toHaveBeenCalledWith(
+      ["tab"],
+      expect.any(Function),
     );
   });
 

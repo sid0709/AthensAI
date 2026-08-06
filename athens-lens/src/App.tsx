@@ -244,9 +244,11 @@ export function App({
             useTabWorkspaceStore.getState().setRoute(focusedTabId, { view: "jobs" });
             navigate({ view: "jobs" });
           }
-          // Bid-complete jobs drop out of Bid Ready — refresh the Lens jobs list.
-          invalidateWorkspaceRequests(session.profileId);
-          void refreshJobs(session, jobsRepository).catch(() => undefined);
+          // Only refresh Bid Ready after a real submit — abandon stays local.
+          if (submitted) {
+            invalidateWorkspaceRequests(session.profileId);
+            void refreshJobs(session, jobsRepository).catch(() => undefined);
+          }
         }}
       />
       <AiAnswerPanel
