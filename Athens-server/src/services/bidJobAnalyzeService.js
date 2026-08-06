@@ -57,21 +57,27 @@ Rules:
 - Never invent API keys or passwords. Never leave suggestedAnswer empty.
 - notJobPageReason: required when isJobPage is false.`;
 
-const FORM_ANSWER_SYSTEM_PROMPT = `You draft application form answers from PROFILE JSON. JSON only.
+const FORM_ANSWER_SYSTEM_PROMPT = `Fill application form fields from PROFILE JSON.
 
-{
-  "summary": string,
-  "formAnswers": [{ "question": string, "suggestedAnswer": string, "confidence": "high"|"medium"|"low" }]
-}
+Output plain text only. One line per field, in field order:
+N: answer
+
+Example:
+1: attached
+2: Jane Doe
+3: jane@example.com
 
 Rules:
-- Answer EVERY listed fillable field. Do not summarize the job.
-- suggestedAnswer = text to type/select. Prefer exact PROFILE values. Use listed options when present.
-- Never invent employers, dates, degrees, or credentials absent from PROFILE. If unknown, brief honest low-confidence answer.
-- Never leave suggestedAnswer empty. summary: one short sentence (field count only).`;
+- N is the field number from the list. answer is the exact text to type or select.
+- Prefer exact PROFILE values. For Yes/No or listed options, use an option exactly.
+- Never invent employers, dates, degrees, or credentials absent from PROFILE.
+- If unknown, a short honest answer. Never leave an answer blank.
+- No JSON, no markdown, no commentary, no confidence, no summary.`;
 
 const FORM_TREE_MAX_CHARS = 12_000;
 const FORM_PROFILE_MAX_CHARS = 4_000;
+/** Lowest supported GPT-5 reasoning setting (omit defaults to medium). */
+const ASK_AI_REASONING_EFFORT = "minimal";
 
 
 const RECOMMEND_RESUME_SYSTEM_PROMPT = `You recommend the best matching resume stack for a job description from a fixed list of Library resumes.
@@ -164,7 +170,7 @@ function buildFormAnswerUserPrompt(pageContext, profileJson, jobTitle) {
 		? ""
 		: String(pageContext.visibleText || "").slice(0, 12_000);
 	const treeSection = formTree
-		? `Actionable fields (SOURCE OF TRUTH — answer each numbered field):
+		? `Fields (answer every number):
 ${formTree}`
 		: `Page text:
 ${visibleText}
@@ -180,7 +186,7 @@ Title: ${pageContext.title}
 
 ${treeSection}
 
-Return formAnswers for every listed field.`;
+Reply with N: answer lines only.`;
 }
 
 function normalizeFormAnswers(entries) {
@@ -196,15 +202,49 @@ function normalizeFormAnswers(entries) {
 		.filter((entry) => entry.question && entry.suggestedAnswer);
 }
 
-/** Best-effort parse of streaming / partial JSON — UX over schema perfection. */
-export function extractFormAnswersFromPartialText(text) {
+/** Parse "1. kind | Label | name=…" lines from the Oak field list. */
+export function fieldLabelsFromFormTree(formTree) {
+	const labels = new Map();
+	for (const raw of String(formTree || "").split("\n")) {
+		const match = raw.match(/^\s*(\d+)\.\s+\S+\s+\|\s+([^|]+?)(?:\s+\||\s*$)/);
+		if (!match) continue;
+		const index = Number(match[1]);
+		const label = String(match[2] || "").trim();
+		if (!Number.isFinite(index) || index < 1 || !label) continue;
+		labels.set(index, label);
+	}
+	return labels;
+}
+
+/**
+ * Best-effort parse of streaming / partial answers.
+ * Prefers compact `N: answer` lines; falls back to legacy JSON pairs.
+ */
+export function extractFormAnswersFromPartialText(text, formTree = "") {
 	const source = String(text || "");
 	const answers = [];
-	const seen = new Set();
-	const pairRe =
-		/"question"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"suggestedAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/g;
-	const pairReAlt =
-		/"suggestedAnswer"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"question"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+	const byKey = new Map();
+	const labels = fieldLabelsFromFormTree(formTree);
+
+	const push = (question, suggestedAnswer, confidence = "medium") => {
+		const q = String(question || "").trim();
+		const a = String(suggestedAnswer || "").trim();
+		if (!q || !a) return;
+		const key = q.toLowerCase();
+		byKey.set(key, { question: q, suggestedAnswer: a, confidence });
+	};
+
+	for (const raw of source.split("\n")) {
+		const line = raw.trim();
+		if (!line || line.startsWith("#") || line.startsWith("{") || line.startsWith("[")) continue;
+		const numbered = line.match(/^(\d+)\s*[:.)\-]\s*(.+)$/);
+		if (!numbered) continue;
+		const index = Number(numbered[1]);
+		const answer = String(numbered[2] || "").trim();
+		if (!Number.isFinite(index) || index < 1 || !answer) continue;
+		const question = labels.get(index) || `Field ${index}`;
+		push(question, answer);
+	}
 
 	const unescapeJson = (value) => {
 		try {
@@ -213,36 +253,28 @@ export function extractFormAnswersFromPartialText(text) {
 			return value.replace(/\\"/g, '"').replace(/\\n/g, "\n");
 		}
 	};
+	const pairRe =
+		/"question"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"suggestedAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+	const pairReAlt =
+		/"suggestedAnswer"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"question"\s*:\s*"((?:\\.|[^"\\])*)"/g;
 
 	for (const match of source.matchAll(pairRe)) {
-		const question = unescapeJson(match[1] || "").trim();
-		const suggestedAnswer = unescapeJson(match[2] || "").trim();
-		const key = question.toLowerCase();
-		if (!question || !suggestedAnswer || seen.has(key)) continue;
-		seen.add(key);
-		answers.push({ question, suggestedAnswer, confidence: "medium" });
+		push(unescapeJson(match[1] || ""), unescapeJson(match[2] || ""));
 	}
 	for (const match of source.matchAll(pairReAlt)) {
-		const suggestedAnswer = unescapeJson(match[1] || "").trim();
-		const question = unescapeJson(match[2] || "").trim();
-		const key = question.toLowerCase();
-		if (!question || !suggestedAnswer || seen.has(key)) continue;
-		seen.add(key);
-		answers.push({ question, suggestedAnswer, confidence: "medium" });
+		push(unescapeJson(match[2] || ""), unescapeJson(match[1] || ""));
 	}
 
 	try {
 		const parsed = JSON.parse(source);
 		for (const entry of normalizeFormAnswers(parsed?.formAnswers)) {
-			const key = entry.question.toLowerCase();
-			if (seen.has(key)) continue;
-			seen.add(key);
-			answers.push(entry);
+			push(entry.question, entry.suggestedAnswer, entry.confidence);
 		}
 	} catch {
 		// Partial stream — ignore.
 	}
 
+	for (const entry of byKey.values()) answers.push(entry);
 	return answers;
 }
 
@@ -480,25 +512,23 @@ export async function answerApplicationFormPage({
 		apiKey,
 		model,
 		messages: buildAskAiMessages(llmPageContext, profileJson, jobTitle),
-		jsonMode: true,
-		cacheKey: "athens-lens-form-answers-v3",
+		jsonMode: false,
+		reasoningEffort: ASK_AI_REASONING_EFFORT,
+		cacheKey: "athens-lens-form-answers-v4",
 		feature: "athens-lens-ask-ai",
 		applierName,
 		jobId: jobIdStr,
 		signal,
 	});
 
-	const formAnswers = extractFormAnswersFromPartialText(content);
-	let summary = "";
-	try {
-		summary = String(JSON.parse(content)?.summary ?? "").trim();
-	} catch {
-		summary = "";
-	}
+	const formAnswers = extractFormAnswersFromPartialText(content, formTree);
+	const summary = formAnswers.length
+		? `Answered ${formAnswers.length} fields.`
+		: "";
 
 	return {
 		result: {
-			summary: summary || `Answered ${formAnswers.length} fields.`,
+			summary,
 			formAnswers,
 			formCount: formAnswers.length,
 			answeredCount: formAnswers.length,
@@ -564,7 +594,7 @@ export async function* streamApplicationFormPage({
 	};
 
 	let fullText = "";
-	let lastAnswerCount = 0;
+	let lastAnswersFingerprint = "";
 
 	for await (const event of chatCompletionStream({
 		provider,
@@ -572,7 +602,8 @@ export async function* streamApplicationFormPage({
 		model,
 		messages: buildAskAiMessages(llmPageContext, profileJson, jobTitle),
 		jsonMode: false,
-		cacheKey: "athens-lens-form-answers-stream-v1",
+		reasoningEffort: ASK_AI_REASONING_EFFORT,
+		cacheKey: "athens-lens-form-answers-stream-v2",
 		feature: "athens-lens-ask-ai",
 		applierName,
 		jobId: jobIdStr,
@@ -581,31 +612,30 @@ export async function* streamApplicationFormPage({
 		if (event.type === "delta") {
 			fullText += event.text || "";
 			yield { type: "delta", text: event.text || "" };
-			const answers = extractFormAnswersFromPartialText(fullText);
-			if (answers.length > lastAnswerCount) {
-				lastAnswerCount = answers.length;
+			const answers = extractFormAnswersFromPartialText(fullText, formTree);
+			const fingerprint = answers
+				.map((entry) => `${entry.question}\0${entry.suggestedAnswer}`)
+				.join("\n");
+			if (fingerprint && fingerprint !== lastAnswersFingerprint) {
+				lastAnswersFingerprint = fingerprint;
 				yield { type: "answers", answers };
 			}
 			continue;
 		}
 		if (event.type === "done") {
-			const answers = extractFormAnswersFromPartialText(fullText);
-			let summary = "";
-			try {
-				summary = String(JSON.parse(fullText)?.summary ?? "").trim();
-			} catch {
-				summary = "";
-			}
+			const answers = extractFormAnswersFromPartialText(fullText, formTree);
 			yield {
 				type: "done",
 				text: fullText,
 				answers,
-				summary: summary || (answers.length ? `Answered ${answers.length} fields.` : ""),
+				summary: answers.length ? `Answered ${answers.length} fields.` : "",
 				usage: event.usage || null,
 				requestId: event.requestId || null,
 				provider: event.provider || provider,
 				requestedModel: event.requestedModel || model,
 				billedModel: event.billedModel || model,
+				durationMs: event.durationMs ?? null,
+				ttftMs: event.ttftMs ?? null,
 				mode: "llm-stream",
 			};
 		}

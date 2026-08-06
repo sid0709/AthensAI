@@ -565,6 +565,7 @@ export async function* chatCompletionStream({
   let buffer = '';
   let billedModel = model;
   let usageRaw = null;
+  let ttftMs = null;
 
   while (true) {
     if (signal?.aborted) {
@@ -598,7 +599,10 @@ export async function* chatCompletionStream({
       const delta = parsed?.choices?.[0]?.delta?.content
         ?? parsed?.choices?.[0]?.text
         ?? '';
-      if (delta) yield { type: 'delta', text: String(delta) };
+      if (delta) {
+        if (ttftMs == null) ttftMs = Date.now() - startedAt;
+        yield { type: 'delta', text: String(delta) };
+      }
     }
   }
 
@@ -613,6 +617,8 @@ export async function* chatCompletionStream({
       requestedModel: model,
       billedModel,
       durationMs: elapsedMs,
+      ttftMs,
+      inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
     });
   }
@@ -623,6 +629,8 @@ export async function* chatCompletionStream({
     provider: p.id,
     requestedModel: model,
     billedModel,
+    durationMs: elapsedMs,
+    ttftMs,
   };
 }
 

@@ -76,6 +76,26 @@ export type AskAiStreamHandlers = {
   signal?: AbortSignal;
 };
 
+export type AskAiUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  totalTokens?: number;
+  model?: string | null;
+};
+
+export type AskAiTiming = {
+  /** Client wall clock from fetch start → first token. */
+  clientTtftMs: number | null;
+  /** Client wall clock from fetch start → stream end. */
+  clientTotalMs: number;
+  /** Server-reported LLM stream duration (BFF → provider). */
+  llmMs: number | null;
+  /** Server-reported time to first token. */
+  llmTtftMs: number | null;
+  model: string | null;
+};
+
 /**
  * Stream Ask AI for fast first-token UX. Schema may be imperfect mid-stream;
  * answers are best-effort extracted as tokens arrive.
@@ -85,7 +105,16 @@ export async function askAiForPageAnswersStream(
   pageContext: PageContext,
   job: { id?: string; title?: string } | null | undefined,
   handlers: AskAiStreamHandlers = {},
-): Promise<{ answers: FormAnswer[]; summary: string; mode: string; streamText: string }> {
+): Promise<{
+  answers: FormAnswer[];
+  summary: string;
+  mode: string;
+  streamText: string;
+  usage: AskAiUsage | null;
+  timing: AskAiTiming;
+}> {
+  const clientStartedAt = Date.now();
+  let clientTtftMs: number | null = null;
   let response: Response;
   try {
     response = await fetch(`${ATHENS_API_BASE_URL}/athens-lens/ask-ai`, {
@@ -127,6 +156,10 @@ export async function askAiForPageAnswersStream(
   let summary = "";
   let mode = "llm-stream";
   let answers: FormAnswer[] = [];
+  let usage: AskAiUsage | null = null;
+  let llmMs: number | null = null;
+  let llmTtftMs: number | null = null;
+  let model: string | null = null;
 
   const handleEvent = (eventName: string, dataRaw: string) => {
     let data: Record<string, unknown> = {};
@@ -138,6 +171,7 @@ export async function askAiForPageAnswersStream(
     if (eventName === "token") {
       const text = String(data.text || "");
       if (!text) return;
+      if (clientTtftMs == null) clientTtftMs = Date.now() - clientStartedAt;
       streamText += text;
       handlers.onToken?.(text);
       return;
@@ -152,6 +186,19 @@ export async function askAiForPageAnswersStream(
       mode = String(data.mode || mode);
       answers = mapAnswers(data.answers as Array<{ question?: string; suggestedAnswer?: string }>);
       handlers.onAnswers?.(answers);
+      const rawUsage = data.usage && typeof data.usage === "object"
+        ? data.usage as AskAiUsage
+        : null;
+      usage = rawUsage;
+      const timing = data.timing && typeof data.timing === "object"
+        ? data.timing as { llmMs?: number | null; ttftMs?: number | null; model?: string | null }
+        : null;
+      if (timing) {
+        llmMs = timing.llmMs ?? null;
+        llmTtftMs = timing.ttftMs ?? null;
+        model = timing.model ? String(timing.model) : null;
+      }
+      if (!model && rawUsage?.model) model = String(rawUsage.model);
       return;
     }
     if (eventName === "error") {
@@ -180,5 +227,18 @@ export async function askAiForPageAnswersStream(
     }
   }
 
-  return { answers, summary, mode, streamText };
+  return {
+    answers,
+    summary,
+    mode,
+    streamText,
+    usage,
+    timing: {
+      clientTtftMs,
+      clientTotalMs: Date.now() - clientStartedAt,
+      llmMs,
+      llmTtftMs,
+      model,
+    },
+  };
 }

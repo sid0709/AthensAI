@@ -195,6 +195,12 @@ export async function askAthensLensAi(req, res) {
 						answers: event.answers || [],
 						pageUrl: normalizedContext.url,
 						pageTitle: normalizedContext.title,
+						usage: event.usage || null,
+						timing: {
+							llmMs: event.durationMs ?? null,
+							ttftMs: event.ttftMs ?? null,
+							model: event.billedModel || event.requestedModel || null,
+						},
 					});
 				}
 			}
