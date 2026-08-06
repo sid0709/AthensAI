@@ -45,11 +45,6 @@ export default defineConfig(({ mode }) => {
     (env.SERVER_API_URL ? originFromApiUrl(env.SERVER_API_URL) : '') ||
     (env.VITE_API_URL ? originFromApiUrl(env.VITE_API_URL) : '') ||
     `http://127.0.0.1:${backendPort}`
-  const avalonPort = env.VITE_AVALON_PORT || '3847'
-  const avalonTarget =
-    env.VITE_DEV_AVALON_PROXY_TARGET ||
-    (env.VITE_AVALON_SERVER ? originFromServiceUrl(env.VITE_AVALON_SERVER) : '') ||
-    `http://127.0.0.1:${avalonPort}`
   const aiBffTarget =
     env.VITE_DEV_AI_BFF_PROXY_TARGET ||
     (env.VITE_AI_BFF_URL ? originFromServiceUrl(env.VITE_AI_BFF_URL) : '') ||
@@ -81,12 +76,6 @@ export default defineConfig(({ mode }) => {
           // Large streamed downloads can take several minutes.
           timeout: 0,
           proxyTimeout: 0,
-        },
-        '/avalon': {
-          target: avalonTarget,
-          changeOrigin: true,
-          secure: false,
-          ws: true,
         },
         '/ai-bff': {
           target: aiBffTarget,

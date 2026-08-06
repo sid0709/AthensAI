@@ -8,7 +8,6 @@
     "test:auth": "tsx --test src/app/features/auth/components/authNarrative.test.ts src/app/features/auth/components/authScene.test.ts src/app/features/auth/experience/authExperienceState.test.ts src/app/features/auth/experience/authAudio.test.ts src/app/features/dashboard/dashboardIdentity.test.ts",
     "test:job-search": "tsx --test src/app/features/job-search/lib/jobSearchUrlState.test.ts src/app/features/job-search/lib/companyGroupState.test.ts",
     "test:title-review": "tsx --test src/app/api/titleReviewRemoval.test.ts src/app/api/jobTitleReviewCache.test.ts",
-    "predev": "npm run pack:extensions",
     "dev": "vite",
     "pack:extensions": "PUBLIC_ORIGIN=http://localhost:9030 EXTENSION_OUTPUT_DIR=$PWD/public/downloads bash ../docker/pack-extensions.sh"
   },

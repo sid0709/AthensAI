@@ -110,12 +110,16 @@ export function avalonRelayHealthUrl(): string {
   return base === "/avalon" ? "/avalon/health" : `${base.replace(/\/$/, "")}/avalon/health`;
 }
 
-/** Wait for the relay HTTP health endpoint before opening a websocket (avoids Vite proxy noise on boot). */
+/** Optional health wait before opening a websocket. Skipped in plain frontend dev (no Avalon proxy). */
 export async function waitForAvalonRelay(
   attempts = 30,
   intervalMs = 1000,
 ): Promise<boolean> {
   const healthUrl = avalonRelayHealthUrl();
+  // Without a dedicated Avalon origin, /avalon is not proxied — don't poll and spam the console.
+  if (import.meta.env.DEV && (healthUrl === "/avalon/health" || healthUrl.startsWith("/avalon/"))) {
+    return false;
+  }
   for (let i = 0; i < attempts; i += 1) {
     try {
       const res = await fetch(healthUrl, { cache: "no-store" });
