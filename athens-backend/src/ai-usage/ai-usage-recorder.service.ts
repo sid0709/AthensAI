@@ -1,8 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import {
-  buildAiApiUsageEntry,
-  tokensToRawUsage,
-} from '@nextoffer/shared/ai-api-usage';
 import type { Prisma } from '@prisma/client';
 import type { ChatUsage } from '../ai/openai/openai.types';
 import {
@@ -14,6 +10,10 @@ import {
   AI_USAGE_COLLECTION,
   AI_USAGE_SERVICE,
 } from './constants/ai-usage.constants';
+import {
+  buildAiApiUsageEntry,
+  tokensToRawUsage,
+} from './lib/ai-api-usage';
 
 export type AiUsageRecordMeta = {
   feature: string;

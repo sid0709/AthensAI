@@ -476,7 +476,7 @@ model MonitorIncident {
 }
 
 /// AI call usage log (replaces Firestore ai_api_usage written by ai-bff).
-/// Field names match Athens UI / @nextoffer/shared buildAiApiUsageEntry.
+/// Field names match Athens UI / buildAiApiUsageEntry (local ai-usage/lib).
 model AiApiUsage {
   id                String    @id @default(auto()) @map("_id") @db.ObjectId
   createdAt         DateTime  @default(now())

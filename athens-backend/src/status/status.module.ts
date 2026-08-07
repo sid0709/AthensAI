@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
 import { BackgroundTasksModule } from '../background-tasks/background-tasks.module';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -11,7 +12,7 @@ import { StatusController } from './status.controller';
 import { StatusStoreService } from './status-store.service';
 
 @Module({
-  imports: [PrismaModule, BackgroundTasksModule],
+  imports: [PrismaModule, AuthModule, BackgroundTasksModule],
   controllers: [StatusController, StatusAdminController, HealthController],
   providers: [
     PrometheusClientService,
