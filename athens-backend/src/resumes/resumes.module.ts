@@ -5,7 +5,6 @@ import { FirebaseModule } from '../firebase/firebase.module';
 import { ResumeAnalyzeController } from './resume-analyze.controller';
 import { ResumeAnalyzeProcessService } from './resume-analyze-process.service';
 import { ResumeAnalyzeSessionService } from './resume-analyze-session.service';
-import { ResumeCatalogSyncService } from './resume-catalog-sync.service';
 import { ResumeStorageService } from './resume-storage.service';
 import { ResumeTextService } from './resume-text.service';
 import { ResumeUploadService } from './resume-upload.service';
@@ -20,7 +19,6 @@ import { ResumesController } from './resumes.controller';
     ResumeUploadService,
     ResumeStorageService,
     ResumeTextService,
-    ResumeCatalogSyncService,
     ResumeAnalyzeProcessService,
     ResumeAnalyzeSessionService,
   ],

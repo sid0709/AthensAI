@@ -204,6 +204,56 @@ export class JobsCompanyListService {
       memberIds,
     );
 
-    return groups.map((group) => mapCompanyGroupRow(group, jobs, stateByJobId));
+    const recommendByJobId = await this.loadRecommendFields(
+      profileId,
+      memberIds,
+    );
+
+    return groups.map((group) => {
+      const row = mapCompanyGroupRow(group, jobs, stateByJobId);
+      const jobsOut = Array.isArray(row.jobs) ? row.jobs : [];
+      row.jobs = jobsOut.map((job) => {
+        const id = String((job as { _id?: string })._id || '');
+        const recommend = recommendByJobId.get(id);
+        if (!recommend) return job;
+        return { ...job, ...recommend };
+      });
+      return row;
+    });
+  }
+
+  private async loadRecommendFields(
+    profileId: string,
+    jobIds: string[],
+  ): Promise<Map<string, Record<string, unknown>>> {
+    const out = new Map<string, Record<string, unknown>>();
+    if (!profileId || !jobIds.length) return out;
+    const account = await this.prisma.accountInfo.findUnique({
+      where: { id: profileId },
+      select: { name: true },
+    });
+    if (!account) return out;
+    const tasks = await this.prisma.vendorTask.findMany({
+      where: { applierName: account.name, jobId: { in: jobIds } },
+      select: {
+        jobId: true,
+        recommendedResumeStack: true,
+        recommendedResumeReason: true,
+        useCustomizedResume: true,
+        recommendWarning: true,
+        recommendedAt: true,
+      },
+    });
+    for (const t of tasks) {
+      if (!t.recommendedResumeStack && !t.useCustomizedResume) continue;
+      out.set(t.jobId, {
+        recommendedResumeStack: t.recommendedResumeStack,
+        recommendedResumeReason: t.recommendedResumeReason,
+        useCustomizedResume: t.useCustomizedResume,
+        recommendWarning: t.recommendWarning,
+        recommendedAt: t.recommendedAt?.toISOString() ?? null,
+      });
+    }
+    return out;
   }
 }

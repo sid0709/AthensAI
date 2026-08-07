@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
+import { AthensLensModule } from './athens-lens/athens-lens.module';
 import { AuthModule } from './auth/auth.module';
 import { BackgroundTasksModule } from './background-tasks/background-tasks.module';
+import { BidsModule } from './bids/bids.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { JobsModule } from './jobs/jobs.module';
 import { MailModule } from './mail/mail.module';
@@ -13,11 +15,13 @@ import { ResumesModule } from './resumes/resumes.module';
     PrismaModule,
     AuthModule,
     PersonalModule,
+    BidsModule,
     JobsModule,
     FirebaseModule,
     ResumesModule,
     MailModule,
     BackgroundTasksModule,
+    AthensLensModule,
   ],
 })
 export class AppModule {}

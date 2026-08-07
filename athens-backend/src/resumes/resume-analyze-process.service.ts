@@ -7,7 +7,6 @@ import { RESUME_SKILL_ANALYSIS_PROMPT } from './analyze/resume-skill-analysis.pr
 import { parseSkillProfileJson } from './analyze/resume-skill-parse';
 import { RESUME_ANALYZE_TEXT_MAX_CHARS } from './constants/resume-skill.constants';
 import type { ResumeAnalysisObject } from './mappers/resume.mapper';
-import { ResumeCatalogSyncService } from './resume-catalog-sync.service';
 
 export type ResumeAnalyzeItemResult = {
   resumeId: string;
@@ -22,7 +21,6 @@ export class ResumeAnalyzeProcessService {
   constructor(
     private readonly chat: OpenAiChatService,
     private readonly prisma: PrismaService,
-    private readonly catalog: ResumeCatalogSyncService,
   ) {}
 
   async analyzeOne(input: {
@@ -100,8 +98,6 @@ export class ResumeAnalyzeProcessService {
           analysisError: null,
         },
       });
-
-      await this.catalog.syncStack(resume.profileId, resume.title);
 
       return {
         resumeId: resume.id,

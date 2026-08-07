@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { BidStatusQueueService } from '../bids/bid-status-queue.service';
 import { deleteManyWithFallback, rawInsertOne, rawUpdateMany, withReplicaSetFallback } from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -38,7 +39,10 @@ type MutateResult = {
 
 @Injectable()
 export class JobStatusMutateService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly bidQueue: BidStatusQueueService,
+  ) {}
 
   async apply(jobId: string, applierName: string, mutationId?: string) {
     return this.setState(jobId, applierName, 'applied', mutationId, {
@@ -83,7 +87,12 @@ export class JobStatusMutateService {
     }
     const next = API_BID_STATUS[key];
     if (next == null) return this.clearState(jobId, applierName, mutationId);
-    return this.setState(jobId, applierName, next, mutationId);
+    return this.setBidPipeline(
+      jobId,
+      applierName,
+      next as 'bid-ready' | 'bid-completed',
+      mutationId,
+    );
   }
 
   async setBidStatusBulk(
@@ -118,7 +127,12 @@ export class JobStatusMutateService {
         const result =
           key === 'clear'
             ? await this.clearState(jobId, applierName, mutationId)
-            : await this.setState(jobId, applierName, 'bid-ready', mutationId);
+            : await this.setBidPipeline(
+                jobId,
+                applierName,
+                'bid-ready',
+                mutationId,
+              );
         results.push({ jobId, viewerStatus: result.viewerStatus });
       } catch (err) {
         failed.push({
@@ -154,6 +168,40 @@ export class JobStatusMutateService {
       catalog: job.sourceCatalog === 'external' ? 'external' : 'market',
       viewerStatus,
       status: row ? [{ state: viewerStatus }] : [],
+    };
+  }
+
+  private async setBidPipeline(
+    jobIdRaw: string,
+    applierName: string,
+    state: 'bid-ready' | 'bid-completed',
+    mutationId?: string,
+  ): Promise<MutateResult> {
+    const { profileId, job } = await this.requireJobAndProfile(
+      jobIdRaw,
+      applierName,
+    );
+    if (state === 'bid-ready') {
+      const { changed } = await this.bidQueue.setBidReady({
+        profileId,
+        applierName: String(applierName).trim(),
+        job,
+      });
+      return {
+        success: true,
+        data: mapJobToListDoc(job, 'bid-ready'),
+        changed,
+        viewerStatus: 'bid-ready',
+        mutationId: mutationId?.trim() || null,
+      };
+    }
+    await this.bidQueue.setBidCompleted({ profileId, job });
+    return {
+      success: true,
+      data: mapJobToListDoc(job, 'bid-completed'),
+      changed: true,
+      viewerStatus: 'bid-completed',
+      mutationId: mutationId?.trim() || null,
     };
   }
 

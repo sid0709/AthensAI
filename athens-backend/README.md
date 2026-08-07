@@ -82,6 +82,37 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/jobs/ai-analyze/stop` | Abort session + release leases |
 | GET | `/api/jobs/skill-extract/status` | Alias of AI Analyze status (legacy client path) |
 
+## Bid Management + Athens Lens
+
+Mongo owns metadata (`vendor_tasks`, `job_statuses`, `bid_review_events`, `athens_lens_sessions`, `upload_sessions`). Firebase Storage holds video bytes only under `bid-recordings/{applier}/{session}/{uploadId}.{ext}`.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/api/jobs/recommend-resumes` | `{ applierName, jobIds[] }` (max 40) — LLM recommend → `vendor_tasks` |
+| GET | `/api/bid-results?applierName=` | Bid Management list (date folders via `bidReadyDate`) |
+| GET | `/api/bid-results/rejected` | Rejected only |
+| GET | `/api/bid-results/stats` | KPIs (`since`/`until` optional) |
+| GET | `/api/bid-results/recording-url` | Signed Storage URL (`path` under `bid-recordings/`) |
+| GET | `/api/bid-results/:id/events` | Review timeline |
+| GET | `/api/bid-results/:id/ai-usage` | Ask AI / recommend usage |
+| PATCH | `/api/bid-results/:id` | Reviewer status |
+| POST | `/api/bid-results/mark-fixed` | Rejected → submitted |
+| POST | `/api/athens-lens/auth/signin` | Vendor password → bearer session |
+| POST | `/api/athens-lens/auth/signout` | Revoke session |
+| GET | `/api/athens-lens/jobs` | Bid-ready feed for Lens |
+| POST | `/api/athens-lens/ask-ai` | Form answers (persists when `jobId` set) |
+| POST | `/api/athens-lens/bids/start` / `complete` / `skip` | Bid lifecycle |
+| POST | `/api/athens-lens/bids/analysis` | Persist Ask AI answers |
+| POST | `/api/athens-lens/bids/resume-audit` | Uploaded resume name audit |
+| POST | `/api/athens-lens/bids/recordings/uploads` | Begin GCS resumable upload |
+| POST | `/api/athens-lens/bids/recordings/uploads/:uploadId/complete` | Validate + attach recording |
+| GET | `/api/athens-lens/gmail/messages` | Mail list via existing Mail module |
+| GET | `/api/athens-lens/gmail/message-bodies` | Message bodies |
+
+Point athens-lens `WXT_ATHENS_API_URL` (and Athens web API base) at this server — no Lens code changes if the contract matches.
+
+Marking BidReady upserts a `vendor_tasks` stub and sets stable `job_statuses.bidReadyAt` (folder day). Completing a bid sets `bid-completed` without restamping that date.
+
 ## Resume library
 
 Binary files: Firebase Storage `{slug(ownerName)}_{profileId}/resumes/{sha256}`. Metadata + analysis: Mongo `resumes`.
@@ -100,7 +131,7 @@ Binary files: Firebase Storage `{slug(ownerName)}_{profileId}/resumes/{sha256}`.
 | POST | `/api/resumes/analyze/stop` | Abort session |
 | GET | `/api/resumes/analyze/status` | Progress per `resumeId` |
 
-API `techStack` ↔ Mongo `title`. Skills in `analysis.skills`; syncs `account_info.resumeAnalysisCatalog[title]`. Knob: `RESUME_ANALYZE_BATCH_CONCURRENCY` (default 8).
+API `techStack` ↔ Mongo `title`. Skills live on each resume in `analysis.skills`. Knob: `RESUME_ANALYZE_BATCH_CONCURRENCY` (default 8).
 
 - Job Search reads **`jobs` only**. Incomplete title-review / AI Analyze rows live in **`temp_jobs`** and are invisible to search.
 - **Ingest dedupe** (`SaveJobService`): before insert, check `temp_jobs` **and** `jobs`. Duplicate when `metadata.legacyId` matches, or `applyLink` matches within `JOB_DEDUP_WINDOW_DAYS` (default 14), or normalized `companyName`+`title` match within that window. Response stays Extension/LI-compatible: `{ success: true, created: false, duplicate: true, reason, code }` (HTTP 200) — row is **not** added.

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { BidsModule } from '../bids/bids.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AiAnalyzeController } from './ai-analyze/ai-analyze.controller';
 import { AiAnalyzeProcessService } from './ai-analyze/ai-analyze-process.service';
@@ -22,6 +23,9 @@ import { JobsQueryService } from './jobs-query.service';
 import { JobsRemoveController } from './jobs-remove.controller';
 import { JobsStatusController } from './jobs-status.controller';
 import { JobsService } from './jobs.service';
+import { RecommendPersistService } from './recommend/recommend-persist.service';
+import { RecommendResumesController } from './recommend/recommend-resumes.controller';
+import { RecommendResumesService } from './recommend/recommend-resumes.service';
 import { RegisterJobService } from './register-job.service';
 import { SaveJobService } from './save-job.service';
 import { SkillExtractController } from './skill-extract.controller';
@@ -33,7 +37,7 @@ import { TitleReviewProcessService } from './title-review/title-review-process.s
 import { TitleReviewSessionService } from './title-review/title-review-session.service';
 
 @Module({
-  imports: [PrismaModule, AiModule],
+  imports: [PrismaModule, AiModule, BidsModule],
   controllers: [
     TitleReviewController,
     AiAnalyzeController,
@@ -43,6 +47,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     JobsRemoveController,
     JobsStatusController,
     JobsController,
+    RecommendResumesController,
   ],
   providers: [
     JobsService,
@@ -67,6 +72,8 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     SaveJobService,
     RegisterJobService,
     TempJobPromotionService,
+    RecommendResumesService,
+    RecommendPersistService,
   ],
 })
 export class JobsModule {}

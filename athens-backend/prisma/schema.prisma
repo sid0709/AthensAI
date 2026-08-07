@@ -134,6 +134,11 @@ model JobStatus {
   jobId     String   @db.ObjectId
   /// posted | bid-ready | bid-completed | applied | scheduled | declined
   state     String
+  /// First transition to bid-ready — stable Bid Management folder day (never restamp).
+  bidReadyAt     DateTime?
+  bidCompletedAt DateTime?
+  /// Denormalized from Job.postedAt for Lens ordering.
+  postedAt  DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -142,8 +147,159 @@ model JobStatus {
 
   @@unique([profileId, jobId])
   @@index([profileId, state])
+  @@index([profileId, state, postedAt(sort: Desc)])
   @@index([jobId])
   @@map("job_statuses")
+}
+
+/// Bid Management + Athens Lens work item (one per applier × job).
+/// Video bytes live in Firebase Storage; this row holds metadata only.
+model VendorTask {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  applierName String
+  jobId       String
+  title       String  @default("Untitled role")
+  company     String  @default("")
+  applyUrl    String?
+  source      String  @default("")
+  location    String  @default("")
+  workMode    String  @default("")
+  matchScore  Float?
+
+  /// pending | done | skipped
+  status              String    @default("pending")
+  /// submitted | reviewed | rejected
+  reviewStatus        String?
+  bidderInProcess     Boolean   @default(false)
+  bidderInProcessAt   DateTime?
+  bidderName          String?
+  bidSessionId        String?
+  addedAt             DateTime  @default(now())
+  completedAt         DateTime?
+  /// Stable folder day — copy from JobStatus.bidReadyAt; do not restamp.
+  bidReadyDate        DateTime?
+  biddingDurationSec  Float?
+
+  rejectReason      String?
+  /// submitted | skipped
+  rejectSource      String?
+  rejectCount       Int       @default(0)
+  resubmitCount     Int       @default(0)
+  lastRejectedAt    DateTime?
+  lastResubmittedAt DateTime?
+
+  recordingPath          String?
+  recordingContentType   String?
+  recordingSize          Int?
+  recordingSha256        String?
+  recordingGeneration    String?
+  recordingDurationSec   Float?
+  recordingStartedAt     DateTime?
+  recordingEndedAt       DateTime?
+  /// [{ storagePath, contentType, sizeBytes, sessionId, sha256, generation, durationSec, recordedStartAt, recordedEndAt, uploadedAt }]
+  recordings             Json?
+
+  recommendedResumeStack  String?
+  recommendedResumeReason String?
+  useCustomizedResume     Boolean  @default(false)
+  recommendWarning        String?
+  recommendedAt           DateTime?
+  /// llm | heuristic
+  recommendMode           String?
+  recommendUsage          Json?
+  recommendRequestId      String?
+  /// match | mismatch | unknown
+  resumeStackMatch        String?
+
+  resumeOriginalName String?
+  resumeExpectedName String?
+  resumeCleanedName  String?
+  resumeRenamed      Boolean   @default(false)
+  resumeMismatch     Boolean   @default(false)
+  /// [{ originalName, expectedName, cleanedName, renamed, mismatch, sessionId, source, fileSize, mimeType, auditKey, recordedAt }]
+  resumeAudits       Json?
+
+  analysisSummary     String?
+  analysisFormAnswers Json?
+  /// llm | heuristic
+  analysisMode        String?
+  analysisPageUrl     String?
+  analysisPageTitle   String?
+  analysisUsage       Json?
+  analysisRequestId   String?
+  analyzedAt          DateTime?
+  flagAnalysisMode    String?
+  flagAnalysisUsage   Json?
+  flagAnalysisRequestId String?
+  flagAnalyzedAt      DateTime?
+  flags               Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([applierName, jobId])
+  @@index([applierName, addedAt(sort: Desc)])
+  @@index([applierName, reviewStatus, lastRejectedAt(sort: Desc)])
+  @@map("vendor_tasks")
+}
+
+/// Timeline for Bid Management detail pane.
+model BidReviewEvent {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  applierName  String
+  jobId        String
+  vendorTaskId String?
+  eventType    String
+  /// Idempotency key (e.g. ai:requestId).
+  eventKey     String?
+  meta         Json?
+  feature      String?
+  createdAt    DateTime @default(now())
+
+  @@unique([applierName, jobId, eventKey])
+  @@index([applierName, jobId, createdAt(sort: Desc)])
+  @@map("bid_review_events")
+}
+
+/// Athens Lens bearer sessions. Doc id = sha256(token) hex.
+model AthensLensSession {
+  id              String   @id @map("_id")
+  accountId       String
+  profileId       String
+  applierName     String
+  username        String
+  authenticatedAt DateTime
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([expiresAt])
+  @@map("athens_lens_sessions")
+}
+
+/// Resumable bid-recording upload handshake (bytes in Firebase Storage).
+model UploadSession {
+  id             String    @id @map("_id")
+  uid            String?
+  applierName    String
+  jobId          String
+  sessionId      String
+  storagePath    String
+  contentType    String
+  expectedBytes  Int
+  expectedSha256 String?
+  /// pending | completed | rejected
+  status         String    @default("pending")
+  expiresAt      DateTime
+  actualBytes    Int?
+  actualSha256   String?
+  generation     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([applierName, jobId])
+  @@index([expiresAt])
+  @@map("upload_sessions")
 }
 
 /// Uploaded / generated resume library. Binary lives in Firebase Storage;

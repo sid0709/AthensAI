@@ -16,7 +16,6 @@ import {
 } from './mappers/resume.mapper';
 import { ResumeStorageService } from './resume-storage.service';
 import { ResumeUploadService } from './resume-upload.service';
-import { ResumeCatalogSyncService } from './resume-catalog-sync.service';
 
 @Injectable()
 export class ResumeService {
@@ -25,7 +24,6 @@ export class ResumeService {
     private readonly accounts: AccountInfoService,
     private readonly storage: ResumeStorageService,
     private readonly upload: ResumeUploadService,
-    private readonly catalog: ResumeCatalogSyncService,
   ) {}
 
   create(input: Parameters<ResumeUploadService['create']>[0]) {
@@ -99,7 +97,7 @@ export class ResumeService {
     id: string,
     ownerName: string,
   ): Promise<UserResumeSummary> {
-    const row = await this.findOwned(id, ownerName);
+    await this.findOwned(id, ownerName);
     const updated = await this.prisma.resume.update({
       where: { id },
       data: {
@@ -109,7 +107,6 @@ export class ResumeService {
         analysisError: null,
       },
     });
-    await this.catalog.syncStack(row.profileId, row.title);
     return toResumeSummary(updated);
   }
 
