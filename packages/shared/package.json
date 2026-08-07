@@ -20,7 +20,9 @@
     },
     "./job-source": {
       "types": "./src/job-source.d.ts",
-      "import": "./src/job-source.js"
+      "require": "./src/job-source.js",
+      "import": "./src/job-source.js",
+      "default": "./src/job-source.js"
     },
     "./score": "./src/score.js",
     "./secretCrypto": "./src/secretCrypto.js",
