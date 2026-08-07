@@ -34,6 +34,7 @@ import { SaveJobService } from './save-job.service';
 import { SkillExtractController } from './skill-extract.controller';
 import { TempJobPromotionService } from './temp-job-promotion.service';
 import { TempJobQueueService } from './temp-job-queue.service';
+import { TitleReviewApproveService } from './title-review-approve.service';
 import { TitleReviewController } from './title-review.controller';
 import { TitleReviewQueryService } from './title-review-query.service';
 import { TitleReviewProcessService } from './title-review/title-review-process.service';
@@ -68,6 +69,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     TitleReviewClaimService,
     AiAnalyzeClaimService,
     TitleReviewQueryService,
+    TitleReviewApproveService,
     TitleReviewProcessService,
     TitleReviewSessionService,
     AiAnalyzeProcessService,
