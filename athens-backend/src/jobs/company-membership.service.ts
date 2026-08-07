@@ -1,6 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import {
+  rawDeleteMany,
+  rawInsertOne,
+  rawUpdateMany,
+  withReplicaSetFallback,
+} from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeCompanyKey } from './lib/company-key';
+
+const COMPANIES_COLLECTION = 'companies';
 
 export type CompanyProfileInput = {
   companyName: string;
@@ -61,18 +69,43 @@ export class CompanyMembershipService {
     });
 
     if (!existing) {
-      const created = await this.prisma.company.create({
-        data: {
-          companyKey,
-          companyName: displayName,
-          companyUrl: incomingUrl,
-          companyLogo: incomingLogo,
-          jobIds: [],
-          lastPostedAt: new Date(0),
-          jobCount: 0,
+      const now = new Date();
+      return withReplicaSetFallback(
+        async () => {
+          const created = await this.prisma.company.create({
+            data: {
+              companyKey,
+              companyName: displayName,
+              companyUrl: incomingUrl,
+              companyLogo: incomingLogo,
+              jobIds: [],
+              lastPostedAt: new Date(0),
+              jobCount: 0,
+            },
+          });
+          return created.id;
         },
-      });
-      return created.id;
+        async () => {
+          await rawInsertOne(this.prisma, COMPANIES_COLLECTION, {
+            companyKey,
+            companyName: displayName,
+            companyUrl: incomingUrl,
+            companyLogo: incomingLogo,
+            jobIds: [],
+            lastPostedAt: new Date(0),
+            jobCount: 0,
+            createdAt: now,
+            updatedAt: now,
+          });
+          const created = await this.prisma.company.findUnique({
+            where: { companyKey },
+          });
+          if (!created) {
+            throw new Error(`company insert failed for key ${companyKey}`);
+          }
+          return created.id;
+        },
+      );
     }
 
     const companyUrl = preferExistingText(existing.companyUrl, incomingUrl);
@@ -84,10 +117,22 @@ export class CompanyMembershipService {
     const nameChanged = companyName !== existing.companyName;
 
     if (urlChanged || logoChanged || nameChanged) {
-      await this.prisma.company.update({
-        where: { id: existing.id },
-        data: { companyUrl, companyLogo, companyName },
-      });
+      await withReplicaSetFallback(
+        () =>
+          this.prisma.company.update({
+            where: { id: existing.id },
+            data: { companyUrl, companyLogo, companyName },
+          }),
+        async () => {
+          await rawUpdateMany(
+            this.prisma,
+            COMPANIES_COLLECTION,
+            { _id: { $oid: existing.id } },
+            { companyUrl, companyLogo, companyName, updatedAt: new Date() },
+          );
+          return null;
+        },
+      );
     }
 
     return existing.id;
@@ -115,14 +160,31 @@ export class CompanyMembershipService {
         ? input.postedAt
         : existing.lastPostedAt;
 
-    await this.prisma.company.update({
-      where: { id: existing.id },
-      data: {
-        jobIds,
-        jobCount: jobIds.length,
-        lastPostedAt,
+    await withReplicaSetFallback(
+      () =>
+        this.prisma.company.update({
+          where: { id: existing.id },
+          data: {
+            jobIds,
+            jobCount: jobIds.length,
+            lastPostedAt,
+          },
+        }),
+      async () => {
+        await rawUpdateMany(
+          this.prisma,
+          COMPANIES_COLLECTION,
+          { _id: { $oid: existing.id } },
+          {
+            jobIds: jobIds.map((id) => ({ $oid: id })),
+            jobCount: jobIds.length,
+            lastPostedAt,
+            updatedAt: new Date(),
+          },
+        );
+        return null;
       },
-    });
+    );
   }
 
   /** Upsert profile then attach job id (used by register / promote). */
@@ -157,13 +219,37 @@ export class CompanyMembershipService {
       const removeSet = new Set(removeIds);
       const jobIds = existing.jobIds.filter((id) => !removeSet.has(id));
       if (jobIds.length === 0) {
-        await this.prisma.company.delete({ where: { id: companyId } });
+        await withReplicaSetFallback(
+          () => this.prisma.company.delete({ where: { id: companyId } }),
+          async () => {
+            await rawDeleteMany(this.prisma, COMPANIES_COLLECTION, {
+              _id: { $oid: companyId },
+            });
+            return null;
+          },
+        );
         continue;
       }
-      await this.prisma.company.update({
-        where: { id: companyId },
-        data: { jobIds, jobCount: jobIds.length },
-      });
+      await withReplicaSetFallback(
+        () =>
+          this.prisma.company.update({
+            where: { id: companyId },
+            data: { jobIds, jobCount: jobIds.length },
+          }),
+        async () => {
+          await rawUpdateMany(
+            this.prisma,
+            COMPANIES_COLLECTION,
+            { _id: { $oid: companyId } },
+            {
+              jobIds: jobIds.map((id) => ({ $oid: id })),
+              jobCount: jobIds.length,
+              updatedAt: new Date(),
+            },
+          );
+          return null;
+        },
+      );
     }
   }
 }

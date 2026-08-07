@@ -27,10 +27,25 @@ export const JOB_AI_SKILL_STATUSES = {
   SKIPPED_DUPLICATE: 'skipped_duplicate',
 } as const;
 
-/** Job.aiSkillStatus values that still need AI Analyze (on APPROVED titles). */
+/**
+ * Claimable for LLM AI analyze (on APPROVED titles).
+ * Promote-ready stuck rows are counted in the UI queue but promoted without LLM.
+ */
 export const JOB_SKILL_EXTRACT_OPEN_STATUSES = [
   JOB_AI_SKILL_STATUSES.PENDING,
   JOB_AI_SKILL_STATUSES.FAILED,
+] as const;
+
+/** Already skill-complete — reclaim only to promote into `jobs` (no LLM). */
+export const JOB_SKILL_PROMOTE_ONLY_STATUSES = [
+  JOB_AI_SKILL_STATUSES.EXTRACTED,
+  JOB_AI_SKILL_STATUSES.SKIPPED_DUPLICATE,
+] as const;
+
+/** UI /status pending badge = LLM open + promote-ready stuck (same as “work left”). */
+export const JOB_SKILL_QUEUE_STATUSES = [
+  ...JOB_SKILL_EXTRACT_OPEN_STATUSES,
+  ...JOB_SKILL_PROMOTE_ONLY_STATUSES,
 ] as const;
 
 /** Title-review processingState values inside metadata.titleReview. */

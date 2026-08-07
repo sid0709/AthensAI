@@ -10,6 +10,7 @@ import {
   AI_ANALYZE_BATCH_SIZE,
 } from '../../ai/constants/ai-concurrency.constants';
 import { AiAnalyzeClaimService } from '../claim/ai-analyze-claim.service';
+import { TempJobPromotionService } from '../temp-job-promotion.service';
 import { TempJobQueueService } from '../temp-job-queue.service';
 import { AiAnalyzeProcessService } from './ai-analyze-process.service';
 
@@ -37,6 +38,7 @@ export class AiAnalyzeSessionService {
     private readonly process: AiAnalyzeProcessService,
     private readonly waves: WaveBatchRunner,
     private readonly queues: TempJobQueueService,
+    private readonly promotion: TempJobPromotionService,
   ) {}
 
   async start(input: { applierName?: string; profileId?: string }) {
@@ -120,8 +122,16 @@ export class AiAnalyzeSessionService {
     const waveSize = AI_ANALYZE_BATCH_SIZE * AI_ANALYZE_BATCH_CONCURRENCY;
     try {
       while (state.status === 'running' && !state.controller.signal.aborted) {
+        // Promote-ready stuck rows (extracted / skipped_duplicate) — no LLM.
+        const promoteWave = await this.promotion.promoteReadyBatch(waveSize);
+        state.promoted += promoteWave.promoted;
+        state.processed += promoteWave.promoted;
+
         const claimed = await this.claims.claimWave(state.sessionId, waveSize);
-        if (!claimed.length) break;
+        if (!claimed.length) {
+          if (promoteWave.attempted === 0) break;
+          continue;
+        }
 
         const results = await this.waves.runBatches({
           items: claimed,

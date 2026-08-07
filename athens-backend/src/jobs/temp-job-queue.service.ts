@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  JOB_SKILL_EXTRACT_OPEN_STATUSES,
+  JOB_SKILL_QUEUE_STATUSES,
   JOB_TITLE_REVIEW_LABELS,
   TITLE_REVIEW_META_STATES,
   type TitleReviewMetaState,
@@ -34,7 +34,7 @@ export class TempJobQueueService {
     return {
       titleReviewLabel: JOB_TITLE_REVIEW_LABELS.APPROVED,
       aiSkillStatus: {
-        in: [...JOB_SKILL_EXTRACT_OPEN_STATUSES],
+        in: [...JOB_SKILL_QUEUE_STATUSES],
       },
     };
   }

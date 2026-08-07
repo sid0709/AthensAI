@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { ProfileLlmAuth } from '../../ai/auth/profile-llm-auth.service';
 import { AI_ANALYZE_JD_MAX_CHARS } from '../../ai/constants/ai-concurrency.constants';
 import { AiChatWithUsageService } from '../../ai-usage/ai-chat-with-usage.service';
@@ -20,6 +20,8 @@ export type AiAnalyzeBatchStats = {
 
 @Injectable()
 export class AiAnalyzeProcessService {
+  private readonly logger = new Logger(AiAnalyzeProcessService.name);
+
   constructor(
     private readonly chat: AiChatWithUsageService,
     private readonly claims: AiAnalyzeClaimService,
@@ -120,8 +122,12 @@ export class AiAnalyzeProcessService {
       try {
         const promoted = await this.promotion.promoteIfReady(job.id);
         if (promoted) stats.promoted += 1;
-      } catch {
-        /* leave in temp_jobs if promote validation fails */
+      } catch (err) {
+        // Leave aiSkillStatus=extracted so the row stays in the UI queue
+        // (JOB_SKILL_QUEUE_STATUSES) and the next AI analyze run promotes it.
+        this.logger.warn(
+          `promote failed for ${job.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 

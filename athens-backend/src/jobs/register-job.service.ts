@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { Prisma, TempJob } from '@prisma/client';
+import {
+  rawDeleteMany,
+  rawInsertOne,
+  withReplicaSetFallback,
+} from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompanyCatalogTotalService } from './company-catalog-total.service';
 import { CompanyMembershipService } from './company-membership.service';
@@ -8,6 +13,9 @@ import {
   toCatalogJobMetadata,
   normalizeJobMetadata,
 } from './mappers/job-metadata.mapper';
+
+const JOBS_COLLECTION = 'jobs';
+const TEMP_JOBS_COLLECTION = 'temp_jobs';
 
 function requireNonEmpty(value: string | null | undefined, field: string) {
   if (typeof value !== 'string' || !value.trim()) {
@@ -81,6 +89,15 @@ export class RegisterJobService {
     });
     if (!row || !isJobCatalogReady(row)) return false;
 
+    const existingJob = await this.prisma.job.findUnique({
+      where: { id: row.id },
+      select: { id: true },
+    });
+    if (existingJob) {
+      await this.deleteTemp(row.id);
+      return true;
+    }
+
     const meta = normalizeJobMetadata(row.metadata);
     const companyId = await this.companies.upsertProfile({
       companyName: row.companyName,
@@ -89,10 +106,36 @@ export class RegisterJobService {
     });
 
     const data = toJobCreateData(row, companyId);
+    const now = new Date();
 
-    // Avoid $transaction — standalone Mongo has no replica-set transactions.
-    await this.prisma.job.create({ data });
-    await this.prisma.tempJob.delete({ where: { id: row.id } });
+    await withReplicaSetFallback(
+      () => this.prisma.job.create({ data }),
+      async () => {
+        await rawInsertOne(this.prisma, JOBS_COLLECTION, {
+          _id: { $oid: row.id },
+          title: data.title,
+          companyName: data.companyName,
+          companyId: { $oid: companyId },
+          source: data.source,
+          postedAt: row.postedAt,
+          titleReviewLabel: data.titleReviewLabel,
+          sourceCatalog: data.sourceCatalog,
+          companyLink: data.companyLink ?? null,
+          applyLink: data.applyLink ?? null,
+          description: data.description ?? null,
+          aiSkills: data.aiSkills ?? null,
+          aiSkillStatus: data.aiSkillStatus ?? null,
+          model_schema_code: data.modelSchemaCode,
+          createdBy: data.createdBy,
+          createdAt: row.createdAt,
+          updatedAt: now,
+          ...(data.metadata ? { metadata: data.metadata } : {}),
+        });
+        return null;
+      },
+    );
+
+    await this.deleteTemp(row.id);
 
     await this.companies.attachJob({
       companyId,
@@ -101,5 +144,17 @@ export class RegisterJobService {
     });
     this.companyTotals.invalidate();
     return true;
+  }
+
+  private async deleteTemp(id: string): Promise<void> {
+    await withReplicaSetFallback(
+      () => this.prisma.tempJob.delete({ where: { id } }),
+      async () => {
+        await rawDeleteMany(this.prisma, TEMP_JOBS_COLLECTION, {
+          _id: { $oid: id },
+        });
+        return null;
+      },
+    );
   }
 }
