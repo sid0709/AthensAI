@@ -21,9 +21,15 @@ model AccountInfo {
   autoBidProfile    Json?
   notificationPrefs Json?
   notionIntegration Json?
+  /// Analyzed library skills by stack title: { [title]: [{ name, category, level }] }
+  resumeAnalysisCatalog          Json?
+  resumeAnalysisCatalogUpdatedAt DateTime?
+  /// AI Mail labeling: { [labelPath: string]: description }
+  mailAiLabelDefinitions Json?
 
   jobStatusCounts JobStatusCounts?
   jobStatuses     JobStatus[]
+  resumes         Resume[]
 
   @@index([usernameKey])
   @@map("account_info")
@@ -155,4 +161,124 @@ model JobStatusCounts {
   account AccountInfo @relation(fields: [profileId], references: [id])
 
   @@map("job_status_counts")
+}
+
+/// Uploaded / generated resume library. Binary lives in Firebase Storage;
+/// this row holds title (upload folder), file meta, and analysis object.
+model Resume {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  profileId     String    @db.ObjectId
+  ownerName     String
+  /// Upload folder / stack label (legacy API field: techStack)
+  title         String
+  fileName      String
+  mimeType      String
+  sizeBytes     Int
+  storagePath   String
+  contentSha256 String
+  extractedText String?
+  isPrimary     Boolean   @default(false)
+  source        String    @default("uploaded")
+  generationId  String?
+  templateId    String?
+  analyzed      Boolean   @default(false)
+  analyzedAt    DateTime?
+  /// { skills: [{ name, category, level }], provider?, model?, usage? }
+  analysis      Json?
+  analysisError String?
+  uploadedAt    DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  account AccountInfo @relation(fields: [profileId], references: [id])
+
+  @@index([profileId, uploadedAt(sort: Desc)])
+  @@index([profileId, title])
+  @@index([ownerName, uploadedAt(sort: Desc)])
+  @@map("resumes")
+}
+
+/// Cached Gmail message (list = headers/snippet; body filled on open).
+model MailMessage {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  applierName String
+  mailbox     String
+  uid         Int
+  messageId   String?
+  fromName    String?
+  fromEmail   String?
+  toJson      Json?
+  ccJson      Json?
+  subject     String
+  preview     String   @default("")
+  bodyText    String?
+  bodyHtml    String?
+  date        DateTime
+  seen        Boolean  @default(false)
+  flagged     Boolean  @default(false)
+  gmailLabels String[]
+  folder      String   @default("inbox")
+  labels      String[]
+  hasBody     Boolean  @default(false)
+  syncedAt    DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([applierName, mailbox, uid])
+  @@index([applierName, folder, date(sort: Desc)])
+  @@index([applierName, date(sort: Desc)])
+  @@map("mail_messages")
+}
+
+/// Per-applier mail sync cursors + cached Gmail label list.
+model MailSyncState {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  applierName      String    @unique
+  highestUid       Int       @default(0)
+  lowestUid        Int       @default(0)
+  lastSyncAt       DateTime?
+  syncing          Boolean   @default(false)
+  gmailLabelsJson  Json?
+  folderCountsJson Json?
+  updatedAt        DateTime  @updatedAt
+
+  @@map("mail_sync_state")
+}
+
+/// Background task queue (mail_ai_label and future types).
+model BackgroundTask {
+  id                   String    @id @default(auto()) @map("_id") @db.ObjectId
+  requestId            String?
+  type                 String
+  status               String
+  profileId            String?
+  applierName          String?
+  payload              Json?
+  progress             Json?
+  result               Json?
+  error                String?
+  leaseOwner           String?
+  leaseExpiresAt       DateTime?
+  createdAt            DateTime  @default(now())
+  startedAt            DateTime?
+  cancelRequestedAt    DateTime?
+  cancelAcknowledgedAt DateTime?
+  finishedAt           DateTime?
+  updatedAt            DateTime  @updatedAt
+  eventSequence        Int       @default(0)
+
+  @@index([requestId])
+  @@index([profileId, status, updatedAt(sort: Desc)])
+  @@index([status, leaseExpiresAt])
+  @@index([type, status])
+  @@map("background_tasks")
+}
+
+/// Idempotency reservations for background tasks.
+model BackgroundTaskReservation {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  key       String    @unique
+  taskId    String?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@map("background_task_reservations")
 }

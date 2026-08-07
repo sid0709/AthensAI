@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
 import type { PrenormTempJobInput } from './mappers/prenorm-scrape.mapper';
+import { JobDedupeService } from './job-dedupe.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 export type SaveJobResult =
   | {
@@ -21,6 +21,7 @@ export type SaveJobResult =
       jobID?: string;
       jobLink?: string;
       reason: string;
+      code?: string;
     };
 
 function legacyIdFrom(data: PrenormTempJobInput): string | undefined {
@@ -35,8 +36,15 @@ function legacyIdFrom(data: PrenormTempJobInput): string | undefined {
 
 @Injectable()
 export class SaveJobService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly dedupe: JobDedupeService,
+  ) {}
 
+  /**
+   * Prenorm → dedupe (temp_jobs + jobs) → create TempJob.
+   * Duplicates return success with `duplicate: true` (Extension / LI-scrapper contract).
+   */
   async save(data: PrenormTempJobInput): Promise<SaveJobResult> {
     const legacyId = legacyIdFrom(data);
     const applyLink =
@@ -44,7 +52,12 @@ export class SaveJobService {
         ? data.applyLink.trim()
         : undefined;
 
-    const duplicate = await this.findDuplicate(legacyId, applyLink);
+    const duplicate = await this.dedupe.findDuplicate({
+      legacyId,
+      applyLink,
+      companyName: data.companyName,
+      title: data.title,
+    });
     if (duplicate) {
       return {
         success: true,
@@ -54,6 +67,7 @@ export class SaveJobService {
         ...(legacyId ? { jobID: legacyId } : {}),
         ...(applyLink ? { jobLink: applyLink } : {}),
         reason: duplicate.reason,
+        code: duplicate.code,
       };
     }
 
@@ -70,62 +84,6 @@ export class SaveJobService {
   }
 
   async existsByLegacyId(jobID: string): Promise<boolean> {
-    const id = String(jobID || '').trim();
-    if (!id) return false;
-    const found = await this.findByLegacyId(id);
-    return Boolean(found);
-  }
-
-  private async findDuplicate(
-    legacyId: string | undefined,
-    applyLink: string | undefined,
-  ): Promise<{ id: string; reason: string } | null> {
-    if (legacyId) {
-      const byLegacy = await this.findByLegacyId(legacyId);
-      if (byLegacy) {
-        return {
-          id: byLegacy.id,
-          reason: 'Duplicate jobID already exists',
-        };
-      }
-    }
-    if (applyLink) {
-      const [temp, job] = await Promise.all([
-        this.prisma.tempJob.findFirst({
-          where: { applyLink },
-          select: { id: true },
-        }),
-        this.prisma.job.findFirst({
-          where: { applyLink },
-          select: { id: true },
-        }),
-      ]);
-      const hit = temp ?? job;
-      if (hit) {
-        return {
-          id: hit.id,
-          reason: 'Duplicate job URL already exists',
-        };
-      }
-    }
-    return null;
-  }
-
-  private async findByLegacyId(
-    legacyId: string,
-  ): Promise<{ id: string } | null> {
-    const where = {
-      metadata: { path: ['legacyId'], equals: legacyId },
-    } as Prisma.TempJobWhereInput;
-    const [temp, job] = await Promise.all([
-      this.prisma.tempJob.findFirst({ where, select: { id: true } }),
-      this.prisma.job.findFirst({
-        where: {
-          metadata: { path: ['legacyId'], equals: legacyId },
-        } as Prisma.JobWhereInput,
-        select: { id: true },
-      }),
-    ]);
-    return temp ?? job;
+    return this.dedupe.existsByLegacyId(jobID);
   }
 }

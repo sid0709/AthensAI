@@ -60,8 +60,8 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 |--------|------|-------|
 | GET | `/api/jobs` | Query: `status`, `q`, `company`, `source`, `postedFrom`, `postedTo`, `sort`, `aiExtracted`, `page`, `pageSize`, `profileId` |
 | GET | `/api/jobs/:id` | Full job (incl. `description`) for View JD. Query: `applierName`, `profileId` |
-| POST | `/api/jobs/bulk` | Extension scrape ingest — `{ jobs: [...] }` → prenorm → `temp_jobs` |
-| POST | `/api/expose/jobs` | LI-scrapper ingest — single job or `{ jobs: [...] }` → prenorm → `temp_jobs` |
+| POST | `/api/jobs/bulk` | Extension scrape ingest — `{ jobs: [...] }` → prenorm → dedupe → `temp_jobs` |
+| POST | `/api/expose/jobs` | LI-scrapper ingest — single job or `{ jobs: [...] }` → prenorm → dedupe → `temp_jobs` |
 | POST | `/api/expose/jobs/check` | LI-scrapper — `{ jobID }` exists in `temp_jobs` or `jobs` via `metadata.legacyId` |
 | POST | `/api/jobs/remove` | Hard-delete catalog `jobs` by `{ ids }` (also clears `job_statuses` + company membership) |
 | POST | `/api/jobs/company/remove-others` | Hard-delete other roles at a company — `{ companyId, keepJobId }` |
@@ -77,6 +77,8 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | GET | `/api/jobs/skill-extract/status` | Alias of AI Analyze status (legacy client path) |
 
 - Job Search reads **`jobs` only**. Incomplete title-review / AI Analyze rows live in **`temp_jobs`** and are invisible to search.
+- **Ingest dedupe** (`SaveJobService`): before insert, check `temp_jobs` **and** `jobs`. Duplicate when `metadata.legacyId` matches, or `applyLink` matches within `JOB_DEDUP_WINDOW_DAYS` (default 14), or normalized `companyName`+`title` match within that window. Response stays Extension/LI-compatible: `{ success: true, created: false, duplicate: true, reason, code }` (HTTP 200) — row is **not** added.
+- New rows stamp `model_schema_code` from `JOB_MODEL_SCHEMA_CODE` (default `mongodb-athens-2026-08-06`).
 - Queue membership is derived from `temp_jobs` (`titleReviewLabel` / `aiSkillStatus` / `metadata.titleReview`) — there is no `athens_metadata` collection.
 - Review Title must approve a title before AI Analyze (`titleReviewLabel=APPROVED` + open `aiSkillStatus`). AI Analyze writes `metadata.details` + `aiSkills`, then `promoteIfReady`.
 - LLM calls use the signed-in profile’s encrypted API key + default model. Throughput knobs: `LLM_*` / `JOB_TITLE_REVIEW_*` / `JOB_AI_ANALYZE_*` in `.env.example`.
