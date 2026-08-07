@@ -36,8 +36,13 @@ export class JobsQueryService {
     const peekJobs = unfiltered ? (this.catalogTotal.peek() ?? 0) : 0;
 
     const idConstraint = await this.statusIdConstraint(status, profileId);
+    const countWhere = unfiltered
+      ? where
+      : { ...where, companyId: { not: null } };
     if (idConstraint && 'includeIds' in idConstraint && !idConstraint.includeIds.length) {
-      const tabCounts = await this.jobStatuses.tabCounts(profileId, peekJobs);
+      const tabCounts = unfiltered
+        ? await this.jobStatuses.tabCounts(profileId, peekJobs)
+        : await this.jobStatuses.filteredTabCounts(profileId, countWhere);
       return this.emptyPage(page, pageSize, tabCounts);
     }
 
@@ -76,7 +81,7 @@ export class JobsQueryService {
 
     const catalogForCounts = unfiltered
       ? await this.catalogTotal.getUnfiltered()
-      : peekJobs;
+      : 0;
 
     const [filtered, tabCounts] = await Promise.all([
       this.companyList.listFiltered(
@@ -86,20 +91,23 @@ export class JobsQueryService {
         profileId,
         idConstraint,
       ),
-      this.jobStatuses.tabCounts(
-        profileId,
-        unfiltered ? catalogForCounts : peekJobs,
-      ),
+      unfiltered
+        ? this.jobStatuses.tabCounts(profileId, catalogForCounts)
+        : this.jobStatuses.filteredTabCounts(profileId, countWhere),
     ]);
 
     if (unfiltered && tabCounts.all !== catalogForCounts) {
       tabCounts.all = catalogForCounts;
     } else if (!unfiltered) {
-      // Filtered "all" badge uses matching job count for this request when on All tab.
-      // Status tabs keep aggregation-based badges; override only the list total.
-      if (status === 'all') {
-        tabCounts.all = filtered.jobTotal;
-      }
+      // Keep All/New aligned with the company-grouped list total.
+      const tracked =
+        tabCounts['bid-ready'] +
+        tabCounts['bid-completed'] +
+        tabCounts.applied +
+        tabCounts.scheduled +
+        tabCounts.declined;
+      tabCounts.all = filtered.jobTotal;
+      tabCounts.posted = Math.max(0, filtered.jobTotal - tracked);
     }
 
     const totalPages =

@@ -453,6 +453,7 @@ export async function generateJobResume(params: {
 export type RecommendResumeResultRow = {
   jobId: string;
   ok: boolean;
+  skipped?: boolean;
   error?: string;
   recommendedResumeStack?: string | null;
   recommendedResumeReason?: string | null;
@@ -466,7 +467,9 @@ export type RecommendResumesResponse = {
   error?: string;
   total?: number;
   succeeded?: number;
+  skipped?: number;
   failed?: number;
+  replaceExisting?: boolean;
   results?: RecommendResumeResultRow[];
 };
 
@@ -474,6 +477,8 @@ export type RecommendResumesResponse = {
 export async function recommendResumesFromLibrary(params: {
   applierName: string;
   jobIds: string[];
+  /** When false, skip LLM for jobs that already have a recommendation. Default true. */
+  replaceExisting?: boolean;
 }): Promise<RecommendResumesResponse> {
   const res = await fetch(`${API_BASE}/jobs/recommend-resumes`, {
     method: "POST",
@@ -481,6 +486,38 @@ export async function recommendResumesFromLibrary(params: {
     body: JSON.stringify({
       applierName: params.applierName,
       jobIds: params.jobIds,
+      replaceExisting: params.replaceExisting !== false,
+    }),
+  });
+  return parseJson(res);
+}
+
+export type SetRecommendedResumeResponse = {
+  success?: boolean;
+  error?: string;
+  jobId?: string;
+  recommendedResumeStack?: string | null;
+  recommendedResumeId?: string | null;
+  recommendedResumeReason?: string | null;
+  useCustomizedResume?: boolean;
+  recommendWarning?: string | null;
+  recommendedAt?: string | null;
+  recommendMode?: "manual" | string | null;
+};
+
+/** Manually assign a Library resume stack to a Bid Ready job. */
+export async function setRecommendedResumeFromLibrary(params: {
+  applierName: string;
+  jobId: string;
+  resumeId: string;
+}): Promise<SetRecommendedResumeResponse> {
+  const res = await fetch(`${API_BASE}/jobs/set-recommended-resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      applierName: params.applierName,
+      jobId: params.jobId,
+      resumeId: params.resumeId,
     }),
   });
   return parseJson(res);

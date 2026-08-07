@@ -88,7 +88,7 @@ Mongo owns metadata (`vendor_tasks`, `job_statuses`, `bid_review_events`, `athen
 
 | Method | Path | Notes |
 |--------|------|-------|
-| POST | `/api/jobs/recommend-resumes` | `{ applierName, jobIds[] }` (max 40) — LLM recommend → `vendor_tasks` |
+| POST | `/api/jobs/recommend-resumes` | `{ applierName, jobIds[] }` (max 40) — LLM match against analyzed Library resumes (`Resume.title` + `analysis.skills`) → `vendor_tasks` |
 | GET | `/api/bid-results?applierName=` | Bid Management list (date folders via `bidReadyDate`) |
 | GET | `/api/bid-results/rejected` | Rejected only |
 | GET | `/api/bid-results/stats` | KPIs (`since`/`until` optional) |
@@ -100,7 +100,7 @@ Mongo owns metadata (`vendor_tasks`, `job_statuses`, `bid_review_events`, `athen
 | POST | `/api/athens-lens/auth/signin` | Vendor password → bearer session |
 | POST | `/api/athens-lens/auth/signout` | Revoke session |
 | GET | `/api/athens-lens/jobs` | Bid-ready feed for Lens |
-| POST | `/api/athens-lens/ask-ai` | Form answers (persists when `jobId` set) |
+| POST | `/api/athens-lens/ask-ai` | Form answers — SSE when `stream: true` / `Accept: text/event-stream` (`token` / `answers` / `done`); JSON otherwise. Persists when `jobId` set. |
 | POST | `/api/athens-lens/bids/start` / `complete` / `skip` | Bid lifecycle |
 | POST | `/api/athens-lens/bids/analysis` | Persist Ask AI answers |
 | POST | `/api/athens-lens/bids/resume-audit` | Uploaded resume name audit |

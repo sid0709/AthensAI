@@ -11,6 +11,7 @@ import { ResumeStorageService } from './resume-storage.service';
 import { ResumeTextService } from './resume-text.service';
 import { ResumeUploadService } from './resume-upload.service';
 import { ResumeWriteService } from './resume-write.service';
+import { ResumeLibraryCatalogService } from './resume-library-catalog.service';
 import { ResumeService } from './resume.service';
 import { ResumesController } from './resumes.controller';
 
@@ -30,7 +31,12 @@ import { ResumesController } from './resumes.controller';
     ResumeAnalyzeProcessService,
     ResumeAnalyzeSessionService,
     AgentJobResumesService,
+    ResumeLibraryCatalogService,
   ],
-  exports: [ResumeService, ResumeAnalyzeSessionService],
+  exports: [
+    ResumeService,
+    ResumeAnalyzeSessionService,
+    ResumeLibraryCatalogService,
+  ],
 })
 export class ResumesModule {}

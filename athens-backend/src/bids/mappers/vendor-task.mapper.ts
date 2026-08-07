@@ -233,12 +233,15 @@ export function serializeVendorTask(doc: VendorTask): Record<string, unknown> {
     resumeRenamed: Boolean(doc.resumeRenamed),
     resumeMismatch: Boolean(doc.resumeMismatch),
     recommendedResumeStack: doc.recommendedResumeStack ?? null,
+    recommendedResumeId: doc.recommendedResumeId ?? null,
     recommendedResumeReason: doc.recommendedResumeReason ?? null,
     useCustomizedResume: Boolean(doc.useCustomizedResume),
     recommendWarning: doc.recommendWarning ?? null,
     recommendedAt: isoOrNull(doc.recommendedAt),
     recommendMode:
-      doc.recommendMode === 'llm' || doc.recommendMode === 'heuristic'
+      doc.recommendMode === 'llm' ||
+      doc.recommendMode === 'heuristic' ||
+      doc.recommendMode === 'manual'
         ? doc.recommendMode
         : null,
     recommendUsage:

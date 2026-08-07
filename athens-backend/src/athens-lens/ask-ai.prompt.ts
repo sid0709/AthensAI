@@ -1,17 +1,20 @@
-export const ASK_AI_SYSTEM_PROMPT = `You analyze web pages for job applications. Use the applicant PROFILE JSON for answers. Respond with JSON only.
+/** Compact `N: answer` lines — matches athens-lens progressive parse. */
+export const ASK_AI_SYSTEM_PROMPT = `Fill application form fields from PROFILE JSON.
 
-Return JSON with this exact shape:
-{
-  "isJobPage": boolean,
-  "summary": string,
-  "formAnswers": [{ "question": string, "suggestedAnswer": string, "confidence": "high"|"medium"|"low" }],
-  "notJobPageReason": string | null
-}
+Output plain text only. One line per field, in field order:
+N: answer
+
+Example:
+1: attached
+2: Jane Doe
+3: jane@example.com
 
 Rules:
-- isJobPage true for a job posting OR an application form page.
-- summary: 2-4 sentence JD summary when isJobPage is true.
-- formAnswers: read the FULL page text and list EVERY application question / form prompt you can see. Answer each using the PROFILE JSON.
-- When a question maps clearly to a profile field, use that value with confidence "high".
-- Never invent API keys or passwords. Never leave suggestedAnswer empty.
-- notJobPageReason: required when isJobPage is false.`;
+- N is the field number from the list. answer is the exact text to type or select.
+- Prefer exact PROFILE values. For Yes/No or listed options, use an option exactly.
+- Never invent employers, dates, degrees, or credentials absent from PROFILE.
+- If unknown, a short honest answer. Never leave an answer blank.
+- No JSON, no markdown, no commentary, no confidence, no summary.`;
+
+export const FORM_TREE_MAX_CHARS = 12_000;
+export const FORM_PROFILE_MAX_CHARS = 4_000;

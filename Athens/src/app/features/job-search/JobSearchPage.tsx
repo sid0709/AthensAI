@@ -8,6 +8,7 @@ import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
 import { downloadJobsCsv } from "../../hooks/useJobSearchFilters";
 import { JobExportDialog } from "./components/JobExportDialog";
+import { RecommendResumeConflictDialog } from "./components/RecommendResumeConflictDialog";
 import { JobListSkeleton } from "./components/JobListSkeleton";
 import { JobListErrorState } from "./components/JobListErrorState";
 import { JobListStickyBar } from "./components/JobListStickyBar";
@@ -17,7 +18,10 @@ import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { runWithConcurrency } from "./lib/run-with-concurrency";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
-import { useRecommendResumes } from "./hooks/useRecommendResumes";
+import {
+  jobHasResumeRecommendation,
+  useRecommendResumes,
+} from "./hooks/useRecommendResumes";
 import { useJobsList } from "./hooks/useJobsList";
 import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
@@ -56,6 +60,7 @@ function JobSearchPageContent() {
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [recommendConflictOpen, setRecommendConflictOpen] = useState(false);
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
   const { jobs, groups, total, totalJobs, loading, error, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
     useJobsList(filters, removedIds, page, pageSize);
@@ -354,7 +359,12 @@ function JobSearchPageContent() {
           void removeBulkResumes(selectedJobs);
         }}
         onRecommendResumes={() => {
-          void recommendBulk(selectedJobs);
+          const already = selectedJobs.filter(jobHasResumeRecommendation).length;
+          if (already > 0) {
+            setRecommendConflictOpen(true);
+            return;
+          }
+          void recommendBulk(selectedJobs, { replaceExisting: true });
         }}
         resumeGenerating={bulkRunning}
         resumeStopping={bulkStopping}
@@ -384,6 +394,22 @@ function JobSearchPageContent() {
         onExportWithApply={() => void handleExportWithApply()}
         onExportOnly={handleExportOnly}
         busy={exportBusy}
+      />
+
+      <RecommendResumeConflictDialog
+        open={recommendConflictOpen}
+        onOpenChange={setRecommendConflictOpen}
+        alreadyCount={selectedJobs.filter(jobHasResumeRecommendation).length}
+        totalCount={selectedJobs.length}
+        busy={recommendRunning}
+        onReplace={() => {
+          setRecommendConflictOpen(false);
+          void recommendBulk(selectedJobs, { replaceExisting: true });
+        }}
+        onSkip={() => {
+          setRecommendConflictOpen(false);
+          void recommendBulk(selectedJobs, { replaceExisting: false });
+        }}
       />
 
       {loading ? (

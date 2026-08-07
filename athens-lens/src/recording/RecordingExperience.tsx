@@ -203,9 +203,6 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
   const [summary, setSummary] = useState("");
   const [answers, setAnswers] = useState<FormAnswer[]>([]);
   const [streamText, setStreamText] = useState("");
-  const [formTree, setFormTree] = useState("");
-  const [captureMeta, setCaptureMeta] = useState<PageContext["readMeta"] | null>(null);
-  const [pageUrl, setPageUrl] = useState("");
   const [captureMs, setCaptureMs] = useState<number | null>(null);
   const [timing, setTiming] = useState<AskAiTiming | null>(null);
   const [usage, setUsage] = useState<AskAiUsage | null>(null);
@@ -220,9 +217,6 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
     setAnswers([]);
     setSummary("");
     setStreamText("");
-    setFormTree("");
-    setCaptureMeta(null);
-    setPageUrl("");
     setCaptureMs(null);
     setTiming(null);
     setUsage(null);
@@ -237,9 +231,6 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
 
         const visibleText = String(read.pageContext.visibleText || "").trim();
         const tree = String(read.pageContext.formTree || "").trim();
-        setFormTree(tree);
-        setCaptureMeta(read.pageContext.readMeta ?? null);
-        setPageUrl(String(read.pageContext.url || "").trim());
 
         if (!visibleText && !tree) {
           setError("No readable text on the focused tab. Click the application form page, then try Ask AI again.");
@@ -307,10 +298,6 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
     window.setTimeout(() => setCopiedId(null), 1600);
   }
 
-  const oakNodeCount = captureMeta?.oakNodeCount ?? 0;
-  const oakFrameCount = captureMeta?.oakFrameCount ?? 0;
-  const oakFieldCount = captureMeta?.oakFieldCount ?? 0;
-  const showOakSection = phase !== "reading" || Boolean(formTree);
   const timingLine = formatAskAiTimingLine({
     captureMs,
     timing,
@@ -341,33 +328,6 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
             </p>
           </div>
 
-          <section className="ai-debug-block" aria-label="Oak form capture">
-            <p className="ai-section-label">Form capture</p>
-            {phase === "reading" ? (
-              <div className="ai-loading" role="status">
-                <Loader2 size={18} className="spin" aria-hidden="true" />
-                <span>Capturing interactive form tree…</span>
-              </div>
-            ) : null}
-
-            {showOakSection && formTree ? (
-              <>
-                <p className="ai-debug-meta">
-                  {pageUrl ? `${pageUrl} · ` : ""}
-                  {oakFieldCount > 0 ? `${oakFieldCount} fields` : oakNodeCount > 0 ? `${oakNodeCount} nodes` : "capture ready"}
-                  {oakFrameCount > 1 ? ` · ${oakFrameCount} frames` : ""}
-                  {captureMs != null ? ` · ${formatDurationMs(captureMs)}` : ""}
-                  {" · algorithmic (no AI)"}
-                </p>
-                <pre className="ai-debug-pre ai-debug-pre--oak">{formTree}</pre>
-              </>
-            ) : null}
-
-            {phase !== "reading" && !formTree ? (
-              <p className="ai-summary">No interactive form tree on this tab — using page text only.</p>
-            ) : null}
-          </section>
-
           <section className="ai-debug-block" aria-label="AI response">
             <p className="ai-section-label">AI response</p>
             {timingLine ? <p className="ai-debug-meta" aria-live="polite">{timingLine}</p> : null}
@@ -375,7 +335,7 @@ export function AiAnswerPanel({ job, session, tabId = null, onClose, onAnswers }
             {phase === "reading" ? (
               <div className="ai-loading" role="status">
                 <Loader2 size={18} className="spin" aria-hidden="true" />
-                <span>Waiting for form capture…</span>
+                <span>Reading the open page…</span>
               </div>
             ) : null}
 

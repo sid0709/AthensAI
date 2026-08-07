@@ -39,6 +39,7 @@ export class RecommendPersistService {
       input.jobId,
       {
         recommendedResumeStack: stack,
+        recommendedResumeId: null,
         recommendedResumeReason: input.reason,
         useCustomizedResume: input.useCustomizedResume,
         recommendWarning: input.warning,

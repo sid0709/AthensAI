@@ -11,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { BidLifecycleService } from '../bids/bid-lifecycle.service';
 import { BidRecordingUploadService } from '../bids/recording/bid-recording-upload.service';
-import { LensAskAiService } from './lens-ask-ai.service';
 import { LensAuthGuard, type LensAuthedRequest } from './lens-auth.guard';
 import { LensGmailService } from './lens-gmail.service';
 import { LensJobsService } from './lens-jobs.service';
@@ -23,27 +22,12 @@ export class AthensLensController {
     private readonly jobs: LensJobsService,
     private readonly lifecycle: BidLifecycleService,
     private readonly recordings: BidRecordingUploadService,
-    private readonly askAi: LensAskAiService,
     private readonly gmail: LensGmailService,
   ) {}
 
   @Get('jobs')
   listJobs(@Req() req: LensAuthedRequest) {
     return this.jobs.list(req.athensLensSession!.applierName);
-  }
-
-  @Post('ask-ai')
-  askAiHandler(
-    @Req() req: LensAuthedRequest,
-    @Body() body: Record<string, unknown>,
-  ) {
-    return this.askAi.answer({
-      applierName: req.athensLensSession!.applierName,
-      pageContext: (body.pageContext as Record<string, unknown>) || {},
-      jobId: body.jobId ? String(body.jobId) : undefined,
-      jobTitle: body.jobTitle ? String(body.jobTitle) : undefined,
-      stream: Boolean(body.stream),
-    });
   }
 
   @Post('bids/start')

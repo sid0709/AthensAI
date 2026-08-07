@@ -76,10 +76,14 @@ export interface Job {
   catalog?: "market" | "external";
   /** Library stack recommended for Bid Ready (vendor_tasks). */
   recommendedResumeStack?: string | null;
+  /** Library Resume.id when a specific file was chosen. */
+  recommendedResumeId?: string | null;
   recommendedResumeReason?: string | null;
   useCustomizedResume?: boolean;
   recommendWarning?: string | null;
   recommendedAt?: string | null;
+  /** llm | heuristic | manual */
+  recommendMode?: "llm" | "heuristic" | "manual" | null;
 }
 
 export interface CompanyJobGroup {

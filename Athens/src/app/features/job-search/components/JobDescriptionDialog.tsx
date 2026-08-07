@@ -45,6 +45,7 @@ type JobDescriptionDialogProps = {
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
+  onChangeRecommendedResume?: () => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {

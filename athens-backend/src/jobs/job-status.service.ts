@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   EMPTY_STATUS_COUNTS,
@@ -64,6 +65,52 @@ export class JobStatusService {
       tracked += n;
     }
     counts.posted = Math.max(0, catalogTotal - tracked);
+    return counts;
+  }
+
+  /**
+   * Status-tab badges scoped to jobs matching attribute filters (source,
+   * posted date, title/company query, etc.). Independent of the active status tab.
+   */
+  async filteredTabCounts(
+    profileId: string,
+    jobWhere: Prisma.JobWhereInput,
+  ): Promise<Record<JobStatusTab, number>> {
+    const counts: Record<JobStatusTab, number> = { ...EMPTY_STATUS_COUNTS };
+    const id = String(profileId || '').trim();
+
+    const all = await this.prisma.job.count({ where: jobWhere });
+    counts.all = all;
+    if (!id || all === 0) {
+      counts.posted = all;
+      return counts;
+    }
+
+    const statusRows = await this.prisma.jobStatus.findMany({
+      where: { profileId: id, state: { in: [...TRACKED_TABS] } },
+      select: { jobId: true, state: true },
+    });
+    if (!statusRows.length) {
+      counts.posted = all;
+      return counts;
+    }
+
+    const trackedIds = [...new Set(statusRows.map((row) => row.jobId))];
+    const matching = await this.prisma.job.findMany({
+      where: { AND: [jobWhere, { id: { in: trackedIds } }] },
+      select: { id: true },
+    });
+    const matchingSet = new Set(matching.map((job) => job.id));
+
+    let tracked = 0;
+    for (const row of statusRows) {
+      if (!matchingSet.has(row.jobId)) continue;
+      const state = row.state as JobStatusState;
+      if (!(TRACKED_TABS as readonly string[]).includes(state)) continue;
+      counts[state] += 1;
+      tracked += 1;
+    }
+    counts.posted = Math.max(0, all - tracked);
     return counts;
   }
 

@@ -2,12 +2,48 @@ import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ProfileLlmAuthService } from '../ai/auth/profile-llm-auth.service';
 import { OpenAiChatService } from '../ai/openai/openai-chat.service';
+import { OpenAiChatStreamService } from '../ai/openai/openai-chat-stream.service';
+import type { ChatMessage } from '../ai/openai/openai.types';
 import { BidLifecycleService } from '../bids/bid-lifecycle.service';
 import { ProfileSecretsService } from '../personal/secrets/profile-secrets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ASK_AI_SYSTEM_PROMPT } from './ask-ai.prompt';
+import {
+  buildFormAnswerUserPrompt,
+  compactProfileJson,
+  mapAskAiUsage,
+  normalizePageContext,
+  sanitizeProfile,
+} from './lib/ask-ai-context';
+import {
+  extractFormAnswersFromPartialText,
+  type FormAnswer,
+} from './lib/extract-form-answers';
 
-const TEXT_MAX = 12_000;
+export type AskAiInput = {
+  applierName: string;
+  pageContext: Record<string, unknown>;
+  jobId?: string;
+  jobTitle?: string;
+  signal?: AbortSignal;
+};
+
+export type AskAiStreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'answers'; answers: FormAnswer[] }
+  | {
+      type: 'done';
+      summary: string;
+      answers: FormAnswer[];
+      mode: 'llm-stream';
+      usage: Record<string, unknown> | null;
+      requestId: string;
+      durationMs: number;
+      ttftMs: number | null;
+      model: string;
+      pageUrl: string;
+      pageTitle: string;
+    };
 
 @Injectable()
 export class LensAskAiService {
@@ -15,120 +51,29 @@ export class LensAskAiService {
     private readonly prisma: PrismaService,
     private readonly llmAuth: ProfileLlmAuthService,
     private readonly chat: OpenAiChatService,
+    private readonly chatStream: OpenAiChatStreamService,
     private readonly secrets: ProfileSecretsService,
     private readonly lifecycle: BidLifecycleService,
   ) {}
 
-  async answer(input: {
-    applierName: string;
-    pageContext: Record<string, unknown>;
-    jobId?: string;
-    jobTitle?: string;
-    stream?: boolean;
-  }) {
-    const visibleText = String(input.pageContext.visibleText || '')
-      .slice(0, TEXT_MAX)
-      .trim();
-    const formTree = String(input.pageContext.formTree || '')
-      .slice(0, TEXT_MAX)
-      .trim();
-    if (!visibleText && !formTree) {
-      throw new BadRequestException({
-        success: false,
-        message: 'pageContext.visibleText or formTree is required',
-      });
-    }
-
-    const account = await this.prisma.accountInfo.findUnique({
-      where: { name: input.applierName },
-      select: { autoBidProfile: true, name: true },
-    });
-    const profileRaw =
-      account?.autoBidProfile && typeof account.autoBidProfile === 'object'
-        ? (account.autoBidProfile as Record<string, unknown>)
-        : {};
-    const decrypted = this.secrets.decryptSelected(profileRaw, []);
-    const profileJson = JSON.stringify(
-      sanitizeProfile(decrypted),
-      null,
-      2,
-    ).slice(0, 4000);
-
-    let auth: Awaited<ReturnType<ProfileLlmAuthService['resolve']>>;
-    try {
-      auth = await this.llmAuth.resolve({ applierName: input.applierName });
-    } catch {
-      return {
-        success: true as const,
-        mode: 'heuristic' as const,
-        summary: 'LLM unavailable — set an API key in Settings.',
-        answers: [] as Array<{
-          question: string;
-          suggestedAnswer: string;
-          confidence: string;
-        }>,
-        pageUrl: String(input.pageContext.url || ''),
-        pageTitle: String(input.pageContext.title || ''),
-      };
-    }
-
-    const userPrompt = `APPLICANT PROFILE (JSON):
-${profileJson}
-
-=== CURRENT PAGE ===
-URL: ${input.pageContext.url || ''}
-Title: ${input.pageContext.title || ''}
-Meta: ${input.pageContext.metaDescription || '(none)'}
-${input.jobTitle ? `Role: ${input.jobTitle}\n` : ''}
-Page text:
-${visibleText || '(none)'}
-
-Form tree:
-${formTree || '(none)'}`;
-
+  async answer(input: AskAiInput) {
+    const ctx = normalizePageContext(input.pageContext);
+    const { auth, messages } = await this.prepare(input, ctx);
     const requestId = randomUUID();
     const completion = await this.chat.chatCompletion({
       provider: auth.provider,
       apiKey: auth.apiKey,
       model: auth.model,
-      jsonMode: true,
-      messages: [
-        { role: 'system', content: ASK_AI_SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
-      ],
+      messages,
+      signal: input.signal,
     });
 
-    let parsed: {
-      isJobPage?: boolean;
-      summary?: string;
-      formAnswers?: Array<{
-        question?: string;
-        suggestedAnswer?: string;
-        confidence?: string;
-      }>;
-    };
-    try {
-      parsed = JSON.parse(completion.content) as typeof parsed;
-    } catch {
-      throw new BadRequestException({
-        success: false,
-        message: 'LLM returned invalid JSON',
-      });
-    }
-
-    const answers = (parsed.formAnswers || [])
-      .map((a) => ({
-        question: String(a.question || '').trim(),
-        suggestedAnswer: String(a.suggestedAnswer || '').trim(),
-        confidence: ['high', 'medium', 'low'].includes(String(a.confidence))
-          ? String(a.confidence)
-          : 'medium',
-      }))
-      .filter((a) => a.question && a.suggestedAnswer);
-
-    const summary = String(parsed.summary || '').trim();
-    const pageUrl = String(input.pageContext.url || '');
-    const pageTitle = String(input.pageContext.title || '');
+    const answers = extractFormAnswersFromPartialText(
+      completion.content,
+      ctx.formTree,
+    );
+    const summary = answers.length ? `Answered ${answers.length} fields.` : '';
+    const usage = mapAskAiUsage(completion.usage, auth.model);
 
     if (input.jobId) {
       await this.lifecycle.persistAnalysis({
@@ -136,12 +81,10 @@ ${formTree || '(none)'}`;
         jobId: input.jobId,
         summary,
         answers,
-        pageUrl,
-        pageTitle,
+        pageUrl: ctx.url,
+        pageTitle: ctx.title,
         mode: 'llm',
-        usage: completion.usage
-          ? { ...completion.usage, model: auth.model }
-          : undefined,
+        usage: usage ?? undefined,
         requestId,
       });
     }
@@ -151,22 +94,126 @@ ${formTree || '(none)'}`;
       mode: 'llm' as const,
       summary,
       answers,
-      pageUrl,
-      pageTitle,
-      usage: completion.usage,
+      pageUrl: ctx.url,
+      pageTitle: ctx.title,
+      usage,
       requestId,
     };
   }
-}
 
-function sanitizeProfile(profile: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const omitRe =
-    /(apikey|api_key|apppassword|app_password|password|secret|token|privatekey|private_key)/i;
-  for (const [key, value] of Object.entries(profile)) {
-    if (omitRe.test(key)) continue;
-    if (value === undefined || value === null || value === '') continue;
-    out[key] = value;
+  async *streamAnswer(input: AskAiInput): AsyncGenerator<AskAiStreamEvent> {
+    const ctx = normalizePageContext(input.pageContext);
+    const { auth, messages } = await this.prepare(input, ctx);
+    const requestId = randomUUID();
+    let fullText = '';
+    let lastFingerprint = '';
+    let finalAnswers: FormAnswer[] = [];
+    let durationMs = 0;
+    let ttftMs: number | null = null;
+    let model = auth.model;
+    let usage: Record<string, unknown> | null = null;
+
+    for await (const event of this.chatStream.chatCompletionStream({
+      provider: auth.provider,
+      apiKey: auth.apiKey,
+      model: auth.model,
+      messages,
+      signal: input.signal,
+    })) {
+      if (event.type === 'delta') {
+        fullText += event.text;
+        yield { type: 'delta', text: event.text };
+        const answers = extractFormAnswersFromPartialText(
+          fullText,
+          ctx.formTree,
+        );
+        const fingerprint = answers
+          .map((a) => `${a.question}\0${a.suggestedAnswer}`)
+          .join('\n');
+        if (fingerprint && fingerprint !== lastFingerprint) {
+          lastFingerprint = fingerprint;
+          finalAnswers = answers;
+          yield { type: 'answers', answers };
+        }
+        continue;
+      }
+      finalAnswers = extractFormAnswersFromPartialText(fullText, ctx.formTree);
+      durationMs = event.durationMs;
+      ttftMs = event.ttftMs;
+      model = event.model || auth.model;
+      usage = mapAskAiUsage(event.usage, model);
+    }
+
+    const summary = finalAnswers.length
+      ? `Answered ${finalAnswers.length} fields.`
+      : '';
+
+    if (input.jobId) {
+      await this.lifecycle.persistAnalysis({
+        applierName: input.applierName,
+        jobId: input.jobId,
+        summary,
+        answers: finalAnswers,
+        pageUrl: ctx.url,
+        pageTitle: ctx.title,
+        mode: 'llm-stream',
+        usage: usage ?? undefined,
+        requestId,
+      });
+    }
+
+    yield {
+      type: 'done',
+      summary,
+      answers: finalAnswers,
+      mode: 'llm-stream',
+      usage,
+      requestId,
+      durationMs,
+      ttftMs,
+      model,
+      pageUrl: ctx.url,
+      pageTitle: ctx.title,
+    };
   }
-  return out;
+
+  private async prepare(
+    input: AskAiInput,
+    ctx: ReturnType<typeof normalizePageContext>,
+  ) {
+    if (!ctx.visibleText && !ctx.formTree) {
+      throw new BadRequestException({
+        success: false,
+        message: 'pageContext.visibleText or formTree is required',
+      });
+    }
+
+    const account = await this.prisma.accountInfo.findUnique({
+      where: { name: input.applierName },
+      select: { autoBidProfile: true },
+    });
+    const profileRaw =
+      account?.autoBidProfile && typeof account.autoBidProfile === 'object'
+        ? (account.autoBidProfile as Record<string, unknown>)
+        : {};
+    const decrypted = this.secrets.decryptSelected(profileRaw, []);
+    const profileJson = compactProfileJson(sanitizeProfile(decrypted));
+    if (profileJson === '{}') {
+      throw new BadRequestException({
+        success: false,
+        message:
+          'No profile data found for this applier. Save Profile settings first.',
+      });
+    }
+
+    const auth = await this.llmAuth.resolve({ applierName: input.applierName });
+    const messages: ChatMessage[] = [
+      { role: 'system', content: ASK_AI_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: buildFormAnswerUserPrompt(ctx, profileJson, input.jobTitle),
+      },
+    ];
+    return { auth, messages };
+  }
 }

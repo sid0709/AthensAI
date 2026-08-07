@@ -200,11 +200,13 @@ model VendorTask {
   recordings             Json?
 
   recommendedResumeStack  String?
+  /// Library Resume.id when user (or AI) picks a specific file; null for customized.
+  recommendedResumeId     String?  @db.ObjectId
   recommendedResumeReason String?
   useCustomizedResume     Boolean  @default(false)
   recommendWarning        String?
   recommendedAt           DateTime?
-  /// llm | heuristic
+  /// llm | heuristic | manual
   recommendMode           String?
   recommendUsage          Json?
   recommendRequestId      String?

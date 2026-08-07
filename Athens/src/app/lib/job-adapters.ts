@@ -135,6 +135,10 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       typeof doc.recommendedResumeStack === "string" && doc.recommendedResumeStack.trim()
         ? doc.recommendedResumeStack.trim()
         : null,
+    recommendedResumeId:
+      typeof doc.recommendedResumeId === "string" && doc.recommendedResumeId.trim()
+        ? doc.recommendedResumeId.trim()
+        : null,
     recommendedResumeReason:
       typeof doc.recommendedResumeReason === "string" && doc.recommendedResumeReason.trim()
         ? doc.recommendedResumeReason.trim()
@@ -148,6 +152,12 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       typeof doc.recommendedAt === "string" && doc.recommendedAt.trim()
         ? doc.recommendedAt.trim()
         : null,
+    recommendMode:
+      doc.recommendMode === "llm" ||
+      doc.recommendMode === "heuristic" ||
+      doc.recommendMode === "manual"
+        ? doc.recommendMode
+        : null,
   };
 }
 
@@ -158,6 +168,8 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
     aiSkills: detailJob.aiSkills?.length ? detailJob.aiSkills : listJob.aiSkills,
     recommendedResumeStack:
       detailJob.recommendedResumeStack || listJob.recommendedResumeStack || null,
+    recommendedResumeId:
+      detailJob.recommendedResumeId || listJob.recommendedResumeId || null,
     recommendedResumeReason:
       detailJob.recommendedResumeReason || listJob.recommendedResumeReason || null,
     useCustomizedResume:
@@ -166,6 +178,7 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
         : listJob.useCustomizedResume,
     recommendWarning: detailJob.recommendWarning || listJob.recommendWarning || null,
     recommendedAt: detailJob.recommendedAt || listJob.recommendedAt || null,
+    recommendMode: detailJob.recommendMode || listJob.recommendMode || null,
   };
 }
 

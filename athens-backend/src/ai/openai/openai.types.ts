@@ -10,18 +10,40 @@ export type ChatCompletionInput = {
   /** openai | deepseek — selects API base URL. */
   provider?: 'openai' | 'deepseek';
   jsonMode?: boolean;
+  /**
+   * OpenAI structured outputs (`json_schema`). When set, preferred over jsonMode
+   * for openai; deepseek falls back to json_object.
+   */
+  jsonSchema?: {
+    name: string;
+    schema: Record<string, unknown>;
+    strict?: boolean;
+  };
   temperature?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
   retries?: number;
 };
 
+export type ChatUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+};
+
 export type ChatCompletionResult = {
   content: string;
   model: string;
-  usage: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-  } | null;
+  usage: ChatUsage | null;
 };
+
+/** OpenAI-compatible chat stream chunks (provider → Nest). */
+export type ChatStreamEvent =
+  | { type: 'delta'; text: string }
+  | {
+      type: 'done';
+      model: string;
+      usage: ChatUsage | null;
+      durationMs: number;
+      ttftMs: number | null;
+    };

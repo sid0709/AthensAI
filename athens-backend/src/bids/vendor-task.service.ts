@@ -62,6 +62,7 @@ export type VendorTaskUpsertFields = Partial<{
   recordingEndedAt: Date | null;
   recordings: Prisma.InputJsonValue;
   recommendedResumeStack: string | null;
+  recommendedResumeId: string | null;
   recommendedResumeReason: string | null;
   useCustomizedResume: boolean;
   recommendWarning: string | null;

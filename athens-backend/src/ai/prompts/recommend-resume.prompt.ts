@@ -1,3 +1,7 @@
+/**
+ * Athens Lens / Job Search — recommend best Library resume stack for a JD.
+ * Labels are Resume.title values (folder names like "Mobile" or "C# + Angular").
+ */
 export const RECOMMEND_RESUME_SYSTEM_PROMPT = `You recommend the best matching resume stack for a job description from a fixed list of Library resumes.
 
 Respond with JSON only:

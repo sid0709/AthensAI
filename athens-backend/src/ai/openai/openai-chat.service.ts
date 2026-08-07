@@ -3,12 +3,13 @@ import {
   LLM_CHAT_RETRIES,
   LLM_CHAT_TIMEOUT_MS,
 } from '../constants/ai-concurrency.constants';
+import {
+  abortError,
+  isRetryableStatus,
+  PROVIDER_BASE,
+  resolveResponseFormat,
+} from './openai-provider';
 import type { ChatCompletionInput, ChatCompletionResult } from './openai.types';
-
-const PROVIDER_BASE: Record<'openai' | 'deepseek', string> = {
-  openai: 'https://api.openai.com/v1',
-  deepseek: 'https://api.deepseek.com/v1',
-};
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -25,16 +26,6 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function abortError(signal?: AbortSignal): Error {
-  return signal?.reason instanceof Error
-    ? signal.reason
-    : Object.assign(new Error('LLM request aborted'), { name: 'AbortError' });
-}
-
-function isRetryableStatus(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500;
-}
-
 /**
  * Thin OpenAI-compatible chat client (OpenAI + DeepSeek).
  * Callers supply messages; no domain prompts live here.
@@ -48,12 +39,11 @@ export class OpenAiChatService {
     const base = PROVIDER_BASE[provider] ?? PROVIDER_BASE.openai;
     const timeoutMs = input.timeoutMs ?? LLM_CHAT_TIMEOUT_MS;
     const retries = input.retries ?? LLM_CHAT_RETRIES;
+    const responseFormat = resolveResponseFormat(provider, input);
     const body = {
       model: input.model,
       messages: input.messages,
-      ...(input.jsonMode
-        ? { response_format: { type: 'json_object' as const } }
-        : {}),
+      ...(responseFormat ? { response_format: responseFormat } : {}),
       ...(typeof input.temperature === 'number'
         ? { temperature: input.temperature }
         : {}),

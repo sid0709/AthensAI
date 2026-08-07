@@ -238,20 +238,24 @@ export class JobsCompanyListService {
       select: {
         jobId: true,
         recommendedResumeStack: true,
+        recommendedResumeId: true,
         recommendedResumeReason: true,
         useCustomizedResume: true,
         recommendWarning: true,
         recommendedAt: true,
+        recommendMode: true,
       },
     });
     for (const t of tasks) {
       if (!t.recommendedResumeStack && !t.useCustomizedResume) continue;
       out.set(t.jobId, {
         recommendedResumeStack: t.recommendedResumeStack,
+        recommendedResumeId: t.recommendedResumeId,
         recommendedResumeReason: t.recommendedResumeReason,
         useCustomizedResume: t.useCustomizedResume,
         recommendWarning: t.recommendWarning,
         recommendedAt: t.recommendedAt?.toISOString() ?? null,
+        recommendMode: t.recommendMode,
       });
     }
     return out;
