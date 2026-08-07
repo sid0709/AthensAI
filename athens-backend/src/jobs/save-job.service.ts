@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import type { PrenormTempJobInput } from './mappers/prenorm-scrape.mapper';
 import { JobDedupeService } from './job-dedupe.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  rawInsertOne,
+  withReplicaSetFallback,
+} from '../prisma/mongo-standalone';
 
 export type SaveJobResult =
   | {
@@ -24,6 +29,8 @@ export type SaveJobResult =
       code?: string;
     };
 
+const TEMP_JOBS_COLLECTION = 'temp_jobs';
+
 function legacyIdFrom(data: PrenormTempJobInput): string | undefined {
   const meta = data.metadata;
   if (!meta || typeof meta !== 'object' || Array.isArray(meta))
@@ -32,6 +39,12 @@ function legacyIdFrom(data: PrenormTempJobInput): string | undefined {
   return typeof legacyId === 'string' && legacyId.trim()
     ? legacyId.trim()
     : undefined;
+}
+
+function newObjectIdHex(): string {
+  const time = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+  const rest = randomBytes(8).toString('hex');
+  return `${time}${rest}`;
 }
 
 @Injectable()
@@ -71,7 +84,40 @@ export class SaveJobService {
       };
     }
 
-    const created = await this.prisma.tempJob.create({ data });
+    const created = await withReplicaSetFallback(
+      () => this.prisma.tempJob.create({ data }),
+      async () => {
+        const id = newObjectIdHex();
+        const now = new Date();
+        await rawInsertOne(this.prisma, TEMP_JOBS_COLLECTION, {
+          _id: { $oid: id },
+          title: data.title,
+          companyName: data.companyName,
+          ...(data.companyId ? { companyId: { $oid: String(data.companyId) } } : {}),
+          source: data.source,
+          postedAt: data.postedAt,
+          ...(data.postedAgo ? { postedAgo: data.postedAgo } : {}),
+          titleReviewLabel: data.titleReviewLabel,
+          sourceCatalog: data.sourceCatalog ?? 'market',
+          ...(data.companyLink ? { companyLink: data.companyLink } : {}),
+          ...(applyLink ? { applyLink } : {}),
+          ...(data.description ? { description: data.description } : {}),
+          ...(data.aiSkills != null ? { aiSkills: data.aiSkills } : {}),
+          ...(data.aiSkillStatus ? { aiSkillStatus: data.aiSkillStatus } : {}),
+          model_schema_code: data.modelSchemaCode,
+          createdBy: data.createdBy,
+          createdAt: now,
+          updatedAt: now,
+          ...(data.metadata != null ? { metadata: data.metadata } : {}),
+        });
+        return {
+          id,
+          applyLink: applyLink ?? null,
+          source: data.source,
+        };
+      },
+    );
+
     return {
       success: true,
       created: true,

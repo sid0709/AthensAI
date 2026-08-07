@@ -287,6 +287,7 @@ async function processScrapeBatch(batch) {
 		return;
 	}
 
+	console.log('[scrapeQueue] POST', `${baseUrl}/jobs/bulk`, `(${batch.length} jobs)`);
 	let response;
 	try {
 		response = await fetch(`${baseUrl}/jobs/bulk`, {
@@ -295,12 +296,14 @@ async function processScrapeBatch(batch) {
 			body: JSON.stringify({ jobs: batch.map((item) => item.job) }),
 		});
 	} catch (error) {
+		console.warn('[scrapeQueue] fetch failed', error);
 		await requeueScrapeBatch(batch, error instanceof Error ? error.message : String(error));
 		return;
 	}
 
 	let body = null;
 	try { body = await response.json(); } catch { /* handled below */ }
+	console.log('[scrapeQueue] response', response.status, body?.summary || body?.error || body);
 	if (!response.ok || !Array.isArray(body?.results)) {
 		await requeueScrapeBatch(
 			batch,
@@ -659,8 +662,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 			await persistScrapeQueue();
 			broadcastScrapeQueue(runId);
 			scheduleImmediateScrapeQueueDrain();
+			// Await drain BEFORE sendResponse — MV3 may suspend the worker as soon as
+			// the message channel closes, which previously left items stuck in Queued.
+			await drainScrapeQueue();
 			sendResponse?.({ success: true, id, state: scrapeQueueSnapshot(runId) });
-			void drainScrapeQueue();
+		})().catch((error) => sendResponse?.({ success: false, error: error.message }));
+		return true;
+	}
+
+	if (message?.action === 'scrapeQueue:clear') {
+		(async () => {
+			await scrapeQueueInitialization;
+			const runId = typeof message.payload?.runId === 'string' ? message.payload.runId : null;
+			if (runId) {
+				scrapeQueueState.items = scrapeQueueState.items.filter((item) => item.runId !== runId);
+				delete scrapeQueueState.runs[runId];
+			} else {
+				scrapeQueueState = normalizeQueueState();
+			}
+			await persistScrapeQueue();
+			broadcastScrapeQueue(runId);
+			sendResponse?.({ success: true, state: scrapeQueueSnapshot(runId) });
 		})().catch((error) => sendResponse?.({ success: false, error: error.message }));
 		return true;
 	}

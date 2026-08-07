@@ -633,6 +633,8 @@ const ScrapComponent = () => {
 			setTargetTab(rememberedTab);
 			runIdRef.current = globalThis.crypto?.randomUUID?.()
 				|| `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			// Drop leftover queue items from earlier failed retries (delayed nextAttemptAt).
+			await sendRuntimeMessage({ action: 'scrapeQueue:clear' }).catch(() => {});
 			setRunStats(createScrapeRunStats());
 			setQueueCounts({ queued: 0, saving: 0 });
 			setValidationChecks(pendingValidationChecklist());
