@@ -3,14 +3,18 @@ import { formatDistanceToNow } from "date-fns";
 import { Link } from "react-router";
 import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles, Eye, Eraser } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
-import { useBackgroundTasks } from "../../../context/BackgroundTaskContext";
-import { resolveProfileDefaultModel } from "../../agents/avalon/ai/model";
+import {
+  startResumeAnalyze,
+  stopResumeAnalyze,
+  waitForResumeAnalyze,
+  type ResumeAnalyzeSession,
+} from "@/app/api/resumeAnalyze";
+import { resolveProfileDefaultModel } from "../lib/resolveProfileDefaultModel";
 import { PATHS } from "../../../config/routes";
 import { SearchField } from "../../../components/shared/SearchField";
 import { Badge, Pill } from "../../../components/ui";
 import { cn } from "../../../lib/utils";
 import {
-  bulkUploadUserResumes,
   deleteUserResume,
   fetchUserResume,
   fetchUserResumes,
@@ -19,6 +23,10 @@ import {
   uploadUserResume,
   clearUserResumeAnalysis,
 } from "../../../services/resumeApi";
+import {
+  uploadResumesInParallel,
+  type BulkUploadProgress,
+} from "../lib/bulkUploadResumes";
 import type { UserResumeSummary } from "../../../types/resume";
 import {
   Dialog,
@@ -51,8 +59,6 @@ type PendingFile = { file: File; techStack?: string; relativePath?: string };
 
 export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLibraryTabProps) {
   const { applier, applierReady } = useApplier();
-  const { latestTask, startTask, cancelTask, waitForTask } = useBackgroundTasks();
-  const analysisTask = latestTask("resume_skill_analysis");
   const [libraryView, setLibraryView] = useState<LibraryView>("uploaded");
   const [q, setQ] = useState("");
   const [stackFilter, setStackFilter] = useState<string>("all");
@@ -64,7 +70,10 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
   const [bulkPending, setBulkPending] = useState<PendingFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgress | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<BulkUploadProgress | null>(null);
+  const [analyzeSession, setAnalyzeSession] = useState<ResumeAnalyzeSession | null>(null);
   const [clearingAnalysis, setClearingAnalysis] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [previewResume, setPreviewResume] = useState<UserResumeSummary | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bulkRef = useRef<HTMLInputElement>(null);
@@ -122,26 +131,33 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
   const allFilteredSelected =
     selectableFiltered.length > 0 && selectableFiltered.every((r) => selectedIds.has(r.id));
   const someFilteredSelected = selectableFiltered.some((r) => selectedIds.has(r.id));
-  const activeAnalysisTask = analysisTask && ["queued", "running", "cancelling"].includes(analysisTask.status)
-    ? analysisTask
-    : null;
-  const analyzing = analyzeProgress != null || activeAnalysisTask != null;
+  const analyzing =
+    analyzeProgress != null ||
+    analyzeSession?.status === "running" ||
+    analyzeSession?.status === "stopping";
+  const stoppingAnalysis = analyzeSession?.status === "stopping";
   const selectedAnalyzedCount = selectedResumes.filter((r) => r.analyzed).length;
 
-  useEffect(() => {
-    if (!activeAnalysisTask) return;
-    const failed = Object.entries(activeAnalysisTask.progress.items || {})
-      .filter(([, item]) => item.status === "failed")
-      .map(([id, item]) => ({
-        fileName: resumes.find((resume) => resume.id === id)?.fileName || id,
-        error: item.error || "Analysis failed",
-      }));
-    setAnalyzeProgress({
-      current: Number(activeAnalysisTask.progress.completed ?? 0) + Number(activeAnalysisTask.progress.failed ?? 0),
-      total: Number(activeAnalysisTask.progress.total ?? 0),
-      failed,
-    });
-  }, [activeAnalysisTask, resumes]);
+  const applyAnalyzeSessionProgress = useCallback(
+    (session: ResumeAnalyzeSession) => {
+      setAnalyzeSession(session);
+      const items = session.progress?.items || session.items || {};
+      const failed = Object.entries(items)
+        .filter(([, item]) => item.status === "failed")
+        .map(([id, item]) => ({
+          fileName: resumes.find((resume) => resume.id === id)?.fileName || id,
+          error: item.error || "Analysis failed",
+        }));
+      const completed = Number(session.completed ?? session.progress?.completed ?? 0);
+      const failedCount = Number(session.failed ?? session.progress?.failed ?? 0);
+      setAnalyzeProgress({
+        current: completed + failedCount,
+        total: Number(session.total ?? session.progress?.total ?? 0),
+        failed,
+      });
+    },
+    [resumes],
+  );
 
   const handleSingleFilePick = (files: FileList | null) => {
     if (!files?.[0]) return;
@@ -193,26 +209,32 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
 
   const confirmBulkUpload = async () => {
     if (!bulkPending?.length || !ownerName || !ownerId) return;
+    const pending = bulkPending;
+    setBulkPending(null);
     setUploading(true);
     setError(null);
+    setUploadProgress({ current: 0, total: pending.length, failed: [] });
     try {
-      const items = await Promise.all(
-        bulkPending.map(async (p) => ({
-          techStack: p.techStack!,
-          fileName: p.file.name,
-          mimeType: p.file.type || "application/octet-stream",
-          contentBase64: await fileToBase64(p.file),
-        })),
-      );
-      const result = await bulkUploadUserResumes({ ownerName, ownerId, items });
+      const result = await uploadResumesInParallel({
+        ownerName,
+        ownerId,
+        items: pending.map((p) => ({ file: p.file, techStack: p.techStack! })),
+        onProgress: setUploadProgress,
+      });
       if (result.failed.length) {
-        setError(`${result.failed.length} file(s) failed to upload.`);
+        const sample = result.failed
+          .slice(0, 3)
+          .map((f) => `${f.fileName}: ${f.error}`)
+          .join(" · ");
+        setError(
+          `${result.failed.length} of ${pending.length} file(s) failed to upload.${sample ? ` ${sample}` : ""}`,
+        );
       }
-      setBulkPending(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Bulk upload failed");
     } finally {
+      setUploadProgress(null);
       setUploading(false);
     }
   };
@@ -232,9 +254,58 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
   };
 
   const handleDelete = async (id: string) => {
-    if (!ownerName || !confirm("Delete this resume?")) return;
-    await deleteUserResume(id, ownerName);
+    if (!ownerName || !confirm("Delete this resume permanently? The file and any analysis will be removed.")) return;
+    setError(null);
+    try {
+      await deleteUserResume(id, ownerName);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!ownerName || !selectedResumes.length || bulkDeleting || analyzing || uploading) return;
+
+    const toDelete = selectedResumes.filter((r) => r.source !== "generated");
+    if (!toDelete.length) {
+      setError("Generated resumes are removed from History, not the Uploaded library.");
+      return;
+    }
+
+    const confirmed = confirm(
+      `Permanently delete ${toDelete.length} selected resume(s)? Files and analysis will be removed from Storage and the library.`,
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    setBulkDeleting(true);
+    const failed: { fileName: string; error: string }[] = [];
+
+    for (const resume of toDelete) {
+      try {
+        await deleteUserResume(resume.id, ownerName);
+      } catch (err) {
+        failed.push({
+          fileName: resume.fileName,
+          error: err instanceof Error ? err.message : "Delete failed",
+        });
+      }
+    }
+
+    setBulkDeleting(false);
     await refresh();
+    clearSelection();
+
+    if (failed.length) {
+      const sample = failed
+        .slice(0, 3)
+        .map((f) => `${f.fileName}: ${f.error}`)
+        .join(" · ");
+      setError(
+        `${failed.length} of ${toDelete.length} resume(s) failed to delete.${sample ? ` ${sample}` : ""}`,
+      );
+    }
   };
 
   const handleBulkAnalyze = async () => {
@@ -257,12 +328,18 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
     setError(null);
     setAnalyzeProgress({ current: 0, total: toAnalyze.length, failed: [] });
     try {
-      const task = await startTask("resume_skill_analysis", {
+      const started = await startResumeAnalyze({
+        applierName: ownerName,
+        profileId: ownerId || undefined,
         resumeIds: toAnalyze.map((resume) => resume.id),
         force: alreadyAnalyzed.length > 0,
       });
-      const finished = await waitForTask(task.id);
-      const failed = Object.entries(finished.progress.items || {})
+      applyAnalyzeSessionProgress(started);
+      const finished = await waitForResumeAnalyze({
+        onProgress: applyAnalyzeSessionProgress,
+      });
+      const items = finished.progress?.items || finished.items || {};
+      const failed = Object.entries(items)
         .filter(([, item]) => item.status === "failed")
         .map(([id, item]) => ({
           fileName: toAnalyze.find((resume) => resume.id === id)?.fileName || id,
@@ -276,13 +353,15 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
       setError(err instanceof Error ? err.message : "Analysis failed");
     } finally {
       setAnalyzeProgress(null);
+      setAnalyzeSession(null);
     }
   };
 
   const handleStopAnalysis = async () => {
-    if (!activeAnalysisTask || activeAnalysisTask.status === "cancelling") return;
+    if (!analyzing || stoppingAnalysis) return;
     try {
-      await cancelTask(activeAnalysisTask.id);
+      const stopped = await stopResumeAnalyze();
+      applyAnalyzeSessionProgress(stopped);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to stop analysis");
     }
@@ -398,7 +477,7 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
         <div className="flex flex-col items-start gap-0.5">
           <button
             type="button"
-            disabled={!hasLlmKey || (!analyzing && selectedIds.size === 0) || uploading}
+            disabled={!hasLlmKey || (!analyzing && selectedIds.size === 0) || uploading || bulkDeleting}
             onClick={() => void (analyzing ? handleStopAnalysis() : handleBulkAnalyze())}
             className="flex items-center gap-2 bg-secondary border border-primary/30 text-primary px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/5 min-h-10 disabled:opacity-50"
           >
@@ -408,7 +487,7 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
               <Sparkles className="w-4 h-4" />
             )}
             {analyzing
-              ? activeAnalysisTask?.status === "cancelling" ? "Stopping analysis…" : "Stop analysis"
+              ? stoppingAnalysis ? "Stopping analysis…" : "Stop analysis"
               : `Analyze selected (${selectedIds.size})`}
           </button>
           {hasLlmKey && defaultModel ? (
@@ -421,7 +500,7 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
         </div>
         <button
           type="button"
-          disabled={selectedAnalyzedCount === 0 || clearingAnalysis || analyzing || uploading}
+          disabled={selectedAnalyzedCount === 0 || clearingAnalysis || analyzing || uploading || bulkDeleting}
           onClick={() => void handleBulkClearAnalysis()}
           className="flex items-center gap-2 bg-secondary border border-border text-muted-foreground px-4 py-2.5 rounded-xl text-sm font-semibold hover:text-foreground min-h-10 disabled:opacity-50"
           title="Remove skill analysis only — keeps the resume file"
@@ -432,6 +511,20 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
             <Eraser className="w-4 h-4" />
           )}
           Clear analysis ({selectedAnalyzedCount})
+        </button>
+        <button
+          type="button"
+          disabled={selectedIds.size === 0 || bulkDeleting || analyzing || uploading || clearingAnalysis}
+          onClick={() => void handleBulkDelete()}
+          className="flex items-center gap-2 bg-secondary border border-destructive/30 text-destructive px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-destructive/5 min-h-10 disabled:opacity-50"
+          title="Permanently delete selected resumes (file + analysis)"
+        >
+          {bulkDeleting ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Trash2 className="w-4 h-4" />
+          )}
+          Delete selected ({selectedIds.size})
         </button>
         {onOpenAnalysis && (
           <button type="button" onClick={onOpenAnalysis} className="flex items-center gap-2 text-sm font-bold text-primary hover:underline">
@@ -469,6 +562,37 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
           >
             Clear
           </button>
+        </div>
+      )}
+
+      {uploadProgress && (
+        <div className="mb-4 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-2 mb-2 text-sm">
+            <span className="font-semibold text-foreground flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              Uploading resumes…
+            </span>
+            <span className="text-muted-foreground tabular-nums">
+              {uploadProgress.current}/{uploadProgress.total}
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-secondary overflow-hidden">
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{
+                width: `${uploadProgress.total ? (uploadProgress.current / uploadProgress.total) * 100 : 0}%`,
+              }}
+            />
+          </div>
+          {uploadProgress.failed.length > 0 && (
+            <ul className="mt-2 text-xs text-destructive space-y-0.5 max-h-24 overflow-y-auto">
+              {uploadProgress.failed.map((f) => (
+                <li key={`${f.fileName}-${f.error}`}>
+                  {f.fileName}: {f.error}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

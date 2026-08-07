@@ -17,7 +17,7 @@ import { APPS_CATALOG, type AppPlugin, type DownloadsManifest } from "./catalog"
 const INSTALL_STEPS = [
   {
     title: "Download the zip",
-    body: "Grab Athens Lens or Project Avalon from the cards below. Each build ships with the VPS release.",
+    body: "Grab Athens Lens, Extension, or LI-scrapper from the cards below. Each build ships with the VPS release.",
   },
   {
     title: "Unzip on your machine",
@@ -37,6 +37,15 @@ function accentClasses(accent: AppPlugin["accent"]) {
       btn: "from-teal-600 to-cyan-600 shadow-teal-500/25 hover:shadow-teal-500/35",
       ring: "ring-teal-500/20",
       orb: "bg-teal-400/30",
+    };
+  }
+  if (accent === "amber") {
+    return {
+      glow: "from-amber-500/25 via-orange-400/10 to-transparent",
+      chip: "bg-amber-500/12 text-amber-800 dark:text-amber-300",
+      btn: "from-amber-600 to-orange-600 shadow-amber-500/25 hover:shadow-amber-500/35",
+      ring: "ring-amber-500/20",
+      orb: "bg-amber-400/30",
     };
   }
   return {
@@ -194,7 +203,7 @@ export function AppsPluginsPage() {
               </p>
               <p className="text-sm sm:text-base text-white/70 leading-relaxed max-w-xl">
                 Download the Chrome extensions built with every deploy. Load them in developer mode —
-                not the Chrome Web Store — and pair them with Bid Ready & Agents.
+                not the Chrome Web Store — and pair them with Bid Ready & Job Search.
               </p>
               {builtAt && (
                 <p className="text-xs text-white/50 font-medium">
@@ -232,7 +241,7 @@ export function AppsPluginsPage() {
           </motion.section>
 
           {/* App cards */}
-          <section className="grid lg:grid-cols-2 gap-5">
+          <section className="grid lg:grid-cols-2 xl:grid-cols-3 gap-5">
             {APPS_CATALOG.map((app, index) => (
               <AppCard key={app.id} app={app} liveVersion={versions[app.id]} index={index} />
             ))}

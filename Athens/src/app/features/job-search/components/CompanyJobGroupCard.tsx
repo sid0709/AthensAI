@@ -67,6 +67,7 @@ type CompanyJobGroupCardProps = {
   onCancel?: (job: Job) => void;
   resumeStates?: Record<string, JobResumeGenerationState>;
   onGenerateResume?: (job: Job) => void;
+  onPatchJob?: (job: Job) => void;
   onLoadMore?: (companyId: string) => void;
   onRemoveOtherJobs?: (activeJob: Job) => Promise<void>;
   loadingMore?: boolean;
@@ -119,6 +120,7 @@ export function CompanyJobGroupCard({
   onCancel,
   resumeStates,
   onGenerateResume,
+  onPatchJob,
   onLoadMore,
   onRemoveOtherJobs,
   loadingMore = false,
@@ -151,6 +153,7 @@ export function CompanyJobGroupCard({
         onCancel={onCancel ? () => onCancel(activeJob) : undefined}
         resumeState={resumeStates?.[activeJob.id]}
         onGenerateResume={onGenerateResume ? () => onGenerateResume(activeJob) : undefined}
+        onPatchJob={onPatchJob}
       />
 
       {additionalRoleCount > 0 ? (

@@ -64,20 +64,16 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm ci --prefix Athens --ignore-scripts
+          npm ci --prefix athens-backend --ignore-scripts
 
-      - name: Enforce Firestore-only architecture
-        run: npm run verify:firestore-only
-
-      # Shared DocumentId format check only — Athens-server firestore/monitoring
-      # unit tests and npm scripts were removed; compose/promtool validation below
-      # still covers monitoring config.
+      # Shared DocumentId format check — packages/shared is kept forever.
       - name: Test shared document id
         run: node --test packages/shared/src/document-id.test.mjs
 
       - name: Build application services
         run: |
-          npm run build -w @avalon/shared
-          npm run build -w ai-bff
+          npm run prisma:generate --prefix athens-backend
+          npm run build --prefix athens-backend
           npm run build --prefix Athens
 
       - name: Validate deployment and monitoring configuration
@@ -144,9 +140,6 @@ jobs:
           printf '  %s\n' "${TAGS[@]}"
 
       # Extensions must hit container nginx (9030) or your host TLS vhost — not bare :80.
-      # Avalon relay is NOT published on 3847; only via /avalon/ on the web port.
-      # WXT_AVALON_RELAY_URL must be the public origin (no /avalon path) — Socket.IO
-      # treats URL path as a namespace; the Engine.IO path is /avalon/socket.io.
       # ATHENS_API_URL / WXT_API_URL bake as ${ORIGIN}/api (e.g. https://athensai.remotepairnet.net/api).
       - name: Resolve public origin
         id: origin
@@ -168,7 +161,6 @@ jobs:
           fi
           {
             echo "origin=${ORIGIN}"
-            echo "relay_url=${ORIGIN}"
             echo "api_url=${ORIGIN}/api"
           } >> "$GITHUB_OUTPUT"
           echo "Extension public origin: ${ORIGIN}"
@@ -187,10 +179,7 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             VITE_API_URL=/api
-            VITE_AVALON_SERVER=/avalon
-            VITE_AI_BFF_URL=/ai-bff
             PUBLIC_ORIGIN=${{ steps.origin.outputs.origin }}
-            WXT_AVALON_RELAY_URL=${{ steps.origin.outputs.relay_url }}
             WXT_API_URL=${{ steps.origin.outputs.api_url }}
             ATHENS_API_URL=${{ steps.origin.outputs.api_url }}
           labels: |
@@ -401,13 +390,8 @@ jobs:
             set_env FIREBASE_SECRET_HOST_PATH /opt/nextoffer/secrets/firebase-service-account.json
             set_env KMS_KEY_NAME projects/drwretail-bm/locations/us-east4/keyRings/athens/cryptoKeys/profile-secrets
             set_env FIREBASE_AUTH_REQUIRED false
-            set_env BACKGROUND_WORKERS_MODE local
+            set_env BACKGROUND_WORKERS_MODE embedded
             set_env FIRESTORE_WRITES_ENABLED true
-            set_env REDIS_ENABLED true
-            set_env REDIS_URL redis://redis:6379
-            set_env QDRANT_URL http://qdrant:6333
-            set_env RECOMMENDATION_QUERY_TIME_MODE on
-            set_env RANKING_AUTO_BACKFILL true
 
       - name: Sync deploy script to VPS
         uses: appleboy/scp-action@v0.1.7
@@ -573,13 +557,12 @@ jobs:
             echo "Starting Athens application deploy"
             /opt/nextoffer/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 
-            docker logs nextoffer 2>&1 | tail -200 | grep -q 'Connected to native Firestore database'
             docker exec nextoffer node --input-type=module -e '
-              const response = await fetch("http://127.0.0.1:8979/readyz", { signal: AbortSignal.timeout(5000) });
+              const response = await fetch("http://127.0.0.1:8980/readyz", { signal: AbortSignal.timeout(5000) });
               const payload = await response.json();
-              if (!response.ok || !payload.databaseReady) process.exit(1);
+              if (!response.ok || !payload.ok) process.exit(1);
             '
-            echo "Verified Firestore readiness."
+            echo "Verified athens-backend readiness."
 
       - name: Summary
         shell: bash
@@ -593,8 +576,7 @@ jobs:
             echo "| Image | \`${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}\` |"
             echo "| Commit | \`${{ needs.build-and-push.outputs.sha_short }}\` |"
             echo ""
-            echo "Health: Athens readiness, AI BFF, Avalon, and public status checks run on the VPS."
+            echo "Health: athens-backend /readyz and public /api/status/current checks run on the VPS."
             echo "Monitoring: Prometheus/Grafana/Alertmanager are maintained by the same SSH deploy."
-            echo "Ranking: Redis/Qdrant are created when missing and reuse persistent Docker volumes."
             echo "Rollback: \`ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '/opt/nextoffer/deploy.sh sha-<old>'\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -9,13 +9,9 @@ export const PATHS = {
   jobs: "/jobs",
   titleReview: "/title-review",
   resumes: "/resumes",
-  applications: "/applications",
-  copilot: "/copilot",
-  agents: "/agents",
   mail: "/mail",
   calendar: "/calendar",
   notion: "/notion",
-  interviews: "/interviews",
   reports: "/reports",
   aiUsage: "/ai-usage",
   apiUsageMonitor: "/api-usage-monitor",
@@ -46,13 +42,9 @@ const VIEW_TO_BASE: Record<View, string> = {
   "job-board": PATHS.jobs,
   "title-review": PATHS.titleReview,
   resumes: PATHS.resumes,
-  ats: PATHS.applications,
-  copilot: PATHS.copilot,
-  agents: PATHS.agents,
   mail: PATHS.mail,
   calendar: PATHS.calendar,
   notion: PATHS.notion,
-  interviews: PATHS.interviews,
   reports: PATHS.reports,
   "ai-usage": PATHS.aiUsage,
   "api-usage-monitor": PATHS.apiUsageMonitor,
@@ -97,13 +89,9 @@ export function viewFromPathname(pathname: string): View {
   if (p.startsWith(PATHS.jobs)) return "job-board";
   if (p.startsWith(PATHS.titleReview)) return "title-review";
   if (p.startsWith(PATHS.resumes)) return "resumes";
-  if (p.startsWith(PATHS.applications)) return "ats";
-  if (p.startsWith(PATHS.copilot)) return "copilot";
-  if (p.startsWith(PATHS.agents)) return "agents";
   if (p.startsWith(PATHS.mail)) return "mail";
   if (p.startsWith(PATHS.calendar)) return "calendar";
   if (p.startsWith(PATHS.notion)) return "notion";
-  if (p.startsWith(PATHS.interviews)) return "interviews";
   if (p.startsWith(PATHS.reports)) return "reports";
   if (p.startsWith(PATHS.aiUsage)) return "ai-usage";
   if (p.startsWith(PATHS.apiUsageMonitor)) return "api-usage-monitor";

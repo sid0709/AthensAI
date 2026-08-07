@@ -13,8 +13,7 @@ import {
 const NOTIFICATION_GROUPS = [
   { id: "applications" as const, label: "Application updates", description: "Status changes and recruiter replies" },
   { id: "interviews" as const, label: "Interview reminders", description: "24h and 1h before scheduled interviews" },
-  { id: "jobs" as const, label: "New job matches", description: "When agents find high-match roles" },
-  { id: "agents" as const, label: "Agent run summaries", description: "Daily digest of agent activity" },
+  { id: "jobs" as const, label: "New job matches", description: "When high-match roles are found" },
   { id: "mail" as const, label: "Email digests", description: "Unread recruiter messages" },
 ];
 

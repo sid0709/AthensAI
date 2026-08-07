@@ -49,7 +49,7 @@ export interface Job {
   workMode: WorkMode;
   type: string;
   seniority: string;
-  /** Years of experience hint from details.date (e.g. "5+ years exp"). */
+  /** Optional experience hint when present on a row (no longer sourced from metadata.details). */
   experience?: string;
   industries: string[];
   status: JobStatus;
@@ -76,10 +76,14 @@ export interface Job {
   catalog?: "market" | "external";
   /** Library stack recommended for Bid Ready (vendor_tasks). */
   recommendedResumeStack?: string | null;
+  /** Library Resume.id when a specific file was chosen. */
+  recommendedResumeId?: string | null;
   recommendedResumeReason?: string | null;
   useCustomizedResume?: boolean;
   recommendWarning?: string | null;
   recommendedAt?: string | null;
+  /** llm | heuristic | manual */
+  recommendMode?: "llm" | "heuristic" | "manual" | null;
 }
 
 export interface CompanyJobGroup {

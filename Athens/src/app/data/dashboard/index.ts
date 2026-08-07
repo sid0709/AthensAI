@@ -12,5 +12,14 @@ export const ACTIVITIES = [
 export const AI_RECS = [
   { t: "Vercel role is a 94% match. Tailor your resume to highlight design system experience.", a: "Tailor resume →", c: "text-violet-600" },
   { t: "No response from Stripe in 12 days. Follow-up Agent can draft a polite nudge.", a: "Draft follow-up →", c: "text-amber-600" },
-  { t: "Notion interview tomorrow. Interview Prep Agent has a custom plan ready.", a: "Start prep →", c: "text-blue-600" },
+  { t: "Notion interview tomorrow. Review the job posting and refresh your talking points.", a: "Open calendar →", c: "text-blue-600" },
+];
+
+export const FUNNEL = [
+  { s: "Applied", n: 47, p: 100 },
+  { s: "Screening", n: 18, p: 38.3 },
+  { s: "Assessment", n: 9, p: 19.1 },
+  { s: "Interview", n: 5, p: 10.6 },
+  { s: "Offer", n: 2, p: 4.3 },
+  { s: "Hired", n: 1, p: 2.1 },
 ];

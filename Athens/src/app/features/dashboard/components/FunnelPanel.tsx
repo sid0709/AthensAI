@@ -1,6 +1,6 @@
 import React from "react";
 import { FunnelBars } from "../../../components/shared/FunnelBars";
-import { FUNNEL } from "../../../data/applications";
+import { FUNNEL } from "../../../data/dashboard";
 
 export function FunnelPanel() {
   return (

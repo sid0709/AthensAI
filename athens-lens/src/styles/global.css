@@ -975,6 +975,18 @@ a:focus-visible {
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.message-body-link {
+  color: var(--color-brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.message-body-link:hover {
+  color: var(--color-text);
 }
 
 .message-body-state {
@@ -1320,10 +1332,6 @@ a:focus-visible {
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.ai-debug-pre--oak {
-  max-height: min(42vh, 360px);
 }
 
 .ai-debug-pre--stream {

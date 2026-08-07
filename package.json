@@ -2,11 +2,7 @@
   "name": "nextoffer",
   "private": true,
   "workspaces": [
-    "packages/shared",
-    "Athens-server",
-    "ai-bff",
-    "project-avalon/packages/shared",
-    "project-avalon/packages/backend"
+    "packages/shared"
   ],
   "dependencies": {
     "@nextoffer/shared": "file:packages/shared",
@@ -14,20 +10,15 @@
     "react": "^18.3.1"
   },
   "devDependencies": {
+    "dotenv": "^17.4.2",
     "tsx": "^4.19.2"
   },
   "scripts": {
     "prestart": "node scripts/prestart.mjs",
     "start": "node scripts/dev-start.mjs",
-    "install:all": "npm install && npm install --prefix Athens && npm run build -w ai-bff",
-    "backfill-job-skills": "npm run backfill-job-skills -w Athens-server",
-    "migrate:firestore-first": "npm run migrate:firestore-first -w Athens-server",
-    "reconcile:firestore-first": "npm run reconcile:firestore-first -w Athens-server",
-    "build:ai": "npm run build -w ai-bff",
-    "verify:firestore-only": "node scripts/verify-firestore-only.mjs",
-    "start:athens-server": "npm run start -w Athens-server",
-    "start:ai": "npm run start -w ai-bff",
-    "start:avalon-relay": "npm run start -w @avalon/backend",
-    "start:ui": "npm run dev --prefix Athens"
+    "install:all": "npm install && npm install --prefix Athens && npm install --prefix athens-backend",
+    "start:athens-backend": "npm run start:dev --prefix athens-backend",
+    "start:ui": "npm run dev --prefix Athens",
+    "build:backend": "npm run prisma:generate --prefix athens-backend && npm run build --prefix athens-backend"
   }
 }

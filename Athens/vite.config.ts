@@ -15,16 +15,6 @@ function originFromApiUrl(apiUrl: string): string {
   }
 }
 
-function originFromServiceUrl(serviceUrl: string): string {
-  try {
-    const u = new URL(serviceUrl)
-    return `${u.protocol}//${u.host}`
-  } catch {
-    return serviceUrl.replace(/\/+$/, '')
-  }
-}
-
-
 function figmaAssetResolver() {
   return {
     name: 'figma-asset-resolver',
@@ -39,21 +29,12 @@ function figmaAssetResolver() {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const backendPort = env.VITE_BACKEND_PORT || '8979'
+  const backendPort = env.VITE_BACKEND_PORT || '8980'
   const proxyTarget =
     env.VITE_DEV_PROXY_TARGET ||
     (env.SERVER_API_URL ? originFromApiUrl(env.SERVER_API_URL) : '') ||
     (env.VITE_API_URL ? originFromApiUrl(env.VITE_API_URL) : '') ||
     `http://127.0.0.1:${backendPort}`
-  const avalonPort = env.VITE_AVALON_PORT || '3847'
-  const avalonTarget =
-    env.VITE_DEV_AVALON_PROXY_TARGET ||
-    (env.VITE_AVALON_SERVER ? originFromServiceUrl(env.VITE_AVALON_SERVER) : '') ||
-    `http://127.0.0.1:${avalonPort}`
-  const aiBffTarget =
-    env.VITE_DEV_AI_BFF_PROXY_TARGET ||
-    (env.VITE_AI_BFF_URL ? originFromServiceUrl(env.VITE_AI_BFF_URL) : '') ||
-    'http://127.0.0.1:3920'
   const devHost = env.DEV_HOST === '127.0.0.1' ? '127.0.0.1' : (env.DEV_HOST || true)
 
   return {
@@ -81,18 +62,6 @@ export default defineConfig(({ mode }) => {
           // Large streamed downloads can take several minutes.
           timeout: 0,
           proxyTimeout: 0,
-        },
-        '/avalon': {
-          target: avalonTarget,
-          changeOrigin: true,
-          secure: false,
-          ws: true,
-        },
-        '/ai-bff': {
-          target: aiBffTarget,
-          changeOrigin: true,
-          secure: false,
-          rewrite: (path) => path.replace(/^\/ai-bff/, ''),
         },
       },
       fs: {

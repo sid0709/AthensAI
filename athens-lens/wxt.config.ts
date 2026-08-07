@@ -6,11 +6,11 @@ export default defineConfig({
   manifest: () => {
     const configuredApiUrl = resolveEndpoint(
       process.env.WXT_ATHENS_API_URL,
-      "http://127.0.0.1:8979/api",
+      "http://127.0.0.1:8980/api",
     );
     const apiHosts = new Set([
-      "http://127.0.0.1:8979/*",
-      "http://localhost:8979/*"
+      "http://127.0.0.1:8980/*",
+      "http://localhost:8980/*"
     ]);
     const url = new URL(configuredApiUrl);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -21,7 +21,7 @@ export default defineConfig({
     return {
       name: "Athens Lens",
       description: "A focused job search assistant in your Chrome side panel.",
-      version: "0.3.28",
+      version: "0.3.32",
       minimum_chrome_version: "116",
       permissions: ["sidePanel", "storage", "tabs", "activeTab", "tabCapture", "desktopCapture", "scripting", "offscreen", "downloads", "webNavigation"],
       host_permissions: [...apiHosts, "http://*/*", "https://*/*", "<all_urls>"],

@@ -7,18 +7,6 @@ export type {
   SkillGraph,
   ActivationResult,
 } from "./knowledgeGraph";
-export type { Application } from "./application";
-export type {
-  RunSummary,
-  JobRow,
-  ActivityEntry,
-  DashboardData,
-  HealthData,
-  ActiveRun,
-  DeployOptions,
-  AgentJobStatus,
-  AgentJobTabKey,
-} from "./agent";
 export type {
   Job,
 	CompanyJobGroup,

@@ -31,8 +31,11 @@ logs
 .playwright-cli
 agent-runtime
 
-# Legacy AutoLancer extension (not shipped)
-Extension
+# Legacy stack — not shipped in Phase 5 runtime image
+Athens-server
+ai-bff
+project-avalon
+extension-v2-original
 
 # Archives & large artifacts (extension zips are built inside the image)
 *.zip

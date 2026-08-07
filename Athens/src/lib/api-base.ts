@@ -29,7 +29,7 @@ function normalizeConfiguredApiBase(raw: string): string {
 
 /**
  * REST base including `/api` suffix.
- * - `SERVER_API_URL` / `VITE_API_URL`: full URL to Athens-server, e.g. `http://127.0.0.1:8979/api`
+ * - `SERVER_API_URL` / `VITE_API_URL`: full URL to athens-backend, e.g. `http://127.0.0.1:8980/api`
  * - Dev: loopback URLs are proxied via same-origin `/api` so LAN clients work (see vite.config.ts)
  */
 export function resolveApiBase(): string {

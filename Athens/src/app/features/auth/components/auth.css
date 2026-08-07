@@ -583,7 +583,6 @@
 .auth-route-label span { color: rgba(177, 164, 237, 0.38); font-size: 7px; }
 .auth-route-profile { top: 22%; left: 16%; animation-delay: 20ms; }
 .auth-route-jobs { bottom: 19%; left: 24%; animation-delay: 65ms; }
-.auth-route-applications { right: 28%; bottom: 17%; animation-delay: 105ms; }
 .auth-route-workspace { top: 33%; right: 13%; animation-delay: 145ms; }
 
 .auth-route-label.is-selected {
@@ -803,7 +802,6 @@
   .auth-transition-identity { top: 41%; }
   .auth-route-profile { top: 18%; left: 7%; }
   .auth-route-jobs { bottom: 24%; left: 8%; }
-  .auth-route-applications { right: 7%; bottom: 22%; }
   .auth-route-workspace { top: 25%; right: 6%; }
 
   .auth-blueprint-sidebar { width: 72px; padding: 84px 18px; }
@@ -823,7 +821,6 @@
   .auth-route-label { font-size: 7px; }
   .auth-route-profile { top: 17%; left: 4%; }
   .auth-route-jobs { bottom: 25%; left: 4%; }
-  .auth-route-applications { right: 4%; bottom: 21%; }
   .auth-route-workspace { top: 23%; right: 4%; }
   .auth-blueprint-hero { height: 106px; }
   .auth-blueprint-content { top: 72px; }

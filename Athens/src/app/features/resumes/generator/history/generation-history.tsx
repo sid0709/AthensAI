@@ -8,7 +8,7 @@ import { defaultConfig, defaultTheme } from "../constants/defaults";
 import { ResumePreview } from "../preview/resume-preview";
 import { normalizeGenerated } from "../utils/content";
 import { fmtCost, fmtRelative, fmtTokens } from "../utils/format";
-import { usageTokenLabels } from "../../../agents/lib/runUsage";
+import { usageTokenLabels } from "../../../../lib/runUsage";
 import { cardCls } from "../styles";
 import type { FullRun, HistoryFacets, HistorySearchIn, HistorySort, HistoryStatus, LayoutSection, ResumeTheme, RunSummary } from "./history-types";
 import { HISTORY_PER_PAGE, HISTORY_SORTS, idStr, jdHeadline, resumeSummarySnippet } from "./history-helpers";

@@ -4,8 +4,8 @@ import { Button } from "../../../components/ui/button";
 import { useJobSkillExtraction } from "../hooks/useJobSkillExtraction";
 
 /**
- * Self-contained toolbar control to run AI skill extraction over jobs pending
- * extraction, with immediate Stop and live progress.
+ * Toolbar control to run AI Analyze over APPROVED temp jobs pending analysis,
+ * with immediate Stop and live progress.
  */
 export function SkillExtractionButton() {
   const { session, pending, loading, isRunning, start, stop } = useJobSkillExtraction();
@@ -26,7 +26,7 @@ export function SkillExtractionButton() {
           ? "Recovering interrupted work…"
         : session.phase === "claiming"
           ? "Loading next batch…"
-          : "Extracting…";
+          : "Analyzing…";
     return (
       <div className="flex items-center gap-2 shrink-0" aria-live="polite">
         <div className="flex flex-col gap-0.5 min-w-[190px]">
@@ -51,7 +51,7 @@ export function SkillExtractionButton() {
           </div>
           <span className="text-[10px] text-muted-foreground tabular-nums">
             {queued
-              ? "Waiting for an extraction worker"
+              ? "Waiting for an AI analyze worker"
               : inflight > 0
                 ? `${inflight} jobs active${session.concurrency && session.batchSize
                   ? ` · ${session.concurrency} batches × ${session.batchSize}`
@@ -84,19 +84,19 @@ export function SkillExtractionButton() {
       disabled={loading || pending === 0}
       onClick={() => void start()}
       title={failed
-        ? session.error || "The last skill extraction failed. Click to retry."
+        ? session.error || "The last AI analyze run failed. Click to retry."
         : pending === 0
-          ? "All Job Search titles have AI skills"
+          ? "All APPROVED titles have been AI-analyzed"
           : pending == null
-            ? "Extract missing or failed skills for APPROVED Job Search titles"
-            : `${pending} APPROVED job(s) pending or failed — extraction is shared globally`}
+            ? "Fill job details and skills for APPROVED titles"
+            : `${pending} APPROVED job(s) pending or failed — AI analyze is shared globally`}
     >
       {loading
         ? <Loader2 className="w-4 h-4 animate-spin" />
         : failed
           ? <AlertCircle className="w-4 h-4" />
           : <Sparkles className="w-4 h-4" />}
-      {failed ? "Retry skills" : "Extract skills"}
+      {failed ? "Retry AI analyze" : "AI analyze"}
       {pending != null && (
         <span
           className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold tabular-nums ${
@@ -104,7 +104,7 @@ export function SkillExtractionButton() {
               ? "bg-muted text-muted-foreground"
               : "bg-violet-600 text-white"
           }`}
-          aria-label={`${pending} jobs pending skill extraction`}
+          aria-label={`${pending} jobs pending AI analyze`}
         >
           {pending.toLocaleString()}
         </span>

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Validate Firestore configuration, clear stale dev ports and build the AI gateway. */
+/** Validate athens-backend env, clear stale dev ports. */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,31 +10,31 @@ import { backendPorts } from './lib/dev-runtime.mjs';
 
 installTerminalLogger('prestart');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-loadEnv({ path: path.join(ROOT, 'Athens-server', '.env') });
+loadEnv({ path: path.join(ROOT, 'athens-backend', '.env') });
 
-function run(cmd, args, opts = {}) {
-	console.log(`> ${cmd} ${args.join(' ')}`);
-	const result = spawnSync(cmd, args, { stdio: 'inherit', cwd: ROOT, ...opts });
-	if (result.status !== 0) process.exit(result.status ?? 1);
-}
-
-printBanner('NextOffer Prestart', ['Firestore authoritative storage', 'Algolia full-text search']);
+printBanner('NextOffer Prestart', ['athens-backend (Nest)', 'Athens SPA']);
 await freePorts([...backendPorts.map((port) => port.port), Number(process.env.VITE_DEV_PORT || 9030)]);
 
-for (const name of ['FIREBASE_PROJECT_ID', 'FIREBASE_STORAGE_BUCKET', 'GOOGLE_APPLICATION_CREDENTIALS']) {
+for (const name of ['DATABASE_URL', 'API_KEYS_ENCRYPTION_KEY']) {
 	if (!String(process.env[name] || '').trim()) {
-		console.error(`[prestart] ${name} is required`);
+		console.error(`[prestart] ${name} is required in athens-backend/.env`);
 		process.exit(1);
 	}
 }
-console.log(`[prestart] Firestore configured for project ${process.env.FIREBASE_PROJECT_ID}`);
 
-const chrome = spawnSync('npm', ['run', 'install:chrome', '-w', 'Athens-server'], {
+if (String(process.env.FIREBASE_PROJECT_ID || '').trim()) {
+	console.log(`[prestart] Firebase configured for project ${process.env.FIREBASE_PROJECT_ID}`);
+} else {
+	console.warn('[prestart] FIREBASE_PROJECT_ID unset — Firebase explorer / Storage features will fail.');
+}
+
+const prisma = spawnSync('npm', ['run', 'prisma:generate', '--prefix', 'athens-backend'], {
 	stdio: 'inherit',
 	cwd: ROOT,
 });
-if (chrome.status !== 0) console.warn('[prestart] Puppeteer Chrome is not installed; PDF rendering will be unavailable.');
+if (prisma.status !== 0) {
+	console.error('[prestart] prisma generate failed');
+	process.exit(prisma.status ?? 1);
+}
 
-run('npm', ['run', 'build', '-w', 'ai-bff']);
 console.log('[prestart] Bootstrap complete.');
-

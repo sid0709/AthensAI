@@ -1,6 +1,6 @@
 import { resolveEndpoint } from "./endpoint";
 
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8979/api";
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:8980/api";
 
 /** Build-time API may be plain (local .env) or enc:<token> (CI / Docker pack). */
 export const ATHENS_API_BASE_URL = resolveEndpoint(

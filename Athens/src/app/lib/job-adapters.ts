@@ -48,7 +48,9 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       ? "posted"
       : resolveJobStatusState(doc.status as unknown[] | undefined, applierId))) as JobStatus;
 
-  const location = String(details.position || (isAnalyzedExternal ? "—" : isExternal ? "—" : "—"));
+  const location = String(
+    details.location || details.position || "—",
+  );
   const workMode = isAnalyzedExternal
     ? parseWorkMode(String(details.remote || ""))
     : isExternal
@@ -56,7 +58,9 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       : parseWorkMode(String(details.remote || ""));
   const type = String(details.time || (isExternal ? "—" : "Full-time"));
   const seniority = String(details.seniority || "—");
-  const salary = String(details.money || (isExternal ? "—" : "Undisclosed"));
+  const salary = String(
+    details.salary || details.money || (isExternal ? "—" : "Undisclosed"),
+  );
   const postedRaw = String(doc.postedAt || doc._createdAt || "");
   const postedAt = postedRaw ? postedRaw.slice(0, 10) : "";
   const posted = postedRaw ? new Date(postedRaw).toLocaleString() : "—";
@@ -103,7 +107,6 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     workMode,
     type,
     seniority,
-    experience: String(details.date || "").trim() || undefined,
     industries,
     status,
     posted,
@@ -132,6 +135,10 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       typeof doc.recommendedResumeStack === "string" && doc.recommendedResumeStack.trim()
         ? doc.recommendedResumeStack.trim()
         : null,
+    recommendedResumeId:
+      typeof doc.recommendedResumeId === "string" && doc.recommendedResumeId.trim()
+        ? doc.recommendedResumeId.trim()
+        : null,
     recommendedResumeReason:
       typeof doc.recommendedResumeReason === "string" && doc.recommendedResumeReason.trim()
         ? doc.recommendedResumeReason.trim()
@@ -145,6 +152,12 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       typeof doc.recommendedAt === "string" && doc.recommendedAt.trim()
         ? doc.recommendedAt.trim()
         : null,
+    recommendMode:
+      doc.recommendMode === "llm" ||
+      doc.recommendMode === "heuristic" ||
+      doc.recommendMode === "manual"
+        ? doc.recommendMode
+        : null,
   };
 }
 
@@ -155,6 +168,8 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
     aiSkills: detailJob.aiSkills?.length ? detailJob.aiSkills : listJob.aiSkills,
     recommendedResumeStack:
       detailJob.recommendedResumeStack || listJob.recommendedResumeStack || null,
+    recommendedResumeId:
+      detailJob.recommendedResumeId || listJob.recommendedResumeId || null,
     recommendedResumeReason:
       detailJob.recommendedResumeReason || listJob.recommendedResumeReason || null,
     useCustomizedResume:
@@ -163,6 +178,7 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
         : listJob.useCustomizedResume,
     recommendWarning: detailJob.recommendWarning || listJob.recommendWarning || null,
     recommendedAt: detailJob.recommendedAt || listJob.recommendedAt || null,
+    recommendMode: detailJob.recommendMode || listJob.recommendMode || null,
   };
 }
 

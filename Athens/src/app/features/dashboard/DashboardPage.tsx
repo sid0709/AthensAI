@@ -1,6 +1,7 @@
 import React from "react";
 import { PageShell } from "../../components/layout/PageShell";
 import { useAppNavigationOptional } from "../../context/AppNavigationContext";
+import type { View } from "../../types";
 import { DashboardHero } from "./components/DashboardHero";
 import { DashboardKpiGrid } from "./components/DashboardKpiGrid";
 import { ActivityChart } from "./components/ActivityChart";
@@ -10,7 +11,6 @@ import { SourceChart } from "./components/SourceChart";
 import { AiRecommendations } from "./components/AiRecommendations";
 import { UpcomingInterviewsPanel } from "./components/UpcomingInterviewsPanel";
 import { MiniCalendarStrip } from "./components/MiniCalendarStrip";
-import { AgentActivityPanel } from "./components/AgentActivityPanel";
 import { useUpcomingInterviews } from "../../hooks/useDashboardMetrics";
 
 export function DashboardPage() {
@@ -25,13 +25,12 @@ export function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <ActivityChart />
           <div className="space-y-5">
-            <UpcomingInterviewsPanel interviews={upcoming} onNavigatePrep={() => appNav?.navigate("interviews")} />
+            <UpcomingInterviewsPanel interviews={upcoming} onNavigate={() => appNav?.navigate("calendar")} />
             <MiniCalendarStrip onNavigate={() => appNav?.navigate("calendar")} />
           </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <FunnelPanel />
-          <AgentActivityPanel onNavigateAgents={() => appNav?.navigate("agents")} />
           <SourceChart />
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

@@ -48,7 +48,7 @@ import { areaCls, cardCls, inputCls } from "../styles";
 import { fmtCost, fmtTokens, stepOutputText } from "../utils/format";
 import { defaultCoverageDecision } from "../utils/coverage";
 import { resolvePromptTokens } from "../utils/prompt-tokens";
-import { usageTokenLabels } from "../../../agents/lib/runUsage";
+import { usageTokenLabels } from "../../../../lib/runUsage";
 import type { GeneratorPageVm } from "../hooks/use-generator-page";
 import type { CoverageDecision, ProviderId, Purpose, ReasoningEffort } from "../types";
 import { PURPOSES, SECTION_LABEL } from "../types";

@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import { removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
+import { removeJobs, removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
 import { useBackgroundTasks } from "../../context/BackgroundTaskContext";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
 import { downloadJobsCsv } from "../../hooks/useJobSearchFilters";
 import { JobExportDialog } from "./components/JobExportDialog";
+import { RecommendResumeConflictDialog } from "./components/RecommendResumeConflictDialog";
 import { JobListSkeleton } from "./components/JobListSkeleton";
 import { JobListErrorState } from "./components/JobListErrorState";
 import { JobListStickyBar } from "./components/JobListStickyBar";
@@ -17,7 +18,10 @@ import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { runWithConcurrency } from "./lib/run-with-concurrency";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
-import { useRecommendResumes } from "./hooks/useRecommendResumes";
+import {
+  jobHasResumeRecommendation,
+  useRecommendResumes,
+} from "./hooks/useRecommendResumes";
 import { useJobsList } from "./hooks/useJobsList";
 import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
@@ -32,7 +36,7 @@ export function JobSearchPage() {
 function JobSearchPageContent() {
   const { applier } = useApplier();
   const profileId = applier?._id != null ? String(applier._id) : "";
-  const { startTask, adoptTask, waitForTask } = useBackgroundTasks();
+  const { adoptTask, waitForTask } = useBackgroundTasks();
   const {
     state: urlState,
     setFilters,
@@ -56,8 +60,9 @@ function JobSearchPageContent() {
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [recommendConflictOpen, setRecommendConflictOpen] = useState(false);
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
-  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
+  const { jobs, groups, total, totalJobs, loading, error, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
     useJobsList(filters, removedIds, page, pageSize);
 
   useEffect(() => {
@@ -250,14 +255,9 @@ function JobSearchPageContent() {
     });
     clearSelection();
     try {
-      const task = await startTask("job_removal", {
-        recordIds: selectedJobs.map((job) => job.backendId || job.id),
-      });
-      const finished = await waitForTask(task.id);
-			if (finished.status === "failed" || finished.status === "cancelled") {
-				throw new Error(finished.error || (finished.status === "cancelled" ? "Removal cancelled" : "Remove failed"));
-			}
-      const deletedCount = Number(finished.result?.deletedCount ?? ids.length);
+      const recordIds = selectedJobs.map((job) => job.backendId || job.id);
+      const result = await removeJobs(recordIds);
+      const deletedCount = Number(result.deletedCount ?? ids.length);
       removeJobsById(ids);
       toast.success(`Removed ${deletedCount} job${ids.length === 1 ? "" : "s"}`);
       void refreshStatusCounts();
@@ -359,7 +359,12 @@ function JobSearchPageContent() {
           void removeBulkResumes(selectedJobs);
         }}
         onRecommendResumes={() => {
-          void recommendBulk(selectedJobs);
+          const already = selectedJobs.filter(jobHasResumeRecommendation).length;
+          if (already > 0) {
+            setRecommendConflictOpen(true);
+            return;
+          }
+          void recommendBulk(selectedJobs, { replaceExisting: true });
         }}
         resumeGenerating={bulkRunning}
         resumeStopping={bulkStopping}
@@ -391,21 +396,28 @@ function JobSearchPageContent() {
         busy={exportBusy}
       />
 
-      {!loading && staleResults && error ? (
-        <div role="status" className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
-          {error}
-          <button type="button" className="ml-2 font-semibold underline underline-offset-2" onClick={retry}>
-            Retry
-          </button>
-        </div>
-      ) : null}
+      <RecommendResumeConflictDialog
+        open={recommendConflictOpen}
+        onOpenChange={setRecommendConflictOpen}
+        alreadyCount={selectedJobs.filter(jobHasResumeRecommendation).length}
+        totalCount={selectedJobs.length}
+        busy={recommendRunning}
+        onReplace={() => {
+          setRecommendConflictOpen(false);
+          void recommendBulk(selectedJobs, { replaceExisting: true });
+        }}
+        onSkip={() => {
+          setRecommendConflictOpen(false);
+          void recommendBulk(selectedJobs, { replaceExisting: false });
+        }}
+      />
 
       {loading ? (
         <JobListSkeleton
           count={Math.min(pageSize, 8)}
           layout={showGrid ? "grid" : "list"}
         />
-      ) : error && !staleResults ? (
+      ) : error ? (
         <JobListErrorState message={error} onRetry={retry} />
       ) : (
         <TabTransition tabKey={showGrid ? "grid" : "list"}>
@@ -434,6 +446,7 @@ function JobSearchPageContent() {
             onGenerateResume={(job) => {
               void generateForJob(job);
             }}
+            onPatchJob={patchJob}
           />
         </TabTransition>
       )}

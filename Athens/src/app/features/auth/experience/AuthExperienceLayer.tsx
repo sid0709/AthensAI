@@ -8,7 +8,6 @@ import "../components/auth.css";
 const ROUTES = [
   { id: "profile", label: "Profile" },
   { id: "jobs", label: "Jobs" },
-  { id: "applications", label: "Applications" },
   { id: "workspace", label: "Workspace", selected: true },
 ];
 

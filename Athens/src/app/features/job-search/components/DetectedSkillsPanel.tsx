@@ -36,7 +36,7 @@ export function DetectedSkillsPanel({ aiSkills }: { aiSkills?: AiSkill[] }) {
           <h3 className="text-sm font-bold text-foreground">Detected skills</h3>
         </div>
         <p className="text-xs text-muted-foreground">
-          This job has not been analyzed yet. Run <span className="font-semibold">Extract skills</span> to detect its main skills.
+          This job has not been analyzed yet. Run <span className="font-semibold">AI analyze</span> to detect its main skills.
         </p>
       </section>
     );
