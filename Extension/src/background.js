@@ -661,11 +661,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 			}
 			await persistScrapeQueue();
 			broadcastScrapeQueue(runId);
-			scheduleImmediateScrapeQueueDrain();
-			// Await drain BEFORE sendResponse — MV3 may suspend the worker as soon as
-			// the message channel closes, which previously left items stuck in Queued.
-			await drainScrapeQueue();
+			// Ack immediately so the scrape loop is not blocked on DB save.
+			// Alarm + fire-and-forget drain keep MV3 saving in the background.
 			sendResponse?.({ success: true, id, state: scrapeQueueSnapshot(runId) });
+			scheduleImmediateScrapeQueueDrain();
+			void drainScrapeQueue();
 		})().catch((error) => sendResponse?.({ success: false, error: error.message }));
 		return true;
 	}
