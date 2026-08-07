@@ -22,8 +22,9 @@ model AccountInfo {
   notificationPrefs Json?
   notionIntegration Json?
   /// Analyzed library skills by stack title: { [title]: [{ name, category, level }] }
-  resumeAnalysisCatalog          Json?
-  resumeAnalysisCatalogUpdatedAt DateTime?
+  resumeAnalysisCatalog Json?
+  /// ISO-8601 string (Athens-server contract — not BSON Date).
+  resumeAnalysisCatalogUpdatedAt String?
   /// AI Mail labeling: { [labelPath: string]: description }
   mailAiLabelDefinitions Json?
 

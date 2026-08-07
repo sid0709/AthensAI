@@ -43,7 +43,8 @@ export class ResumeCatalogSyncService {
       where: { id: profileId },
       data: {
         resumeAnalysisCatalog: catalog as Prisma.InputJsonValue,
-        resumeAnalysisCatalogUpdatedAt: new Date(),
+        // Match Athens-server: ISO string, not BSON Date.
+        resumeAnalysisCatalogUpdatedAt: new Date().toISOString(),
       },
     });
   }

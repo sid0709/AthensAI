@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
+import { BackgroundTasksModule } from './background-tasks/background-tasks.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { JobsModule } from './jobs/jobs.module';
+import { MailModule } from './mail/mail.module';
 import { PersonalModule } from './personal/personal.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ResumesModule } from './resumes/resumes.module';
@@ -14,6 +16,8 @@ import { ResumesModule } from './resumes/resumes.module';
     JobsModule,
     FirebaseModule,
     ResumesModule,
+    MailModule,
+    BackgroundTasksModule,
   ],
 })
 export class AppModule {}

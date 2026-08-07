@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { AccountInfoService } from '../../auth/account-info.service';
-import { asText } from '../../personal/mappers/as-text';
-import { ProfileSecretsService } from '../../personal/secrets/profile-secrets.service';
-import { BETA_TIER } from '../constants/mail.constants';
+import { AccountInfoService } from '../auth/account-info.service';
+import { asText } from '../personal/mappers/as-text';
+import { ProfileSecretsService } from '../personal/secrets/profile-secrets.service';
+import { BETA_TIER } from './constants/mail.constants';
 
 export type MailCredentialsOk = {
   ok: true;

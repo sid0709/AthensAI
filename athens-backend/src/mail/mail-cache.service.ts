@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
-import { ALL_MAIL_PATH } from '../constants/mail.constants';
+import { PrismaService } from '../prisma/prisma.service';
+import { ALL_MAIL_PATH } from './constants/mail.constants';
 import {
   extractCustomLabels,
   labelsMatchFilter,
   type MailMessageDoc,
-} from '../mappers/folder-mapper';
+} from './mappers/folder-mapper';
 
 @Injectable()
 export class MailCacheService {
