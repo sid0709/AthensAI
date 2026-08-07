@@ -9,9 +9,11 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { StartAiSessionDto } from './dto/start-ai-session.dto';
+import { ApproveTitleReviewJobsDto } from './dto/approve-title-review-jobs.dto';
 import { ListTitleReviewQueryDto } from './dto/list-title-review.query.dto';
 import { RemoveTitleReviewJobsDto } from './dto/remove-title-review-jobs.dto';
 import { JobHardDeleteService } from './job-hard-delete.service';
+import { TitleReviewApproveService } from './title-review-approve.service';
 import { TitleReviewQueryService } from './title-review-query.service';
 import { TitleReviewSessionService } from './title-review/title-review-session.service';
 
@@ -21,6 +23,7 @@ export class TitleReviewController {
     private readonly titleReview: TitleReviewQueryService,
     private readonly session: TitleReviewSessionService,
     private readonly hardDelete: JobHardDeleteService,
+    private readonly approveService: TitleReviewApproveService,
   ) {}
 
   @Get('status')
@@ -37,6 +40,20 @@ export class TitleReviewController {
   @Post('stop')
   stop() {
     return this.session.stop();
+  }
+
+  /** Mark selected temp_jobs APPROVED → eligible for AI Analyze. */
+  @Post('approve')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  approve(@Body() body: ApproveTitleReviewJobsDto) {
+    if (!body.ids?.length) {
+      throw new BadRequestException({
+        success: false,
+        error: 'Missing ids array',
+        message: 'Missing ids array',
+      });
+    }
+    return this.approveService.approve(body.ids);
   }
 
   /** Permanent hard delete from staging `temp_jobs`. */

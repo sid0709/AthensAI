@@ -1,3 +1,5 @@
+import { deepseekThinkingBody } from './deepseek';
+import { normalizeDeepSeekModel } from '../../personal/constants/deepseek-models.constants';
 import type { ChatCompletionInput } from './openai.types';
 
 export const PROVIDER_BASE: Record<'openai' | 'deepseek', string> = {
@@ -33,4 +35,38 @@ export function resolveResponseFormat(
     return { type: 'json_object' };
   }
   return null;
+}
+
+/** Build OpenAI-compatible chat body (DeepSeek: normalize model + thinking). */
+export function buildChatCompletionBody(
+  provider: 'openai' | 'deepseek',
+  input: ChatCompletionInput,
+  extras?: { stream?: boolean },
+): Record<string, unknown> {
+  const model =
+    provider === 'deepseek' ? normalizeDeepSeekModel(input.model) : input.model;
+  const responseFormat = resolveResponseFormat(provider, input);
+  const body: Record<string, unknown> = {
+    model,
+    messages: input.messages,
+    ...(extras?.stream ? { stream: true } : {}),
+    ...(responseFormat ? { response_format: responseFormat } : {}),
+    ...(typeof input.temperature === 'number'
+      ? { temperature: input.temperature }
+      : {}),
+  };
+  if (provider === 'deepseek') {
+    Object.assign(
+      body,
+      deepseekThinkingBody({
+        jsonMode: input.jsonMode,
+        jsonSchema: input.jsonSchema,
+        thinking: input.thinking,
+      }),
+    );
+  }
+  if (extras?.stream && provider === 'openai') {
+    body.stream_options = { include_usage: true };
+  }
+  return body;
 }

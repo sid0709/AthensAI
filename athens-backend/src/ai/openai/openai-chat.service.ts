@@ -3,11 +3,12 @@ import {
   LLM_CHAT_RETRIES,
   LLM_CHAT_TIMEOUT_MS,
 } from '../constants/ai-concurrency.constants';
+import { extractChatMessageContent } from './deepseek';
 import {
   abortError,
+  buildChatCompletionBody,
   isRetryableStatus,
   PROVIDER_BASE,
-  resolveResponseFormat,
 } from './openai-provider';
 import type { ChatCompletionInput, ChatCompletionResult } from './openai.types';
 
@@ -39,15 +40,7 @@ export class OpenAiChatService {
     const base = PROVIDER_BASE[provider] ?? PROVIDER_BASE.openai;
     const timeoutMs = input.timeoutMs ?? LLM_CHAT_TIMEOUT_MS;
     const retries = input.retries ?? LLM_CHAT_RETRIES;
-    const responseFormat = resolveResponseFormat(provider, input);
-    const body = {
-      model: input.model,
-      messages: input.messages,
-      ...(responseFormat ? { response_format: responseFormat } : {}),
-      ...(typeof input.temperature === 'number'
-        ? { temperature: input.temperature }
-        : {}),
-    };
+    const body = buildChatCompletionBody(provider, input);
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -107,7 +100,12 @@ export class OpenAiChatService {
       }
 
       let data: {
-        choices?: Array<{ message?: { content?: string } }>;
+        choices?: Array<{
+          message?: {
+            content?: string | null;
+            reasoning_content?: string | null;
+          };
+        }>;
         model?: string;
         usage?: {
           prompt_tokens?: number;
@@ -123,7 +121,7 @@ export class OpenAiChatService {
         });
       }
 
-      const content = String(data.choices?.[0]?.message?.content ?? '');
+      const content = extractChatMessageContent(data.choices?.[0]?.message);
       if (!content.trim()) {
         throw Object.assign(new Error('LLM returned empty content'), {
           retryable: true,

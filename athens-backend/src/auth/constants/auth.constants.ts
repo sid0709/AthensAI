@@ -17,6 +17,10 @@ export const AuthMessages = {
   currentPasswordIncorrect: 'Current password is incorrect',
   passwordUpdated: 'Password updated successfully',
   nameRequired: 'Name is required',
+  vendorPasswordRequired:
+    'Provide vendorPassword (min 8 characters) or clear: true',
+  vendorPasswordUpdated: 'Vendor access password updated',
+  vendorPasswordCleared: 'Vendor access password cleared',
 } as const;
 
 export const MIN_NEW_PASSWORD_LENGTH = 8;

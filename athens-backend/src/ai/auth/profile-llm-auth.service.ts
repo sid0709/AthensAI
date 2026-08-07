@@ -6,6 +6,10 @@ import {
 import { AccountInfoRepository } from '../../auth/account-info.repository';
 import { AccountInfoService } from '../../auth/account-info.service';
 import {
+  DEEPSEEK_DEFAULT_MODEL,
+  normalizeDeepSeekModel,
+} from '../../personal/constants/deepseek-models.constants';
+import {
   getLlmProvider,
   isLlmProviderId,
   type LlmProviderId,
@@ -56,9 +60,11 @@ export class ProfileLlmAuthService {
       ? providerRaw
       : 'openai';
     const p = getLlmProvider(provider);
-    const model =
+    const rawModel =
       asText(profile.defaultModel).trim() ||
-      (provider === 'openai' ? 'gpt-4o-mini' : 'deepseek-chat');
+      (provider === 'openai' ? 'gpt-4o-mini' : DEEPSEEK_DEFAULT_MODEL);
+    const model =
+      provider === 'deepseek' ? normalizeDeepSeekModel(rawModel) : rawModel;
 
     const decrypted = this.secrets.decryptSelected(profile, [p.keyField]);
     const apiKey = asText(decrypted[p.keyField]).trim();

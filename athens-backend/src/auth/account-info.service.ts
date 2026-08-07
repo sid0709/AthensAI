@@ -39,4 +39,11 @@ export class AccountInfoService {
   updatePassword(id: string, password: string): Promise<void> {
     return this.accounts.updatePassword(id, password);
   }
+
+  updateVendorPassword(
+    id: string,
+    vendorPassword: string | null,
+  ): Promise<void> {
+    return this.accounts.updateVendorPassword(id, vendorPassword);
+  }
 }

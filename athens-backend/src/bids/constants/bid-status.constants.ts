@@ -21,7 +21,6 @@ export const BID_RECORDINGS_PREFIX = 'bid-recordings/';
 export const BID_RESULT_ID_PREFIX = 'bid-';
 
 export const MAX_RECOMMEND_JOBS = 40;
-export const RECOMMEND_CONCURRENCY = 2;
 export const BID_QUEUE_LIMIT = 1000;
 export const REJECTED_LIST_LIMIT = 500;
 export const RECORDING_URL_EXPIRES_MS = 60 * 60_000;

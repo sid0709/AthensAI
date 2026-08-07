@@ -34,6 +34,7 @@ Default listen: `http://127.0.0.1:8980/api`
 | POST | `/api/auth/signin` | `{ name, password }` |
 | POST | `/api/auth/signup` | `{ name, password }` |
 | POST | `/api/auth/change-password` | `{ name, currentPassword, newPassword }` |
+| POST | `/api/auth/vendor-password` | `{ applierName, vendorPassword }` or `{ applierName, clear: true }` |
 | GET | `/api/account_info` | — |
 | GET | `/api/account_info/by/:name` | — |
 
@@ -50,7 +51,7 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 
 | Method | Path | Notes |
 |--------|------|------|
-| GET | `/api/personal/llm-models?provider=&applierName=&profileId=` | OpenAI catalog (needs decrypted profile key) or DeepSeek fixed list |
+| GET | `/api/personal/llm-models?provider=&applierName=&profileId=` | OpenAI live catalog (needs key) or DeepSeek V4 (`deepseek-v4-flash` / `deepseek-v4-pro`, live `/models` + fallback) |
 | POST | `/api/personal/default-model` | `{ applierName, provider, model, profileId? }` — validates key then saves |
 | POST | `/api/personal/llm-key-check` | `{ provider, apiKey?, applierName? }` |
 
@@ -138,7 +139,7 @@ API `techStack` ↔ Mongo `title`. Skills live on each resume in `analysis.skill
 - New rows stamp `model_schema_code` from `JOB_MODEL_SCHEMA_CODE` (default `mongodb-athens-2026-08-06`).
 - Queue membership is derived from `temp_jobs` (`titleReviewLabel` / `aiSkillStatus` / `metadata.titleReview`) — there is no `athens_metadata` collection.
 - Review Title must approve a title before AI Analyze (`titleReviewLabel=APPROVED` + open `aiSkillStatus`). AI Analyze writes `metadata.details` + `aiSkills`, then `promoteIfReady`.
-- LLM calls use the signed-in profile’s encrypted API key + default model. Throughput knobs: `LLM_*` / `JOB_TITLE_REVIEW_*` / `JOB_AI_ANALYZE_*` in `.env.example`.
+- LLM calls use the signed-in profile’s encrypted API key + default model (OpenAI or DeepSeek V4). DeepSeek requests disable thinking for fast JSON batch work. Throughput knobs: `LLM_*` / `JOB_TITLE_REVIEW_*` / `JOB_AI_ANALYZE_*` / `RESUME_ANALYZE_BATCH_CONCURRENCY` / `RECOMMEND_RESUME_CONCURRENCY` in `.env.example`.
 - Status tabs filter via `job_statuses` for the given `profileId` (`posted` = jobs with no status row).
 - List responses **omit** `description` (lean `select` + `@@index([postedAt])`). Unfiltered totals are cached in-process (~60s); filtered lists still `count`.
 - Filters and offset pagination (`page` / `pageSize`) hit Prisma against `AthensDB.jobs`.
@@ -178,6 +179,16 @@ Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default) claims `mail_ai_lab
 | GET | `/api/background-tasks/:taskId` | Public task snapshot |
 | POST | `/api/background-tasks/:taskId/cancel` | Soft cancel |
 | GET | `/api/background-tasks/events?profileId=` | SSE snapshot / updates / heartbeat |
+
+## Analytics reports
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/reports/job-source-summary` | Query: `applierName?`, `startDate?`, `endDate?` → `{ success, data: [{ source, postings, applied, scheduled, declined }] }` |
+| GET | `/api/reports/daily-applications` | Query: `applierName?`, `startDate?`, `endDate?` → `{ success, data: [{ date, value }] }` |
+| GET | `/api/reports/daily-postings-by-source` | Query: `startDate?`, `endDate?` → `{ success, data: [{ date, source, count }] }` (stacked area chart) |
+
+Posting counts use `jobs.postedAt`. Application counts use `job_statuses` for the applier (`updatedAt` in range; states `applied` / `scheduled` / `declined`).
 
 ## Firebase Atlas (admin explorer)
 

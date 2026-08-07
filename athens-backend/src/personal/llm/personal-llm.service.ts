@@ -7,6 +7,10 @@ import { AccountInfoRepository } from '../../auth/account-info.repository';
 import { AccountInfoService } from '../../auth/account-info.service';
 import { OBJECT_ID_PATTERN } from '../constants/profile-field.constants';
 import {
+  DEEPSEEK_FALLBACK_MODELS,
+  normalizeDeepSeekModel,
+} from '../constants/deepseek-models.constants';
+import {
   getLlmProvider,
   isLlmProviderId,
   type LlmProviderId,
@@ -36,6 +40,34 @@ export class PersonalLlmService {
     const p = getLlmProvider(provider);
     if (Array.isArray(p.models)) {
       return { success: true, provider, models: p.models };
+    }
+    if (provider === 'deepseek') {
+      try {
+        const apiKey = await this.loadProviderApiKey(
+          provider,
+          input.applierName,
+          input.profileId,
+        );
+        if (!apiKey) {
+          return {
+            success: true,
+            provider,
+            models: [...DEEPSEEK_FALLBACK_MODELS],
+          };
+        }
+        const models = await this.llmKeys.listModels(
+          provider,
+          apiKey,
+          Boolean(input.force),
+        );
+        return { success: true, provider, models };
+      } catch {
+        return {
+          success: true,
+          provider,
+          models: [...DEEPSEEK_FALLBACK_MODELS],
+        };
+      }
     }
 
     try {
@@ -91,7 +123,9 @@ export class PersonalLlmService {
   async setDefaultModel(body: Record<string, unknown>) {
     const name = asText(body.applierName).trim();
     const provider = isLlmProviderId(body.provider) ? body.provider : null;
-    const model = asText(body.model).trim().slice(0, 64);
+    const rawModel = asText(body.model).trim().slice(0, 64);
+    const model =
+      provider === 'deepseek' ? normalizeDeepSeekModel(rawModel) : rawModel;
 
     if (!name) {
       throw new BadRequestException({

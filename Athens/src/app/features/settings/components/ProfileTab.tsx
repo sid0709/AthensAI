@@ -70,7 +70,9 @@ export function ProfileTab() {
 				profileUpdatedAt: progress.profileUpdatedAt ? String(progress.profileUpdatedAt) : null,
 				resumeUpdatedAt: progress.resumeUpdatedAt ? String(progress.resumeUpdatedAt) : null,
 			});
+			return;
 		}
+		setRefreshingResumes(false);
 	}, [resumeRefreshTask]);
   const isAdmin = isAdminPermission(applier?.permission);
   const load = useCallback(async (signal?: AbortSignal) => {

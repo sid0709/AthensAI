@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { isDeepSeekModel, listOpenAiModels } from '@nextoffer/shared/models';
 import {
+  DEEPSEEK_CHAT_MODELS,
+  DEEPSEEK_DEFAULT_MODEL,
+  listDeepSeekModels,
+  normalizeDeepSeekModel,
+} from '../constants/deepseek-models.constants';
+import {
   getLlmProvider,
   type LlmProviderId,
 } from '../constants/llm-providers.constants';
@@ -18,9 +24,13 @@ export class LlmKeyService {
   isModelCompatible(provider: LlmProviderId, model: string): boolean {
     const modelId = asText(model).trim();
     if (!modelId) return false;
-    return provider === 'deepseek'
-      ? isDeepSeekModel(modelId)
-      : !isDeepSeekModel(modelId);
+    if (provider === 'deepseek') {
+      const normalized = normalizeDeepSeekModel(modelId);
+      return (
+        isDeepSeekModel(normalized) || DEEPSEEK_CHAT_MODELS.includes(normalized)
+      );
+    }
+    return !isDeepSeekModel(modelId);
   }
 
   async listModels(
@@ -29,8 +39,28 @@ export class LlmKeyService {
     force = false,
   ): Promise<string[]> {
     const p = getLlmProvider(provider);
-    if (Array.isArray(p.models)) return p.models;
     if (!apiKey) throw new Error(`No API key configured for ${p.label}.`);
+
+    if (p.id === 'deepseek') {
+      const cacheKey = `${p.id}:${apiKey.slice(-12)}`;
+      const cached = this.modelCache.get(cacheKey);
+      if (!force && cached && Date.now() - cached.at < MODEL_TTL_MS) {
+        return cached.models;
+      }
+      try {
+        const models = await listDeepSeekModels(apiKey);
+        const merged = uniqueModels([
+          ...DEEPSEEK_CHAT_MODELS,
+          ...models.map(normalizeDeepSeekModel),
+        ]);
+        this.modelCache.set(cacheKey, { at: Date.now(), models: merged });
+        return merged;
+      } catch {
+        return [...DEEPSEEK_CHAT_MODELS];
+      }
+    }
+
+    if (Array.isArray(p.models)) return p.models;
 
     const cacheKey = `${p.id}:${apiKey.slice(-12)}`;
     const cached = this.modelCache.get(cacheKey);
@@ -80,12 +110,26 @@ export class LlmKeyService {
         };
       }
 
-      // DeepSeek: catalog is fixed; a missing key is the only hard fail here.
-      // Full chat probe for DeepSeek is optional; Nest AI path records usage locally.
+      const catalog = await listDeepSeekModels(apiKey);
+      const requested = normalizeDeepSeekModel(
+        asText(input.model).trim() || DEEPSEEK_DEFAULT_MODEL,
+      );
+      if (
+        asText(input.model).trim() &&
+        catalog.length > 0 &&
+        !catalog.includes(requested) &&
+        !DEEPSEEK_CHAT_MODELS.includes(requested)
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          message: `${requested} is not available to this DeepSeek API key.`,
+        };
+      }
       return {
         ok: true,
         status: 200,
-        message: `${p.label} key accepted (catalog provider).`,
+        message: `${p.label} key is valid.`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -96,4 +140,8 @@ export class LlmKeyService {
       };
     }
   }
+}
+
+function uniqueModels(ids: string[]): string[] {
+  return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))];
 }

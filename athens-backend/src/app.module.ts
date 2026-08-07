@@ -9,6 +9,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { MailModule } from './mail/mail.module';
 import { PersonalModule } from './personal/personal.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ReportsModule } from './reports/reports.module';
 import { ResumesModule } from './resumes/resumes.module';
 import { StatusModule } from './status/status.module';
 
@@ -26,6 +27,7 @@ import { StatusModule } from './status/status.module';
     AthensLensModule,
     StatusModule,
     AiUsageModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}
