@@ -46,7 +46,20 @@ cd "${ROOT}/Extension"
 if [[ ! -d node_modules ]]; then
   npm ci
 fi
-VITE_API_URL="${VITE_API_ENC}" npm run build
+# Do NOT reuse SPA's relative VITE_API_URL=/api from the Docker Athens build.
+# Extension has no enc: decoder — bake a plain absolute API base.
+EXTENSION_API_URL="${PUBLIC_ORIGIN:+${PUBLIC_ORIGIN%/}/api}"
+EXTENSION_API_URL="${EXTENSION_API_URL:-${ATHENS_API_URL}}"
+if [[ -z "${EXTENSION_API_URL}" || "${EXTENSION_API_URL}" == "/api" || "${EXTENSION_API_URL}" == api ]]; then
+  echo "error: Extension needs an absolute API URL (PUBLIC_ORIGIN or ATHENS_API_URL), got '${EXTENSION_API_URL:-empty}'" >&2
+  exit 1
+fi
+if [[ "${EXTENSION_API_URL}" == enc:* ]]; then
+  echo "error: Extension does not decode enc: tokens; pass a plain https://…/api URL" >&2
+  exit 1
+fi
+echo "    Extension VITE_API_URL=${EXTENSION_API_URL}"
+VITE_API_URL="${EXTENSION_API_URL}" npm run build
 EXTENSION_VERSION="$(python3 -c "import json; print(json.load(open('${ROOT}/Extension/package.json'))['version'])")"
 rm -f "${OUT_DIR}/${EXTENSION_ZIP_NAME}"
 (

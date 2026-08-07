@@ -87,19 +87,21 @@ export class JobDedupeService {
   private async findByLegacyId(
     legacyId: string,
   ): Promise<{ id: string } | null> {
-    const where = {
-      metadata: { path: ['legacyId'], equals: legacyId },
-    } as Prisma.TempJobWhereInput;
-    const [temp, job] = await Promise.all([
-      this.prisma.tempJob.findFirst({ where, select: { id: true } }),
-      this.prisma.job.findFirst({
-        where: {
-          metadata: { path: ['legacyId'], equals: legacyId },
-        } as Prisma.JobWhereInput,
-        select: { id: true },
-      }),
+    // Prisma Mongo JsonFilter does not support `path` (Postgres-only). Use findRaw.
+    const filter = {
+      'metadata.legacyId': legacyId,
+    } as Prisma.InputJsonValue;
+    const options = {
+      projection: { _id: 1 },
+      limit: 1,
+    } as Prisma.InputJsonValue;
+
+    const [tempRaw, jobRaw] = await Promise.all([
+      this.prisma.tempJob.findRaw({ filter, options }),
+      this.prisma.job.findRaw({ filter, options }),
     ]);
-    return temp ?? job;
+
+    return pickRawId(tempRaw) ?? pickRawId(jobRaw);
   }
 
   private async findByApplyLink(
@@ -172,6 +174,16 @@ function asObjectIdHex(value: unknown): string | null {
     return typeof oid === 'string' && /^[a-fA-F0-9]{24}$/.test(oid)
       ? oid
       : null;
+  }
+  return null;
+}
+
+function pickRawId(raw: unknown): { id: string } | null {
+  const rows = Array.isArray(raw) ? raw : [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const id = asObjectIdHex((row as { _id?: unknown })._id);
+    if (id) return { id };
   }
   return null;
 }
