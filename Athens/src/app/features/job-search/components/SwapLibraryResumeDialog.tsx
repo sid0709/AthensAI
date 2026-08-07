@@ -138,16 +138,20 @@ export function SwapLibraryResumeDialog({
             Choose Library resume
           </DialogTitle>
           <DialogDescription className="text-sm leading-relaxed">
-            Swap the recommended stack for{" "}
-            <span className="font-medium text-foreground">{job.title}</span>
             {currentLabel ? (
               <>
-                {" "}
+                Swap the recommended stack for{" "}
+                <span className="font-medium text-foreground">{job.title}</span>{" "}
                 (currently{" "}
-                <span className="font-medium text-foreground">{currentLabel}</span>)
+                <span className="font-medium text-foreground">{currentLabel}</span>
+                ).
               </>
-            ) : null}
-            .
+            ) : (
+              <>
+                Choose a Library resume for{" "}
+                <span className="font-medium text-foreground">{job.title}</span>.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
