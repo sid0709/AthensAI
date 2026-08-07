@@ -1,9 +1,19 @@
 import React from "react";
 import { BarChart3, BriefcaseBusiness, Send, Waypoints } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { ChartTip, KPI } from "../../../components/ui";
 import type { DateRange } from "../../../hooks/useAnalyticsFilters";
 import type { JobAnalytics } from "../hooks/useJobAnalytics";
+import { sourceChartColor } from "../lib/postingsAreaChart";
 import { rangeLabel } from "../lib/rangeFilter";
 import { AnalyticsEmpty } from "./AnalyticsStates";
 
@@ -11,9 +21,7 @@ export function JobPostingProgress({ range, analytics }: { range: DateRange; ana
   const applyRate = analytics.posted > 0
     ? Math.round((analytics.applications / analytics.posted) * 100)
     : 0;
-  const sourceData = analytics.pipelineBySource
-    .filter((row) => row.postings > 0)
-    .sort((a, b) => b.postings - a.postings);
+  const hasSeries = analytics.postingsArea.some((row) => Number(row.total) > 0);
 
   return (
     <div className="space-y-5">
@@ -27,19 +35,50 @@ export function JobPostingProgress({ range, analytics }: { range: DateRange; ana
 
       <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
         <h3 className="text-sm font-bold text-foreground mb-1">Postings by source</h3>
-        <p className="text-sm text-muted-foreground mb-5">New opportunities compared with applications sent</p>
-        {sourceData.length === 0 ? (
+        <p className="text-sm text-muted-foreground mb-5">New opportunities over time by job source</p>
+        {!hasSeries ? (
           <AnalyticsEmpty message="No job postings were recorded in this date range." />
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={sourceData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+          <ResponsiveContainer width="100%" height={320}>
+            <AreaChart data={analytics.postingsArea} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
               <CartesianGrid strokeDasharray="2 4" stroke="rgba(0,0,0,0.06)" vertical={false} />
-              <XAxis dataKey="source" tick={{ fill: "#6b6b84", fontSize: 12 }} axisLine={false} tickLine={false} />
-              <YAxis allowDecimals={false} tick={{ fill: "#6b6b84", fontSize: 12 }} axisLine={false} tickLine={false} />
+              <XAxis
+                dataKey="label"
+                tick={{ fill: "#6b6b84", fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+                minTickGap={28}
+              />
+              <YAxis
+                allowDecimals={false}
+                tick={{ fill: "#6b6b84", fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
+              />
               <Tooltip content={<ChartTip />} />
-              <Bar dataKey="postings" name="Postings" fill="#6c5ce7" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="applied" name="Applied" fill="#2dd4bf" radius={[4, 4, 0, 0]} />
-            </BarChart>
+              <Legend
+                verticalAlign="top"
+                height={36}
+                iconType="circle"
+                wrapperStyle={{ fontSize: 12, paddingBottom: 8 }}
+              />
+              {analytics.postingSourceKeys.map((source, index) => {
+                const color = sourceChartColor(index);
+                return (
+                  <Area
+                    key={source}
+                    type="linear"
+                    dataKey={source}
+                    name={source}
+                    stackId="postings"
+                    stroke={color}
+                    fill={color}
+                    fillOpacity={0.85}
+                    strokeWidth={1}
+                  />
+                );
+              })}
+            </AreaChart>
           </ResponsiveContainer>
         )}
       </div>

@@ -179,6 +179,16 @@ Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default) claims `mail_ai_lab
 | POST | `/api/background-tasks/:taskId/cancel` | Soft cancel |
 | GET | `/api/background-tasks/events?profileId=` | SSE snapshot / updates / heartbeat |
 
+## Analytics reports
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/reports/job-source-summary` | Query: `applierName?`, `startDate?`, `endDate?` → `{ success, data: [{ source, postings, applied, scheduled, declined }] }` |
+| GET | `/api/reports/daily-applications` | Query: `applierName?`, `startDate?`, `endDate?` → `{ success, data: [{ date, value }] }` |
+| GET | `/api/reports/daily-postings-by-source` | Query: `startDate?`, `endDate?` → `{ success, data: [{ date, source, count }] }` (stacked area chart) |
+
+Posting counts use `jobs.postedAt`. Application counts use `job_statuses` for the applier (`updatedAt` in range; states `applied` / `scheduled` / `declined`).
+
 ## Firebase Atlas (admin explorer)
 
 Requires header `x-applier-name` with `account_info.permission === "admin"`. Uses Firebase Admin SDK (Firestore + Storage) — not Prisma/Mongo.

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useApplier } from "@/context/applier-context";
 import {
   fetchDailyApplications,
+  fetchDailyPostingsBySource,
   fetchJobSourceSummary,
   type DailyApplicationRow,
+  type DailyPostingBySourceRow,
   type JobSourceSummaryRow,
 } from "../../../api/reports";
 import type { DateRange } from "../../../hooks/useAnalyticsFilters";
@@ -24,6 +26,10 @@ import {
   type TrendPoint,
   type VelocityPoint,
 } from "../lib/computeAnalytics";
+import {
+  pivotPostingsBySource,
+  type PostingsAreaPoint,
+} from "../lib/postingsAreaChart";
 
 export interface JobAnalytics {
   loading: boolean;
@@ -44,6 +50,8 @@ export interface JobAnalytics {
   cohortData: CohortPoint[];
   matchScatter: MatchPoint[];
   pipelineBySource: JobSourceSummaryRow[];
+  postingsArea: PostingsAreaPoint[];
+  postingSourceKeys: string[];
 }
 
 const EMPTY: JobAnalytics = {
@@ -65,6 +73,8 @@ const EMPTY: JobAnalytics = {
   cohortData: [],
   matchScatter: [],
   pipelineBySource: [],
+  postingsArea: [],
+  postingSourceKeys: [],
 };
 
 export function useJobAnalytics(range: DateRange): JobAnalytics {
@@ -74,6 +84,7 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
   const [loading, setLoading] = useState(true);
   const [daily, setDaily] = useState<DailyApplicationRow[]>([]);
   const [sourceSummary, setSourceSummary] = useState<JobSourceSummaryRow[]>([]);
+  const [postingRows, setPostingRows] = useState<DailyPostingBySourceRow[]>([]);
 
   const { startDate, endDate } = useMemo(() => rangeToIsoDates(range), [range]);
 
@@ -84,13 +95,15 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
     (async () => {
       setLoading(true);
       try {
-        const [dailyRows, summaryRows] = await Promise.all([
+        const [dailyRows, summaryRows, postingBySource] = await Promise.all([
           fetchDailyApplications(applierName, startDate, endDate),
           fetchJobSourceSummary(applierName, startDate, endDate),
+          fetchDailyPostingsBySource(startDate, endDate),
         ]);
         if (cancelled) return;
         setDaily(dailyRows);
         setSourceSummary(summaryRows);
+        setPostingRows(postingBySource);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -108,6 +121,7 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
     const applications = sumAppliedInRange(daily) || totals.applied;
     const responseRate = totals.applied > 0 ? Math.round((totals.scheduled / totals.applied) * 100) : 0;
     const interviewRate = responseRate;
+    const { points, sources } = pivotPostingsBySource(postingRows, startDate, endDate);
 
     return {
       loading: false,
@@ -117,7 +131,7 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
       interviewRate,
       avgResponseDays: null,
       posted: totals.postings,
-      postingSources: sourceSummary.filter((row) => row.postings > 0).length,
+      postingSources: sourceSummary.filter((row) => row.postings > 0).length || sources.length,
       trendData: computeTrend(daily, [], null, startDate, endDate),
       rolePie: [],
       heatmapData: [],
@@ -133,12 +147,15 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
       cohortData: [],
       matchScatter: [],
       pipelineBySource: sourceSummary.filter((r) => r.applied > 0 || r.postings > 0),
+      postingsArea: points,
+      postingSourceKeys: sources,
     };
   }, [
     applierReady,
     daily,
     endDate,
     loading,
+    postingRows,
     sourceSummary,
     startDate,
   ]);

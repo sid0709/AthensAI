@@ -90,8 +90,8 @@ export function PaginationBar({
             : total === 0 && showingCount === 0
               ? "No results"
             : detailed
-              ? `Showing ${showingCount} of ${Math.max(total, showingCount).toLocaleString()} ${unitLabel}${secondaryTotal == null ? "" : ` · ${Math.max(secondaryTotal ?? 0, showingCount).toLocaleString()} ${secondaryLabel}`} · Page ${page} / ${Math.max(1, Math.ceil(Math.max(total, showingCount) / pageSize))}`
-              : `${start}–${end} of ${Math.max(total, showingCount)}`}
+              ? `Showing ${showingCount} of ${total.toLocaleString()} ${unitLabel}${secondaryTotal == null ? "" : ` · ${Number(secondaryTotal).toLocaleString()} ${secondaryLabel}`} · Page ${page} / ${Math.max(1, totalPages ?? 1)}`
+              : `${start}–${end} of ${total}`}
         </p>
         {onPageSizeChange && (
           <div className="flex items-center gap-2">

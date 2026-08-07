@@ -18,6 +18,12 @@ export interface FrequencyDayRow {
   hourlyData: { hour: number; count: number }[];
 }
 
+export interface DailyPostingBySourceRow {
+  date: string;
+  source: string;
+  count: number;
+}
+
 type ReportResponse<T> = { success?: boolean; data?: T };
 
 function qs(params: Record<string, string | undefined>): string {
@@ -67,6 +73,16 @@ export async function fetchJobApplicationFrequency(
 ): Promise<FrequencyDayRow[]> {
   return getReport<FrequencyDayRow>("/reports/job-application-frequency", {
     applierName,
+    startDate,
+    endDate,
+  });
+}
+
+export async function fetchDailyPostingsBySource(
+  startDate: string,
+  endDate: string,
+): Promise<DailyPostingBySourceRow[]> {
+  return getReport<DailyPostingBySourceRow>("/reports/daily-postings-by-source", {
     startDate,
     endDate,
   });

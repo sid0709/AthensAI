@@ -98,8 +98,10 @@ export class JobsQueryService {
 
     if (unfiltered && tabCounts.all !== catalogForCounts) {
       tabCounts.all = catalogForCounts;
-    } else if (!unfiltered) {
-      // Keep All/New aligned with the company-grouped list total.
+    } else if (!unfiltered && status === 'all') {
+      // Align All/New with the attribute-filtered list total only when the
+      // active tab is All. Status-scoped jobTotal must not rewrite badges —
+      // e.g. New would become max(0, newTotal - tracked) → 0.
       const tracked =
         tabCounts['bid-ready'] +
         tabCounts['bid-completed'] +
