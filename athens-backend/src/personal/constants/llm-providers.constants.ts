@@ -1,11 +1,10 @@
-import { DEEPSEEK_MODELS } from '@nextoffer/shared/models';
-
 export type LlmProviderId = 'openai' | 'deepseek';
 
 export type LlmProviderConfig = {
   id: LlmProviderId;
   label: string;
   keyField: 'openaiApiKey' | 'deepseekApiKey';
+  /** Fixed catalog; null = fetch live (OpenAI / DeepSeek). */
   models: string[] | null;
 };
 
@@ -19,8 +18,9 @@ export const LLM_PROVIDERS: Record<LlmProviderId, LlmProviderConfig> = {
   deepseek: {
     id: 'deepseek',
     label: 'DeepSeek',
+    // null so LlmKeyService hits DeepSeek /models (falls back to V4 catalog).
     keyField: 'deepseekApiKey',
-    models: [...DEEPSEEK_MODELS],
+    models: null,
   },
 };
 

@@ -2,9 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { LLM_CHAT_TIMEOUT_MS } from '../constants/ai-concurrency.constants';
 import {
   abortError,
+  buildChatCompletionBody,
   isRetryableStatus,
   PROVIDER_BASE,
-  resolveResponseFormat,
 } from './openai-provider';
 import type {
   ChatCompletionInput,
@@ -24,20 +24,7 @@ export class OpenAiChatStreamService {
     const provider = input.provider ?? 'openai';
     const base = PROVIDER_BASE[provider] ?? PROVIDER_BASE.openai;
     const timeoutMs = input.timeoutMs ?? LLM_CHAT_TIMEOUT_MS;
-    const responseFormat = resolveResponseFormat(provider, input);
-    const body: Record<string, unknown> = {
-      model: input.model,
-      messages: input.messages,
-      stream: true,
-      ...(responseFormat ? { response_format: responseFormat } : {}),
-      ...(typeof input.temperature === 'number'
-        ? { temperature: input.temperature }
-        : {}),
-    };
-    // OpenAI-only; DeepSeek ignores / rejects unknown stream_options.
-    if (provider === 'openai') {
-      body.stream_options = { include_usage: true };
-    }
+    const body = buildChatCompletionBody(provider, input, { stream: true });
 
     if (input.signal?.aborted) throw abortError(input.signal);
 
@@ -48,7 +35,7 @@ export class OpenAiChatStreamService {
 
     const startedAt = Date.now();
     let ttftMs: number | null = null;
-    let billedModel = input.model;
+    let billedModel = typeof body.model === 'string' ? body.model : input.model;
     let usage: ChatCompletionResult['usage'] = null;
 
     try {
@@ -170,9 +157,7 @@ async function* readProviderSse(
       }
       if (meta.model || meta.usage) hooks.onMeta(meta);
       const delta =
-        parsed.choices?.[0]?.delta?.content ??
-        parsed.choices?.[0]?.text ??
-        '';
+        parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.text ?? '';
       if (delta) {
         yield { type: 'delta', text: hooks.onDelta(String(delta)) };
       }

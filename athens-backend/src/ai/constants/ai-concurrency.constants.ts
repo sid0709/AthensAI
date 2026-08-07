@@ -57,10 +57,17 @@ export const AI_ANALYZE_JD_MAX_CHARS = envInt(
   32_000,
 );
 
-/** One resume per LLM call; parallelize via concurrency. */
 export const RESUME_ANALYZE_BATCH_SIZE = 1;
 export const RESUME_ANALYZE_BATCH_CONCURRENCY = envInt(
   'RESUME_ANALYZE_BATCH_CONCURRENCY',
+  12,
+  1,
+  32,
+);
+
+/** Parallel recommend-resume LLM calls (shared with LLM admission). */
+export const RECOMMEND_RESUME_CONCURRENCY = envInt(
+  'RECOMMEND_RESUME_CONCURRENCY',
   8,
   1,
   32,

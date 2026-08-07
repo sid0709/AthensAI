@@ -5,7 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ProfileLlmAuthService } from '../../ai/auth/profile-llm-auth.service';
-import { createLimiter } from '../../ai/concurrency/create-limiter';
+import { LlmAdmissionService } from '../../ai/concurrency/llm-admission.service';
+import { RECOMMEND_RESUME_CONCURRENCY } from '../../ai/constants/ai-concurrency.constants';
+import { mapPool } from '../../ai/concurrency/create-limiter';
 import {
   RECOMMEND_RESUME_JSON_SCHEMA,
   RECOMMEND_RESUME_SCHEMA_NAME,
@@ -14,10 +16,7 @@ import {
 } from '../../ai/prompts';
 import { AiChatWithUsageService } from '../../ai-usage/ai-chat-with-usage.service';
 import { AI_USAGE_FEATURES } from '../../ai-usage/constants/ai-usage.constants';
-import {
-  MAX_RECOMMEND_JOBS,
-  RECOMMEND_CONCURRENCY,
-} from '../../bids/constants/bid-status.constants';
+import { MAX_RECOMMEND_JOBS } from '../../bids/constants/bid-status.constants';
 import { resolveCatalogKey } from '../../bids/lib/resume-catalog';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ResumeLibraryCatalogService } from '../../resumes/resume-library-catalog.service';
@@ -34,6 +33,7 @@ export class RecommendResumesService {
     private readonly prisma: PrismaService,
     private readonly llmAuth: ProfileLlmAuthService,
     private readonly chat: AiChatWithUsageService,
+    private readonly admission: LlmAdmissionService,
     private readonly persist: RecommendPersistService,
     private readonly libraryCatalog: ResumeLibraryCatalogService,
     private readonly vendorTasks: VendorTaskService,
@@ -88,70 +88,68 @@ export class RecommendResumesService {
     const needsLlm = replaceExisting
       ? jobIds
       : jobIds.filter(
-          (jobId) => !hasExistingRecommendation(existingByJobId.get(jobId) ?? null),
+          (jobId) =>
+            !hasExistingRecommendation(existingByJobId.get(jobId) ?? null),
         );
     const catalog =
       needsLlm.length > 0
         ? await this.libraryCatalog.compressForProfile(account.id)
         : { text: '', stackNames: [] as string[] };
-    const limiter = createLimiter(RECOMMEND_CONCURRENCY);
-    const results = await Promise.all(
-      jobIds.map((jobId) =>
-        limiter.run(async () => {
-          try {
-            if (!replaceExisting) {
-              const existing = existingByJobId.get(jobId) ?? null;
-              if (hasExistingRecommendation(existing)) {
-                return {
-                  jobId,
-                  ok: true as const,
-                  skipped: true as const,
-                  recommendedResumeStack:
-                    existing?.recommendedResumeStack ?? null,
-                  recommendedResumeReason:
-                    existing?.recommendedResumeReason ?? null,
-                  warning: existing?.recommendWarning ?? null,
-                  mode: 'skipped' as const,
-                  useCustomizedResume: Boolean(existing?.useCustomizedResume),
-                };
-              }
+    const results = await mapPool(
+      jobIds,
+      RECOMMEND_RESUME_CONCURRENCY,
+      async (jobId) => {
+        try {
+          if (!replaceExisting) {
+            const existing = existingByJobId.get(jobId) ?? null;
+            if (hasExistingRecommendation(existing)) {
+              return {
+                jobId,
+                ok: true as const,
+                skipped: true as const,
+                recommendedResumeStack:
+                  existing?.recommendedResumeStack ?? null,
+                recommendedResumeReason:
+                  existing?.recommendedResumeReason ?? null,
+                warning: existing?.recommendWarning ?? null,
+                mode: 'skipped' as const,
+                useCustomizedResume: Boolean(existing?.useCustomizedResume),
+              };
             }
-
-            const outcome = await this.recommendOne(
-              account.name,
-              jobId,
-              catalog,
-            );
-            await this.persist.persist({
-              applierName: account.name,
-              jobId,
-              ...outcome.result,
-              mode: outcome.mode,
-              usage: outcome.usage,
-              requestId: outcome.requestId,
-            });
-            return {
-              jobId,
-              ok: true as const,
-              skipped: false as const,
-              recommendedResumeStack:
-                outcome.result.matchedCatalogKey ||
-                outcome.result.recommendedResume,
-              recommendedResumeReason: outcome.result.reason,
-              warning: outcome.result.warning,
-              mode: outcome.mode,
-              useCustomizedResume: outcome.result.useCustomizedResume,
-            };
-          } catch (err) {
-            return {
-              jobId,
-              ok: false as const,
-              skipped: false as const,
-              error: err instanceof Error ? err.message : String(err),
-            };
           }
-        }),
-      ),
+
+          const outcome = await this.admission.run(account.id, () =>
+            this.recommendOne(account.name, jobId, catalog),
+          );
+          await this.persist.persist({
+            applierName: account.name,
+            jobId,
+            ...outcome.result,
+            mode: outcome.mode,
+            usage: outcome.usage,
+            requestId: outcome.requestId,
+          });
+          return {
+            jobId,
+            ok: true as const,
+            skipped: false as const,
+            recommendedResumeStack:
+              outcome.result.matchedCatalogKey ||
+              outcome.result.recommendedResume,
+            recommendedResumeReason: outcome.result.reason,
+            warning: outcome.result.warning,
+            mode: outcome.mode,
+            useCustomizedResume: outcome.result.useCustomizedResume,
+          };
+        } catch (err) {
+          return {
+            jobId,
+            ok: false as const,
+            skipped: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      },
     );
 
     const succeeded = results.filter((r) => r.ok && !r.skipped).length;
@@ -197,7 +195,7 @@ export class RecommendResumesService {
       return heuristicRecommend({
         useCustomizedResume: true,
         warning:
-          'No analyzed Library resumes. Analyze resumes in My Resume\'s Library first.',
+          "No analyzed Library resumes. Analyze resumes in My Resume's Library first.",
         reason: 'Empty library catalog — use customized resume.',
       });
     }
@@ -281,9 +279,7 @@ export class RecommendResumesService {
           : null,
         reason:
           parsed.reason ||
-          (matchedCatalogKey
-            ? `Matched ${matchedCatalogKey}.`
-            : 'No match.'),
+          (matchedCatalogKey ? `Matched ${matchedCatalogKey}.` : 'No match.'),
       },
       mode: 'llm' as const,
       usage,

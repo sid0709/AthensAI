@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { AccountInfo, Prisma } from '@prisma/client';
-import { isReplicaSetRequired } from '../prisma/mongo-standalone';
+import {
+  isReplicaSetRequired,
+  mongoIdQuery,
+  toMongoJson,
+} from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -55,24 +59,14 @@ export class AccountInfoRepository {
   }
 
   async updatePassword(id: string, password: string): Promise<void> {
-    try {
-      await this.prisma.accountInfo.update({
-        where: { id },
-        data: { password },
-      });
-    } catch (error) {
-      if (!isReplicaSetRequired(error)) throw error;
-      await this.prisma.$runCommandRaw({
-        update: ACCOUNT_INFO_COLLECTION,
-        updates: [
-          {
-            q: { _id: { $oid: id } },
-            u: { $set: { password } },
-            multi: false,
-          },
-        ],
-      });
-    }
+    await this.updateFields(id, { password });
+  }
+
+  async updateVendorPassword(
+    id: string,
+    vendorPassword: string | null,
+  ): Promise<void> {
+    await this.updateFields(id, { vendorPassword });
   }
 
   async updateAutoBidProfile(
@@ -80,24 +74,7 @@ export class AccountInfoRepository {
     autoBidProfile: Prisma.InputJsonValue,
     vendorAllowed: boolean,
   ): Promise<void> {
-    try {
-      await this.prisma.accountInfo.update({
-        where: { id },
-        data: { autoBidProfile, vendorAllowed },
-      });
-    } catch (error) {
-      if (!isReplicaSetRequired(error)) throw error;
-      await this.prisma.$runCommandRaw({
-        update: ACCOUNT_INFO_COLLECTION,
-        updates: [
-          {
-            q: { _id: { $oid: id } },
-            u: { $set: { autoBidProfile, vendorAllowed } },
-            multi: false,
-          },
-        ],
-      });
-    }
+    await this.updateFields(id, { autoBidProfile, vendorAllowed });
   }
 
   /** Merge a few autoBidProfile fields without clobbering the rest. */
@@ -117,23 +94,38 @@ export class AccountInfoRepository {
       ...base,
       ...fields,
     } as Prisma.InputJsonValue;
+    await this.updateFields(id, { autoBidProfile });
+  }
+
+  private async updateFields(
+    id: string,
+    data: Prisma.AccountInfoUpdateInput,
+  ): Promise<void> {
     try {
-      await this.prisma.accountInfo.update({
-        where: { id },
-        data: { autoBidProfile },
-      });
+      await this.prisma.accountInfo.update({ where: { id }, data });
     } catch (error) {
       if (!isReplicaSetRequired(error)) throw error;
-      await this.prisma.$runCommandRaw({
-        update: ACCOUNT_INFO_COLLECTION,
-        updates: [
-          {
-            q: { _id: { $oid: id } },
-            u: { $set: { autoBidProfile } },
-            multi: false,
-          },
-        ],
-      });
+      const matched = await this.rawUpdateById(id, data);
+      if (matched < 1) {
+        throw new Error(`Account update matched 0 documents for id=${id}`);
+      }
     }
+  }
+
+  private async rawUpdateById(
+    id: string,
+    data: Prisma.AccountInfoUpdateInput,
+  ): Promise<number> {
+    const result = await this.prisma.$runCommandRaw({
+      update: ACCOUNT_INFO_COLLECTION,
+      updates: [
+        {
+          q: mongoIdQuery(id),
+          u: { $set: toMongoJson(data) },
+          multi: false,
+        },
+      ],
+    });
+    return Number((result as { n?: number }).n ?? 0);
   }
 }

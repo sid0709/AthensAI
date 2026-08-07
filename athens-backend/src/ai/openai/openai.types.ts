@@ -20,6 +20,11 @@ export type ChatCompletionInput = {
     strict?: boolean;
   };
   temperature?: number;
+  /**
+   * DeepSeek V4 thinking mode. Defaults to disabled (faster; needed for reliable
+   * JSON batch work). OpenAI ignores this field.
+   */
+  thinking?: 'enabled' | 'disabled';
   signal?: AbortSignal;
   timeoutMs?: number;
   retries?: number;

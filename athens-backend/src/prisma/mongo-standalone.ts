@@ -122,6 +122,19 @@ export function objectIdIn(ids: string[]): Prisma.InputJsonValue {
   };
 }
 
+const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
+
+/**
+ * Match legacy string `_id` or BSON ObjectId for `$runCommandRaw` updates.
+ * Some Athens-server accounts store `_id` as a plain string.
+ */
+export function mongoIdQuery(id: string): Prisma.InputJsonValue {
+  const trimmed = String(id || '').trim();
+  if (!trimmed) return { _id: trimmed };
+  if (!OBJECT_ID_HEX.test(trimmed)) return { _id: trimmed };
+  return { $or: [{ _id: { $oid: trimmed } }, { _id: trimmed }] };
+}
+
 /** Prefer typed Prisma deleteMany; fall back to raw on standalone Mongo. */
 export async function deleteManyWithFallback(
   prisma: PrismaClient,

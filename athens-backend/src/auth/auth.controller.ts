@@ -10,6 +10,7 @@ import { AuthService } from './auth.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { SignInDto } from './dto/signin.dto';
 import { SignUpDto } from './dto/signup.dto';
+import { VendorPasswordDto } from './dto/vendor-password.dto';
 
 @Controller('auth')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
@@ -32,5 +33,11 @@ export class AuthController {
   @HttpCode(200)
   changePassword(@Body() dto: ChangePasswordDto) {
     return this.authService.changePassword(dto);
+  }
+
+  @Post('vendor-password')
+  @HttpCode(200)
+  setVendorPassword(@Body() dto: VendorPasswordDto) {
+    return this.authService.setVendorPassword(dto);
   }
 }

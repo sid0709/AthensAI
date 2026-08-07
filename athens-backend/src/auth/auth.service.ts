@@ -14,6 +14,7 @@ import {
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { SignInDto } from './dto/signin.dto';
 import { SignUpDto } from './dto/signup.dto';
+import { VendorPasswordDto } from './dto/vendor-password.dto';
 import { toAuthUser } from './mappers/account.mapper';
 import { PasswordService } from './password.service';
 
@@ -109,5 +110,31 @@ export class AuthService {
     await this.accounts.updatePassword(user.id, hashedPassword);
 
     return { success: true, message: AuthMessages.passwordUpdated };
+  }
+
+  async setVendorPassword(dto: VendorPasswordDto) {
+    const name = String(dto.applierName ?? '').trim();
+    if (!name) {
+      throw new BadRequestException(AuthMessages.nameRequired);
+    }
+
+    const user = await this.accounts.findByName(name);
+    if (!user) {
+      throw new NotFoundException(AuthMessages.accountNotFound);
+    }
+
+    if (dto.clear === true) {
+      await this.accounts.updateVendorPassword(user.id, null);
+      return { success: true, message: AuthMessages.vendorPasswordCleared };
+    }
+
+    const vendorPassword = String(dto.vendorPassword ?? '');
+    if (vendorPassword.length < MIN_NEW_PASSWORD_LENGTH) {
+      throw new BadRequestException(AuthMessages.vendorPasswordRequired);
+    }
+
+    const hashed = await this.passwords.hash(vendorPassword);
+    await this.accounts.updateVendorPassword(user.id, hashed);
+    return { success: true, message: AuthMessages.vendorPasswordUpdated };
   }
 }
