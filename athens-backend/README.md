@@ -54,6 +54,28 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/personal/default-model` | `{ applierName, provider, model, profileId? }` — validates key then saves |
 | POST | `/api/personal/llm-key-check` | `{ provider, apiKey?, applierName? }` |
 
+## Job Search catalog (read-only)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/jobs` | Query: `status`, `q`, `company`, `source`, `postedFrom`, `postedTo`, `sort`, `aiExtracted`, `page`, `pageSize`, `profileId` |
+
+- Only `status=all` returns catalog rows today; other status tabs return an empty page (list-by-status not wired yet).
+- Filters and offset pagination (`page` / `pageSize`) hit Prisma against `AthensDB.jobs`.
+- With `profileId` (`account_info._id`): badge counts load from `job_status_counts` at O(1); page rows hydrate `viewerStatus` from `job_statuses` (one doc per profile × job).
+- Response: `{ success, data, pagination, statusCounts, hasMore }`.
+
+### Profile-owned status collections
+
+| Collection | Shape |
+|------------|--------|
+| `job_statuses` | One document per **profile × job** (`profileId` + `jobId` unique). Never shared across users. |
+| `job_status_counts` | One document per **profile** (`profileId` unique). Status-tab badges. |
+
+Incrementing counts when a new catalog job is ingested (touch every profile) is deferred.
+
+Populate the job catalog with `npm run migrate:jobs` (see script header for flags). After schema changes: `npm run prisma:generate` and `npm run prisma:push`.
+
 ## Verify
 
 ```bash

@@ -22,6 +22,76 @@ model AccountInfo {
   notificationPrefs Json?
   notionIntegration Json?
 
+  jobStatusCounts JobStatusCounts?
+  jobStatuses     JobStatus[]
+
   @@index([usernameKey])
   @@map("account_info")
+}
+
+/// Lean Job Search catalog. Filter/search fields are flat; legacy capsules live in metadata.
+model Job {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  title            String
+  companyName      String
+  source           String
+  postedAt         DateTime
+  titleReviewLabel String
+  sourceCatalog    String   @default("market")
+  companyLink      String?
+  applyLink        String?
+  description      String?
+  /// [{ name, category, requirement }]
+  aiSkills         Json?
+  aiSkillStatus    String?
+  modelSchemaCode  String   @map("model_schema_code")
+  createdBy        String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  /// { legacyId?, companyTags?, companyLogo?, details?, titleReview? }
+  metadata         Json?
+
+  statuses JobStatus[]
+
+  @@index([titleReviewLabel, postedAt(sort: Desc)])
+  @@index([titleReviewLabel, source, postedAt(sort: Desc)])
+  @@index([sourceCatalog, titleReviewLabel, postedAt(sort: Desc)])
+  @@index([createdBy, postedAt(sort: Desc)])
+  @@map("jobs")
+}
+
+/// One row per profile × job. Status is owned by the profile, never shared.
+model JobStatus {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  profileId String   @db.ObjectId
+  jobId     String   @db.ObjectId
+  /// posted | bid-ready | bid-completed | applied | scheduled | declined
+  state     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account AccountInfo @relation(fields: [profileId], references: [id])
+  job     Job         @relation(fields: [jobId], references: [id])
+
+  @@unique([profileId, jobId])
+  @@index([profileId, state])
+  @@index([jobId])
+  @@map("job_statuses")
+}
+
+/// One document per profile. Job Search status-tab badges read this at O(1).
+model JobStatusCounts {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  profileId    String   @unique @db.ObjectId
+  posted       Int      @default(0)
+  bidReady     Int      @default(0)
+  bidCompleted Int      @default(0)
+  applied      Int      @default(0)
+  scheduled    Int      @default(0)
+  declined     Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  account AccountInfo @relation(fields: [profileId], references: [id])
+
+  @@map("job_status_counts")
 }

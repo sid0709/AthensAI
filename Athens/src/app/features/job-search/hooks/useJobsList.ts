@@ -5,10 +5,9 @@ import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
 import { retryTransient } from "@/lib/transient-retry";
-import { JobSourceTitles } from '@/app/data/jobs/pub';
-import { mapDocToJob } from "../../../lib/job-adapters";
+import { mapDocToJob, normalizeId } from "../../../lib/job-adapters";
 import type { CompanyJobGroup, Job } from "../../../types";
-import { keepOnlyCompanyJob, mergeCompanyMembers, removeCompanyJobs } from "../lib/companyGroupState";
+import { keepOnlyCompanyJob, removeCompanyJobs } from "../lib/companyGroupState";
 import type {
   JobSearchFilterState,
   JobStatusTab,
@@ -31,12 +30,6 @@ type ListResponse = {
   statusCounts?: Partial<Record<JobStatusTab, number>> | null;
 };
 
-type CountsResponse = {
-  success?: boolean;
-  counts?: Partial<Record<JobStatusTab, number>>;
-  warming?: boolean;
-};
-
 type ApiRequest = (
   path: string,
   options?: Omit<RequestInit, "body"> & { body?: unknown },
@@ -53,23 +46,21 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
 };
 
 const JOB_LIST_REQUEST_TIMEOUT_MS = 30_000;
-const JOB_LIST_ENDPOINT = "/jobs/list/v3";
-const JOB_COUNTS_ENDPOINT = "/jobs/list/v3/counts";
+const JOB_LIST_ENDPOINT = "/jobs";
 
 const LIST_CACHE_TTL_MS = 10 * 60_000;
 const LIST_CACHE_STALE_MS = 24 * 60 * 60_000;
 const LIST_CACHE_MAX_ENTRIES = 200;
-const LIST_CACHE_DB = "athens-job-search-v3";
+const LIST_CACHE_DB = "athens-job-search";
 const LIST_CACHE_STORE = "responses";
 type ListCacheEntry = { response: ListResponse; expiresAt: number; staleAt: number };
 const listCache = new Map<string, ListCacheEntry>();
 const listRequests = new Map<string, Promise<ListResponse>>();
-const pageCursors = new Map<string, Map<number, string | null>>();
 let listCacheDbPromise: ReturnType<typeof openDB> | null = null;
 
 function requestJobsPage(
   cacheKey: string,
-  body: Record<string, unknown>,
+  queryPath: string,
   request: ApiRequest,
 ): Promise<ListResponse> {
   const existing = listRequests.get(cacheKey);
@@ -85,9 +76,8 @@ function requestJobsPage(
   }, JOB_LIST_REQUEST_TIMEOUT_MS);
 
   const pending = retryTransient(
-    () => request(JOB_LIST_ENDPOINT, {
-      method: "POST",
-      body,
+    () => request(queryPath, {
+      method: "GET",
       signal: controller.signal,
     }) as Promise<ListResponse>,
     { signal: controller.signal, delaysMs: [300] },
@@ -166,7 +156,6 @@ async function clearPersistentListCache() {
 
 function invalidateJobListCaches() {
   listCache.clear();
-  pageCursors.clear();
   void clearPersistentListCache();
 }
 
@@ -186,68 +175,12 @@ function cacheListResponse(key: string, response: ListResponse) {
   }
 }
 
-function listCacheKey(body: Record<string, unknown>) {
-  return JSON.stringify(body);
+function listCacheKey(queryPath: string) {
+  return queryPath;
 }
 
-function cursorFamilyKey(body: Record<string, unknown>) {
-  const copy = { ...body };
-  delete copy.page;
-  delete copy.cursor;
-  return listCacheKey(copy);
-}
-
-function rememberNextCursor(body: Record<string, unknown>, page: number, response: ListResponse) {
-  const family = cursorFamilyKey(body);
-  const ledger = pageCursors.get(family) ?? new Map<number, string | null>([[1, null]]);
-  ledger.set(page + 1, response.hasMore && response.nextCursor ? response.nextCursor : "");
-  pageCursors.set(family, ledger);
-}
-
-async function resolvePageCursor(body: Record<string, unknown>, targetPage: number, request: ApiRequest) {
-  if (targetPage <= 1) return null;
-  const family = cursorFamilyKey(body);
-  const ledger = pageCursors.get(family) ?? new Map<number, string | null>([[1, null]]);
-  pageCursors.set(family, ledger);
-  if (ledger.has(targetPage)) {
-    const cursor = ledger.get(targetPage);
-    if (cursor === "") throw new Error("That Job Search page is no longer available");
-    return cursor ?? null;
-  }
-  const knownPages = [...ledger.keys()].filter((candidate) => candidate < targetPage).sort((a, b) => b - a);
-  let currentPage = knownPages[0] ?? 1;
-  let cursor = ledger.get(currentPage) ?? null;
-  if (cursor === "") throw new Error("That Job Search page is no longer available");
-  while (currentPage < targetPage) {
-    const requestBody = { ...body, page: currentPage };
-    if (cursor) requestBody.cursor = cursor;
-    else delete requestBody.cursor;
-    const key = `${family}:${currentPage}:${cursor || "first"}`;
-    const response = await requestJobsPage(key, requestBody, request);
-    if (!response?.success || !Array.isArray(response.data)) throw new Error("The jobs response was incomplete");
-    rememberNextCursor(body, currentPage, response);
-    cursor = pageCursors.get(family)?.get(currentPage + 1) ?? null;
-    if (cursor === "") throw new Error("That Job Search page is no longer available");
-    currentPage += 1;
-  }
-  return cursor;
-}
-
-function statusTabToApi(statusTab: JobStatusTab): { applied?: boolean; status?: string } {
-  if (statusTab === "posted") return { applied: false };
-  if (statusTab === "bid-ready") return { applied: true, status: "BidReady" };
-  if (statusTab === "bid-completed") return { applied: true, status: "BidCompleted" };
-  if (statusTab === "applied") return { applied: true, status: "Applied" };
-  if (statusTab === "scheduled") return { applied: true, status: "Scheduled" };
-  if (statusTab === "declined") return { applied: true, status: "Declined" };
-  return {};
-}
-
-function workModeToRemote(workMode: string): string | undefined {
-  if (workMode === "remote") return "Remote";
-  if (workMode === "hybrid") return "Hybrid";
-  if (workMode === "onsite") return "On-site";
-  return undefined;
+function statusTabToQuery(statusTab: JobStatusTab): string {
+  return statusTab;
 }
 
 /** Debounce only free-text search fields; other filters apply immediately. */
@@ -282,53 +215,28 @@ function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
   };
 }
 
-export function buildJobsListBody(
+/** Build GET /jobs query string from Job Search URL-style filters. */
+export function buildJobsListQuery(
   filters: JobSearchFilterState,
-  opts: { page: number; limit: number; applierName?: string; statusTab?: JobStatusTab },
-): Record<string, unknown> {
+  opts: { page: number; pageSize: number; statusTab?: JobStatusTab; profileId?: string },
+): string {
   const statusTab = opts.statusTab ?? filters.statusTab;
-  const body: Record<string, unknown> = {
-    q: filters.jobQuery.trim(),
-    sort: "newest",
-    page: opts.page,
-    limit: opts.limit,
-    jobSources: filters.source.length
-      ? filters.source.join(",")
-      : JobSourceTitles.join(","),
-  };
-  if (opts.applierName) body.applierName = opts.applierName;
-  if (filters.aiExtractedOnly) body.aiExtracted = true;
-
-  if (filters.companyQuery.trim()) body["company.name"] = filters.companyQuery.trim();
-  if (filters.location !== "all") body["details.position"] = filters.location;
-  const remote = workModeToRemote(filters.workMode);
-  if (remote) body["details.remote"] = remote;
-  if (filters.seniority.length) body["details.seniority"] = filters.seniority.join(",");
-  if (filters.industry !== "all") body["company.tags"] = filters.industry;
-  if (filters.postedFrom) body.postedAtFrom = filters.postedFrom;
-  if (filters.postedTo) body.postedAtTo = filters.postedTo;
-
-  Object.assign(body, statusTabToApi(statusTab));
-  return body;
-}
-
-/** Shared filter body for batched status counts (no sort/status tab). */
-export function buildJobsCountsBody(
-  filters: JobSearchFilterState,
-  applierName?: string,
-): Record<string, unknown> {
-  const body = buildJobsListBody(filters, {
-    page: 1,
-    limit: 1,
-    applierName,
-    statusTab: "all",
-  });
-  delete body.sort;
-  delete body.page;
-  delete body.limit;
-  delete body.applied;
-  delete body.status;
-  return body;
+  const params = new URLSearchParams();
+  params.set("status", statusTabToQuery(statusTab));
+  params.set("q", filters.jobQuery.trim());
+  params.set("company", filters.companyQuery.trim());
+  params.set(
+    "source",
+    filters.source.length ? filters.source.join(",") : "all",
+  );
+  params.set("postedFrom", filters.postedFrom);
+  params.set("postedTo", filters.postedTo);
+  params.set("sort", filters.sort || "newest");
+  params.set("aiExtracted", filters.aiExtractedOnly ? "1" : "0");
+  params.set("page", String(opts.page));
+  params.set("pageSize", String(opts.pageSize));
+  if (opts.profileId) params.set("profileId", opts.profileId);
+  return `${JOB_LIST_ENDPOINT}?${params.toString()}`;
 }
 
 function mapResponseGroups(
@@ -392,7 +300,7 @@ export function useJobsList(
   page = 1,
   pageSize = 25,
 ) {
-  const { post, request } = useApi(API_BASE);
+  const { request } = useApi(API_BASE);
   const { applier, applierReady } = useApplier();
 
   const [rawGroups, setRawGroups] = useState<CompanyJobGroup[]>([]);
@@ -407,7 +315,6 @@ export function useJobsList(
   const [error, setError] = useState<string | null>(null);
   const [staleResults, setStaleResults] = useState(false);
   const [retryRevision, setRetryRevision] = useState(0);
-  const [countsLoading, setCountsLoading] = useState(false);
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const rawGroupsRef = useRef<CompanyJobGroup[]>([]);
   const applierRef = useRef(applier);
@@ -426,25 +333,17 @@ export function useJobsList(
   );
 	const jobs = useMemo(() => groups.flatMap((group) => group.jobs), [groups]);
 
-  const listBody = useMemo(
+  const listQueryPath = useMemo(
     () =>
-      buildJobsListBody(debouncedFilters, {
+      buildJobsListQuery(debouncedFilters, {
         page,
-        limit: pageSize,
-        applierName: applier?.name,
+        pageSize,
+        profileId: applier?._id != null ? normalizeId(applier._id) : undefined,
       }),
-    [debouncedFilters, page, pageSize, applier?.name],
+    [debouncedFilters, page, pageSize, applier?._id],
   );
 
-  const countsBody = useMemo(
-    () => buildJobsCountsBody(debouncedFilters, applier?.name),
-    [debouncedFilters, applier?.name],
-  );
-
-  const currentQueryKey = listCacheKey(listBody);
-  const currentQueryKeyRef = useRef(currentQueryKey);
-  currentQueryKeyRef.current = currentQueryKey;
-  const countsKey = listCacheKey(countsBody);
+  const currentQueryKey = listCacheKey(listQueryPath);
   const loading =
     !applierReady ||
     isDebouncing ||
@@ -482,8 +381,6 @@ export function useJobsList(
       const responseTotal = res.pagination?.total
         ?? countTotal
         ?? ((page - 1) * pageSize + res.data.length + (res.hasMore ? 1 : 0));
-      // Catalog totals can diverge from the keyset page. An empty mid-page with a
-      // large total is a cursor/index failure — do not treat it as a settled hit.
       if (
         !allowEmptyMidPage
         && page > 1
@@ -495,11 +392,8 @@ export function useJobsList(
 			setRawGroups(mapResponseGroups(res.data, applierRef.current));
       setTotal(responseTotal);
 			setTotalJobs(res.pagination?.totalJobs ?? countTotal ?? responseTotal);
-      rememberNextCursor(listBody, page, res);
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
-        // Keep countsLoading for /counts to refine Applied/Bid under filters.
-        // List may embed provisional All/New only.
       }
       setSettledKey(currentQueryKey);
       return true;
@@ -507,7 +401,6 @@ export function useJobsList(
     setRequestInFlight(true);
     setError(null);
     setStaleResults(false);
-    // Drop cross-tab/page leftovers immediately so Applied does not keep showing New.
     if (!hasFreshCache) {
       setRawGroups([]);
       setTotal(0);
@@ -517,11 +410,9 @@ export function useJobsList(
 
     (async () => {
       try {
-        // Paint from memory/IDB if present, but never block the network list on IDB.
         const idbPromise = (!cached || cached.staleAt <= Date.now())
           ? readPersistentListResponse(cacheKey)
           : Promise.resolve(null);
-        const cursorPromise = resolvePageCursor(listBody, page, request);
 
         if (cached && !cancelled) {
           applyResponse(cached.response);
@@ -539,16 +430,9 @@ export function useJobsList(
           }
         }
 
-        const cursor = await cursorPromise;
-        const requestBody = { ...listBody };
-        if (cursor) requestBody.cursor = cursor;
-        else delete requestBody.cursor;
-        const res = await requestJobsPage(`${cacheKey}:${cursor || "first"}`, requestBody, request);
+        const res = await requestJobsPage(cacheKey, listQueryPath, request);
         if (cancelled) return;
         if (!applyResponse(res)) {
-          if (page > 1 && Array.isArray(res?.data) && res.data.length === 0) {
-            pageCursors.delete(cursorFamilyKey(listBody));
-          }
           throw new Error("The jobs response was incomplete");
         }
         cacheListResponse(cacheKey, res);
@@ -557,7 +441,6 @@ export function useJobsList(
         if ((e as Error)?.name === "AbortError") return;
         console.error(e);
         let showingFallback = false;
-        // Only reuse cache/previous rows for THIS query key — never another tab.
         if (cached && cached.staleAt > Date.now() && applyResponse(cached.response)) {
           showingFallback = true;
           setStaleResults(true);
@@ -583,7 +466,7 @@ export function useJobsList(
           toast.error("Failed to load jobs", {
             description: timedOut
               ? "The request timed out. Please try again."
-              : "Check that Athens-server is running and VITE_API_URL is set.",
+              : "Check that athens-backend is running and VITE_API_URL is set.",
           });
         }
       } finally {
@@ -593,44 +476,7 @@ export function useJobsList(
     return () => {
       cancelled = true;
     };
-  }, [currentQueryKey, retryRevision, request, applierReady, isDebouncing, listBody, page, pageSize, debouncedFilters.statusTab]);
-
-  useEffect(() => {
-    if (!applierReady || isDebouncing) return;
-    let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    const controller = new AbortController();
-    const loadCounts = async (attempt = 0) => {
-      // Soft refresh only — never blank badges while a successful list already rendered counts.
-      if (!cancelled && attempt === 0) setCountsLoading(true);
-      try {
-        const res = await retryTransient(
-          () => request(JOB_COUNTS_ENDPOINT, {
-            method: "POST",
-            body: countsBody,
-            signal: controller.signal,
-          }) as Promise<CountsResponse>,
-          { signal: controller.signal },
-        );
-        if (cancelled || !res?.success || !res.counts) return;
-        setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
-        if (res.warming && attempt < 4) {
-          retryTimer = setTimeout(() => void loadCounts(attempt + 1), 1_500);
-        }
-      } catch {
-        /* counts are optional; keep list-embedded badges */
-      } finally {
-        if (!cancelled) setCountsLoading(false);
-      }
-    };
-    void loadCounts();
-    return () => {
-      cancelled = true;
-      controller.abort();
-      if (retryTimer) clearTimeout(retryTimer);
-    };
-  }, [countsKey, applierReady, request, isDebouncing, countsBody]);
-
+  }, [currentQueryKey, retryRevision, request, applierReady, isDebouncing, listQueryPath, page, pageSize, debouncedFilters.statusTab]);
   const patchJob = useCallback(
     (updated: Job) => {
       const previousJob = rawGroupsRef.current
@@ -695,18 +541,15 @@ export function useJobsList(
 
   const refreshStatusCounts = useCallback(async () => {
     if (!applierReady) return;
-    setCountsLoading(true);
     try {
-      const res = (await post(JOB_COUNTS_ENDPOINT, countsBody)) as CountsResponse;
-      if (res?.success && res.counts) {
-        setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
+      const res = (await request(listQueryPath, { method: "GET" })) as ListResponse;
+      if (res?.success && res.statusCounts) {
+        setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
       }
     } catch {
       /* counts are optional */
-    } finally {
-      setCountsLoading(false);
     }
-  }, [applierReady, countsBody, post]);
+  }, [applierReady, listQueryPath, request]);
 
   const retry = useCallback(() => {
     setError(null);
@@ -723,86 +566,9 @@ export function useJobsList(
 		if (!group || memberLoadingIds.has(companyId)) return;
     const focusLoaded = !options.focusJobId || group.jobs.some((job) => job.id === options.focusJobId);
     if (group.nextMemberOffset == null && focusLoaded) return;
-    const queryKeyAtStart = currentQueryKey;
-    const requestToken = Symbol(companyId);
-    memberRequestTokensRef.current.set(companyId, requestToken);
-		setMemberLoadingIds((previous) => new Set(previous).add(companyId));
-		setMemberErrors((previous) => {
-      if (!previous[companyId]) return previous;
-      const next = { ...previous };
-      delete next[companyId];
-      return next;
-		});
-		try {
-			const cursor = memberCursorsRef.current.get(companyId) || null;
-			const response = (await request(
-	        JOB_LIST_ENDPOINT,
-	        {
-				method: "POST",
-				body: {
-					...listBody,
-					companyId,
-					limit: 10,
-					...(cursor ? { cursor } : {}),
-				},
-			})) as ListResponse;
-			if (
-        currentQueryKeyRef.current !== queryKeyAtStart ||
-        memberRequestTokensRef.current.get(companyId) !== requestToken
-      ) return undefined;
-			if (!response?.success || !Array.isArray(response.data)) {
-        throw new Error("The server could not load this company's roles.");
-      }
-			const memberOffset = group.jobs.length;
-			const loaded = [
-	        ...response.data.map((doc, index) => ({
-	          job: mapDocToJob(doc, applier),
-	          order: memberOffset + index,
-	        })),
-	      ];
-			memberCursorsRef.current.set(companyId, response.nextCursor || null);
-			setRawGroups((previous) => mergeCompanyMembers(
-	        previous,
-	        companyId,
-	        loaded,
-	        response.hasMore ? memberOffset + response.data.length : null,
-	      ));
-			setMemberErrors((previous) => {
-        if (!previous[companyId]) return previous;
-        const next = { ...previous };
-        delete next[companyId];
-        return next;
-      });
-	      return {
-				focusValid: !options.focusJobId
-					|| group.jobs.some((job) => job.id === options.focusJobId)
-					|| loaded.some(({ job }) => job.id === options.focusJobId)
-					|| response.hasMore === true,
-			};
-		} catch (error) {
-			if (
-        currentQueryKeyRef.current !== queryKeyAtStart ||
-        memberRequestTokensRef.current.get(companyId) !== requestToken
-      ) return undefined;
-			setMemberErrors((previous) => ({
-        ...previous,
-        [companyId]: error instanceof Error ? error.message : "Please try again.",
-      }));
-			toast.error("Could not load more roles", {
-				description: error instanceof Error ? error.message : "Please try again.",
-			});
-			return undefined;
-		} finally {
-			if (memberRequestTokensRef.current.get(companyId) === requestToken) {
-        memberRequestTokensRef.current.delete(companyId);
-        setMemberLoadingIds((previous) => {
-          const next = new Set(previous);
-          next.delete(companyId);
-          return next;
-        });
-      }
-		}
-	}, [applier, currentQueryKey, listBody, memberLoadingIds, rawGroups, request]);
+    // Company member paging is not part of the athens-backend GET /jobs MVP.
+    return { focusValid: focusLoaded };
+	}, [memberLoadingIds, rawGroups]);
 
   return {
     jobs,
@@ -815,7 +581,7 @@ export function useJobsList(
     retry,
     requestKey: currentQueryKey,
     resultsSettled: settledKey === currentQueryKey,
-    countsLoading: loading || countsLoading,
+    countsLoading: loading,
     page,
     pageSize,
     statusCounts,

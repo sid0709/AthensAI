@@ -12,11 +12,6 @@ export type JobSearchFilterState = {
   companyQuery: string;
   /** Empty = all sources */
   source: string[];
-  location: string;
-  workMode: string;
-  /** Empty = all seniority levels */
-  seniority: string[];
-  industry: string;
   postedFrom: string;
   postedTo: string;
   sort: JobSortKey;
@@ -31,10 +26,6 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
   jobQuery: "",
   companyQuery: "",
   source: [],
-  location: "all",
-  workMode: "all",
-  seniority: [],
-  industry: "all",
   postedFrom: "",
   postedTo: "",
   sort: "newest",
@@ -45,15 +36,6 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
 function matchesBaseFilters(job: Job, filters: JobSearchFilterState, includeStatus: boolean) {
   if (includeStatus && filters.statusTab !== "all" && job.status !== filters.statusTab) return false;
   if (filters.source.length && !filters.source.includes(job.source)) return false;
-  if (filters.location !== "all" && job.location !== filters.location) return false;
-  if (filters.workMode !== "all" && job.workMode !== filters.workMode) return false;
-  if (
-    filters.seniority.length &&
-    !filters.seniority.some((s) => job.seniority.toLowerCase().includes(s.toLowerCase()))
-  ) {
-    return false;
-  }
-  if (filters.industry !== "all" && !job.industries.includes(filters.industry)) return false;
 
   if (filters.jobQuery.trim()) {
     const q = filters.jobQuery.toLowerCase();
@@ -115,10 +97,6 @@ export function countActiveFilters(filters: JobSearchFilterState): number {
 export function countAttributeFilters(filters: JobSearchFilterState): number {
   let n = 0;
   if (filters.source.length) n++;
-  if (filters.location !== "all") n++;
-  if (filters.workMode !== "all") n++;
-  if (filters.seniority.length) n++;
-  if (filters.industry !== "all") n++;
   if (filters.postedFrom || filters.postedTo) n++;
   return n;
 }
@@ -127,10 +105,6 @@ export function clearAttributeFilters(filters: JobSearchFilterState): JobSearchF
   return {
     ...filters,
     source: [],
-    location: "all",
-    workMode: "all",
-    seniority: [],
-    industry: "all",
     postedFrom: "",
     postedTo: "",
   };
@@ -170,34 +144,6 @@ export function getActiveFilterChips(filters: JobSearchFilterState): ActiveFilte
       apply: (f) => ({ ...f, source: f.source.filter((s) => s !== src) }),
     });
   }
-  if (filters.location !== "all") {
-    chips.push({
-      id: "location",
-      label: filters.location,
-      apply: (f) => ({ ...f, location: "all" }),
-    });
-  }
-  if (filters.workMode !== "all") {
-    chips.push({
-      id: "workMode",
-      label: filters.workMode,
-      apply: (f) => ({ ...f, workMode: "all" }),
-    });
-  }
-  for (const level of filters.seniority) {
-    chips.push({
-      id: `seniority-${level}`,
-      label: level,
-      apply: (f) => ({ ...f, seniority: f.seniority.filter((s) => s !== level) }),
-    });
-  }
-  if (filters.industry !== "all") {
-    chips.push({
-      id: "industry",
-      label: filters.industry,
-      apply: (f) => ({ ...f, industry: "all" }),
-    });
-  }
   if (filters.postedFrom || filters.postedTo) {
     chips.push({
       id: "posted",
@@ -225,7 +171,7 @@ export function useJobSearchFilters(
   search: string,
   status: string,
   source: string,
-  location: string,
+  _location: string,
   sort: JobSortKey | "posted",
 ) {
   const filters: JobSearchFilterState = {
@@ -234,7 +180,6 @@ export function useJobSearchFilters(
     companyQuery: "",
     statusTab: status === "all" ? "all" : (status as JobStatusTab),
     source: source ? [source] : [],
-    location,
     sort: sort === "posted" ? "newest" : sort,
   };
   return filterJobs(JOBS, filters);

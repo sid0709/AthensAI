@@ -9,13 +9,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../../../../components/ui/sheet";
-import { AthensSelect, AthensMultiSelect, DatePicker } from "../../../../components/forms";
-import {
-  JOB_INDUSTRIES,
-  JOB_LOCATIONS,
-  JOB_SENIORITIES,
-  JOB_WORK_MODES,
-} from "../../../../data/jobs";
+import { AthensMultiSelect, DatePicker } from "../../../../components/forms";
 import { JobSourceTitles } from "../../../../data/jobs/pub";
 import type { JobSearchFilterState } from "../../../../hooks/useJobSearchFilters";
 import { clearAttributeFilters } from "../../../../hooks/useJobSearchFilters";
@@ -55,7 +49,7 @@ export function JobFiltersSheet({
       <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
         <SheetHeader>
           <SheetTitle>Attribute filters</SheetTitle>
-          <SheetDescription>Source, location, dates, and role attributes.</SheetDescription>
+          <SheetDescription>Source and posted date.</SheetDescription>
         </SheetHeader>
 
         <div className="px-4 space-y-6 pb-4">
@@ -83,53 +77,6 @@ export function JobFiltersSheet({
                 value={parseDateStr(filters.postedTo)}
                 onChange={(d) => patch({ postedTo: d ? format(d, "yyyy-MM-dd") : "" })}
                 placeholder="End date"
-              />
-            </div>
-          </Section>
-
-          <Section title="Location & mode">
-            <div className="grid grid-cols-1 gap-3">
-              <AthensSelect
-                label="Location"
-                value={filters.location}
-                onChange={(location) => patch({ location })}
-                options={JOB_LOCATIONS.map((l) => ({
-                  value: l,
-                  label: l === "all" ? "Any location" : l,
-                }))}
-              />
-              <AthensSelect
-                label="Work mode"
-                value={filters.workMode}
-                onChange={(workMode) => patch({ workMode })}
-                options={JOB_WORK_MODES.map((m) => ({
-                  value: m,
-                  label: m === "all" ? "Any mode" : m.charAt(0).toUpperCase() + m.slice(1),
-                }))}
-              />
-            </div>
-          </Section>
-
-          <Section title="Role attributes">
-            <div className="grid grid-cols-1 gap-3">
-              <AthensMultiSelect
-                label="Seniority"
-                values={filters.seniority}
-                onChange={(seniority) => patch({ seniority })}
-                placeholder="All levels"
-                options={JOB_SENIORITIES.filter((s) => s !== "all").map((s) => ({
-                  value: s,
-                  label: s,
-                }))}
-              />
-              <AthensSelect
-                label="Industry"
-                value={filters.industry}
-                onChange={(industry) => patch({ industry })}
-                options={JOB_INDUSTRIES.map((i) => ({
-                  value: i,
-                  label: i === "all" ? "All industries" : i,
-                }))}
               />
             </div>
           </Section>
