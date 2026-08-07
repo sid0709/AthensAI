@@ -1,4 +1,5 @@
 import type { Job } from '@prisma/client';
+import type { JobListRow } from '../constants/job-list.select';
 
 type JobMetadata = {
   companyLogo?: string;
@@ -7,14 +8,16 @@ type JobMetadata = {
   legacyId?: string;
 };
 
+type JobListSource = JobListRow | Job;
+
 function asMetadata(raw: unknown): JobMetadata {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   return raw;
 }
 
-/** Map Prisma Job → shape expected by Athens `mapDocToJob`. */
+/** Map Prisma Job (list or detail) → shape expected by Athens `mapDocToJob`. */
 export function mapJobToListDoc(
-  job: Job,
+  job: JobListSource,
   viewerStatus = 'posted',
 ): Record<string, unknown> {
   const metadata = asMetadata(job.metadata);
@@ -23,6 +26,10 @@ export function mapJobToListDoc(
     : [];
   const logo =
     typeof metadata.companyLogo === 'string' ? metadata.companyLogo.trim() : '';
+  const description =
+    'description' in job && typeof job.description === 'string'
+      ? job.description
+      : undefined;
 
   return {
     _id: job.id,
@@ -37,7 +44,7 @@ export function mapJobToListDoc(
     postedAt: job.postedAt.toISOString(),
     applyLink: job.applyLink ?? undefined,
     companyLink: job.companyLink ?? undefined,
-    description: job.description ?? undefined,
+    ...(description ? { description } : {}),
     aiSkills: job.aiSkills ?? undefined,
     aiSkillStatus: job.aiSkillStatus ?? undefined,
     details: metadata.details ?? undefined,

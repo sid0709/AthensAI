@@ -53,6 +53,8 @@ model Job {
 
   statuses JobStatus[]
 
+  /// Unfiltered Job Search: orderBy postedAt desc without a leading filter key.
+  @@index([postedAt(sort: Desc)])
   @@index([titleReviewLabel, postedAt(sort: Desc)])
   @@index([titleReviewLabel, source, postedAt(sort: Desc)])
   @@index([sourceCatalog, titleReviewLabel, postedAt(sort: Desc)])

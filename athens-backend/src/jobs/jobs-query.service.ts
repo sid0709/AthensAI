@@ -8,6 +8,8 @@ import {
   PAGE_SIZE_MAX,
   type JobStatusTab,
 } from './constants/job-list.constants';
+import { JOB_LIST_SELECT } from './constants/job-list.select';
+import { JobCatalogTotalService } from './job-catalog-total.service';
 import { JobStatusCountsService } from './job-status-counts.service';
 import { JobStatusService } from './job-status.service';
 import { mapJobToListDoc } from './mappers/job-list.mapper';
@@ -40,10 +42,15 @@ function parseDayEnd(isoDate: string): Date | null {
   return new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
 }
 
+function isEmptyWhere(where: Prisma.JobWhereInput): boolean {
+  return Object.keys(where).length === 0;
+}
+
 @Injectable()
 export class JobsQueryService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly catalogTotal: JobCatalogTotalService,
     private readonly statusCounts: JobStatusCountsService,
     private readonly jobStatuses: JobStatusService,
   ) {}
@@ -59,28 +66,38 @@ export class JobsQueryService {
 
     // Status tabs other than All need job_statuses joins — not wired yet.
     if (status !== 'all') {
-      const counts = await this.statusCounts.getTabCounts(profileId, 0);
+      const peek = this.catalogTotal.peek() ?? 0;
+      const counts = await this.statusCounts.getTabCounts(profileId, peek);
       return this.emptyPage(page, pageSize, counts);
     }
 
     const where = this.buildWhere(query);
-    const [total, rows] = await Promise.all([
-      this.prisma.job.count({ where }),
+    const unfiltered = isEmptyWhere(where);
+    const peekTotal = unfiltered ? (this.catalogTotal.peek() ?? 0) : 0;
+
+    // One Mongo round-trip wave: page rows + total + badge counts.
+    const [total, rows, tabCounts] = await Promise.all([
+      unfiltered
+        ? this.catalogTotal.getUnfiltered()
+        : this.prisma.job.count({ where }),
       this.prisma.job.findMany({
         where,
+        select: JOB_LIST_SELECT,
         orderBy: { postedAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
+      this.statusCounts.getTabCounts(profileId, peekTotal),
     ]);
 
-    const [tabCounts, stateByJobId] = await Promise.all([
-      this.statusCounts.getTabCounts(profileId, total),
-      this.jobStatuses.statesForJobs(
-        profileId,
-        rows.map((row) => row.id),
-      ),
-    ]);
+    if (unfiltered && tabCounts.all !== total) {
+      tabCounts.all = total;
+    }
+
+    const stateByJobId = await this.jobStatuses.statesForJobs(
+      profileId,
+      rows.map((row) => row.id),
+    );
 
     const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
     return {
