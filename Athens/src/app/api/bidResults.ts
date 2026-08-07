@@ -187,8 +187,86 @@ export async function fetchBidResultAiUsage(
   const res = await fetch(
     `${API_BASE}/bid-results/${encodeURIComponent(id)}/ai-usage?${params}`,
   );
-  const data = await parseJson<{ rows?: BidAiUsageRow[] }>(res);
-  return Array.isArray(data.rows) ? data.rows : [];
+  const data = await parseJson<{ rows?: unknown[] }>(res);
+  if (!Array.isArray(data.rows)) return [];
+  return data.rows
+    .map((row) => normalizeBidAiUsageRow(row))
+    .filter((row): row is BidAiUsageRow => row != null);
+}
+
+function normalizeBidAiUsageRow(raw: unknown): BidAiUsageRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const nested =
+    row.usage && typeof row.usage === "object" && !Array.isArray(row.usage)
+      ? (row.usage as Record<string, unknown>)
+      : null;
+  const u = nested ?? row;
+  const n = (v: unknown) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
+  const inputTokens = n(u.inputTokens ?? u.promptTokens ?? u.prompt_tokens);
+  const outputTokens = n(u.outputTokens ?? u.completionTokens ?? u.completion_tokens);
+  const totalTokens = n(u.totalTokens ?? u.total_tokens ?? inputTokens + outputTokens);
+  const costRaw = u.costUsd ?? u.cost;
+  const id =
+    typeof row.id === "string" && row.id.trim()
+      ? row.id.trim()
+      : typeof row.requestId === "string" && row.requestId.trim()
+        ? row.requestId.trim()
+        : `usage-${Math.random().toString(36).slice(2)}`;
+  return {
+    id,
+    feature: typeof row.feature === "string" ? row.feature : null,
+    provider:
+      typeof row.provider === "string"
+        ? row.provider
+        : typeof u.provider === "string"
+          ? u.provider
+          : null,
+    requestedModel:
+      typeof row.requestedModel === "string"
+        ? row.requestedModel
+        : typeof u.requestedModel === "string"
+          ? u.requestedModel
+          : typeof u.model === "string"
+            ? u.model
+            : null,
+    billedModel:
+      typeof row.billedModel === "string"
+        ? row.billedModel
+        : typeof u.billedModel === "string"
+          ? u.billedModel
+          : typeof u.model === "string"
+            ? u.model
+            : null,
+    inputTokens,
+    cachedInputTokens: n(u.cachedInputTokens ?? u.cachedTokens),
+    outputTokens,
+    totalTokens,
+    costUsd:
+      typeof costRaw === "number" && Number.isFinite(costRaw) ? costRaw : null,
+    success: row.success !== false && u.success !== false,
+    durationMs:
+      typeof row.durationMs === "number" && Number.isFinite(row.durationMs)
+        ? row.durationMs
+        : null,
+    applierName: typeof row.applierName === "string" ? row.applierName : null,
+    jobId: typeof row.jobId === "string" ? row.jobId : null,
+    requestId:
+      typeof row.requestId === "string"
+        ? row.requestId
+        : typeof u.requestId === "string"
+          ? u.requestId
+          : null,
+    createdAt:
+      typeof row.createdAt === "string"
+        ? row.createdAt
+        : typeof row.at === "string"
+          ? row.at
+          : null,
+  };
 }
 
 export async function patchBidResultStatus(

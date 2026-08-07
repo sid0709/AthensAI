@@ -900,9 +900,9 @@ export function BidDetailPane({
                           <div className="bm-ai-usage-meta">
                             {row.billedModel || row.requestedModel || "—"}
                             {" · "}
-                            {row.totalTokens.toLocaleString()} tokens
+                            {(row.totalTokens ?? 0).toLocaleString()} tokens
                             {" · "}
-                            {formatUsd(row.costUsd)}
+                            {formatUsd(row.costUsd ?? null)}
                             {row.success ? "" : " · failed"}
                             {row.requestId && savedAiRequestIds.has(row.requestId)
                               ? " · result saved"

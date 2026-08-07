@@ -15,10 +15,8 @@ import {
   REJECTED_LIST_LIMIT,
 } from './constants/bid-status.constants';
 import { asDate } from './lib/iso';
-import {
-  mapTaskToBidResult,
-  stripBidResultIdPrefix,
-} from './mappers/bid-result.mapper';
+import { mapTaskToBidResult, stripBidResultIdPrefix } from './mappers/bid-result.mapper';
+import { rowFromVendorEmbeddedUsage } from './mappers/bid-ai-usage.mapper';
 import { deriveBidUiStatus } from './mappers/bid-ui-status';
 import { VendorTaskService } from './vendor-task.service';
 
@@ -238,23 +236,42 @@ export class BidResultsService {
   async aiUsage(applierName: string, id: string) {
     const task = await this.resolveTask(applierName, id);
     const rows: Record<string, unknown>[] = [];
-    if (task.analysisUsage && typeof task.analysisUsage === 'object') {
-      rows.push({
-        feature: 'ask-ai',
-        usage: task.analysisUsage,
-        requestId: task.analysisRequestId,
-        at: task.analyzedAt,
-      });
-    }
-    if (task.recommendUsage && typeof task.recommendUsage === 'object') {
-      rows.push({
-        feature: 'recommend-resume',
-        usage: task.recommendUsage,
-        requestId: task.recommendRequestId,
-        at: task.recommendedAt,
-      });
-    }
-    return { success: true as const, rows };
+
+    const analysis = rowFromVendorEmbeddedUsage({
+      id: `analysis:${task.id}`,
+      feature: 'bid-job-analyze',
+      usage: task.analysisUsage,
+      requestId: task.analysisRequestId,
+      at: task.analyzedAt,
+      applierName: task.applierName,
+      jobId: task.jobId,
+    });
+    if (analysis) rows.push(analysis);
+
+    const recommend = rowFromVendorEmbeddedUsage({
+      id: `recommend:${task.id}`,
+      feature: 'bid-recommend-resume',
+      usage: task.recommendUsage,
+      requestId: task.recommendRequestId,
+      at: task.recommendedAt,
+      applierName: task.applierName,
+      jobId: task.jobId,
+    });
+    if (recommend) rows.push(recommend);
+
+    rows.sort((a, b) => {
+      const aAt = String(a.createdAt || '');
+      const bAt = String(b.createdAt || '');
+      return bAt.localeCompare(aAt);
+    });
+
+    return {
+      success: true as const,
+      jobId: task.jobId,
+      applierName: task.applierName,
+      rows,
+      total: rows.length,
+    };
   }
 
   async updateStatus(input: {
