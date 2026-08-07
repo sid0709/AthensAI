@@ -90,10 +90,9 @@ export class RegisterJobService {
 
     const data = toJobCreateData(row, companyId);
 
-    await this.prisma.$transaction([
-      this.prisma.job.create({ data }),
-      this.prisma.tempJob.delete({ where: { id: row.id } }),
-    ]);
+    // Avoid $transaction — standalone Mongo has no replica-set transactions.
+    await this.prisma.job.create({ data });
+    await this.prisma.tempJob.delete({ where: { id: row.id } });
 
     await this.companies.attachJob({
       companyId,

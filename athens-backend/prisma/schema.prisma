@@ -28,9 +28,8 @@ model AccountInfo {
   /// AI Mail labeling: { [labelPath: string]: description }
   mailAiLabelDefinitions Json?
 
-  jobStatusCounts JobStatusCounts?
-  jobStatuses     JobStatus[]
-  resumes         Resume[]
+  jobStatuses JobStatus[]
+  resumes    Resume[]
 
   @@index([usernameKey])
   @@map("account_info")
@@ -145,23 +144,6 @@ model JobStatus {
   @@index([profileId, state])
   @@index([jobId])
   @@map("job_statuses")
-}
-
-/// One document per profile. Job Search status-tab badges read this at O(1).
-model JobStatusCounts {
-  id           String   @id @default(auto()) @map("_id") @db.ObjectId
-  profileId    String   @unique @db.ObjectId
-  posted       Int      @default(0)
-  bidReady     Int      @default(0)
-  bidCompleted Int      @default(0)
-  applied      Int      @default(0)
-  scheduled    Int      @default(0)
-  declined     Int      @default(0)
-  updatedAt    DateTime @updatedAt
-
-  account AccountInfo @relation(fields: [profileId], references: [id])
-
-  @@map("job_status_counts")
 }
 
 /// Uploaded / generated resume library. Binary lives in Firebase Storage;

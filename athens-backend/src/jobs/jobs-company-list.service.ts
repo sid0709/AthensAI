@@ -4,7 +4,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { COMPANY_MEMBERS_PAGE_SIZE } from './constants/job-list.constants';
 import { JOB_LIST_SELECT } from './constants/job-list.select';
 import type { ListJobsQueryDto } from './dto/list-jobs.query.dto';
-import { buildJobsMongoMatch } from './lib/jobs-mongo-match';
+import {
+  buildJobsMongoMatch,
+  type JobsIdConstraint,
+} from './lib/jobs-mongo-match';
 import {
   mapCompanyGroupRow,
   type CompanyGroupSource,
@@ -87,8 +90,17 @@ export class JobsCompanyListService {
     page: number,
     pageSize: number,
     profileId: string,
+    idConstraint: JobsIdConstraint = null,
   ) {
-    const match = buildJobsMongoMatch(query);
+    if (
+      idConstraint &&
+      'includeIds' in idConstraint &&
+      idConstraint.includeIds.length === 0
+    ) {
+      return { data: [] as Record<string, unknown>[], companyTotal: 0, jobTotal: 0 };
+    }
+
+    const match = buildJobsMongoMatch(query, idConstraint);
     const skip = (page - 1) * pageSize;
 
     const raw = await this.prisma.$runCommandRaw({

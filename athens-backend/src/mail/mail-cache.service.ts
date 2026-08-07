@@ -8,59 +8,66 @@ import {
   type MailMessageDoc,
 } from './mappers/folder-mapper';
 
+/** Must match @@map on MailMessage / MailSyncState. */
+const MAIL_MESSAGES = 'mail_messages';
+const MAIL_SYNC_STATE = 'mail_sync_state';
+
 @Injectable()
 export class MailCacheService {
   constructor(private readonly prisma: PrismaService) {}
 
   async upsertMessages(messages: MailMessageDoc[]) {
     for (const m of messages) {
-      await this.prisma.mailMessage.upsert({
-        where: {
-          applierName_mailbox_uid: {
-            applierName: m.applierName,
-            mailbox: m.mailbox,
-            uid: m.uid,
-          },
-        },
-        create: {
-          applierName: m.applierName,
-          mailbox: m.mailbox,
-          uid: m.uid,
-          messageId: m.messageId,
-          fromName: m.from.name,
-          fromEmail: m.from.email,
-          toJson: m.to as unknown as Prisma.InputJsonValue,
-          ccJson: m.cc as unknown as Prisma.InputJsonValue,
-          subject: m.subject,
-          preview: m.preview,
-          bodyText: m.bodyText || null,
-          bodyHtml: m.bodyHtml,
-          date: m.date,
-          seen: m.flags.seen,
-          flagged: m.flags.flagged,
-          gmailLabels: m.gmailLabels,
-          folder: m.folder,
-          labels: m.labels,
-          hasBody: m.hasBody,
-          syncedAt: m.syncedAt,
-        },
-        update: {
-          messageId: m.messageId,
-          fromName: m.from.name,
-          fromEmail: m.from.email,
-          toJson: m.to as unknown as Prisma.InputJsonValue,
-          ccJson: m.cc as unknown as Prisma.InputJsonValue,
-          subject: m.subject,
-          preview: m.preview || undefined,
-          date: m.date,
-          seen: m.flags.seen,
-          flagged: m.flags.flagged,
-          gmailLabels: m.gmailLabels,
-          folder: m.folder,
-          labels: m.labels,
-          syncedAt: m.syncedAt,
-        },
+      const key = {
+        applierName: m.applierName,
+        mailbox: m.mailbox,
+        uid: m.uid,
+      };
+      const create = {
+        ...key,
+        messageId: m.messageId,
+        fromName: m.from.name,
+        fromEmail: m.from.email,
+        toJson: m.to as unknown as Prisma.InputJsonValue,
+        ccJson: m.cc as unknown as Prisma.InputJsonValue,
+        subject: m.subject,
+        preview: m.preview,
+        bodyText: m.bodyText || null,
+        bodyHtml: m.bodyHtml,
+        date: m.date,
+        seen: m.flags.seen,
+        flagged: m.flags.flagged,
+        gmailLabels: m.gmailLabels,
+        folder: m.folder,
+        labels: m.labels,
+        hasBody: m.hasBody,
+        syncedAt: m.syncedAt,
+      };
+      const update = {
+        messageId: m.messageId,
+        fromName: m.from.name,
+        fromEmail: m.from.email,
+        toJson: m.to as unknown as Prisma.InputJsonValue,
+        ccJson: m.cc as unknown as Prisma.InputJsonValue,
+        subject: m.subject,
+        preview: m.preview || undefined,
+        date: m.date,
+        seen: m.flags.seen,
+        flagged: m.flags.flagged,
+        gmailLabels: m.gmailLabels,
+        folder: m.folder,
+        labels: m.labels,
+        syncedAt: m.syncedAt,
+      };
+
+      const existing = await this.prisma.mailMessage.findUnique({
+        where: { applierName_mailbox_uid: key },
       });
+      if (existing) {
+        await this.updateMessageDoc(existing.id, key, update);
+      } else {
+        await this.createMessageDoc(key, create, update);
+      }
     }
   }
 
@@ -70,15 +77,21 @@ export class MailCacheService {
     patch: { bodyText: string; bodyHtml: string | null; preview: string },
     mailbox = ALL_MAIL_PATH,
   ) {
-    await this.prisma.mailMessage.updateMany({
-      where: { applierName, mailbox, uid },
-      data: {
-        bodyText: patch.bodyText,
-        bodyHtml: patch.bodyHtml,
-        preview: patch.preview || undefined,
-        hasBody: true,
-      },
-    });
+    const data = {
+      bodyText: patch.bodyText,
+      bodyHtml: patch.bodyHtml,
+      preview: patch.preview || undefined,
+      hasBody: true,
+    };
+    try {
+      await this.prisma.mailMessage.updateMany({
+        where: { applierName, mailbox, uid },
+        data,
+      });
+    } catch (error) {
+      if (!isReplicaSetRequired(error)) throw error;
+      await this.rawUpdate(MAIL_MESSAGES, { applierName, mailbox, uid }, data);
+    }
   }
 
   async updateMessageFlags(
@@ -103,10 +116,15 @@ export class MailCacheService {
     }
     if (patch.labels) data.labels = patch.labels;
     if (Object.keys(data).length === 0) return;
-    await this.prisma.mailMessage.updateMany({
-      where: { applierName, mailbox, uid },
-      data,
-    });
+    try {
+      await this.prisma.mailMessage.updateMany({
+        where: { applierName, mailbox, uid },
+        data,
+      });
+    } catch (error) {
+      if (!isReplicaSetRequired(error)) throw error;
+      await this.rawUpdate(MAIL_MESSAGES, { applierName, mailbox, uid }, data);
+    }
   }
 
   async getMessage(applierName: string, uid: number, mailbox?: string) {
@@ -168,9 +186,10 @@ export class MailCacheService {
       );
     }
 
-    const total = opts.unlabeled || opts.label
-      ? rows.length
-      : await this.prisma.mailMessage.count({ where });
+    const total =
+      opts.unlabeled || opts.label
+        ? rows.length
+        : await this.prisma.mailMessage.count({ where });
 
     if (opts.unlabeled || opts.label) {
       const start = (page - 1) * pageSize;
@@ -195,35 +214,172 @@ export class MailCacheService {
       folderCountsJson?: Prisma.InputJsonValue;
     },
   ) {
-    return this.prisma.mailSyncState.upsert({
-      where: { applierName },
-      create: {
-        applierName,
-        highestUid: patch.highestUid ?? 0,
-        lowestUid: patch.lowestUid ?? 0,
-        lastSyncAt: patch.lastSyncAt,
-        syncing: patch.syncing ?? false,
-        gmailLabelsJson: patch.gmailLabelsJson,
-        folderCountsJson: patch.folderCountsJson,
-      },
-      update: {
-        ...(typeof patch.highestUid === 'number'
-          ? { highestUid: patch.highestUid }
-          : {}),
-        ...(typeof patch.lowestUid === 'number'
-          ? { lowestUid: patch.lowestUid }
-          : {}),
-        ...(patch.lastSyncAt ? { lastSyncAt: patch.lastSyncAt } : {}),
-        ...(typeof patch.syncing === 'boolean'
-          ? { syncing: patch.syncing }
-          : {}),
-        ...(patch.gmailLabelsJson !== undefined
-          ? { gmailLabelsJson: patch.gmailLabelsJson }
-          : {}),
-        ...(patch.folderCountsJson !== undefined
-          ? { folderCountsJson: patch.folderCountsJson }
-          : {}),
-      },
+    const create = {
+      applierName,
+      highestUid: patch.highestUid ?? 0,
+      lowestUid: patch.lowestUid ?? 0,
+      lastSyncAt: patch.lastSyncAt ?? null,
+      syncing: patch.syncing ?? false,
+      gmailLabelsJson: patch.gmailLabelsJson ?? null,
+      folderCountsJson: patch.folderCountsJson ?? null,
+    };
+    const update = omitUndefined({
+      highestUid: patch.highestUid,
+      lowestUid: patch.lowestUid,
+      lastSyncAt: patch.lastSyncAt,
+      syncing: patch.syncing,
+      gmailLabelsJson: patch.gmailLabelsJson,
+      folderCountsJson: patch.folderCountsJson,
     });
+
+    const existing = await this.prisma.mailSyncState.findUnique({
+      where: { applierName },
+    });
+    if (existing) {
+      try {
+        return await this.prisma.mailSyncState.update({
+          where: { id: existing.id },
+          data: update,
+        });
+      } catch (error) {
+        if (!isReplicaSetRequired(error)) throw error;
+        await this.rawUpdate(MAIL_SYNC_STATE, { _id: { $oid: existing.id } }, update);
+        const row = await this.getSyncState(applierName);
+        if (!row) throw new Error('Failed to load updated mail sync state');
+        return row;
+      }
+    }
+
+    try {
+      return await this.prisma.mailSyncState.create({ data: create });
+    } catch (error) {
+      if (isUniqueConflict(error)) {
+        try {
+          return await this.prisma.mailSyncState.update({
+            where: { applierName },
+            data: update,
+          });
+        } catch (updateError) {
+          if (!isReplicaSetRequired(updateError)) throw updateError;
+          await this.rawUpdate(MAIL_SYNC_STATE, { applierName }, update);
+          const row = await this.getSyncState(applierName);
+          if (!row) throw new Error('Failed to load updated mail sync state');
+          return row;
+        }
+      }
+      if (!isReplicaSetRequired(error)) throw error;
+      await this.rawInsert(MAIL_SYNC_STATE, create);
+      const row = await this.getSyncState(applierName);
+      if (!row) throw new Error('Failed to load created mail sync state');
+      return row;
+    }
   }
+
+  private async createMessageDoc(
+    key: { applierName: string; mailbox: string; uid: number },
+    create: Record<string, unknown>,
+    update: Record<string, unknown>,
+  ) {
+    try {
+      await this.prisma.mailMessage.create({
+        data: create as Prisma.MailMessageCreateInput,
+      });
+    } catch (error) {
+      if (isUniqueConflict(error)) {
+        await this.prisma.mailMessage.update({
+          where: { applierName_mailbox_uid: key },
+          data: update as Prisma.MailMessageUpdateInput,
+        });
+        return;
+      }
+      if (!isReplicaSetRequired(error)) throw error;
+      try {
+        await this.rawInsert(MAIL_MESSAGES, create);
+      } catch (rawError) {
+        if (!isDuplicateKey(rawError)) throw rawError;
+        await this.rawUpdate(MAIL_MESSAGES, key, update);
+      }
+    }
+  }
+
+  private async updateMessageDoc(
+    id: string,
+    key: { applierName: string; mailbox: string; uid: number },
+    update: Record<string, unknown>,
+  ) {
+    try {
+      await this.prisma.mailMessage.update({
+        where: { id },
+        data: update as Prisma.MailMessageUpdateInput,
+      });
+    } catch (error) {
+      if (!isReplicaSetRequired(error)) throw error;
+      await this.rawUpdate(MAIL_MESSAGES, key, update);
+    }
+  }
+
+  private async rawInsert(collection: string, data: Record<string, unknown>) {
+    await this.prisma.$runCommandRaw({
+      insert: collection,
+      documents: [toMongoDoc({ ...omitUndefined(data), updatedAt: new Date() })],
+      ordered: true,
+    } as unknown as Prisma.InputJsonObject);
+  }
+
+  private async rawUpdate(
+    collection: string,
+    query: Record<string, unknown>,
+    data: Record<string, unknown>,
+  ) {
+    const set = toMongoDoc({
+      ...omitUndefined(data),
+      updatedAt: new Date(),
+    });
+    await this.prisma.$runCommandRaw({
+      update: collection,
+      updates: [{ q: query, u: { $set: set }, multi: false }],
+    } as unknown as Prisma.InputJsonObject);
+  }
+}
+
+function omitUndefined(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/** Prisma $runCommandRaw JSON must use Extended JSON for BSON dates. */
+function toMongoDoc(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (v instanceof Date) {
+      out[k] = { $date: v.toISOString() };
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function isReplicaSetRequired(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /replica set/i.test(message);
+}
+
+function isUniqueConflict(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === 'P2002'
+  );
+}
+
+function isDuplicateKey(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /E11000|duplicate key/i.test(message) || isUniqueConflict(error);
 }

@@ -1,9 +1,15 @@
 import { Injectable } from '@nestjs/common';
+import { deleteManyWithFallback, objectIdIn } from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompanyCatalogTotalService } from './company-catalog-total.service';
 import { CompanyMembershipService } from './company-membership.service';
 import { JobCatalogTotalService } from './job-catalog-total.service';
 import { normalizeJobIds } from './lib/normalize-job-ids';
+
+/** Must match `@@map` on Job / TempJob / JobStatus in prisma/schema.prisma. */
+const JOBS_COLLECTION = 'jobs';
+const TEMP_JOBS_COLLECTION = 'temp_jobs';
+const JOB_STATUSES_COLLECTION = 'job_statuses';
 
 export type HardDeleteResult = {
   success: true;
@@ -49,11 +55,22 @@ export class JobHardDeleteService {
       };
     }
 
-    await this.prisma.jobStatus.deleteMany({
-      where: { jobId: { in: deletedIds } },
-    });
+    await deleteManyWithFallback(
+      this.prisma,
+      JOB_STATUSES_COLLECTION,
+      { jobId: objectIdIn(deletedIds) },
+      () =>
+        this.prisma.jobStatus.deleteMany({
+          where: { jobId: { in: deletedIds } },
+        }),
+    );
     await this.companies.detachJobs(existing);
-    await this.prisma.job.deleteMany({ where: { id: { in: deletedIds } } });
+    await deleteManyWithFallback(
+      this.prisma,
+      JOBS_COLLECTION,
+      { _id: objectIdIn(deletedIds) },
+      () => this.prisma.job.deleteMany({ where: { id: { in: deletedIds } } }),
+    );
 
     this.jobTotals.invalidate();
     this.companyTotals.invalidate();
@@ -90,7 +107,13 @@ export class JobHardDeleteService {
       };
     }
 
-    await this.prisma.tempJob.deleteMany({ where: { id: { in: deletedIds } } });
+    await deleteManyWithFallback(
+      this.prisma,
+      TEMP_JOBS_COLLECTION,
+      { _id: objectIdIn(deletedIds) },
+      () =>
+        this.prisma.tempJob.deleteMany({ where: { id: { in: deletedIds } } }),
+    );
 
     return {
       success: true,

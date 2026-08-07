@@ -12,7 +12,7 @@ import { ExposeJobsController } from './expose-jobs.controller';
 import { JobCatalogTotalService } from './job-catalog-total.service';
 import { JobDedupeService } from './job-dedupe.service';
 import { JobHardDeleteService } from './job-hard-delete.service';
-import { JobStatusCountsService } from './job-status-counts.service';
+import { JobStatusMutateService } from './job-status-mutate.service';
 import { JobStatusService } from './job-status.service';
 import { JobsBulkController } from './jobs-bulk.controller';
 import { JobsCompanyListService } from './jobs-company-list.service';
@@ -20,6 +20,7 @@ import { JobsController } from './jobs.controller';
 import { JobsDetailService } from './jobs-detail.service';
 import { JobsQueryService } from './jobs-query.service';
 import { JobsRemoveController } from './jobs-remove.controller';
+import { JobsStatusController } from './jobs-status.controller';
 import { JobsService } from './jobs.service';
 import { RegisterJobService } from './register-job.service';
 import { SaveJobService } from './save-job.service';
@@ -40,6 +41,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     ExposeJobsController,
     JobsBulkController,
     JobsRemoveController,
+    JobsStatusController,
     JobsController,
   ],
   providers: [
@@ -50,8 +52,8 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     JobCatalogTotalService,
     CompanyCatalogTotalService,
     CompanyMembershipService,
-    JobStatusCountsService,
     JobStatusService,
+    JobStatusMutateService,
     JobHardDeleteService,
     JobDedupeService,
     TempJobQueueService,

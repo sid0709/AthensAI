@@ -32,13 +32,31 @@ function parseDayEnd(isoDate: string): Date | null {
   return new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
 }
 
+export type JobsIdConstraint =
+  | { includeIds: string[] }
+  | { excludeIds: string[] }
+  | null;
+
 /** Mongo $match for filtered company grouping (mirrors JobsQueryService.buildWhere). */
 export function buildJobsMongoMatch(
   query: ListJobsQueryDto,
+  idConstraint: JobsIdConstraint = null,
 ): Record<string, unknown> {
   const match: Record<string, unknown> = {
     companyId: { $exists: true, $ne: null },
   };
+
+  if (idConstraint && 'includeIds' in idConstraint) {
+    match._id = {
+      $in: idConstraint.includeIds.map((id) => ({ $oid: id })),
+    };
+  } else if (idConstraint && 'excludeIds' in idConstraint) {
+    if (idConstraint.excludeIds.length) {
+      match._id = {
+        $nin: idConstraint.excludeIds.map((id) => ({ $oid: id })),
+      };
+    }
+  }
 
   const q = String(query.q ?? '').trim();
   if (q) {

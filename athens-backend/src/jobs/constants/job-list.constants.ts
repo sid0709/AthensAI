@@ -1,4 +1,4 @@
-/** Application-status tabs on Job Search. Only `all` is backed yet. */
+/** Application-status tabs on Job Search. */
 export const JOB_STATUS_TABS = [
   'all',
   'posted',

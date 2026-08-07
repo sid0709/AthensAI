@@ -60,6 +60,12 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 |--------|------|-------|
 | GET | `/api/jobs` | Query: `status`, `q`, `company`, `source`, `postedFrom`, `postedTo`, `sort`, `aiExtracted`, `page`, `pageSize`, `profileId` |
 | GET | `/api/jobs/:id` | Full job (incl. `description`) for View JD. Query: `applierName`, `profileId` |
+| GET | `/api/jobs/:id/viewer-status` | Reconcile profile status. Query: `applierName` |
+| POST | `/api/jobs/:id/apply` | Mark applied → upsert `job_statuses.state=applied` |
+| POST | `/api/jobs/:id/status` | Body `{ applierName, status: Applied\|Scheduled\|Declined }` |
+| POST | `/api/jobs/:id/unapply` | Clear applied → delete `job_statuses` row (back to New) |
+| POST | `/api/jobs/:id/bid-status` | Body `{ applierName, status: BidReady\|BidCompleted\|clear }` — `clear` deletes row |
+| POST | `/api/jobs/bid-status/bulk` | Body `{ applierName, status: BidReady\|clear, jobs: [{ id }] }` |
 | POST | `/api/jobs/bulk` | Extension scrape ingest — `{ jobs: [...] }` → prenorm → dedupe → `temp_jobs` |
 | POST | `/api/expose/jobs` | LI-scrapper ingest — single job or `{ jobs: [...] }` → prenorm → dedupe → `temp_jobs` |
 | POST | `/api/expose/jobs/check` | LI-scrapper — `{ jobID }` exists in `temp_jobs` or `jobs` via `metadata.legacyId` |
@@ -102,10 +108,10 @@ API `techStack` ↔ Mongo `title`. Skills in `analysis.skills`; syncs `account_i
 - Queue membership is derived from `temp_jobs` (`titleReviewLabel` / `aiSkillStatus` / `metadata.titleReview`) — there is no `athens_metadata` collection.
 - Review Title must approve a title before AI Analyze (`titleReviewLabel=APPROVED` + open `aiSkillStatus`). AI Analyze writes `metadata.details` + `aiSkills`, then `promoteIfReady`.
 - LLM calls use the signed-in profile’s encrypted API key + default model. Throughput knobs: `LLM_*` / `JOB_TITLE_REVIEW_*` / `JOB_AI_ANALYZE_*` in `.env.example`.
-- Only `status=all` returns catalog rows today; other status tabs return an empty page (list-by-status not wired yet).
+- Status tabs filter via `job_statuses` for the given `profileId` (`posted` = jobs with no status row).
 - List responses **omit** `description` (lean `select` + `@@index([postedAt])`). Unfiltered totals are cached in-process (~60s); filtered lists still `count`.
 - Filters and offset pagination (`page` / `pageSize`) hit Prisma against `AthensDB.jobs`.
-- With `profileId` (`account_info._id`): badge counts load from `job_status_counts` at O(1); page rows hydrate `viewerStatus` from `job_statuses` (one doc per profile × job).
+- With `profileId` (`account_info._id`): badge counts aggregate from `job_statuses`; page rows hydrate `viewerStatus` from the same collection (one doc per profile × job). Absence of a row means New (`posted`).
 - Response: `{ success, data, pagination, statusCounts, hasMore }`.
 
 ## Mail (Gmail IMAP/SMTP)
@@ -194,10 +200,9 @@ One-shot reshape + move incomplete catalog rows: `npm run migrate:temp-jobs`. In
 
 | Collection | Shape |
 |------------|--------|
-| `job_statuses` | One document per **profile × job** (`profileId` + `jobId` unique). Never shared across users. |
-| `job_status_counts` | One document per **profile** (`profileId` unique). Status-tab badges. |
+| `job_statuses` | One document per **profile × job** (`profileId` + `jobId` unique). Never shared across users. `state` is `bid-ready` \| `bid-completed` \| `applied` \| `scheduled` \| `declined`. Missing row = New (`posted`). |
 
-Incrementing counts when a new catalog job is ingested (touch every profile) is deferred.
+Status-tab badges are computed with `groupBy` on `job_statuses` (no denormalized counter collection).
 
 After schema changes: `npm run prisma:generate` and `npm run prisma:push`.
 

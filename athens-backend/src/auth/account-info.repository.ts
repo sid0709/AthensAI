@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AccountInfo, Prisma } from '@prisma/client';
+import { isReplicaSetRequired } from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -135,9 +136,4 @@ export class AccountInfoRepository {
       });
     }
   }
-}
-
-function isReplicaSetRequired(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /replica set/i.test(message);
 }
