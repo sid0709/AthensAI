@@ -19,6 +19,7 @@ export type RecommendResumesOptions = {
   replaceExisting?: boolean;
 };
 
+/** Max jobs per recommend-resumes request (matches backend ArrayMaxSize). */
 const MAX_BULK = 40;
 
 /** True when the job already has a Library (or customized) recommendation. */
@@ -29,9 +30,18 @@ export function jobHasResumeRecommendation(job: Job): boolean {
   return false;
 }
 
+function chunkJobs<T>(items: T[], size: number): T[][] {
+  if (size <= 0 || items.length === 0) return items.length ? [items] : [];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
 /**
  * Bid Ready Library resume recommend — calls POST /jobs/recommend-resumes
- * and patches local job rows with the returned stacks.
+ * (chunked to MAX_BULK) and patches local job rows with the returned stacks.
  */
 export function useRecommendResumes(onPatchJob?: (job: Job) => void) {
   const { applier } = useApplier();
@@ -46,16 +56,12 @@ export function useRecommendResumes(onPatchJob?: (job: Job) => void) {
         return;
       }
       const replaceExisting = options?.replaceExisting !== false;
-      const jobs = selected.slice(0, MAX_BULK);
-      const jobIds = jobs
-        .map((job) => String(job.backendId || job.id || "").trim())
-        .filter(Boolean);
-      if (!jobIds.length) {
+      const jobs = selected.filter((job) =>
+        Boolean(String(job.backendId || job.id || "").trim()),
+      );
+      if (!jobs.length) {
         toast.error("Select at least one job.");
         return;
-      }
-      if (selected.length > MAX_BULK) {
-        toast.message(`Recommending the first ${MAX_BULK} selected jobs.`);
       }
 
       if (!replaceExisting) {
@@ -66,40 +72,52 @@ export function useRecommendResumes(onPatchJob?: (job: Job) => void) {
         }
       }
 
+      const total = jobs.length;
       setRunning(true);
-      setProgress({ done: 0, total: jobIds.length, succeeded: 0, failed: 0 });
+      setProgress({ done: 0, total, succeeded: 0, failed: 0 });
+
+      let succeeded = 0;
+      let skipped = 0;
+      let failed = 0;
+      let done = 0;
+
       try {
-        const res = await recommendResumesFromLibrary({
-          applierName: name,
-          jobIds,
-          replaceExisting,
-        });
-        const rows = Array.isArray(res.results) ? res.results : [];
-        const byId = new Map(rows.map((row) => [row.jobId, row]));
-
-        for (const job of jobs) {
-          const id = String(job.backendId || job.id || "").trim();
-          const row = byId.get(id) as RecommendResumeResultRow | undefined;
-          if (!row?.ok || row.skipped) continue;
-          onPatchJob?.({
-            ...job,
-            recommendedResumeStack: row.recommendedResumeStack || null,
-            recommendedResumeReason: row.recommendedResumeReason || null,
-            useCustomizedResume: Boolean(row.useCustomizedResume),
-            recommendWarning: row.warning || null,
-            recommendedAt: new Date().toISOString(),
+        for (const batch of chunkJobs(jobs, MAX_BULK)) {
+          const jobIds = batch.map((job) =>
+            String(job.backendId || job.id || "").trim(),
+          );
+          const res = await recommendResumesFromLibrary({
+            applierName: name,
+            jobIds,
+            replaceExisting,
           });
-        }
+          const rows = Array.isArray(res.results) ? res.results : [];
+          const byId = new Map(rows.map((row) => [row.jobId, row]));
 
-        const succeeded = Number(res.succeeded ?? rows.filter((r) => r.ok && !r.skipped).length);
-        const skipped = Number(res.skipped ?? rows.filter((r) => r.ok && r.skipped).length);
-        const failed = Number(res.failed ?? rows.filter((r) => !r.ok).length);
-        setProgress({
-          done: jobIds.length,
-          total: jobIds.length,
-          succeeded,
-          failed,
-        });
+          for (const job of batch) {
+            const id = String(job.backendId || job.id || "").trim();
+            const row = byId.get(id) as RecommendResumeResultRow | undefined;
+            if (!row?.ok || row.skipped) continue;
+            onPatchJob?.({
+              ...job,
+              recommendedResumeStack: row.recommendedResumeStack || null,
+              recommendedResumeReason: row.recommendedResumeReason || null,
+              useCustomizedResume: Boolean(row.useCustomizedResume),
+              recommendWarning: row.warning || null,
+              recommendedAt: new Date().toISOString(),
+            });
+          }
+
+          succeeded += Number(
+            res.succeeded ?? rows.filter((r) => r.ok && !r.skipped).length,
+          );
+          skipped += Number(
+            res.skipped ?? rows.filter((r) => r.ok && r.skipped).length,
+          );
+          failed += Number(res.failed ?? rows.filter((r) => !r.ok).length);
+          done += batch.length;
+          setProgress({ done, total, succeeded, failed });
+        }
 
         if (failed === 0 && skipped === 0) {
           toast.success(
