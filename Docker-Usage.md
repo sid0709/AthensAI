@@ -6,15 +6,16 @@ Workflow: [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publ
 
 | Event | Build & push to Docker Hub | Deploy to VPS |
 |-------|----------------------------|---------------|
-| PR opened/updated → `main`/`master` | Yes (`:pr-N`, `:pr-N-<sha>`) | No |
-| Push / merge to `main`/`master` | Yes (`:latest`, `:sha-<sha>`, …) | Yes (immutable `:sha-<sha>`) |
-| Manual `workflow_dispatch` | Yes (same as main) | Yes |
+| PR opened/updated → `main`/`master`/`stage` | Yes (`:pr-N`, `:pr-N-<sha>`) | No |
+| Push / merge to `main`/`master` | Yes (`:latest`, `:sha-<sha>`, …) → **Production** | Yes (immutable `:sha-<sha>`) |
+| Push / merge to `stage` | Yes (`:stage`, `:sha-<sha>`, …) → **Stage** | Yes (immutable `:sha-<sha>`) |
+| Manual `workflow_dispatch` | Yes (tags follow the branch you run from) | Yes |
 
-Deploy SSHs into the VPS, syncs [`docker/deploy-remote.sh`](docker/deploy-remote.sh), pulls the application image, recreates container `nextoffer`, and waits for athens-backend `/readyz` plus public `/api/status/current`.
+Deploy SSHs into the VPS for the matching GitHub Environment, syncs [`docker/deploy-remote.sh`](docker/deploy-remote.sh), pulls the application image, recreates container `nextoffer`, and waits for athens-backend `/readyz` plus public `/api/status/current`.
 
-### Required GitHub secrets
+### Required GitHub Environment secrets
 
-Repo **Settings → Secrets and variables → Actions**:
+Repo **Settings → Environments** → **Production** (for `main`/`master`) and **Stage** (for `stage`):
 
 | Secret | Purpose |
 |--------|---------|
@@ -24,9 +25,11 @@ Repo **Settings → Secrets and variables → Actions**:
 | `VPS_USER` | SSH user (e.g. `root`) |
 | `VPS_SSH_KEY` | Private ed25519 key authorized on the VPS |
 
-Optional: `VPS_SSH_PORT` (default `22`), repo variable `DOCKER_IMAGE` (default `omnimuh730/nextoffer`), `PUBLIC_ORIGIN` for extension bake URLs.
+Optional: `VPS_SSH_PORT` (default `22`), `PUBLIC_ORIGIN` for extension bake URLs (different per environment when Stage and Production use different hosts), repo variable `DOCKER_IMAGE` (default `omnimuh730/nextoffer`).
 
-App secrets (`DATABASE_URL`, Firebase credentials, encryption key) live only on the VPS in `/opt/nextoffer/deploy.env` — see [`docker/deploy.env.example`](docker/deploy.env.example). Do not put them in GitHub Actions.
+Restrict each environment’s **Deployment branches** to the matching branch (`main` for Production, `stage` for Stage).
+
+App secrets (`DATABASE_URL`, Firebase credentials, encryption key) live only on each VPS in `/opt/nextoffer/deploy.env` — see [`docker/deploy.env.example`](docker/deploy.env.example). Do not put them in GitHub Actions.
 
 ### Rollback
 
@@ -36,7 +39,7 @@ On the VPS (or via SSH):
 /opt/nextoffer/deploy.sh sha-<oldshortsha>
 ```
 
-Or re-run a previous successful **Docker publish** workflow from the Actions UI (`workflow_dispatch`).
+Or re-run a previous successful **Docker publish** workflow from the Actions UI (`workflow_dispatch`) on the same branch.
 
 ---
 

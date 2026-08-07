@@ -1,7 +1,11 @@
-# Build NextOffer and push to Docker Hub when a PR targets main or legacy master.
-# On a main/master push or workflow_dispatch, also SSH-deploy to the VPS.
+# Build NextOffer and push to Docker Hub when a PR targets main, stage, or legacy master.
+# On a main/stage/master push or workflow_dispatch, also SSH-deploy to the VPS.
 #
-# Required repo secrets (Settings → Secrets and variables → Actions):
+# GitHub Environments (Settings → Environments) supply secrets per target:
+#   stage branch  → Stage environment
+#   main / master → Production environment
+#
+# Required environment secrets:
 #   DOCKERHUB_USERNAME  — e.g. omnimuh730
 #   DOCKERHUB_TOKEN     — Docker Hub access token (not your password)
 #   VPS_HOST            — e.g. 83.229.67.146
@@ -10,7 +14,7 @@
 #
 # Optional secrets / variables:
 #   VPS_SSH_PORT        — default 22
-#   DOCKER_IMAGE        — default: omnimuh730/nextoffer
+#   DOCKER_IMAGE        — default: omnimuh730/nextoffer (repo variable)
 #   GRAFANA_ADMIN_PASSWORD — optional; otherwise generated and persisted on the VPS
 #   PUBLIC_ORIGIN       — public web origin baked into extension zips
 #                         (e.g. https://sid.example.com or http://IP:9030).
@@ -20,9 +24,9 @@ name: Docker publish
 
 on:
   pull_request:
-    branches: [main, master]
+    branches: [main, master, stage]
   push:
-    branches: [main, master]
+    branches: [main, master, stage]
   workflow_dispatch:
     inputs:
       bootstrap_firebase_runtime:
@@ -42,6 +46,8 @@ jobs:
   build-and-push:
     name: Build & push
     runs-on: ubuntu-latest
+    # PR builds use the base branch; pushes / workflow_dispatch use the ref branch.
+    environment: ${{ (github.event_name == 'pull_request' && github.base_ref || github.ref_name) == 'stage' && 'Stage' || 'Production' }}
     permissions:
       contents: read
       packages: write
@@ -49,6 +55,7 @@ jobs:
     outputs:
       sha_short: ${{ steps.meta.outputs.sha_short }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
+      deploy_environment: ${{ steps.meta.outputs.deploy_environment }}
 
     steps:
       - name: Checkout
@@ -110,16 +117,32 @@ jobs:
           set -euo pipefail
           IMAGE="${IMAGE_NAME}"
           SHA_SHORT="$(git rev-parse --short HEAD)"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BRANCH="${{ github.base_ref }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+          fi
+          if [[ "${BRANCH}" == "stage" ]]; then
+            DEPLOY_ENVIRONMENT="Stage"
+          else
+            DEPLOY_ENVIRONMENT="Production"
+          fi
           TAGS=()
 
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             PR="${{ github.event.pull_request.number }}"
-            # PR builds: do not overwrite :latest — use PR + sha tags for testing.
+            # PR builds: do not overwrite live tags — use PR + sha tags for testing.
             TAGS+=("${IMAGE}:pr-${PR}")
             TAGS+=("${IMAGE}:pr-${PR}-${SHA_SHORT}")
             IMAGE_TAG="pr-${PR}-${SHA_SHORT}"
+          elif [[ "${BRANCH}" == "stage" ]]; then
+            # Stage: rolling :stage tag + immutable sha/date. Never overwrite :latest.
+            TAGS+=("${IMAGE}:stage")
+            TAGS+=("${IMAGE}:sha-${SHA_SHORT}")
+            TAGS+=("${IMAGE}:$(date -u +%Y.%m.%d)-${SHA_SHORT}")
+            IMAGE_TAG="sha-${SHA_SHORT}"
           else
-            # main/master push / workflow_dispatch: update the live tags.
+            # Production (main/master): update the live tags.
             TAGS+=("${IMAGE}:latest")
             TAGS+=("${IMAGE}:sha-${SHA_SHORT}")
             TAGS+=("${IMAGE}:amd64")
@@ -134,8 +157,10 @@ jobs:
             echo "EOF"
             echo "sha_short=${SHA_SHORT}"
             echo "image_tag=${IMAGE_TAG}"
+            echo "deploy_environment=${DEPLOY_ENVIRONMENT}"
           } >> "$GITHUB_OUTPUT"
 
+          echo "Deploy environment: ${DEPLOY_ENVIRONMENT}"
           echo "Will push:"
           printf '  %s\n' "${TAGS[@]}"
 
@@ -197,6 +222,7 @@ jobs:
             echo "|---|---|"
             echo "| Event | \`${{ github.event_name }}\` |"
             echo "| Ref | \`${{ github.ref_name }}\` |"
+            echo "| Environment | \`${{ steps.meta.outputs.deploy_environment }}\` |"
             echo "| Commit | \`${{ steps.meta.outputs.sha_short }}\` |"
             echo "| Deploy tag | \`${{ steps.meta.outputs.image_tag }}\` |"
             echo ""
@@ -205,7 +231,7 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo '```'
             echo ""
-            echo "Pull: \`docker pull ${IMAGE_NAME}:latest\` (main/master) or \`docker pull ${IMAGE_NAME}:pr-N\` (PR)."
+            echo "Pull: \`docker pull ${IMAGE_NAME}:latest\` (Production), \`docker pull ${IMAGE_NAME}:stage\` (Stage), or \`docker pull ${IMAGE_NAME}:pr-N\` (PR)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
@@ -213,8 +239,9 @@ jobs:
     needs: build-and-push
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    environment: ${{ needs.build-and-push.outputs.deploy_environment }}
     concurrency:
-      group: nextoffer-vps-deploy
+      group: nextoffer-vps-deploy-${{ needs.build-and-push.outputs.deploy_environment }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -572,6 +599,7 @@ jobs:
             echo ""
             echo "| | |"
             echo "|---|---|"
+            echo "| Environment | \`${{ needs.build-and-push.outputs.deploy_environment }}\` |"
             echo "| Host | \`${{ secrets.VPS_HOST }}\` |"
             echo "| Image | \`${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}\` |"
             echo "| Commit | \`${{ needs.build-and-push.outputs.sha_short }}\` |"
