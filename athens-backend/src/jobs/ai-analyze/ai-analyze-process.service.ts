@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { ProfileLlmAuth } from '../../ai/auth/profile-llm-auth.service';
 import { AI_ANALYZE_JD_MAX_CHARS } from '../../ai/constants/ai-concurrency.constants';
-import { OpenAiChatService } from '../../ai/openai/openai-chat.service';
+import { AiChatWithUsageService } from '../../ai-usage/ai-chat-with-usage.service';
+import { AI_USAGE_FEATURES } from '../../ai-usage/constants/ai-usage.constants';
 import type { ClaimedTempJob } from '../claim/claim-meta';
 import { AiAnalyzeClaimService } from '../claim/ai-analyze-claim.service';
 import { normalizeJobScrape } from '../mappers/job-metadata.mapper';
@@ -20,7 +21,7 @@ export type AiAnalyzeBatchStats = {
 @Injectable()
 export class AiAnalyzeProcessService {
   constructor(
-    private readonly chat: OpenAiChatService,
+    private readonly chat: AiChatWithUsageService,
     private readonly claims: AiAnalyzeClaimService,
     private readonly promotion: TempJobPromotionService,
   ) {}
@@ -54,6 +55,12 @@ export class AiAnalyzeProcessService {
           { role: 'system', content: JOB_AI_ANALYZE_PROMPT },
           { role: 'user', content: JSON.stringify({ jobs: payload }) },
         ],
+        usageMeta: {
+          feature: AI_USAGE_FEATURES.jobAiAnalyze,
+          applierName: input.auth.applierName,
+          runId: input.sessionId,
+          path: '/jobs/ai-analyze',
+        },
       });
       content = result.content;
     } catch (err) {

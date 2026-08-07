@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { AiUsageModule } from '../ai-usage/ai-usage.module';
 import { BidsModule } from '../bids/bids.module';
 import { MailModule } from '../mail/mail.module';
 import { PersonalModule } from '../personal/personal.module';
@@ -15,7 +16,14 @@ import { LensJobsService } from './lens-jobs.service';
 import { LensSessionService } from './lens-session.service';
 
 @Module({
-  imports: [PrismaModule, BidsModule, AiModule, PersonalModule, MailModule],
+  imports: [
+    PrismaModule,
+    BidsModule,
+    AiModule,
+    AiUsageModule,
+    PersonalModule,
+    MailModule,
+  ],
   controllers: [
     AthensLensAuthController,
     AthensLensAskAiController,

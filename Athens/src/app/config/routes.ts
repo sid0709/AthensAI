@@ -9,7 +9,6 @@ export const PATHS = {
   jobs: "/jobs",
   titleReview: "/title-review",
   resumes: "/resumes",
-  agents: "/agents",
   mail: "/mail",
   calendar: "/calendar",
   notion: "/notion",
@@ -43,7 +42,6 @@ const VIEW_TO_BASE: Record<View, string> = {
   "job-board": PATHS.jobs,
   "title-review": PATHS.titleReview,
   resumes: PATHS.resumes,
-  agents: PATHS.agents,
   mail: PATHS.mail,
   calendar: PATHS.calendar,
   notion: PATHS.notion,
@@ -91,7 +89,6 @@ export function viewFromPathname(pathname: string): View {
   if (p.startsWith(PATHS.jobs)) return "job-board";
   if (p.startsWith(PATHS.titleReview)) return "title-review";
   if (p.startsWith(PATHS.resumes)) return "resumes";
-  if (p.startsWith(PATHS.agents)) return "agents";
   if (p.startsWith(PATHS.mail)) return "mail";
   if (p.startsWith(PATHS.calendar)) return "calendar";
   if (p.startsWith(PATHS.notion)) return "notion";

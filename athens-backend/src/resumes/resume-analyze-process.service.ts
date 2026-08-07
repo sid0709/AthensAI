@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { Resume, Prisma } from '@prisma/client';
 import type { ProfileLlmAuth } from '../ai/auth/profile-llm-auth.service';
-import { OpenAiChatService } from '../ai/openai/openai-chat.service';
+import { AiChatWithUsageService } from '../ai-usage/ai-chat-with-usage.service';
+import { AI_USAGE_FEATURES } from '../ai-usage/constants/ai-usage.constants';
 import { RESUME_SKILL_ANALYSIS_PROMPT } from './analyze/resume-skill-analysis.prompt';
 import { parseSkillProfileJson } from './analyze/resume-skill-parse';
 import { RESUME_ANALYZE_TEXT_MAX_CHARS } from './constants/resume-skill.constants';
@@ -19,7 +20,7 @@ export type ResumeAnalyzeItemResult = {
 @Injectable()
 export class ResumeAnalyzeProcessService {
   constructor(
-    private readonly chat: OpenAiChatService,
+    private readonly chat: AiChatWithUsageService,
     private readonly writes: ResumeWriteService,
   ) {}
 
@@ -70,6 +71,11 @@ export class ResumeAnalyzeProcessService {
             }),
           },
         ],
+        usageMeta: {
+          feature: AI_USAGE_FEATURES.resumeAnalyze,
+          applierName: auth.applierName,
+          path: '/resumes/analyze',
+        },
       });
 
       const skills = parseSkillProfileJson(result.content);

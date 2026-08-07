@@ -1,4 +1,3 @@
-import type { ApplyRunSummary } from "../../../api/avalonLog";
 import type { DailyApplicationRow, FrequencyDayRow, JobSourceSummaryRow } from "../../../api/reports";
 import { mergeJobStatusRows } from "@nextoffer/shared/job-status";
 import { formatMonthLabel, formatWeekLabel, isWithinRange } from "./dateRange";
@@ -12,7 +11,6 @@ export type StageOverTime = { m: string; applied: number; screening: number; int
 export type VelocityPoint = { w: string; response: number; interview: number; offer: number };
 export type CohortPoint = { m: string; c1: number; c2: number; c3: number };
 export type MatchPoint = { match: number; likelihood: number; company: string };
-export type AgentStatusSlice = { name: string; v: number; c: string };
 
 const ROLE_COLORS: Record<string, string> = {
   Frontend: "#6c5ce7",
@@ -21,14 +19,6 @@ const ROLE_COLORS: Record<string, string> = {
   DevOps: "#f472b6",
   Backend: "#60a5fa",
   Other: "#94a3b8",
-};
-
-const AGENT_STATUS_COLORS: Record<string, string> = {
-  applied: "#6c5ce7",
-  succeeded: "#2dd4bf",
-  failed: "#f472b6",
-  running: "#f59e0b",
-  other: "#94a3b8",
 };
 
 const DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -190,13 +180,14 @@ export function computeStageOverTime(
   return [...monthMap.values()];
 }
 
-export function computeHeatmap(freq: FrequencyDayRow[], runs: ApplyRunSummary[], startDate: string, endDate: string): HeatmapRow[] {
+export function computeHeatmap(freq: FrequencyDayRow[], startDate: string, endDate: string): HeatmapRow[] {
   const grid: Record<string, HeatmapRow> = {};
   for (const day of DAY_ORDER) {
     grid[day] = { day, h6: 0, h9: 0, h12: 0, h15: 0, h18: 0, h21: 0 };
   }
 
   for (const row of freq) {
+    if (!isWithinRange(row._id, startDate, endDate)) continue;
     const d = new Date(`${row._id}T12:00:00`);
     const day = DAY_NAMES[d.getDay()];
     if (!grid[day]) continue;
@@ -204,17 +195,6 @@ export function computeHeatmap(freq: FrequencyDayRow[], runs: ApplyRunSummary[],
       const bucket = HOUR_BUCKETS.find((b) => hour >= b.min && hour < b.max);
       if (bucket) grid[day][bucket.key] += count;
     }
-  }
-
-  for (const run of runs) {
-    const iso = run.startedAt;
-    if (!isWithinRange(iso, startDate, endDate)) continue;
-    const d = new Date(iso);
-    const day = DAY_NAMES[d.getDay()];
-    if (!grid[day]) continue;
-    const hour = d.getHours();
-    const bucket = HOUR_BUCKETS.find((b) => hour >= b.min && hour < b.max);
-    if (bucket) grid[day][bucket.key] += 1;
   }
 
   return DAY_ORDER.map((day) => grid[day]).filter(Boolean);
@@ -289,23 +269,6 @@ export function computeMatchScatter(jobDocs: Record<string, unknown>[], applierI
     points.push({ match: Math.round(score), likelihood, company: String(company) });
   }
   return points.slice(0, 40);
-}
-
-export function computeAgentStatusPie(runs: ApplyRunSummary[], startDate: string, endDate: string): AgentStatusSlice[] {
-  const counts = new Map<string, number>();
-  for (const run of runs) {
-    if (!isWithinRange(run.startedAt, startDate, endDate)) continue;
-    const raw = (run.status || "other").toLowerCase();
-    const key = raw.includes("applied") || raw.includes("success") ? "succeeded" : raw.includes("fail") ? "failed" : raw.includes("run") ? "running" : "other";
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const total = [...counts.values()].reduce((a, b) => a + b, 0);
-  if (total === 0) return [];
-  return [...counts.entries()].map(([name, n]) => ({
-    name: name.charAt(0).toUpperCase() + name.slice(1),
-    v: Math.round((n / total) * 100),
-    c: AGENT_STATUS_COLORS[name] ?? AGENT_STATUS_COLORS.other,
-  }));
 }
 
 export function sumAppliedInRange(daily: DailyApplicationRow[]): number {

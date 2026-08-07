@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recreate the Firestore-first NextOffer container on the VPS.
+# Recreate the athens-backend NextOffer container on the VPS.
 set -euo pipefail
 
 IMAGE_DEFAULT="${DOCKER_IMAGE:-omnimuh730/nextoffer}"
@@ -7,7 +7,7 @@ TAG_OR_REF="${1:-latest}"
 DEPLOY_ENV="${DEPLOY_ENV:-/opt/nextoffer/deploy.env}"
 CONTAINER_NAME="${CONTAINER_NAME:-nextoffer}"
 MONITORING_NETWORK="${MONITORING_NETWORK:-athens-monitoring}"
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8979/readyz}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8980/readyz}"
 STATUS_URL="${STATUS_URL:-http://127.0.0.1:9030/api/status/current}"
 HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-36}"
 HEALTH_SLEEP_SEC="${HEALTH_SLEEP_SEC:-5}"
@@ -19,6 +19,7 @@ source "$DEPLOY_ENV"
 set +a
 
 : "${API_KEYS_ENCRYPTION_KEY:?API_KEYS_ENCRYPTION_KEY must be set in $DEPLOY_ENV}"
+: "${DATABASE_URL:?DATABASE_URL must be set in $DEPLOY_ENV}"
 : "${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID must be set in $DEPLOY_ENV}"
 : "${FIREBASE_STORAGE_BUCKET:?FIREBASE_STORAGE_BUCKET must be set in $DEPLOY_ENV}"
 : "${FIREBASE_SECRET_HOST_PATH:?FIREBASE_SECRET_HOST_PATH must be set in $DEPLOY_ENV}"
@@ -43,12 +44,12 @@ docker run -d \
 	--add-host=host.docker.internal:host-gateway \
 	--env-file "$DEPLOY_ENV" \
 	-p 127.0.0.1:9030:80 \
-	-p 127.0.0.1:8979:8979 \
-	-p 127.0.0.1:3920:3920 \
-	-v nextoffer-puppeteer:/data/puppeteer \
+	-p 127.0.0.1:8980:8980 \
 	-v "${FIREBASE_SECRET_HOST_PATH}:/run/secrets/firebase-service-account.json:ro" \
 	-e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json \
+	-e PORT=8980 \
 	-e METRICS_PORT=9101 \
+	-e BACKGROUND_WORKERS_MODE=embedded \
 	"$IMAGE_REF"
 
 wait_for_url() {
@@ -66,9 +67,9 @@ wait_for_url "$HEALTH_URL"
 wait_for_url "$STATUS_URL"
 
 docker exec "$CONTAINER_NAME" node --input-type=module -e '
-	const response = await fetch("http://127.0.0.1:8979/api/status/current", { signal: AbortSignal.timeout(5000) });
+	const response = await fetch("http://127.0.0.1:8980/api/status/current", { signal: AbortSignal.timeout(5000) });
 	const payload = await response.json();
-	const required = ["athens-api", "firestore-tasks", "algolia-sync"];
+	const required = ["athens-api"];
 	const components = new Map((payload.components || []).map((item) => [item.component, item]));
 	if (!response.ok || !required.every((id) => components.has(id))) process.exit(1);
 '

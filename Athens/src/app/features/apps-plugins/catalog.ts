@@ -6,7 +6,7 @@ export type AppPlugin = {
   version: string;
   downloadUrl: string;
   iconSrc: string;
-  accent: "indigo" | "teal";
+  accent: "indigo" | "teal" | "amber";
   badges: string[];
   highlights: string[];
   pairsWith?: { label: string; href: string };
@@ -32,22 +32,40 @@ export const APPS_CATALOG: AppPlugin[] = [
     pairsWith: { label: "Bid Management", href: "/bid-management" },
   },
   {
-    id: "avalon",
-    name: "Project Avalon",
-    tagline: "Remote browser control for auto-apply",
+    id: "extension",
+    name: "Extension",
+    tagline: "Job-market scraper for Athens ingest",
     description:
-      "Relay-powered Chrome extension that lets Athens Agents scan, analyze, and inject applications through your real browser session.",
-    version: "0.1.0",
-    downloadUrl: "/downloads/avalon-extension.zip",
-    iconSrc: "/apps/avalon.png",
+      "Chrome extension that scrapes job boards and posts bulk listings into Athens via /api/jobs/bulk.",
+    version: "2.1.1",
+    downloadUrl: "/downloads/extension.zip",
+    iconSrc: "/apps/extension.png",
     accent: "teal",
-    badges: ["Chrome MV3", "Developer mode", "Agents"],
+    badges: ["Chrome MV3", "Developer mode", "Ingest"],
     highlights: [
-      "Pairs with Avalon Controller in Agents",
-      "Keeps your logged-in browser session",
-      "Relay health + profile sign-in built in",
+      "Bulk job ingest into AthensDB",
+      "Tracks scrape progress in the side panel",
+      "Pairs with Job Search in Athens",
     ],
-    pairsWith: { label: "Agents", href: "/agents" },
+    pairsWith: { label: "Job Search", href: "/job-search" },
+  },
+  {
+    id: "li-scrapper",
+    name: "LI-scrapper",
+    tagline: "LinkedIn job scrape → Athens expose API",
+    description:
+      "Chrome extension that collects LinkedIn job posts and sends them to Athens via /api/expose/jobs.",
+    version: "1.0.0",
+    downloadUrl: "/downloads/li-scrapper-extension.zip",
+    iconSrc: "/apps/li-scrapper.png",
+    accent: "amber",
+    badges: ["Chrome MV3", "Developer mode", "LinkedIn"],
+    highlights: [
+      "Expose-jobs ingest path",
+      "Deduped check before insert",
+      "Pack-time API host baked for your VPS",
+    ],
+    pairsWith: { label: "Job Search", href: "/job-search" },
   },
 ];
 

@@ -17,24 +17,16 @@ import { changePassword, deleteAccount } from "../../../services/profileApi";
 import { clearResumeStorage } from "../../../services/resumeStorage";
 
 /** Client keys tied to the signed-in applier — clear on account wipe. */
-async function clearApplierLocalData(applierName: string, profileId: unknown) {
+async function clearApplierLocalData(applierName: string) {
   const keysToRemove: string[] = [
     "athens_auth_user",
     "athens_auth_expires_at",
     "athens-profile",
-    "athens-agent-sessions",
-    "athens-avalon-session",
-    "athens-agent-job-budget-usd",
-    "athens-agent-allow-window-focus",
     "athens-resume-ai-defaults",
     "athens-job-bookmarks",
   ];
   if (applierName) {
     keysToRemove.push(`resumeGeneratorConfig:${applierName}`);
-    keysToRemove.push(`athens-agent-queue-${applierName}`);
-  }
-  if (profileId != null && String(profileId)) {
-    keysToRemove.push(`athens-agent-state:v2:profile:${String(profileId)}`);
   }
   for (const key of keysToRemove) {
     try {
@@ -42,23 +34,6 @@ async function clearApplierLocalData(applierName: string, profileId: unknown) {
     } catch {
       /* ignore */
     }
-  }
-  // Sweep any other agent-queue keys for this applier.
-  try {
-    const profileQueuePrefix = profileId == null
-      ? ""
-      : `athens-agent-state:v2:queue:${String(profileId)}:`;
-    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-      const key = localStorage.key(i);
-      if (
-        (key?.startsWith("athens-agent-queue-") && applierName && key.includes(applierName)) ||
-        (profileQueuePrefix && key?.startsWith(profileQueuePrefix))
-      ) {
-        localStorage.removeItem(key);
-      }
-    }
-  } catch {
-    /* ignore */
   }
   await Promise.allSettled([clearResumeStorage()]);
 }
@@ -131,7 +106,7 @@ export function SecurityTab() {
         toast.error(res.message || "Could not delete account");
         return;
       }
-      await clearApplierLocalData(user.name, user._id);
+      await clearApplierLocalData(user.name);
       signout();
       setDeleteOpen(false);
       toast.success("Account deleted");

@@ -44,7 +44,7 @@ export function AnalyticsOverviewTab({
         <KPI
           label="Interview Rate"
           value={analytics.applications > 0 ? `${analytics.interviewRate}%` : "—"}
-          sub={analytics.agentRuns > 0 ? `${analytics.agentRuns} agent runs` : "scheduled interviews"}
+          sub="scheduled interviews"
           icon={TrendingUp}
           accent="blue"
         />

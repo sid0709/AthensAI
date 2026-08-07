@@ -6,13 +6,14 @@ import {
 } from '@nestjs/common';
 import { ProfileLlmAuthService } from '../../ai/auth/profile-llm-auth.service';
 import { createLimiter } from '../../ai/concurrency/create-limiter';
-import { OpenAiChatService } from '../../ai/openai/openai-chat.service';
 import {
   RECOMMEND_RESUME_JSON_SCHEMA,
   RECOMMEND_RESUME_SCHEMA_NAME,
   RECOMMEND_RESUME_SYSTEM_PROMPT,
   parseRecommendResumeResponse,
 } from '../../ai/prompts';
+import { AiChatWithUsageService } from '../../ai-usage/ai-chat-with-usage.service';
+import { AI_USAGE_FEATURES } from '../../ai-usage/constants/ai-usage.constants';
 import {
   MAX_RECOMMEND_JOBS,
   RECOMMEND_CONCURRENCY,
@@ -32,7 +33,7 @@ export class RecommendResumesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llmAuth: ProfileLlmAuthService,
-    private readonly chat: OpenAiChatService,
+    private readonly chat: AiChatWithUsageService,
     private readonly persist: RecommendPersistService,
     private readonly libraryCatalog: ResumeLibraryCatalogService,
     private readonly vendorTasks: VendorTaskService,
@@ -235,6 +236,13 @@ export class RecommendResumesService {
           content: `ALLOWED RESUME LABELS (pick exactly one or null):\n${allowedList}\n\nRESUME CATALOG:\n${catalog.text}\n\n=== PAGE TEXT ===\nURL: (job)\nTitle: ${job.title || '(unknown)'}\n\n${pageText}`,
         },
       ],
+      usageMeta: {
+        feature: AI_USAGE_FEATURES.recommendResume,
+        applierName: auth.applierName,
+        jobId: String(job.id || ''),
+        requestId,
+        path: '/jobs/recommend-resumes',
+      },
     });
 
     const parsed = parseRecommendResumeResponse(completion.content);

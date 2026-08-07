@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { OpenAiChatService } from '../ai/openai/openai-chat.service';
 import { ProfileLlmAuthService } from '../ai/auth/profile-llm-auth.service';
+import { AiChatWithUsageService } from '../ai-usage/ai-chat-with-usage.service';
+import { AI_USAGE_FEATURES } from '../ai-usage/constants/ai-usage.constants';
 import { ALL_MAIL_PATH } from './constants/mail.constants';
 import { ImapClientService } from './imap/imap-client.service';
 import { MailCacheService } from './mail-cache.service';
@@ -87,7 +88,7 @@ function parseMessageId(raw: string): { mailbox: string; uid: number } {
 export class MailAiLabelService {
   constructor(
     private readonly llmAuth: ProfileLlmAuthService,
-    private readonly chat: OpenAiChatService,
+    private readonly chat: AiChatWithUsageService,
     private readonly imap: ImapClientService,
     private readonly cache: MailCacheService,
     private readonly definitions: MailLabelDefinitionsService,
@@ -333,7 +334,12 @@ export class MailAiLabelService {
   }
 
   private async classifySnippet(input: {
-    auth: { provider: 'openai' | 'deepseek'; apiKey: string; model: string };
+    auth: {
+      provider: 'openai' | 'deepseek';
+      apiKey: string;
+      model: string;
+      applierName: string;
+    };
     catalog: Array<{ name: string; description: string }>;
     id: string;
     text: string;
@@ -361,6 +367,11 @@ export class MailAiLabelService {
           }),
         },
       ],
+      usageMeta: {
+        feature: AI_USAGE_FEATURES.mailLabel,
+        applierName: input.auth.applierName,
+        path: '/mail/ai-label/snippet',
+      },
     });
     const parsed = parseJsonLoose(String(result.content || '')) as {
       results?: Array<{ action?: string; label?: string | null }>;
@@ -377,7 +388,12 @@ export class MailAiLabelService {
   }
 
   private async classifyBody(input: {
-    auth: { provider: 'openai' | 'deepseek'; apiKey: string; model: string };
+    auth: {
+      provider: 'openai' | 'deepseek';
+      apiKey: string;
+      model: string;
+      applierName: string;
+    };
     catalog: Array<{ name: string; description: string }>;
     id: string;
     text: string;
@@ -405,6 +421,11 @@ export class MailAiLabelService {
           }),
         },
       ],
+      usageMeta: {
+        feature: AI_USAGE_FEATURES.mailLabel,
+        applierName: input.auth.applierName,
+        path: '/mail/ai-label/body',
+      },
     });
     const parsed = parseJsonLoose(String(result.content || '')) as {
       results?: Array<{ label?: string | null }>;

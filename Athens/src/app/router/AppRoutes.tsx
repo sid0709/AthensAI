@@ -14,7 +14,6 @@ const {
   "job-board": JobSearchPage,
   "title-review": TitleReviewPage,
   resumes: ResumesPage,
-  agents: AgentsPage,
   mail: MailPage,
   calendar: CalendarPage,
   notion: NotionPage,
@@ -45,7 +44,6 @@ export function AppRoutes() {
         <Route path={PATHS.jobs.slice(1)} element={<JobSearchPage />} />
         <Route path={PATHS.titleReview.slice(1)} element={<BetaRoute><TitleReviewPage /></BetaRoute>} />
         <Route path={`${PATHS.resumes.slice(1)}/:tab?`} element={<ResumesPage />} />
-        <Route path={PATHS.agents.slice(1)} element={<AgentsPage />} />
         <Route path={`${PATHS.mail.slice(1)}/:threadId?`} element={<MailPage />} />
         <Route path={`${PATHS.calendar.slice(1)}/:view?`} element={<BetaRoute><CalendarPage /></BetaRoute>} />
         <Route path={PATHS.notion.slice(1)} element={<BetaRoute><NotionPage /></BetaRoute>} />

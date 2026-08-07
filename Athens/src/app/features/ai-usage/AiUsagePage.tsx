@@ -26,7 +26,7 @@ import { Badge, ChartTip, KPI } from "../../components/ui";
 import { Button } from "../../components/ui/button";
 import { DATE_RANGE_OPTIONS, type DateRange } from "../../hooks/useAnalyticsFilters";
 import { rangeLabel } from "../analytics/lib/rangeFilter";
-import { formatRunCost } from "../agents/lib/runUsage";
+import { formatRunCost } from "../../lib/runUsage";
 import { mono } from "../../lib/utils";
 import { useAiUsageAnalytics } from "./hooks/useAiUsageAnalytics";
 

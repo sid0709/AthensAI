@@ -1,13 +1,12 @@
-# NextOffer
+# NextOffer / AthensAI
 
-Job search, skill matching, and Avalon-powered auto-apply.
+Job search, skill matching, and resume tooling backed by **athens-backend**.
 
 ```
-remotepairnet.net ──► VPS nginx ──► Athens UI + Athens API
-Athens / Agents ──Socket.IO /avalon──► VPS Avalon relay
-All LLM calls ──► VPS ai-bff ──► OpenAI / DeepSeek
-VPS processes ──► Firestore + Cloud Storage + Algolia
-VPS local services ──► Redis + Qdrant + Prometheus/Grafana
+Public origin ──► host nginx ──► container nginx (:9030) ──► Athens SPA
+/api/*          ──► athens-backend (:8980)
+LLM + jobs API  ──► athens-backend (MongoDB AthensDB + Firebase Storage)
+Metrics         ──► Prometheus scrape nextoffer:9101
 ```
 
 ## Prerequisites
@@ -15,102 +14,65 @@ VPS local services ──► Redis + Qdrant + Prometheus/Grafana
 | Tool | Why |
 |------|-----|
 | **Node.js 20+** | All services |
-| **Docker Desktop** | Redis + Qdrant (easiest local path) |
 | **npm** | Package manager |
-| **Chrome** | Avalon extension drives your real browser for auto-apply |
+| **MongoDB** | AthensDB (athens-backend) |
 
 ## First-time setup
 
 ```bash
-cd NextOffer
+cd AthensAI
 
-# 1. Install dependencies (root workspaces + Athens UI + build AI BFF)
+# 1. Install root workspace (packages/shared) + UI + API
 npm run install:all
 
-# 2. Install Avalon packages (extension + shared)
-cd project-avalon && npm install && cd ..
-
-# 3. Copy env templates
-cp .env.example Athens-server/.env
+# 2. Copy env templates
+cp athens-backend/.env.example athens-backend/.env
 cp Athens/.env.example Athens/.env
-cp ai-bff/.env.example ai-bff/.env
-# Edit Athens-server/.env — set profile API keys in the UI under Settings → Profile
-# Edit ai-bff/.env — optional env default keys for local smoke tests
+# Edit athens-backend/.env — DATABASE_URL, API_KEYS_ENCRYPTION_KEY, Firebase
 ```
 
 ## Start everything (one command)
-
-**Start Docker Desktop first**, then:
 
 ```bash
 npm start
 ```
 
-If Redis and Qdrant already run outside Docker:
-
-```bash
-brew services start redis
-SKIP_DOCKER=1 npm start
-```
-
 `npm start` automatically:
 
-1. **Validates Firebase credentials**
-2. **Starts Redis + Qdrant** via Docker when ranking is enabled
-3. **Builds** `ai-bff`
-4. **Launches** Athens-server, ai-bff, and Athens UI
-
-## Monitoring and public status
-
-Production health remains on the VPS Prometheus/Grafana/Alertmanager stack. Athens-server exposes `/metrics`, `/healthz`, `/readyz`, and the curated public status API under `/api/status/*`; Firestore-backed deployments also report Firestore and Cloud Storage readiness.
-
-Google Cloud retains Firestore/Storage/KMS audit logs, backups, and billing alerts declared in [`infra/firebase/`](infra/firebase/), but it does not run the application.
-
-Firebase Auth, Hosting, Cloud Run, Tasks, Scheduler, and Memorystore are intentionally excluded from the VPS runtime.
+1. **Validates** `athens-backend/.env` (`DATABASE_URL`, encryption key)
+2. **Runs** `prisma generate`
+3. **Launches** athens-backend (watch) and Athens UI
 
 | Service | URL |
 |---------|-----|
 | **Frontend** | http://localhost:9030 |
-| **Athens-server** | http://localhost:8979 |
-| **AI BFF** | http://localhost:3920 |
+| **athens-backend** | http://localhost:8980 |
 
 Press `Ctrl+C` to stop all Node processes.
-
-## Auto-apply workflow
-
-1. Open **Agents → Controller** in Athens
-2. Ensure the Avalon extension is connected (green status badge)
-3. **Queue Jobs** from posted job sources, or navigate manually in Chrome
-4. On a job application page: **Fetch tree** → **Analyze** → **Apply (inject)**
 
 ## Run services individually
 
 ```bash
-npm run infra:up
-npm run backfill-job-skills
-npm run start:ai
-npm run start:athens-server
+npm run start:athens-backend
 npm run start:ui
-cd project-avalon && npm run dev:extension    # Chrome extension
 ```
 
 ## Project layout
 
 ```
-NextOffer/
+AthensAI/
 ├── Athens/              Frontend (React + Vite)
-├── Athens-server/       API, matching, jobs, resumes (clustered HTTP)
-├── ai-bff/              GPT + DeepSeek gateway + ai_api_usage logging
-├── project-avalon/      Chrome extension + @avalon/shared + @avalon/backend (relay :3847)
-└── packages/shared/     Pricing, models, skill-normalize
+├── athens-backend/      NestJS + Prisma API (:8980)
+├── athens-lens/         Chrome extension (Lens)
+├── Extension/           Chrome extension (scraper)
+├── LI-scrapper/         LinkedIn scraper extension
+├── packages/shared/     Pricing, models, skill-normalize (kept forever)
+├── docker/              nginx, supervisord, deploy scripts
+└── monitoring/          Prometheus / Grafana
 ```
 
-## Troubleshooting
+Legacy dirs (`Athens-server/`, `ai-bff/`, `project-avalon/`, `extension-v2-original/`) have been removed from this tree. Runtime is athens-backend only.
 
-**Relay offline** — Start the Avalon relay (`npm run start:avalon-relay` or full `npm start`). Socket.IO is on `/avalon/socket.io` (port **3847**). In Docker, nginx proxies `/avalon/` to that process.
+## Monitoring and public status
 
-**Extension not connected** — Load the unpacked extension from `project-avalon/packages/extension/.output/chrome-mv3` (after `npm run dev:extension`). Point `WXT_AVALON_RELAY_URL` at `http://127.0.0.1:3847` if needed.
-
-**Best Match shows 0%** — Ensure Redis is up and backfill ran: `npm run backfill-job-skills`.
-
-**Analyze fails** — Ensure AI keys are set under Settings → Profile (or `ai-bff/.env` for env defaults).
+Production health is on the VPS Prometheus/Grafana/Alertmanager stack. athens-backend exposes `/metrics` (private :9101), `/healthz`, `/readyz`, and `/api/status/*`.

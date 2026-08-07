@@ -21,8 +21,6 @@ export function useDashboardMetrics() {
       responseRate,
       offers,
       avgResponseDays: 4.2,
-      activeAgents: 3,
-      agentTasks: 12,
       interviewsToday: interviews.filter((e) => {
         const d = new Date(e.start);
         return d.getDate() === 18 && d.getMonth() === 5;

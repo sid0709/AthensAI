@@ -1,4 +1,4 @@
-import { Database, RefreshCw, Search } from "lucide-react";
+import { Database, RefreshCw } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { LiveRange } from "./LiveMetricsPanel";
 
@@ -12,8 +12,7 @@ export type DependencyMetricSeries = {
   expectedDelaySeconds?: number;
 };
 export type DependencyMetrics = {
-  "firestore-tasks": DependencyMetricSeries;
-  "algolia-sync": DependencyMetricSeries;
+  "background-tasks": DependencyMetricSeries;
 };
 
 type Metric = { key: string; label: string; color: string; format: (value: number | null) => string };
@@ -30,17 +29,11 @@ const cards: Array<{
   chart: string[];
 }> = [
   {
-    key: "firestore-tasks", title: "Task workers", description: "Firestore queue and lease health", Icon: Database,
+    key: "background-tasks", title: "Task workers", description: "Mongo background queue and lease health", Icon: Database,
     metrics: [
       { key: "oldestQueueAgeSeconds", label: "Oldest queued", color: "#2563eb", format: seconds },
       { key: "expiredLeaseCount", label: "Expired leases", color: "#dc2626", format: number },
     ], chart: ["oldestQueueAgeSeconds", "expiredLeaseCount"],
-  },
-  {
-    key: "algolia-sync", title: "Algolia sync", description: "Full-text search outbox health", Icon: Search,
-    metrics: [
-      { key: "outboxLagSeconds", label: "Outbox lag", color: "#d97706", format: seconds },
-    ], chart: ["outboxLagSeconds"],
   },
 ];
 

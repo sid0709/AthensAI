@@ -14,7 +14,6 @@ import {
   computeTrend,
   sumAppliedInRange,
   sumSourceTotals,
-  type AgentStatusSlice,
   type CohortPoint,
   type FunnelItem,
   type HeatmapRow,
@@ -35,7 +34,6 @@ export interface JobAnalytics {
   avgResponseDays: number | null;
   posted: number;
   postingSources: number;
-  agentRuns: number;
   trendData: TrendPoint[];
   rolePie: RoleSlice[];
   heatmapData: HeatmapRow[];
@@ -44,7 +42,6 @@ export interface JobAnalytics {
   stageOverTime: StageOverTime[];
   velocitySeries: VelocityPoint[];
   cohortData: CohortPoint[];
-  agentStatusPie: AgentStatusSlice[];
   matchScatter: MatchPoint[];
   pipelineBySource: JobSourceSummaryRow[];
 }
@@ -58,7 +55,6 @@ const EMPTY: JobAnalytics = {
   avgResponseDays: null,
   posted: 0,
   postingSources: 0,
-  agentRuns: 0,
   trendData: [],
   rolePie: [],
   heatmapData: [],
@@ -67,7 +63,6 @@ const EMPTY: JobAnalytics = {
   stageOverTime: [],
   velocitySeries: [],
   cohortData: [],
-  agentStatusPie: [],
   matchScatter: [],
   pipelineBySource: [],
 };
@@ -123,7 +118,6 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
       avgResponseDays: null,
       posted: totals.postings,
       postingSources: sourceSummary.filter((row) => row.postings > 0).length,
-      agentRuns: 0,
       trendData: computeTrend(daily, [], null, startDate, endDate),
       rolePie: [],
       heatmapData: [],
@@ -137,7 +131,6 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
       stageOverTime: [],
       velocitySeries: [],
       cohortData: [],
-      agentStatusPie: [],
       matchScatter: [],
       pipelineBySource: sourceSummary.filter((r) => r.applied > 0 || r.postings > 0),
     };

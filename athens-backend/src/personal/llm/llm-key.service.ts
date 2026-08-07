@@ -81,7 +81,7 @@ export class LlmKeyService {
       }
 
       // DeepSeek: catalog is fixed; a missing key is the only hard fail here.
-      // Full chat probe goes through ai-bff in Athens-server — skip until ported.
+      // Full chat probe for DeepSeek is optional; Nest AI path records usage locally.
       return {
         ok: true,
         status: 200,

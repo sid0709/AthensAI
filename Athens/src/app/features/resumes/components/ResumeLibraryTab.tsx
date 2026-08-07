@@ -9,7 +9,7 @@ import {
   waitForResumeAnalyze,
   type ResumeAnalyzeSession,
 } from "@/app/api/resumeAnalyze";
-import { resolveProfileDefaultModel } from "../../agents/avalon/ai/model";
+import { resolveProfileDefaultModel } from "../lib/resolveProfileDefaultModel";
 import { PATHS } from "../../../config/routes";
 import { SearchField } from "../../../components/shared/SearchField";
 import { Badge, Pill } from "../../../components/ui";

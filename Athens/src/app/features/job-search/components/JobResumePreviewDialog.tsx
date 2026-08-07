@@ -8,7 +8,7 @@ import {
   DialogFooter,
   DialogTitle,
 } from "../../../components/ui/dialog";
-import { agentJobResumePdfUrl } from "../../agents/components/AgentResumePdfPreview";
+import { agentJobResumePdfUrl } from "./JobResumePdfPreview";
 import type { Job } from "../../../types";
 
 type JobResumePreviewDialogProps = {
@@ -32,7 +32,7 @@ export function JobResumePreviewDialog({
       <DialogContent className="max-w-3xl">
         <DialogTitle className="truncate pr-8">Tailored résumé · {job.title}</DialogTitle>
         <DialogDescription className="truncate">
-          {job.company} — generated for {applierName}; the Agents pipeline reuses this PDF.
+          {job.company} — generated for {applierName}.
         </DialogDescription>
         <iframe
           src={pdfUrl}

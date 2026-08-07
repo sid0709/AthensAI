@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { AiUsageModule } from '../ai-usage/ai-usage.module';
 import { AuthModule } from '../auth/auth.module';
 import { FirebaseModule } from '../firebase/firebase.module';
 import { AgentJobResumesController } from './agent-job-resumes.controller';
@@ -16,7 +17,7 @@ import { ResumeService } from './resume.service';
 import { ResumesController } from './resumes.controller';
 
 @Module({
-  imports: [AuthModule, AiModule, FirebaseModule],
+  imports: [AuthModule, AiModule, AiUsageModule, FirebaseModule],
   controllers: [
     ResumesController,
     ResumeAnalyzeController,

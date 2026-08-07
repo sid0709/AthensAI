@@ -1,8 +1,0 @@
-node_modules
-dist
-.output
-.wxt
-*.local
-.env
-.DS_Store
-*.log

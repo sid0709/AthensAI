@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { RequestMethod } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { AuthResponseFilter } from './common/auth-response.filter';
 import { loadAppConfig } from './config/app.config';
@@ -13,7 +14,12 @@ async function bootstrap() {
   app.useBodyParser('json', { limit: '32mb' });
   app.useBodyParser('urlencoded', { limit: '32mb', extended: true });
 
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api', {
+    exclude: [
+      { path: 'readyz', method: RequestMethod.GET },
+      { path: 'healthz', method: RequestMethod.GET },
+    ],
+  });
   app.useGlobalFilters(new AuthResponseFilter());
   app.enableCors({
     origin: config.corsOrigins.length ? config.corsOrigins : true,

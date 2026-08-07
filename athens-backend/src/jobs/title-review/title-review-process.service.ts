@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { ProfileLlmAuth } from '../../ai/auth/profile-llm-auth.service';
-import { OpenAiChatService } from '../../ai/openai/openai-chat.service';
+import { AiChatWithUsageService } from '../../ai-usage/ai-chat-with-usage.service';
+import { AI_USAGE_FEATURES } from '../../ai-usage/constants/ai-usage.constants';
 import type { ClaimedTempJob } from '../claim/claim-meta';
 import { TitleReviewClaimService } from '../claim/title-review-claim.service';
 import { JOB_TITLE_REVIEW_LABELS } from '../constants/job-pipeline.constants';
@@ -17,7 +18,7 @@ export type TitleReviewBatchStats = {
 @Injectable()
 export class TitleReviewProcessService {
   constructor(
-    private readonly chat: OpenAiChatService,
+    private readonly chat: AiChatWithUsageService,
     private readonly claims: TitleReviewClaimService,
   ) {}
 
@@ -57,6 +58,12 @@ export class TitleReviewProcessService {
             ),
           },
         ],
+        usageMeta: {
+          feature: AI_USAGE_FEATURES.jobTitleReview,
+          applierName: input.auth.applierName,
+          runId: input.sessionId,
+          path: '/jobs/title-review',
+        },
       });
       content = result.content;
     } catch (err) {

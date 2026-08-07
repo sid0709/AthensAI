@@ -8,17 +8,6 @@ export type {
   ActivationResult,
 } from "./knowledgeGraph";
 export type {
-  RunSummary,
-  JobRow,
-  ActivityEntry,
-  DashboardData,
-  HealthData,
-  ActiveRun,
-  DeployOptions,
-  AgentJobStatus,
-  AgentJobTabKey,
-} from "./agent";
-export type {
   Job,
 	CompanyJobGroup,
   JobStatus,

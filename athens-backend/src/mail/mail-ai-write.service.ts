@@ -1,12 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { OpenAiChatService } from '../ai/openai/openai-chat.service';
 import { ProfileLlmAuthService } from '../ai/auth/profile-llm-auth.service';
+import { AiChatWithUsageService } from '../ai-usage/ai-chat-with-usage.service';
+import { AI_USAGE_FEATURES } from '../ai-usage/constants/ai-usage.constants';
 
 @Injectable()
 export class MailAiWriteService {
   constructor(
     private readonly llmAuth: ProfileLlmAuthService,
-    private readonly chat: OpenAiChatService,
+    private readonly chat: AiChatWithUsageService,
   ) {}
 
   async write(input: {
@@ -41,6 +42,11 @@ export class MailAiWriteService {
         { role: 'user', content: userParts.join('\n\n') || 'Write a short email.' },
       ],
       temperature: 0.4,
+      usageMeta: {
+        feature: AI_USAGE_FEATURES.mailWrite,
+        applierName: auth.applierName,
+        path: '/mail/ai-write',
+      },
     });
 
     return {

@@ -34,7 +34,7 @@ export function BetaRoute({ children }: { children: ReactNode }) {
           <h1 className="text-xl font-bold text-foreground">Beta workspace required</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             This page is available for Beta accounts. Your current workspace still has access to job search,
-            resumes, agents, mail, and settings.
+            resumes, mail, and settings.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             <Link

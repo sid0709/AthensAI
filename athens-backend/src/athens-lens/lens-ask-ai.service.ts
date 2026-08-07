@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ProfileLlmAuthService } from '../ai/auth/profile-llm-auth.service';
-import { OpenAiChatService } from '../ai/openai/openai-chat.service';
 import { OpenAiChatStreamService } from '../ai/openai/openai-chat-stream.service';
-import type { ChatMessage } from '../ai/openai/openai.types';
+import type { ChatMessage, ChatUsage } from '../ai/openai/openai.types';
+import { AiChatWithUsageService } from '../ai-usage/ai-chat-with-usage.service';
+import { AiUsageRecorderService } from '../ai-usage/ai-usage-recorder.service';
+import { AI_USAGE_FEATURES } from '../ai-usage/constants/ai-usage.constants';
 import { BidLifecycleService } from '../bids/bid-lifecycle.service';
 import { ProfileSecretsService } from '../personal/secrets/profile-secrets.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -50,8 +52,9 @@ export class LensAskAiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llmAuth: ProfileLlmAuthService,
-    private readonly chat: OpenAiChatService,
+    private readonly chat: AiChatWithUsageService,
     private readonly chatStream: OpenAiChatStreamService,
+    private readonly usageRecorder: AiUsageRecorderService,
     private readonly secrets: ProfileSecretsService,
     private readonly lifecycle: BidLifecycleService,
   ) {}
@@ -66,6 +69,13 @@ export class LensAskAiService {
       model: auth.model,
       messages,
       signal: input.signal,
+      usageMeta: {
+        feature: AI_USAGE_FEATURES.lensAskAi,
+        applierName: input.applierName,
+        jobId: input.jobId,
+        requestId,
+        path: '/athens-lens/ask-ai',
+      },
     });
 
     const answers = extractFormAnswersFromPartialText(
@@ -142,6 +152,20 @@ export class LensAskAiService {
       ttftMs = event.ttftMs;
       model = event.model || auth.model;
       usage = mapAskAiUsage(event.usage, model);
+      await this.usageRecorder.record({
+        feature: AI_USAGE_FEATURES.lensAskAi,
+        applierName: input.applierName,
+        jobId: input.jobId,
+        requestId,
+        path: '/athens-lens/ask-ai/stream',
+        provider: auth.provider,
+        requestedModel: auth.model,
+        billedModel: model,
+        apiKey: auth.apiKey,
+        usage: event.usage as ChatUsage | null,
+        durationMs,
+        success: true,
+      });
     }
 
     const summary = finalAnswers.length

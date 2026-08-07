@@ -3,7 +3,6 @@ export type View =
   | "job-board"
   | "title-review"
   | "resumes"
-  | "agents"
   | "mail"
   | "calendar"
   | "notion"

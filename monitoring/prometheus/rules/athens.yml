@@ -42,7 +42,7 @@ groups:
           severity: critical
         annotations:
           summary: Athens API is not ready
-          description: Athens-server readiness has failed for more than two minutes.
+          description: athens-backend readiness has failed for more than two minutes.
       - alert: AthensDiskAlmostFull
         expr: athens:root_filesystem_utilization:ratio > 0.85
         for: 10m
@@ -124,29 +124,21 @@ groups:
           summary: Firestore status snapshot persistence is failing
           description: Health remains visible in Prometheus, but the public fallback snapshot is not updating.
       - alert: AthensApplicationMetricsDown
-        expr: up{job="athens-server"} == 0
+        expr: up{job="athens-backend"} == 0
         for: 2m
         labels:
           severity: critical
         annotations:
           summary: Cluster-wide application metrics are unavailable
-          description: Prometheus cannot scrape the private Athens metrics listener on port 9101.
-      - alert: AthensBackgroundWorkerMetricsDown
-        expr: up{job="athens-background-worker"} == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: Athens background worker metrics are unavailable
-          description: Prometheus cannot scrape the dedicated worker metrics listener on port 9102.
+          description: Prometheus cannot scrape the private athens-backend metrics listener on port 9101.
       - alert: AthensTaskWorkerUnavailable
-        expr: athens_health_status{component="firestore-tasks"} == 0
+        expr: athens_health_status{component="background-tasks"} == 0
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: Firestore task workers are unavailable
-          description: No healthy worker heartbeat or lease processing is available.
+          summary: Background task workers are unavailable
+          description: No healthy embedded worker heartbeat or lease processing is available.
       - alert: AthensTaskQueueDelayed
         expr: athens_background_queue_oldest_age_seconds > 300
         for: 5m

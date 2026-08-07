@@ -19,8 +19,7 @@ const h = React.createElement;
 
 const MAX_LOGS = 400;
 const SERVICE_COLORS = {
-	'athens-server': 'magenta',
-	'ai-bff': 'cyan',
+	'athens-backend': 'magenta',
 	'athens-ui': 'green',
 	dev: 'gray',
 };

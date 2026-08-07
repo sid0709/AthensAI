@@ -19,7 +19,7 @@ import {
   AlertTriangle,
   History,
 } from "lucide-react";
-import { AgentResumePdfPreview } from "../../agents/components/AgentResumePdfPreview";
+import { JobResumePdfPreview } from "../../job-search/components/JobResumePdfPreview";
 import { SlidePanel, SlidePanelHeader } from "../../../components/overlays";
 import { useApplier } from "@/context/applier-context";
 import { fetchBidResultAiUsage, fetchBidResultEvents } from "../../../api/bidResults";
@@ -741,7 +741,7 @@ export function BidDetailPane({
                   )}
                   {preview.hasGeneratedPdf && result.jobId ? (
                     <div className="bm-pdf-frame">
-                      <AgentResumePdfPreview
+                      <JobResumePdfPreview
                         applierName={applier?.name || result.bidder.name}
                         jobId={result.jobId}
                         className="bm-pdf-iframe"

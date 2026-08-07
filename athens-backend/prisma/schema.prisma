@@ -423,3 +423,93 @@ model BackgroundTaskReservation {
 
   @@map("background_task_reservations")
 }
+
+/// Compact current status snapshot for /status fallback (one doc per source).
+model MonitorStatus {
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+  source             String   @unique
+  version            Int      @default(2)
+  updatedAt          DateTime @updatedAt
+  /// ComponentStatus[]
+  components         Json
+  /// { [componentId]: incidentId }
+  activeIncidentIds  Json?
+
+  @@map("monitor_status")
+}
+
+/// Completed daily availability rollups.
+model MonitorDay {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  date       String   @unique
+  source     String
+  version    Int      @default(2)
+  complete   Boolean
+  /// DailyComponentRollup[]
+  components Json
+  updatedAt  DateTime @updatedAt
+
+  @@map("monitor_days")
+}
+
+/// Public status incidents (auto + manual).
+model MonitorIncident {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  source         String
+  component      String
+  name           String
+  status         String
+  severity       String
+  title          String
+  description    String
+  startedAt      DateTime
+  updatedAt      DateTime  @updatedAt
+  resolvedAt     DateTime?
+  /// IncidentUpdate[]
+  updates        Json
+  manual         Boolean?
+  internalReason String?
+
+  @@index([startedAt(sort: Desc)])
+  @@index([component, startedAt(sort: Desc)])
+  @@map("monitor_incidents")
+}
+
+/// AI call usage log (replaces Firestore ai_api_usage written by ai-bff).
+/// Field names match Athens UI / @nextoffer/shared buildAiApiUsageEntry.
+model AiApiUsage {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  createdAt         DateTime  @default(now())
+  requestId         String
+  feature           String?
+  provider          String?
+  requestedModel    String?
+  billedModel       String?
+  modelMismatch     Boolean?
+  apiKey            String?
+  inputTokens       Int?
+  cachedInputTokens Int?
+  outputTokens      Int?
+  totalTokens       Int?
+  costUsd           Float?
+  priced            Boolean?
+  rates             Json?
+  startedAt         DateTime?
+  durationMs        Int?
+  success           Boolean?
+  httpStatus        Int?
+  error             String?
+  runId             String?
+  applierName       String?
+  jobId             String?
+  path              String?
+  service           String?
+
+  @@unique([requestId])
+  @@index([createdAt(sort: Desc)])
+  @@index([applierName, createdAt(sort: Desc)])
+  @@index([feature, createdAt(sort: Desc)])
+  @@index([runId])
+  @@index([provider, billedModel, createdAt(sort: Desc)])
+  @@map("ai_api_usage")
+}

@@ -1,6 +1,6 @@
 /**
  * Shared dev orchestration — spawn services, probe ports, shutdown.
- * Logic unchanged from the original dev-start.mjs; only factored out for the Ink UI.
+ * athens-backend + Athens UI only (Phase 5 cutover).
  */
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -13,10 +13,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export const ROOT_DIR = ROOT;
 
 export const backendServices = [
-	{ name: 'athens-server', label: 'Athens-server', cmd: 'npm', args: ['run', 'start', '-w', 'Athens-server'], cwd: ROOT },
-	{ name: 'background-worker', label: 'Background worker', cmd: 'npm', args: ['run', 'worker:background', '-w', 'Athens-server'], cwd: ROOT, env: { BACKGROUND_TASK_WORKER: 'true' } },
-	{ name: 'avalon-relay', label: 'Avalon relay', cmd: 'npm', args: ['run', 'start', '-w', '@avalon/backend'], cwd: ROOT },
-	{ name: 'ai-bff', label: 'AI BFF', cmd: 'npm', args: ['run', 'dev', '-w', 'ai-bff'], cwd: ROOT },
+	{
+		name: 'athens-backend',
+		label: 'athens-backend',
+		cmd: 'npm',
+		args: ['run', 'start:dev', '--prefix', 'athens-backend'],
+		cwd: ROOT,
+	},
 ];
 
 export const uiService = {
@@ -28,9 +31,12 @@ export const uiService = {
 };
 
 export const backendPorts = [
-	{ host: '127.0.0.1', port: Number(process.env.ATHENS_SERVER_PORT || 8979), label: 'Athens-server', service: 'athens-server' },
-	{ host: '127.0.0.1', port: Number(process.env.AVALON_PORT || 3847), label: 'Avalon relay', service: 'avalon-relay' },
-	{ host: '127.0.0.1', port: Number(process.env.AI_BFF_PORT || 3920), label: 'AI BFF', service: 'ai-bff' },
+	{
+		host: '127.0.0.1',
+		port: Number(process.env.ATHENS_BACKEND_PORT || process.env.PORT || 8980),
+		label: 'athens-backend',
+		service: 'athens-backend',
+	},
 ];
 
 export function lanAddresses() {
@@ -45,15 +51,14 @@ export function lanAddresses() {
 
 export function getDevSummary() {
 	const devPort = Number(process.env.VITE_DEV_PORT || 9030) || 9030;
+	const apiPort = Number(process.env.ATHENS_BACKEND_PORT || process.env.PORT || 8980);
 	const networkLines = lanAddresses().map((ip) => `Frontend (LAN) → http://${ip}:${devPort}`);
 	return {
 		devPort,
 		networkLines,
 		endpoints: [
 			{ label: 'Frontend', url: `http://localhost:${devPort}` },
-			{ label: 'Athens-server', url: 'http://localhost:8979' },
-			{ label: 'Avalon relay', url: 'http://localhost:3847' },
-			{ label: 'AI BFF', url: 'http://localhost:3920' },
+			{ label: 'athens-backend', url: `http://localhost:${apiPort}` },
 		],
 	};
 }

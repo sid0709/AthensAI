@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { AiUsageModule } from '../ai-usage/ai-usage.module';
 import { AuthModule } from '../auth/auth.module';
 import { BackgroundTasksModule } from '../background-tasks/background-tasks.module';
 import { PersonalModule } from '../personal/personal.module';
@@ -20,6 +21,7 @@ import { SmtpClientService } from './smtp/smtp-client.service';
     AuthModule,
     PersonalModule,
     AiModule,
+    AiUsageModule,
     forwardRef(() => BackgroundTasksModule),
   ],
   controllers: [MailController],

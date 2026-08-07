@@ -3,7 +3,6 @@ import type { View } from "../types";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { JobSearchPage } from "../features/job-search/JobSearchPage";
 import { ResumesPage } from "../features/resumes/ResumesPage";
-import { AgentsPage } from "../features/agents/AgentsPage";
 import { MailPage } from "../features/mail/MailPage";
 import { CalendarPage } from "../features/calendar/CalendarPage";
 import { AnalyticsPage } from "../features/analytics/AnalyticsPage";
@@ -22,7 +21,6 @@ export const VIEW_COMPONENTS: Record<View, ComponentType> = {
   "job-board": JobSearchPage,
   "title-review": TitleReviewPage,
   resumes: ResumesPage,
-  agents: AgentsPage,
   mail: MailPage,
   calendar: CalendarPage,
   notion: NotionPage,
