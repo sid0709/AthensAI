@@ -18,6 +18,10 @@
       "types": "./src/job-status.d.ts",
       "import": "./src/job-status.js"
     },
+    "./job-source": {
+      "types": "./src/job-source.d.ts",
+      "import": "./src/job-source.js"
+    },
     "./score": "./src/score.js",
     "./secretCrypto": "./src/secretCrypto.js",
     "./profileApiKeys": "./src/profileApiKeys.js",

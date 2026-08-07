@@ -8,3 +8,4 @@ export * from './score.js';
 export * from './secretCrypto.js';
 export * from './profileApiKeys.js';
 export * from './job-status.js';
+export * from './job-source.js';
