@@ -57,7 +57,7 @@ function JobSearchPageContent() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
-  const { jobs, groups, total, totalJobs, loading, error, staleResults, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
+  const { jobs, groups, total, totalJobs, loading, error, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
     useJobsList(filters, removedIds, page, pageSize);
 
   useEffect(() => {
@@ -391,21 +391,12 @@ function JobSearchPageContent() {
         busy={exportBusy}
       />
 
-      {!loading && staleResults && error ? (
-        <div role="status" className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
-          {error}
-          <button type="button" className="ml-2 font-semibold underline underline-offset-2" onClick={retry}>
-            Retry
-          </button>
-        </div>
-      ) : null}
-
       {loading ? (
         <JobListSkeleton
           count={Math.min(pageSize, 8)}
           layout={showGrid ? "grid" : "list"}
         />
-      ) : error && !staleResults ? (
+      ) : error ? (
         <JobListErrorState message={error} onRetry={retry} />
       ) : (
         <TabTransition tabKey={showGrid ? "grid" : "list"}>

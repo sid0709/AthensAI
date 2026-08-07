@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteDB, openDB } from "idb";
 import { toast } from "sonner";
 import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
@@ -48,25 +47,17 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
 const JOB_LIST_REQUEST_TIMEOUT_MS = 30_000;
 const JOB_LIST_ENDPOINT = "/jobs";
 
-const LIST_CACHE_TTL_MS = 10 * 60_000;
-const LIST_CACHE_STALE_MS = 24 * 60 * 60_000;
-const LIST_CACHE_MAX_ENTRIES = 200;
-const LIST_CACHE_DB = "athens-job-search";
-const LIST_CACHE_STORE = "responses";
-type ListCacheEntry = { response: ListResponse; expiresAt: number; staleAt: number };
-const listCache = new Map<string, ListCacheEntry>();
 const listRequests = new Map<string, Promise<ListResponse>>();
-let listCacheDbPromise: ReturnType<typeof openDB> | null = null;
 
 function requestJobsPage(
-  cacheKey: string,
+  requestKey: string,
   queryPath: string,
   request: ApiRequest,
 ): Promise<ListResponse> {
-  const existing = listRequests.get(cacheKey);
+  const existing = listRequests.get(requestKey);
   if (existing) return existing;
 
-  // This request belongs to the cache key, not to any one React effect. A
+  // This request belongs to the query key, not to any one React effect. A
   // rerender may stop consuming it, but must not abort it for another consumer.
   const controller = new AbortController();
   let timedOut = false;
@@ -90,93 +81,11 @@ function requestJobsPage(
     throw error;
   }).finally(() => {
     clearTimeout(timeout);
-    if (listRequests.get(cacheKey) === pending) listRequests.delete(cacheKey);
+    if (listRequests.get(requestKey) === pending) listRequests.delete(requestKey);
   });
 
-  listRequests.set(cacheKey, pending);
+  listRequests.set(requestKey, pending);
   return pending;
-}
-
-function listCacheDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!listCacheDbPromise) {
-    listCacheDbPromise = openDB(LIST_CACHE_DB, 1, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains(LIST_CACHE_STORE)) db.createObjectStore(LIST_CACHE_STORE);
-      },
-    });
-  }
-  return listCacheDbPromise;
-}
-
-/** Drop profile-sensitive job-list responses after the owning account is deleted. */
-export async function clearJobListCacheStorage(): Promise<void> {
-  listCache.clear();
-  if (listCacheDbPromise) {
-    const db = await listCacheDbPromise.catch(() => null);
-    db?.close();
-  }
-  listCacheDbPromise = null;
-  await deleteDB(LIST_CACHE_DB);
-}
-
-async function readPersistentListResponse(key: string): Promise<ListCacheEntry | null> {
-  try {
-    const db = await listCacheDb();
-    if (!db) return null;
-    const entry = (await db.get(LIST_CACHE_STORE, key)) as ListCacheEntry | undefined;
-    if (!entry || entry.staleAt <= Date.now()) {
-      if (entry) await db.delete(LIST_CACHE_STORE, key);
-      return null;
-    }
-    listCache.set(key, entry);
-    return entry;
-  } catch {
-    return null;
-  }
-}
-
-async function persistListResponse(key: string, entry: ListCacheEntry) {
-  try {
-    const db = await listCacheDb();
-    if (db) await db.put(LIST_CACHE_STORE, entry, key);
-  } catch {
-    /* IndexedDB is an optional acceleration layer. */
-  }
-}
-
-async function clearPersistentListCache() {
-  try {
-    const db = await listCacheDb();
-    if (db) await db.clear(LIST_CACHE_STORE);
-  } catch {
-    /* Cache invalidation must never affect the mutation itself. */
-  }
-}
-
-function invalidateJobListCaches() {
-  listCache.clear();
-  void clearPersistentListCache();
-}
-
-function cacheListResponse(key: string, response: ListResponse) {
-  const now = Date.now();
-  for (const [existingKey, entry] of listCache) {
-    if (entry.staleAt <= now) listCache.delete(existingKey);
-  }
-  listCache.delete(key);
-  const entry = { response, expiresAt: now + LIST_CACHE_TTL_MS, staleAt: now + LIST_CACHE_STALE_MS };
-  listCache.set(key, entry);
-  void persistListResponse(key, entry);
-  while (listCache.size > LIST_CACHE_MAX_ENTRIES) {
-    const oldest = listCache.keys().next().value as string | undefined;
-    if (!oldest) break;
-    listCache.delete(oldest);
-  }
-}
-
-function listCacheKey(queryPath: string) {
-  return queryPath;
 }
 
 function statusTabToQuery(statusTab: JobStatusTab): string {
@@ -305,15 +214,14 @@ export function useJobsList(
 
   const [rawGroups, setRawGroups] = useState<CompanyJobGroup[]>([]);
   const [total, setTotal] = useState(0);
-	const [totalJobs, setTotalJobs] = useState(0);
-	const [memberLoadingIds, setMemberLoadingIds] = useState<Set<string>>(new Set());
+  const [totalJobs, setTotalJobs] = useState(0);
+  const [memberLoadingIds, setMemberLoadingIds] = useState<Set<string>>(new Set());
   const [memberErrors, setMemberErrors] = useState<Record<string, string>>({});
   const memberRequestTokensRef = useRef(new Map<string, symbol>());
   const memberCursorsRef = useRef(new Map<string, string | null>());
   const [requestInFlight, setRequestInFlight] = useState(false);
   const [settledKey, setSettledKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [staleResults, setStaleResults] = useState(false);
   const [retryRevision, setRetryRevision] = useState(0);
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const rawGroupsRef = useRef<CompanyJobGroup[]>([]);
@@ -327,11 +235,11 @@ export function useJobsList(
   } = useDebouncedTextFilters(filters);
   const groups = useMemo(
     () => rawGroups
-			.map((group) => ({ ...group, jobs: group.jobs.filter((job) => !excludeIds.has(job.id)) }))
-			.filter((group) => group.jobs.length > 0),
+      .map((group) => ({ ...group, jobs: group.jobs.filter((job) => !excludeIds.has(job.id)) }))
+      .filter((group) => group.jobs.length > 0),
     [rawGroups, excludeIds],
   );
-	const jobs = useMemo(() => groups.flatMap((group) => group.jobs), [groups]);
+  const jobs = useMemo(() => groups.flatMap((group) => group.jobs), [groups]);
 
   const listQueryPath = useMemo(
     () =>
@@ -343,15 +251,12 @@ export function useJobsList(
     [debouncedFilters, page, pageSize, applier?._id],
   );
 
-  const currentQueryKey = listCacheKey(listQueryPath);
+  const currentQueryKey = listQueryPath;
   const loading =
     !applierReady ||
     isDebouncing ||
     requestInFlight ||
     settledKey !== currentQueryKey;
-
-  const settledKeyRef = useRef<string | null>(null);
-  settledKeyRef.current = settledKey;
 
   useEffect(() => {
     memberRequestTokensRef.current.clear();
@@ -363,9 +268,6 @@ export function useJobsList(
   useEffect(() => {
     if (!applierReady || isDebouncing) return;
     let cancelled = false;
-    const cacheKey = currentQueryKey;
-    let cached = listCache.get(currentQueryKey);
-    let hasFreshCache = Boolean(cached && cached.expiresAt > Date.now());
     const applyResponse = (res: ListResponse, { allowEmptyMidPage = false } = {}) => {
       if (!res?.success || !Array.isArray(res.data)) return false;
       const tab = debouncedFilters.statusTab;
@@ -389,9 +291,9 @@ export function useJobsList(
       ) {
         return false;
       }
-			setRawGroups(mapResponseGroups(res.data, applierRef.current));
+      setRawGroups(mapResponseGroups(res.data, applierRef.current));
       setTotal(responseTotal);
-			setTotalJobs(res.pagination?.totalJobs ?? countTotal ?? responseTotal);
+      setTotalJobs(res.pagination?.totalJobs ?? countTotal ?? responseTotal);
       if (res.statusCounts) {
         setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.statusCounts });
       }
@@ -400,75 +302,35 @@ export function useJobsList(
     };
     setRequestInFlight(true);
     setError(null);
-    setStaleResults(false);
-    if (!hasFreshCache) {
-      setRawGroups([]);
-      setTotal(0);
-      setTotalJobs(0);
-      setSettledKey(null);
-    }
+    setRawGroups([]);
+    setTotal(0);
+    setTotalJobs(0);
+    setSettledKey(null);
 
     (async () => {
       try {
-        const idbPromise = (!cached || cached.staleAt <= Date.now())
-          ? readPersistentListResponse(cacheKey)
-          : Promise.resolve(null);
-
-        if (cached && !cancelled) {
-          applyResponse(cached.response);
-          if (cached.staleAt > Date.now() && cached.expiresAt <= Date.now()) setStaleResults(true);
-        }
-
-        const idbEntry = await idbPromise;
-        if (idbEntry && !cancelled) {
-          cached = idbEntry;
-          hasFreshCache = idbEntry.expiresAt > Date.now();
-          if (hasFreshCache) applyResponse(idbEntry.response);
-          else if (idbEntry.staleAt > Date.now()) {
-            applyResponse(idbEntry.response);
-            setStaleResults(true);
-          }
-        }
-
-        const res = await requestJobsPage(cacheKey, listQueryPath, request);
+        const res = await requestJobsPage(currentQueryKey, listQueryPath, request);
         if (cancelled) return;
         if (!applyResponse(res)) {
           throw new Error("The jobs response was incomplete");
         }
-        cacheListResponse(cacheKey, res);
       } catch (e) {
         const timedOut = (e as Error)?.name === "TimeoutError";
         if ((e as Error)?.name === "AbortError") return;
         console.error(e);
-        let showingFallback = false;
-        if (cached && cached.staleAt > Date.now() && applyResponse(cached.response)) {
-          showingFallback = true;
-          setStaleResults(true);
-          setError(timedOut
-            ? "Job refresh took too long. Showing cached results."
-            : "Could not refresh jobs. Showing cached results.");
-        } else if (settledKeyRef.current === currentQueryKey && rawGroupsRef.current.length > 0) {
-          showingFallback = true;
-          setStaleResults(true);
-          setError(timedOut
-            ? "Job refresh took too long. Showing the previous results."
-            : "Could not refresh jobs. Showing the previous results.");
-        } else {
-			setRawGroups([]);
-          setTotal(0);
-			setTotalJobs(0);
-          setSettledKey(currentQueryKey);
-          setError(timedOut
-            ? "Job Search took too long to respond. Please try again."
-            : "Could not load jobs. Check the server connection and try again.");
-        }
-        if (!showingFallback) {
-          toast.error("Failed to load jobs", {
-            description: timedOut
-              ? "The request timed out. Please try again."
-              : "Check that athens-backend is running and VITE_API_URL is set.",
-          });
-        }
+        if (cancelled) return;
+        setRawGroups([]);
+        setTotal(0);
+        setTotalJobs(0);
+        setSettledKey(currentQueryKey);
+        setError(timedOut
+          ? "Job Search took too long to respond. Please try again."
+          : "Could not load jobs. Check the server connection and try again.");
+        toast.error("Failed to load jobs", {
+          description: timedOut
+            ? "The request timed out. Please try again."
+            : "Check that athens-backend is running and VITE_API_URL is set.",
+        });
       } finally {
         if (!cancelled) setRequestInFlight(false);
       }
@@ -489,9 +351,8 @@ export function useJobsList(
           [updated.status]: previous[updated.status] + 1,
         }));
       }
-      invalidateJobListCaches();
       const statusTab = debouncedFilters.statusTab;
-			setRawGroups((previous) => {
+      setRawGroups((previous) => {
         if (statusTab !== "all" && updated.status !== statusTab) {
           const result = removeCompanyJobs(
             previous,
@@ -514,9 +375,8 @@ export function useJobsList(
 
   const removeJobsById = useCallback((ids: string[]) => {
     if (!ids.length) return;
-    invalidateJobListCaches();
     const idSet = new Set(ids);
-		setRawGroups((previous) => {
+    setRawGroups((previous) => {
       const result = removeCompanyJobs(
         previous,
         (job) => idSet.has(job.id) || idSet.has(job.backendId || ""),
@@ -529,7 +389,6 @@ export function useJobsList(
   }, []);
 
   const removeOtherCompanyJobs = useCallback((companyId: string, keepJobId: string) => {
-    invalidateJobListCaches();
     setRawGroups((previous) => {
       const result = keepOnlyCompanyJob(previous, companyId, keepJobId);
       if (result.removedJobs) {
@@ -553,31 +412,29 @@ export function useJobsList(
 
   const retry = useCallback(() => {
     setError(null);
-    setStaleResults(false);
     setRequestInFlight(true);
     setRetryRevision((revision) => revision + 1);
   }, []);
 
-	const loadCompanyMembers = useCallback(async (
+  const loadCompanyMembers = useCallback(async (
     companyId: string,
     options: { focusJobId?: string } = {},
   ) => {
-		const group = rawGroups.find((candidate) => candidate.companyId === companyId);
-		if (!group || memberLoadingIds.has(companyId)) return;
+    const group = rawGroups.find((candidate) => candidate.companyId === companyId);
+    if (!group || memberLoadingIds.has(companyId)) return;
     const focusLoaded = !options.focusJobId || group.jobs.some((job) => job.id === options.focusJobId);
     if (group.nextMemberOffset == null && focusLoaded) return;
     // Company member paging is not part of the athens-backend GET /jobs MVP.
     return { focusValid: focusLoaded };
-	}, [memberLoadingIds, rawGroups]);
+  }, [memberLoadingIds, rawGroups]);
 
   return {
     jobs,
-		groups,
+    groups,
     total,
-		totalJobs,
+    totalJobs,
     loading,
     error,
-    staleResults,
     retry,
     requestKey: currentQueryKey,
     resultsSettled: settledKey === currentQueryKey,
@@ -588,9 +445,9 @@ export function useJobsList(
     applierReady,
     patchJob,
     removeJobsById,
-		removeOtherCompanyJobs,
-		loadCompanyMembers,
-		memberLoadingIds,
+    removeOtherCompanyJobs,
+    loadCompanyMembers,
+    memberLoadingIds,
     memberErrors,
     refreshStatusCounts,
   };

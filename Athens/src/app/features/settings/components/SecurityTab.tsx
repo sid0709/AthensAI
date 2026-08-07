@@ -15,7 +15,6 @@ import {
 } from "../../../components/ui/alert-dialog";
 import { changePassword, deleteAccount } from "../../../services/profileApi";
 import { clearResumeStorage } from "../../../services/resumeStorage";
-import { clearJobListCacheStorage } from "../../job-search/hooks/useJobsList";
 
 /** Client keys tied to the signed-in applier — clear on account wipe. */
 async function clearApplierLocalData(applierName: string, profileId: unknown) {
@@ -61,7 +60,7 @@ async function clearApplierLocalData(applierName: string, profileId: unknown) {
   } catch {
     /* ignore */
   }
-  await Promise.allSettled([clearResumeStorage(), clearJobListCacheStorage()]);
+  await Promise.allSettled([clearResumeStorage()]);
 }
 
 export function SecurityTab() {
