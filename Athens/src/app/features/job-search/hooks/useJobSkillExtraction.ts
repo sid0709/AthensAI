@@ -7,7 +7,7 @@ import { skillExtractionSessionFromTask } from "../lib/skillExtractionState";
 
 export function useJobSkillExtraction() {
   const { applier } = useApplier();
-  const { latestTask, startTask, cancelTask } = useBackgroundTasks();
+  const { latestTask, cancelTask } = useBackgroundTasks();
   const task = latestTask("skill_extraction");
   const [fallback, setFallback] = useState<SkillExtractSession>({ running: false, status: "idle" });
   const [pending, setPending] = useState<number | null>(null);
@@ -34,22 +34,15 @@ export function useJobSkillExtraction() {
   }, [refresh, task?.id, task?.status]);
 
   const start = useCallback(async () => {
-    setLoading(true);
-    try {
-      const created = await startTask("skill_extraction", {});
-      toast.success("Skill extraction queued", {
-        description: pending != null
-          ? `${pending} job(s) waiting. Progress continues if you leave this page.`
-          : "Progress continues if you leave this page.",
-      });
-      return created;
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to start extraction");
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [pending, startTask]);
+    if (pending == null || pending === 0) return null;
+    toast.info("Skill extraction AI is not wired yet", {
+      description:
+        pending != null
+          ? `${pending} APPROVED job(s) still need skills. Badge count is live from athens_metadata.`
+          : "Badge count is live from athens_metadata.",
+    });
+    return null;
+  }, [pending]);
 
   const stop = useCallback(async () => {
     if (!task || !["queued", "running", "cancelling"].includes(task.status)) return;

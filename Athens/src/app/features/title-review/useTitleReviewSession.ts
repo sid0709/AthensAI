@@ -55,7 +55,7 @@ export function useTitleReviewSession({
   autoLoad = true,
 }: { enabled?: boolean; autoLoad?: boolean; pollWhenIdle?: boolean } = {}) {
   const { applier } = useApplier();
-  const { latestTask, startTask, cancelTask } = useBackgroundTasks();
+  const { latestTask, cancelTask } = useBackgroundTasks();
   const task = latestTask("title_review");
   const [fallback, setFallback] = useState<TitleReviewSession>({ running: false, status: "idle" });
   const [loading, setLoading] = useState(false);
@@ -82,20 +82,14 @@ export function useTitleReviewSession({
 
   const start = useCallback(async () => {
     if (!applier?.name) return null;
-    setLoading(true);
-    try {
-      const created = await startTask("title_review", {});
-      toast.success("Title review started", {
-        description: fallback.pending != null ? `${fallback.pending} title(s) queued.` : "Reviewing pending titles.",
-      });
-      return { success: true, started: true, sessionId: created.id, pending: fallback.pending ?? undefined };
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to start title review");
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [applier?.name, fallback.pending, startTask]);
+    toast.info("Title review AI is not wired yet", {
+      description:
+        fallback.pending != null
+          ? `${fallback.pending} title(s) still need review. List data is live from athens_metadata.`
+          : "List data is live from athens_metadata.",
+    });
+    return null;
+  }, [applier?.name, fallback.pending]);
 
   const stop = useCallback(async () => {
     if (!task || !["queued", "running", "cancelling"].includes(task.status)) return;

@@ -97,3 +97,22 @@ model JobStatusCounts {
 
   @@map("job_status_counts")
 }
+
+/// Shared catalog work queues (not per-profile). One membership row per queue × job.
+/// Join `jobId` → `jobs` for display. Badge counts = count by queue (+ state).
+model AthensMetadata {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  /// title_review | skill_extract
+  queue     String
+  /// title_review: pending | review_required | failed
+  /// skill_extract: pending | failed
+  state     String
+  jobId     String   @db.ObjectId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([queue, jobId])
+  @@index([queue, state])
+  @@index([jobId])
+  @@map("athens_metadata")
+}
