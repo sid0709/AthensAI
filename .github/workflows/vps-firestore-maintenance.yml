@@ -3,6 +3,14 @@ name: VPS Firestore maintenance
 on:
   workflow_dispatch:
     inputs:
+      target_environment:
+        description: GitHub Environment / VPS to update
+        type: choice
+        required: true
+        options:
+          - Production
+          - Stage
+        default: Production
       writes_enabled:
         description: Allow application and worker writes to Firestore
         type: boolean
@@ -18,6 +26,7 @@ jobs:
   toggle:
     name: Set Firestore write gate
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target_environment }}
     steps:
       - name: Update VPS write gate and restart current image
         uses: appleboy/ssh-action@v1.2.0
@@ -55,7 +64,13 @@ jobs:
               echo "nextoffer stopped for migration"
               exit 0
             fi
-            /opt/nextoffer/deploy.sh latest
+            if [ "${{ inputs.target_environment }}" = "Stage" ]; then
+              image_tag=stage
+            else
+              image_tag=latest
+            fi
+            /opt/nextoffer/deploy.sh "${image_tag}"
             actual="$(docker inspect nextoffer --format '{{range .Config.Env}}{{println .}}{{end}}' | awk -F= '$1 == "FIRESTORE_WRITES_ENABLED" { print $2 }')"
             test "${actual}" = "${enabled}"
             echo "FIRESTORE_WRITES_ENABLED=${actual}"
+            echo "Redeployed image tag: ${image_tag}"
