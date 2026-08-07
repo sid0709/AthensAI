@@ -1,9 +1,35 @@
 import { Injectable } from '@nestjs/common';
 import type { Job, Prisma, VendorTask } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
 import { inferJobSource } from '../jobs/lib/infer-job-source';
 import { normalizeJobMetadata } from '../jobs/mappers/job-metadata.mapper';
+import {
+  isReplicaSetRequired,
+  rawInsertOne,
+  rawUpdateMany,
+  repairStringDateFields,
+  withReplicaSetFallback,
+} from '../prisma/mongo-standalone';
+import { PrismaService } from '../prisma/prisma.service';
 import { serializeVendorTask } from './mappers/vendor-task.mapper';
+
+/** Must match `@@map("vendor_tasks")` on VendorTask in schema.prisma. */
+const VENDOR_TASKS_COLLECTION = 'vendor_tasks';
+
+const VENDOR_TASK_DATE_FIELDS = [
+  'addedAt',
+  'completedAt',
+  'bidReadyDate',
+  'bidderInProcessAt',
+  'lastRejectedAt',
+  'lastResubmittedAt',
+  'recordingStartedAt',
+  'recordingEndedAt',
+  'recommendedAt',
+  'analyzedAt',
+  'flagAnalyzedAt',
+  'createdAt',
+  'updatedAt',
+] as const;
 
 export type VendorTaskUpsertFields = Partial<{
   title: string;
@@ -69,23 +95,49 @@ export class VendorTaskService {
     applierName: string,
     jobId: string,
   ): Promise<VendorTask | null> {
-    return this.prisma.vendorTask.findUnique({
-      where: {
-        applierName_jobId: { applierName, jobId },
-      },
-    });
+    try {
+      return await this.prisma.vendorTask.findUnique({
+        where: {
+          applierName_jobId: { applierName, jobId },
+        },
+      });
+    } catch (error) {
+      if (!isInconsistentDateTime(error)) throw error;
+      await this.repairDates();
+      return this.prisma.vendorTask.findUnique({
+        where: {
+          applierName_jobId: { applierName, jobId },
+        },
+      });
+    }
   }
 
   async findById(id: string): Promise<VendorTask | null> {
-    return this.prisma.vendorTask.findUnique({ where: { id } });
+    try {
+      return await this.prisma.vendorTask.findUnique({ where: { id } });
+    } catch (error) {
+      if (!isInconsistentDateTime(error)) throw error;
+      await this.repairDates();
+      return this.prisma.vendorTask.findUnique({ where: { id } });
+    }
   }
 
   async listForApplier(applierName: string, limit: number): Promise<VendorTask[]> {
-    return this.prisma.vendorTask.findMany({
-      where: { applierName },
-      orderBy: { addedAt: 'desc' },
-      take: limit,
-    });
+    try {
+      return await this.prisma.vendorTask.findMany({
+        where: { applierName },
+        orderBy: { addedAt: 'desc' },
+        take: limit,
+      });
+    } catch (error) {
+      if (!isInconsistentDateTime(error)) throw error;
+      await this.repairDates();
+      return this.prisma.vendorTask.findMany({
+        where: { applierName },
+        orderBy: { addedAt: 'desc' },
+        take: limit,
+      });
+    }
   }
 
   async listRejected(applierName: string, limit: number): Promise<VendorTask[]> {
@@ -118,24 +170,20 @@ export class VendorTaskService {
 
     const existing = await this.findByApplierJob(applierName, job.id);
     if (existing) {
-      return this.prisma.vendorTask.update({
-        where: { id: existing.id },
-        data: {
-          ...snapshot,
-          ...(existing.bidReadyDate ? {} : { bidReadyDate }),
-        },
-      });
+      const data = {
+        ...snapshot,
+        ...(existing.bidReadyDate ? {} : { bidReadyDate }),
+      };
+      return this.updateById(existing.id, data);
     }
 
-    return this.prisma.vendorTask.create({
-      data: {
-        applierName,
-        jobId: job.id,
-        ...snapshot,
-        status: 'pending',
-        bidReadyDate,
-        addedAt: bidReadyDate,
-      },
+    return this.createTask({
+      applierName,
+      jobId: job.id,
+      ...snapshot,
+      status: 'pending',
+      bidReadyDate,
+      addedAt: bidReadyDate,
     });
   }
 
@@ -146,39 +194,118 @@ export class VendorTaskService {
     opts?: { incRejectCount?: boolean; incResubmitCount?: boolean },
   ): Promise<VendorTask> {
     const existing = await this.findByApplierJob(applierName, jobId);
-    const data: Prisma.VendorTaskUpdateInput = { ...fields };
 
     if (existing) {
-      const updateData: Prisma.VendorTaskUpdateInput = { ...data };
-      if (opts?.incRejectCount) {
-        updateData.rejectCount = { increment: 1 };
-      }
-      if (opts?.incResubmitCount) {
-        updateData.resubmitCount = { increment: 1 };
-      }
-      // Never restamp bidReadyDate if already set
+      const updateData: Record<string, unknown> = { ...fields };
       if (existing.bidReadyDate && 'bidReadyDate' in updateData) {
         delete updateData.bidReadyDate;
       }
-      return this.prisma.vendorTask.update({
-        where: { id: existing.id },
-        data: updateData,
-      });
+      if (opts?.incRejectCount) {
+        updateData.rejectCount = (existing.rejectCount || 0) + 1;
+      }
+      if (opts?.incResubmitCount) {
+        updateData.resubmitCount = (existing.resubmitCount || 0) + 1;
+      }
+      return this.updateById(existing.id, updateData);
     }
 
-    return this.prisma.vendorTask.create({
-      data: {
-        status: 'pending',
-        ...(fields as Prisma.VendorTaskCreateInput),
-        applierName,
-        jobId,
-        rejectCount: opts?.incRejectCount ? 1 : 0,
-        resubmitCount: opts?.incResubmitCount ? 1 : 0,
-      },
+    return this.createTask({
+      status: 'pending',
+      ...fields,
+      applierName,
+      jobId,
+      rejectCount: opts?.incRejectCount ? 1 : 0,
+      resubmitCount: opts?.incResubmitCount ? 1 : 0,
     });
   }
 
   serialize(doc: VendorTask): Record<string, unknown> {
     return serializeVendorTask(doc);
   }
+
+  private async createTask(
+    data: Record<string, unknown>,
+  ): Promise<VendorTask> {
+    const now = new Date();
+    const createData = {
+      ...data,
+      createdAt: (data.createdAt as Date) || now,
+      updatedAt: now,
+    } as Prisma.VendorTaskCreateInput;
+
+    return withReplicaSetFallback(
+      () => this.prisma.vendorTask.create({ data: createData }),
+      async () => {
+        const applierName = String(data.applierName || '');
+        const jobId = String(data.jobId || '');
+        await rawInsertOne(this.prisma, VENDOR_TASKS_COLLECTION, {
+          ...stripUndefined(data),
+          rejectCount: Number(data.rejectCount || 0),
+          resubmitCount: Number(data.resubmitCount || 0),
+          useCustomizedResume: Boolean(data.useCustomizedResume),
+          resumeRenamed: Boolean(data.resumeRenamed),
+          resumeMismatch: Boolean(data.resumeMismatch),
+          bidderInProcess: Boolean(data.bidderInProcess),
+          createdAt: now,
+          updatedAt: now,
+        });
+        const created = await this.findByApplierJob(applierName, jobId);
+        if (!created) {
+          throw new Error('Failed to load vendor_tasks after raw insert');
+        }
+        return created;
+      },
+    );
+  }
+
+  private async updateById(
+    id: string,
+    data: Record<string, unknown>,
+  ): Promise<VendorTask> {
+    const now = new Date();
+    try {
+      return await this.prisma.vendorTask.update({
+        where: { id },
+        data: data as Prisma.VendorTaskUpdateInput,
+      });
+    } catch (error) {
+      if (!isReplicaSetRequired(error)) throw error;
+      await rawUpdateMany(
+        this.prisma,
+        VENDOR_TASKS_COLLECTION,
+        { _id: { $oid: id } },
+        { ...stripUndefined(data), updatedAt: now },
+      );
+      const updated = await this.findById(id);
+      if (!updated) {
+        throw new Error('Failed to load vendor_tasks after raw update');
+      }
+      return updated;
+    }
+  }
+
+  private async repairDates(): Promise<void> {
+    await repairStringDateFields(
+      this.prisma,
+      VENDOR_TASKS_COLLECTION,
+      [...VENDOR_TASK_DATE_FIELDS],
+    );
+  }
+}
+
+function stripUndefined(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+function isInconsistentDateTime(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Failed to convert .+ to 'DateTime'|Inconsistent column data/i.test(
+    message,
+  );
 }

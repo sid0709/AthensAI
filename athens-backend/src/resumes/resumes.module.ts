@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
 import { AuthModule } from '../auth/auth.module';
 import { FirebaseModule } from '../firebase/firebase.module';
+import { AgentJobResumesController } from './agent-job-resumes.controller';
+import { AgentJobResumesService } from './agent-job-resumes.service';
 import { ResumeAnalyzeController } from './resume-analyze.controller';
 import { ResumeAnalyzeProcessService } from './resume-analyze-process.service';
 import { ResumeAnalyzeSessionService } from './resume-analyze-session.service';
@@ -13,7 +15,11 @@ import { ResumesController } from './resumes.controller';
 
 @Module({
   imports: [AuthModule, AiModule, FirebaseModule],
-  controllers: [ResumesController, ResumeAnalyzeController],
+  controllers: [
+    ResumesController,
+    ResumeAnalyzeController,
+    AgentJobResumesController,
+  ],
   providers: [
     ResumeService,
     ResumeUploadService,
@@ -21,6 +27,7 @@ import { ResumesController } from './resumes.controller';
     ResumeTextService,
     ResumeAnalyzeProcessService,
     ResumeAnalyzeSessionService,
+    AgentJobResumesService,
   ],
   exports: [ResumeService, ResumeAnalyzeSessionService],
 })

@@ -18,7 +18,7 @@ describe("athensAuthStore", () => {
     vi.unstubAllGlobals();
   });
 
-  it("signs in through Athens-server and persists no password", async () => {
+  it("signs in through athens-backend and persists no password", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
       void init;

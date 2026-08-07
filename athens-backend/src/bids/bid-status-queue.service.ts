@@ -5,12 +5,22 @@ import {
   deleteManyWithFallback,
   rawInsertOne,
   rawUpdateMany,
+  repairStringDateFields,
   withReplicaSetFallback,
 } from '../prisma/mongo-standalone';
 import type { JobStatusState } from '../jobs/constants/job-status-states.constants';
 import { VendorTaskService } from './vendor-task.service';
 
 const JOB_STATUSES_COLLECTION = 'job_statuses';
+
+/** DateTime fields that raw fallbacks must store as BSON Date (not ISO strings). */
+const JOB_STATUS_DATE_FIELDS = [
+  'bidReadyAt',
+  'bidCompletedAt',
+  'postedAt',
+  'createdAt',
+  'updatedAt',
+] as const;
 
 /**
  * JobStatus bid transitions with stable bidReadyAt + vendor_tasks stub.
@@ -29,9 +39,7 @@ export class BidStatusQueueService {
     job: Job;
   }): Promise<{ bidReadyAt: Date; changed: boolean }> {
     const { profileId, job, applierName } = input;
-    const existing = await this.prisma.jobStatus.findUnique({
-      where: { profileId_jobId: { profileId, jobId: job.id } },
-    });
+    const existing = await this.findStatusRow(profileId, job.id);
 
     const now = new Date();
     const bidReadyAt = existing?.bidReadyAt ?? now;
@@ -110,9 +118,7 @@ export class BidStatusQueueService {
     existingBidReadyAt?: Date | null;
   }): Promise<void> {
     const { profileId, job } = input;
-    const existing = await this.prisma.jobStatus.findUnique({
-      where: { profileId_jobId: { profileId, jobId: job.id } },
-    });
+    const existing = await this.findStatusRow(profileId, job.id);
     const now = new Date();
     const bidReadyAt =
       existing?.bidReadyAt ?? input.existingBidReadyAt ?? now;
@@ -182,11 +188,25 @@ export class BidStatusQueueService {
     profileId: string,
     jobId: string,
   ): Promise<Date | null> {
-    const row = await this.prisma.jobStatus.findUnique({
-      where: { profileId_jobId: { profileId, jobId } },
-      select: { bidReadyAt: true },
-    });
-    return row?.bidReadyAt ?? null;
+    try {
+      const row = await this.prisma.jobStatus.findUnique({
+        where: { profileId_jobId: { profileId, jobId } },
+        select: { bidReadyAt: true },
+      });
+      return row?.bidReadyAt ?? null;
+    } catch (error) {
+      if (!isInconsistentDateTime(error)) throw error;
+      await repairStringDateFields(
+        this.prisma,
+        JOB_STATUSES_COLLECTION,
+        [...JOB_STATUS_DATE_FIELDS],
+      );
+      const row = await this.prisma.jobStatus.findUnique({
+        where: { profileId_jobId: { profileId, jobId } },
+        select: { bidReadyAt: true },
+      });
+      return row?.bidReadyAt ?? null;
+    }
   }
 
   async listQueue(
@@ -196,11 +216,26 @@ export class BidStatusQueueService {
     const states: JobStatusState[] = opts.includeCompleted
       ? ['bid-ready', 'bid-completed']
       : ['bid-ready'];
-    return this.prisma.jobStatus.findMany({
-      where: { profileId, state: { in: states } },
-      orderBy: [{ postedAt: 'desc' }, { updatedAt: 'desc' }],
-      take: opts.limit,
-    });
+    try {
+      return await this.prisma.jobStatus.findMany({
+        where: { profileId, state: { in: states } },
+        orderBy: [{ postedAt: 'desc' }, { updatedAt: 'desc' }],
+        take: opts.limit,
+      });
+    } catch (error) {
+      // Standalone raw writes once stored ISO strings; heal then retry.
+      if (!isInconsistentDateTime(error)) throw error;
+      await repairStringDateFields(
+        this.prisma,
+        JOB_STATUSES_COLLECTION,
+        [...JOB_STATUS_DATE_FIELDS],
+      );
+      return this.prisma.jobStatus.findMany({
+        where: { profileId, state: { in: states } },
+        orderBy: [{ postedAt: 'desc' }, { updatedAt: 'desc' }],
+        take: opts.limit,
+      });
+    }
   }
 
   async clearStatus(profileId: string, jobId: string): Promise<number> {
@@ -217,4 +252,29 @@ export class BidStatusQueueService {
         }),
     );
   }
+
+  private async findStatusRow(profileId: string, jobId: string) {
+    try {
+      return await this.prisma.jobStatus.findUnique({
+        where: { profileId_jobId: { profileId, jobId } },
+      });
+    } catch (error) {
+      if (!isInconsistentDateTime(error)) throw error;
+      await repairStringDateFields(
+        this.prisma,
+        JOB_STATUSES_COLLECTION,
+        [...JOB_STATUS_DATE_FIELDS],
+      );
+      return this.prisma.jobStatus.findUnique({
+        where: { profileId_jobId: { profileId, jobId } },
+      });
+    }
+  }
+}
+
+function isInconsistentDateTime(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Failed to convert .+ to 'DateTime'|Inconsistent column data/i.test(
+    message,
+  );
 }

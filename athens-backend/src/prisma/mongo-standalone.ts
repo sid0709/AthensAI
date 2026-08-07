@@ -7,6 +7,46 @@ export function isReplicaSetRequired(error: unknown): boolean {
   return /replica set/i.test(message);
 }
 
+/** Extended JSON Date for Prisma `$runCommandRaw` (BSON Date, not ISO string). */
+export function toMongoDate(
+  value: Date | string | null | undefined,
+): { $date: string } | null {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return { $date: d.toISOString() };
+}
+
+/**
+ * Walk a raw Mongo document / $set payload and convert `Date` instances to
+ * `{ $date: iso }` so `$runCommandRaw` stores BSON DateTime (Prisma-readable).
+ */
+export function toMongoJson(value: unknown): Prisma.InputJsonValue {
+  if (value instanceof Date) {
+    return { $date: value.toISOString() };
+  }
+  if (value === null || value === undefined) {
+    return null as unknown as Prisma.InputJsonValue;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => toMongoJson(item)) as Prisma.InputJsonValue;
+  }
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    // Already Extended JSON ($oid / $date / $numberLong) — leave alone.
+    if ('$date' in obj || '$oid' in obj || '$numberLong' in obj) {
+      return obj as Prisma.InputJsonValue;
+    }
+    const out: Record<string, Prisma.InputJsonValue> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === undefined) continue;
+      out[k] = toMongoJson(v);
+    }
+    return out;
+  }
+  return value as Prisma.InputJsonValue;
+}
+
 /** Delete matching docs via the Mongo wire protocol (no Prisma transaction). */
 export async function rawDeleteMany(
   prisma: PrismaClient,
@@ -28,7 +68,7 @@ export async function rawInsertOne(
 ): Promise<void> {
   await prisma.$runCommandRaw({
     insert: collection,
-    documents: [document],
+    documents: [toMongoJson(document)],
     ordered: true,
   });
 }
@@ -45,12 +85,35 @@ export async function rawUpdateMany(
     updates: [
       {
         q: query,
-        u: { $set: set },
+        u: { $set: toMongoJson(set) },
         multi: true,
       },
     ],
   });
   return Number((result as { n?: number }).n ?? 0);
+}
+
+/**
+ * Convert string ISO timestamps → BSON Date for fields Prisma maps as DateTime.
+ * Uses aggregation-pipeline update (`$toDate`). Safe to call repeatedly.
+ */
+export async function repairStringDateFields(
+  prisma: PrismaClient,
+  collection: string,
+  fields: string[],
+): Promise<void> {
+  for (const field of fields) {
+    await prisma.$runCommandRaw({
+      update: collection,
+      updates: [
+        {
+          q: { [field]: { $type: 'string' } },
+          u: [{ $set: { [field]: { $toDate: `$${field}` } } }],
+          multi: true,
+        },
+      ],
+    });
+  }
 }
 
 export function objectIdIn(ids: string[]): Prisma.InputJsonValue {

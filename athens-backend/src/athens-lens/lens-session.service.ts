@@ -1,6 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import {
+  rawDeleteMany,
+  rawInsertOne,
+  withReplicaSetFallback,
+} from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
+
+/** Must match `@@map("athens_lens_sessions")` on AthensLensSession. */
+const SESSIONS_COLLECTION = 'athens_lens_sessions';
 
 const DEFAULT_TTL_SECONDS = 12 * 60 * 60;
 const MIN_TTL = 5 * 60;
@@ -45,17 +53,36 @@ export class LensSessionService {
       authenticatedAt.getTime() + sessionTtlSeconds() * 1000,
     );
     const profileId = input.profileId || input.accountId;
-    await this.prisma.athensLensSession.create({
-      data: {
-        id,
-        accountId: input.accountId,
-        profileId,
-        applierName: input.applierName,
-        username: input.username,
-        authenticatedAt,
-        expiresAt,
+    const now = new Date();
+
+    await withReplicaSetFallback(
+      async () => {
+        await this.prisma.athensLensSession.create({
+          data: {
+            id,
+            accountId: input.accountId,
+            profileId,
+            applierName: input.applierName,
+            username: input.username,
+            authenticatedAt,
+            expiresAt,
+          },
+        });
       },
-    });
+      () =>
+        rawInsertOne(this.prisma, SESSIONS_COLLECTION, {
+          _id: id,
+          accountId: input.accountId,
+          profileId,
+          applierName: input.applierName,
+          username: input.username,
+          authenticatedAt,
+          expiresAt,
+          createdAt: now,
+          updatedAt: now,
+        }),
+    );
+
     return {
       token,
       session: {
@@ -78,7 +105,7 @@ export class LensSessionService {
     });
     if (!row) return null;
     if (row.expiresAt.getTime() <= Date.now()) {
-      await this.prisma.athensLensSession.delete({ where: { id } }).catch(() => undefined);
+      await this.deleteById(id);
       return null;
     }
     return {
@@ -94,8 +121,19 @@ export class LensSessionService {
   async revoke(token: string): Promise<void> {
     const normalized = String(token || '').trim();
     if (!normalized) return;
-    await this.prisma.athensLensSession
-      .delete({ where: { id: tokenId(normalized) } })
-      .catch(() => undefined);
+    await this.deleteById(tokenId(normalized));
+  }
+
+  private async deleteById(id: string): Promise<void> {
+    await withReplicaSetFallback(
+      async () => {
+        await this.prisma.athensLensSession
+          .delete({ where: { id } })
+          .catch(() => undefined);
+      },
+      async () => {
+        await rawDeleteMany(this.prisma, SESSIONS_COLLECTION, { _id: id });
+      },
+    );
   }
 }

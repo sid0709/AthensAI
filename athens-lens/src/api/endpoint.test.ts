@@ -19,13 +19,13 @@ describe("endpoint encoding", () => {
     const url = "https://athensai.remotepairnet.net/api";
     const token = execFileSync("python3", [encodePy, url], { encoding: "utf8" }).trim();
     expect(decodeEndpoint(`enc:${token}`)).toBe(url);
-    expect(resolveEndpoint(`enc:${token}`, "http://127.0.0.1:8979/api")).toBe(url);
+    expect(resolveEndpoint(`enc:${token}`, "http://127.0.0.1:8980/api")).toBe(url);
   });
 
   it("falls back when value is empty", () => {
-    expect(resolveEndpoint("", "http://127.0.0.1:8979/api")).toBe("http://127.0.0.1:8979/api");
-    expect(resolveEndpoint(undefined, "http://127.0.0.1:8979/api")).toBe(
-      "http://127.0.0.1:8979/api",
+    expect(resolveEndpoint("", "http://127.0.0.1:8980/api")).toBe("http://127.0.0.1:8980/api");
+    expect(resolveEndpoint(undefined, "http://127.0.0.1:8980/api")).toBe(
+      "http://127.0.0.1:8980/api",
     );
   });
 });
