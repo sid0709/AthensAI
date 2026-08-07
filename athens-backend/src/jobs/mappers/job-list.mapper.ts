@@ -1,29 +1,30 @@
-import type { Job } from '@prisma/client';
-import type { JobListRow } from '../constants/job-list.select';
+import type { Job, TempJob } from '@prisma/client';
+import {
+  normalizeJobMetadata,
+  type JobMetadataCapsule,
+} from './job-metadata.mapper';
 
-type JobMetadata = {
-  companyLogo?: string;
-  companyTags?: string[];
-  details?: Record<string, unknown>;
-  legacyId?: string;
-};
-
-type JobListSource = JobListRow | Job;
-
-function asMetadata(raw: unknown): JobMetadata {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  return raw;
-}
+type JobListSource = Pick<
+  Job | TempJob,
+  | 'id'
+  | 'title'
+  | 'companyName'
+  | 'source'
+  | 'postedAt'
+  | 'applyLink'
+  | 'companyLink'
+  | 'aiSkills'
+  | 'aiSkillStatus'
+  | 'sourceCatalog'
+  | 'metadata'
+> & { description?: string | null };
 
 /** Map Prisma Job (list or detail) → shape expected by Athens `mapDocToJob`. */
 export function mapJobToListDoc(
   job: JobListSource,
   viewerStatus = 'posted',
 ): Record<string, unknown> {
-  const metadata = asMetadata(job.metadata);
-  const tags = Array.isArray(metadata.companyTags)
-    ? metadata.companyTags.map(String).filter(Boolean)
-    : [];
+  const metadata: JobMetadataCapsule = normalizeJobMetadata(job.metadata) ?? {};
   const logo =
     typeof metadata.companyLogo === 'string' ? metadata.companyLogo.trim() : '';
   const description =
@@ -38,7 +39,6 @@ export function mapJobToListDoc(
     company: {
       name: job.companyName,
       ...(logo ? { logo } : {}),
-      ...(tags.length ? { tags } : {}),
     },
     source: job.source,
     postedAt: job.postedAt.toISOString(),

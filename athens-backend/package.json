@@ -15,6 +15,7 @@
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "migrate:jobs": "node scripts/migrate-jobs-athensai-to-athensdb.mjs",
+    "migrate:temp-jobs": "node scripts/reshape-jobs-and-split-temp.mjs",
     "backfill:metadata": "node scripts/backfill-athens-metadata.mjs",
     "lint": "eslint \"{src,apps,libs}/**/*.ts\" --fix",
     "test": "jest",

@@ -49,7 +49,7 @@ export interface Job {
   workMode: WorkMode;
   type: string;
   seniority: string;
-  /** Years of experience hint from details.date (e.g. "5+ years exp"). */
+  /** Optional experience hint when present on a row (no longer sourced from metadata.details). */
   experience?: string;
   industries: string[];
   status: JobStatus;

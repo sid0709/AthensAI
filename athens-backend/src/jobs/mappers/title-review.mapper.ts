@@ -1,5 +1,3 @@
-import type { Job } from '@prisma/client';
-
 type TitleReviewCapsule = {
   processingState?: string;
   label?: string;
@@ -12,6 +10,17 @@ type TitleReviewCapsule = {
   error?: { code?: string; message?: string; failedAt?: string };
 };
 
+type TitleReviewJobSource = {
+  id: string;
+  title: string;
+  companyName: string;
+  source: string;
+  postedAt: Date;
+  applyLink: string | null;
+  titleReviewLabel: string;
+  metadata: unknown;
+};
+
 function asCapsule(raw: unknown): TitleReviewCapsule | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const meta = raw as { titleReview?: unknown };
@@ -19,19 +28,9 @@ function asCapsule(raw: unknown): TitleReviewCapsule | null {
   return meta.titleReview;
 }
 
-/** Map Job + queue state → Athens TitleReviewJob row. */
+/** Map TempJob + queue state → Athens TitleReviewJob row. */
 export function mapJobToTitleReviewRow(
-  job: Pick<
-    Job,
-    | 'id'
-    | 'title'
-    | 'companyName'
-    | 'source'
-    | 'postedAt'
-    | 'applyLink'
-    | 'titleReviewLabel'
-    | 'metadata'
-  >,
+  job: TitleReviewJobSource,
   queueState: string,
 ) {
   const capsule = asCapsule(job.metadata);

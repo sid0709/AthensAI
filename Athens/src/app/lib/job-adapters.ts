@@ -48,7 +48,9 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       ? "posted"
       : resolveJobStatusState(doc.status as unknown[] | undefined, applierId))) as JobStatus;
 
-  const location = String(details.position || (isAnalyzedExternal ? "—" : isExternal ? "—" : "—"));
+  const location = String(
+    details.location || details.position || "—",
+  );
   const workMode = isAnalyzedExternal
     ? parseWorkMode(String(details.remote || ""))
     : isExternal
@@ -56,7 +58,9 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       : parseWorkMode(String(details.remote || ""));
   const type = String(details.time || (isExternal ? "—" : "Full-time"));
   const seniority = String(details.seniority || "—");
-  const salary = String(details.money || (isExternal ? "—" : "Undisclosed"));
+  const salary = String(
+    details.salary || details.money || (isExternal ? "—" : "Undisclosed"),
+  );
   const postedRaw = String(doc.postedAt || doc._createdAt || "");
   const postedAt = postedRaw ? postedRaw.slice(0, 10) : "";
   const posted = postedRaw ? new Date(postedRaw).toLocaleString() : "—";
@@ -103,7 +107,6 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     workMode,
     type,
     seniority,
-    experience: String(details.date || "").trim() || undefined,
     industries,
     status,
     posted,

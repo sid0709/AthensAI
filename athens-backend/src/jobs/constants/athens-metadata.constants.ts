@@ -1,4 +1,7 @@
-/** Shared catalog queues in `athens_metadata` (not per-profile). */
+/**
+ * Shared catalog queues in `athens_metadata` (not per-profile).
+ * `jobId` points at `temp_jobs._id` while title review / skill extract run.
+ */
 export const ATHENS_METADATA_QUEUES = {
   TITLE_REVIEW: 'title_review',
   SKILL_EXTRACT: 'skill_extract',

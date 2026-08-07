@@ -29,7 +29,8 @@ model AccountInfo {
   @@map("account_info")
 }
 
-/// Lean Job Search catalog. Filter/search fields are flat; legacy capsules live in metadata.
+/// Lean Job Search catalog (searchable). Incomplete title-review / skill-extract rows live in `temp_jobs`.
+/// Filter/search fields are flat; capsules live in metadata.
 model Job {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   title            String
@@ -48,7 +49,7 @@ model Job {
   createdBy        String
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-  /// { legacyId?, companyTags?, companyLogo?, details?, titleReview? }
+  /// { legacyId?, companyLogo?, details?: { location?, time?, remote?, seniority?, salary? }, titleReview? }
   metadata         Json?
 
   statuses JobStatus[]
@@ -60,6 +61,38 @@ model Job {
   @@index([sourceCatalog, titleReviewLabel, postedAt(sort: Desc)])
   @@index([createdBy, postedAt(sort: Desc)])
   @@map("jobs")
+}
+
+/// Staging catalog for jobs awaiting title review and/or skill extraction.
+/// Same document shape as `jobs`. Title Review + Extract Skills operate here.
+/// Promote into `jobs` only when titleReviewLabel=APPROVED and aiSkillStatus is done.
+model TempJob {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  title            String
+  companyName      String
+  source           String
+  postedAt         DateTime
+  titleReviewLabel String
+  sourceCatalog    String   @default("market")
+  companyLink      String?
+  applyLink        String?
+  description      String?
+  /// [{ name, category, requirement }]
+  aiSkills         Json?
+  aiSkillStatus    String?
+  modelSchemaCode  String   @map("model_schema_code")
+  createdBy        String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  /// { legacyId?, companyLogo?, details?: { location?, time?, remote?, seniority?, salary? }, titleReview? }
+  metadata         Json?
+
+  @@index([postedAt(sort: Desc)])
+  @@index([titleReviewLabel, postedAt(sort: Desc)])
+  @@index([titleReviewLabel, source, postedAt(sort: Desc)])
+  @@index([aiSkillStatus, postedAt(sort: Desc)])
+  @@index([createdBy, postedAt(sort: Desc)])
+  @@map("temp_jobs")
 }
 
 /// One row per profile × job. Status is owned by the profile, never shared.
@@ -99,7 +132,8 @@ model JobStatusCounts {
 }
 
 /// Shared catalog work queues (not per-profile). One membership row per queue × job.
-/// Join `jobId` → `jobs` for display. Badge counts = count by queue (+ state).
+/// Join `jobId` → `temp_jobs` while pipelines run; row deleted on promote to `jobs`.
+/// Badge counts = count by queue (+ state).
 model AthensMetadata {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   /// title_review | skill_extract
@@ -107,6 +141,7 @@ model AthensMetadata {
   /// title_review: pending | review_required | failed
   /// skill_extract: pending | failed
   state     String
+  /// ObjectId of the `temp_jobs` document being processed.
   jobId     String   @db.ObjectId
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

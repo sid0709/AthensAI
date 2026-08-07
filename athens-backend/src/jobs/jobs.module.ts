@@ -10,6 +10,7 @@ import { JobsQueryService } from './jobs-query.service';
 import { JobsService } from './jobs.service';
 import { SkillExtractController } from './skill-extract.controller';
 import { SkillExtractQueryService } from './skill-extract-query.service';
+import { TempJobPromotionService } from './temp-job-promotion.service';
 import { TitleReviewController } from './title-review.controller';
 import { TitleReviewQueryService } from './title-review-query.service';
 
@@ -26,6 +27,7 @@ import { TitleReviewQueryService } from './title-review-query.service';
     AthensMetadataService,
     TitleReviewQueryService,
     SkillExtractQueryService,
+    TempJobPromotionService,
   ],
 })
 export class JobsModule {}

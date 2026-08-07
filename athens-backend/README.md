@@ -60,28 +60,50 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 |--------|------|-------|
 | GET | `/api/jobs` | Query: `status`, `q`, `company`, `source`, `postedFrom`, `postedTo`, `sort`, `aiExtracted`, `page`, `pageSize`, `profileId` |
 | GET | `/api/jobs/:id` | Full job (incl. `description`) for View JD. Query: `applierName`, `profileId` |
-| GET | `/api/jobs/title-review/status` | Shared title-review queue counts from `athens_metadata` |
-| GET | `/api/jobs/title-review` | Paginated title-review list (join metadata → jobs). Query: `tab`, `page`, `limit`, `q`, `sort` |
+| GET | `/api/jobs/title-review/status` | Shared title-review queue counts from `athens_metadata` (temp_jobs) |
+| GET | `/api/jobs/title-review` | Paginated title-review list (join metadata → **temp_jobs**). Query: `tab`, `page`, `limit`, `q`, `sort` |
 | GET | `/api/jobs/title-review/bootstrap` | List + idle session counts |
-| GET | `/api/jobs/skill-extract/status` | Shared skill-extract pending badge (`pending` = not extracted on APPROVED titles) |
+| GET | `/api/jobs/skill-extract/status` | Shared skill-extract pending badge on **temp_jobs** |
 
+- Job Search reads **`jobs` only**. Incomplete title-review / skill-extract rows live in **`temp_jobs`** and are invisible to search.
 - Only `status=all` returns catalog rows today; other status tabs return an empty page (list-by-status not wired yet).
 - List responses **omit** `description` (lean `select` + `@@index([postedAt])`). Unfiltered totals are cached in-process (~60s); filtered lists still `count`.
 - Filters and offset pagination (`page` / `pageSize`) hit Prisma against `AthensDB.jobs`.
 - With `profileId` (`account_info._id`): badge counts load from `job_status_counts` at O(1); page rows hydrate `viewerStatus` from `job_statuses` (one doc per profile × job).
 - Response: `{ success, data, pagination, statusCounts, hasMore }`.
 
+### Metadata capsule (`Job.metadata` / `TempJob.metadata`)
+
+```text
+{
+  legacyId?, companyLogo?,
+  details?: { location?, time?, remote?, seniority?, salary? },
+  titleReview?
+}
+```
+
+Legacy keys `companyTags`, `details.position`, `details.money`, and `details.date` are removed by `npm run migrate:temp-jobs`.
+
+### Catalog split (`jobs` vs `temp_jobs`)
+
+| Collection | Role |
+|------------|------|
+| `jobs` | Searchable catalog. Rows are title-approved **and** skill-pipeline done (`extracted` or `skipped_duplicate`). |
+| `temp_jobs` | Staging. Title Review + Extract Skills operate here. Promote into `jobs` when both pipelines complete (`TempJobPromotionService.promoteIfReady` — AI not wired yet). |
+
+One-shot reshape + move: `npm run migrate:temp-jobs` (add `-- --dry-run` to preview). Then rebuild queues: `npm run backfill:metadata`.
+
 ### Shared catalog queues (`athens_metadata`)
 
-Not per-profile (unlike `job_statuses`). One membership document per `queue` × `jobId`:
+Not per-profile (unlike `job_statuses`). One membership document per `queue` × `jobId` where **`jobId` → `temp_jobs._id`**:
 
 | Field | Values |
 |-------|--------|
 | `queue` | `title_review` \| `skill_extract` |
 | `state` | title: `pending` \| `review_required` \| `failed`; skills: `pending` \| `failed` |
-| `jobId` | `jobs._id` |
+| `jobId` | `temp_jobs._id` |
 
-Rebuild from `jobs` with `npm run backfill:metadata` after `prisma:push`.
+Rebuild from `temp_jobs` with `npm run backfill:metadata` after `prisma:push` / `migrate:temp-jobs`.
 
 ### Profile-owned status collections
 

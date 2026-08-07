@@ -40,7 +40,7 @@ export class AthensMetadataService {
     };
   }
 
-  /** APPROVED titles still pending/failed skill extraction (shared global queue). */
+  /** APPROVED temp_jobs still pending/failed skill extraction (shared global queue). */
   async skillExtractPendingCount() {
     const [pending, failed] = await Promise.all([
       this.countByQueueState(

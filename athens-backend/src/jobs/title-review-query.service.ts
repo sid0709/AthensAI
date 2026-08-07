@@ -10,6 +10,7 @@ import {
 import type { ListTitleReviewQueryDto } from './dto/list-title-review.query.dto';
 import { mapJobToTitleReviewRow } from './mappers/title-review.mapper';
 
+/** Title Review operates on `temp_jobs` only. */
 const TITLE_REVIEW_JOB_SELECT = {
   id: true,
   title: true,
@@ -19,7 +20,7 @@ const TITLE_REVIEW_JOB_SELECT = {
   applyLink: true,
   titleReviewLabel: true,
   metadata: true,
-} as const satisfies Prisma.JobSelect;
+} as const satisfies Prisma.TempJobSelect;
 
 function tabToState(tab: string): TitleReviewMetaState {
   if (tab === 'review_required')
@@ -65,17 +66,17 @@ export class TitleReviewQueryService {
       return this.emptyList(page, limit, counts, started);
     }
 
-    const where: Prisma.JobWhereInput = {
+    const where: Prisma.TempJobWhereInput = {
       id: { in: jobIds },
       ...(q ? { title: { contains: q, mode: 'insensitive' as const } } : {}),
     };
 
-    const orderBy: Prisma.JobOrderByWithRelationInput =
+    const orderBy: Prisma.TempJobOrderByWithRelationInput =
       sort === 'oldest' ? { postedAt: 'asc' } : { postedAt: 'desc' };
 
     const [total, rows] = await Promise.all([
-      this.prisma.job.count({ where }),
-      this.prisma.job.findMany({
+      this.prisma.tempJob.count({ where }),
+      this.prisma.tempJob.findMany({
         where,
         select: TITLE_REVIEW_JOB_SELECT,
         orderBy,

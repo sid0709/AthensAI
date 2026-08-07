@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * Scan AthensDB.jobs and rebuild athens_metadata membership rows.
+ * Scan AthensDB.temp_jobs and rebuild athens_metadata membership rows.
+ * Title Review + skill extract operate on temp_jobs only; searchable jobs
+ * stay in `jobs` and are not queued.
  *
  * title_review:
  *   PENDING label → state pending
  *   REVIEW_REQUIRED label → state review_required
  *   metadata.titleReview.processingState === failed → state failed
  *
- * skill_extract (APPROVED titles only, matches Athens-server):
+ * skill_extract (APPROVED titles only):
  *   aiSkillStatus pending → state pending
  *   aiSkillStatus failed → state failed
  *
@@ -43,15 +45,15 @@ async function main() {
   const client = new MongoClient(url);
   await client.connect();
   const db = client.db();
-  const jobs = db.collection('jobs');
+  const tempJobs = db.collection('temp_jobs');
   const meta = db.collection('athens_metadata');
 
-  console.log(`[backfill:metadata] db=${db.databaseName}`);
+  console.log(`[backfill:metadata] db=${db.databaseName} source=temp_jobs`);
 
   const now = new Date();
   const docs = [];
 
-  const titleCursor = jobs.find(
+  const titleCursor = tempJobs.find(
     {
       $or: [
         { titleReviewLabel: { $in: ['PENDING', 'REVIEW_REQUIRED'] } },
@@ -83,7 +85,7 @@ async function main() {
     });
   }
 
-  const skillCursor = jobs.find(
+  const skillCursor = tempJobs.find(
     {
       titleReviewLabel: 'APPROVED',
       aiSkillStatus: { $in: ['pending', 'failed'] },

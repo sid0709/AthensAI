@@ -5,7 +5,7 @@ import { AthensMetadataService } from './athens-metadata.service';
 export class SkillExtractQueryService {
   constructor(private readonly metadata: AthensMetadataService) {}
 
-  /** Read-only status — pending badge only; AI extraction not wired yet. */
+  /** Read-only status from temp_jobs queue — pending badge only; AI not wired yet. */
   async status() {
     const pending = await this.metadata.skillExtractPendingCount();
     return {
