@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -9,6 +10,8 @@ import {
 } from '@nestjs/common';
 import { StartAiSessionDto } from './dto/start-ai-session.dto';
 import { ListTitleReviewQueryDto } from './dto/list-title-review.query.dto';
+import { RemoveTitleReviewJobsDto } from './dto/remove-title-review-jobs.dto';
+import { JobHardDeleteService } from './job-hard-delete.service';
 import { TitleReviewQueryService } from './title-review-query.service';
 import { TitleReviewSessionService } from './title-review/title-review-session.service';
 
@@ -17,6 +20,7 @@ export class TitleReviewController {
   constructor(
     private readonly titleReview: TitleReviewQueryService,
     private readonly session: TitleReviewSessionService,
+    private readonly hardDelete: JobHardDeleteService,
   ) {}
 
   @Get('status')
@@ -33,6 +37,20 @@ export class TitleReviewController {
   @Post('stop')
   stop() {
     return this.session.stop();
+  }
+
+  /** Permanent hard delete from staging `temp_jobs`. */
+  @Post('remove')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  remove(@Body() body: RemoveTitleReviewJobsDto) {
+    if (!body.ids?.length) {
+      throw new BadRequestException({
+        success: false,
+        error: 'Missing ids array',
+        message: 'Missing ids array',
+      });
+    }
+    return this.hardDelete.deleteTempJobs(body.ids);
   }
 
   @Get('bootstrap')

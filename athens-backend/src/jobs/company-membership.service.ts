@@ -135,4 +135,35 @@ export class CompanyMembershipService {
     });
     return companyId;
   }
+
+  /** Remove job ids from company membership; delete empty company rows. */
+  async detachJobs(
+    jobs: Array<{ id: string; companyId: string | null }>,
+  ): Promise<void> {
+    const byCompany = new Map<string, string[]>();
+    for (const job of jobs) {
+      const companyId = String(job.companyId || '').trim();
+      if (!companyId) continue;
+      const list = byCompany.get(companyId) || [];
+      list.push(job.id);
+      byCompany.set(companyId, list);
+    }
+
+    for (const [companyId, removeIds] of byCompany) {
+      const existing = await this.prisma.company.findUnique({
+        where: { id: companyId },
+      });
+      if (!existing) continue;
+      const removeSet = new Set(removeIds);
+      const jobIds = existing.jobIds.filter((id) => !removeSet.has(id));
+      if (jobIds.length === 0) {
+        await this.prisma.company.delete({ where: { id: companyId } });
+        continue;
+      }
+      await this.prisma.company.update({
+        where: { id: companyId },
+        data: { jobIds, jobCount: jobIds.length },
+      });
+    }
+  }
 }

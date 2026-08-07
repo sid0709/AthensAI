@@ -63,7 +63,10 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/jobs/bulk` | Extension scrape ingest — `{ jobs: [...] }` → prenorm → `temp_jobs` |
 | POST | `/api/expose/jobs` | LI-scrapper ingest — single job or `{ jobs: [...] }` → prenorm → `temp_jobs` |
 | POST | `/api/expose/jobs/check` | LI-scrapper — `{ jobID }` exists in `temp_jobs` or `jobs` via `metadata.legacyId` |
-| GET | `/api/jobs/title-review/status` | Live title-review session + queue counts from **temp_jobs** |
+| POST | `/api/jobs/remove` | Hard-delete catalog `jobs` by `{ ids }` (also clears `job_statuses` + company membership) |
+| POST | `/api/jobs/company/remove-others` | Hard-delete other roles at a company — `{ companyId, keepJobId }` |
+| POST | `/api/jobs/title-review/remove` | Hard-delete staging `temp_jobs` by `{ ids, applierName? }` |
+
 | POST | `/api/jobs/title-review/start` | Body: `{ applierName?, profileId? }` — starts Review Title (profile LLM key) |
 | POST | `/api/jobs/title-review/stop` | Abort session + release leases |
 | GET | `/api/jobs/title-review` | Paginated title-review list on **temp_jobs**. Query: `tab`, `page`, `limit`, `q`, `sort` |

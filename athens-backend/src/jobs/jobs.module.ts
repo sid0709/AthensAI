@@ -13,11 +13,13 @@ import { JobCatalogTotalService } from './job-catalog-total.service';
 import { JobStatusCountsService } from './job-status-counts.service';
 import { JobStatusService } from './job-status.service';
 import { JobsBulkController } from './jobs-bulk.controller';
+import { JobsRemoveController } from './jobs-remove.controller';
 import { JobsCompanyListService } from './jobs-company-list.service';
 import { JobsController } from './jobs.controller';
 import { JobsDetailService } from './jobs-detail.service';
 import { JobsQueryService } from './jobs-query.service';
 import { JobsService } from './jobs.service';
+import { JobHardDeleteService } from './job-hard-delete.service';
 import { RegisterJobService } from './register-job.service';
 import { SaveJobService } from './save-job.service';
 import { SkillExtractController } from './skill-extract.controller';
@@ -36,6 +38,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     SkillExtractController,
     ExposeJobsController,
     JobsBulkController,
+    JobsRemoveController,
     JobsController,
   ],
   providers: [
@@ -48,6 +51,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     CompanyMembershipService,
     JobStatusCountsService,
     JobStatusService,
+    JobHardDeleteService,
     TempJobQueueService,
     TitleReviewClaimService,
     AiAnalyzeClaimService,

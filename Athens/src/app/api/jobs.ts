@@ -56,10 +56,18 @@ export async function unapplyFromJob(jobId: string, applierName: string): Promis
   return parseJson(res);
 }
 
-/** Permanently delete exact documents from job_market. */
+/** Permanently delete exact documents from catalog `jobs`. */
 export async function removeJobs(
   ids: string[],
-): Promise<{ success?: boolean; deletedCount?: number; error?: string }> {
+): Promise<{
+  success?: boolean;
+  deletedCount?: number;
+  deletedIds?: string[];
+  removedCount?: number;
+  removedIds?: string[];
+  alreadyAbsentCount?: number;
+  error?: string;
+}> {
   const res = await fetch(`${API_BASE}/jobs/remove`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

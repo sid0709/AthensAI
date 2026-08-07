@@ -21,6 +21,10 @@ export class JobCatalogTotalService {
     return this.cached.value;
   }
 
+  invalidate() {
+    this.cached = null;
+  }
+
   async getUnfiltered(): Promise<number> {
     const now = Date.now();
     if (this.cached && this.cached.expiresAt > now) {

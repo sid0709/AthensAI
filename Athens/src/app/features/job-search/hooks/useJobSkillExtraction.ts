@@ -1,18 +1,30 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import { fetchSkillExtractStatus, type SkillExtractSession } from "@/app/api/jobSkillExtract";
+import {
+  fetchSkillExtractStatus,
+  startSkillExtract,
+  stopSkillExtract,
+  type SkillExtractSession,
+} from "@/app/api/jobSkillExtract";
 import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 import { skillExtractionSessionFromTask } from "../lib/skillExtractionState";
 
+function profileIdOf(applier: { _id?: unknown } | null | undefined): string | undefined {
+  const id = applier?._id;
+  return typeof id === "string" && id.trim() ? id.trim() : undefined;
+}
+
 export function useJobSkillExtraction() {
   const { applier } = useApplier();
-  const { latestTask, cancelTask } = useBackgroundTasks();
+  const { latestTask } = useBackgroundTasks();
   const task = latestTask("skill_extraction");
   const [fallback, setFallback] = useState<SkillExtractSession>({ running: false, status: "idle" });
   const [pending, setPending] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const session = useMemo(() => skillExtractionSessionFromTask(task) || fallback, [fallback, task]);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isRunning = session.running;
 
   const refresh = useCallback(async () => {
     try {
@@ -33,29 +45,66 @@ export function useJobSkillExtraction() {
     if (task && !task.status.match(/^(queued|running|cancelling)$/)) void refresh();
   }, [refresh, task?.id, task?.status]);
 
+  useEffect(() => {
+    if (!isRunning) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    pollRef.current = setInterval(() => {
+      void refresh();
+    }, 1500);
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [isRunning, refresh]);
+
   const start = useCallback(async () => {
     if (pending == null || pending === 0) return null;
-    toast.info("Skill extraction AI is not wired yet", {
-      description:
-        pending != null
-          ? `${pending} APPROVED job(s) still need skills. Badge count is live from temp_jobs.`
-          : "Badge count is live from temp_jobs.",
-    });
-    return null;
-  }, [pending]);
-
-  const stop = useCallback(async () => {
-    if (!task || !["queued", "running", "cancelling"].includes(task.status)) return;
+    if (!applier?.name) {
+      toast.error("Sign in required to run AI analyze");
+      return null;
+    }
     setLoading(true);
     try {
-      await cancelTask(task.id);
-      toast.info("Stopping extraction…");
+      const next = await startSkillExtract(applier.name, profileIdOf(applier));
+      setFallback(next);
+      setPending(next.pending ?? pending);
+      if (next.running) {
+        toast.success("AI analyze started");
+      } else {
+        toast.info(next.message || "Nothing to analyze");
+      }
+      return next;
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to stop extraction");
+      toast.error(error instanceof Error ? error.message : "Failed to start AI analyze");
+      return null;
     } finally {
       setLoading(false);
     }
-  }, [cancelTask, task]);
+  }, [applier, pending]);
 
-  return { session, pending, loading, isRunning: session.running, start, stop, refresh };
+  const stop = useCallback(async () => {
+    if (!applier?.name) return;
+    if (!isRunning && session.status !== "stopping") return;
+    setLoading(true);
+    try {
+      const next = await stopSkillExtract(applier.name, profileIdOf(applier));
+      setFallback(next);
+      setPending(next.pending ?? null);
+      toast.info("AI analyze stopped");
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to stop AI analyze");
+    } finally {
+      setLoading(false);
+    }
+  }, [applier, isRunning, refresh, session.status]);
+
+  return { session, pending, loading, isRunning, start, stop, refresh };
 }

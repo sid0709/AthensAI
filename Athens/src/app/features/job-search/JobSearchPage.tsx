@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import { removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
+import { removeJobs, removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
 import { useBackgroundTasks } from "../../context/BackgroundTaskContext";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
@@ -32,7 +32,7 @@ export function JobSearchPage() {
 function JobSearchPageContent() {
   const { applier } = useApplier();
   const profileId = applier?._id != null ? String(applier._id) : "";
-  const { startTask, adoptTask, waitForTask } = useBackgroundTasks();
+  const { adoptTask, waitForTask } = useBackgroundTasks();
   const {
     state: urlState,
     setFilters,
@@ -250,14 +250,9 @@ function JobSearchPageContent() {
     });
     clearSelection();
     try {
-      const task = await startTask("job_removal", {
-        recordIds: selectedJobs.map((job) => job.backendId || job.id),
-      });
-      const finished = await waitForTask(task.id);
-			if (finished.status === "failed" || finished.status === "cancelled") {
-				throw new Error(finished.error || (finished.status === "cancelled" ? "Removal cancelled" : "Remove failed"));
-			}
-      const deletedCount = Number(finished.result?.deletedCount ?? ids.length);
+      const recordIds = selectedJobs.map((job) => job.backendId || job.id);
+      const result = await removeJobs(recordIds);
+      const deletedCount = Number(result.deletedCount ?? ids.length);
       removeJobsById(ids);
       toast.success(`Removed ${deletedCount} job${ids.length === 1 ? "" : "s"}`);
       void refreshStatusCounts();
