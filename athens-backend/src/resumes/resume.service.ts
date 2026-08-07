@@ -16,6 +16,7 @@ import {
 } from './mappers/resume.mapper';
 import { ResumeStorageService } from './resume-storage.service';
 import { ResumeUploadService } from './resume-upload.service';
+import { ResumeWriteService } from './resume-write.service';
 
 @Injectable()
 export class ResumeService {
@@ -24,6 +25,7 @@ export class ResumeService {
     private readonly accounts: AccountInfoService,
     private readonly storage: ResumeStorageService,
     private readonly upload: ResumeUploadService,
+    private readonly writes: ResumeWriteService,
   ) {}
 
   create(input: Parameters<ResumeUploadService['create']>[0]) {
@@ -61,21 +63,32 @@ export class ResumeService {
 
   async setPrimary(id: string, ownerName: string): Promise<UserResumeSummary> {
     const row = await this.findOwned(id, ownerName);
-    await this.prisma.resume.updateMany({
-      where: { profileId: row.profileId },
-      data: { isPrimary: false },
-    });
-    const updated = await this.prisma.resume.update({
-      where: { id: row.id },
-      data: { isPrimary: true },
-    });
+    await this.writes.updateMany(
+      { profileId: row.profileId },
+      { isPrimary: false },
+    );
+    const updated = await this.writes.update(row.id, { isPrimary: true });
     return toResumeSummary(updated);
   }
 
   async delete(id: string, ownerName: string) {
     const row = await this.findOwned(id, ownerName);
-    await this.storage.delete(row.storagePath);
-    await this.prisma.resume.delete({ where: { id: row.id } });
+    const storagePath = String(row.storagePath || '').trim();
+
+    // Content is addressed by sha256 — only remove the blob when this is the
+    // last library row pointing at that Storage path.
+    const sharedRefs = storagePath
+      ? await this.prisma.resume.count({
+          where: { storagePath, id: { not: row.id } },
+        })
+      : 0;
+
+    // Drop Mongo first so analysis / metadata cannot outlive a successful delete.
+    await this.writes.delete(row.id);
+
+    if (storagePath && sharedRefs === 0) {
+      await this.storage.delete(storagePath);
+    }
 
     if (row.isPrimary) {
       const next = await this.prisma.resume.findFirst({
@@ -83,10 +96,7 @@ export class ResumeService {
         orderBy: { uploadedAt: 'desc' },
       });
       if (next) {
-        await this.prisma.resume.update({
-          where: { id: next.id },
-          data: { isPrimary: true },
-        });
+        await this.writes.update(next.id, { isPrimary: true });
       }
     }
 
@@ -98,14 +108,11 @@ export class ResumeService {
     ownerName: string,
   ): Promise<UserResumeSummary> {
     await this.findOwned(id, ownerName);
-    const updated = await this.prisma.resume.update({
-      where: { id },
-      data: {
-        analyzed: false,
-        analyzedAt: null,
-        analysis: { skills: [] },
-        analysisError: null,
-      },
+    const updated = await this.writes.update(id, {
+      analyzed: false,
+      analyzedAt: null,
+      analysis: { skills: [] },
+      analysisError: null,
     });
     return toResumeSummary(updated);
   }

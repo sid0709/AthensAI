@@ -11,9 +11,9 @@ import {
 } from '@nestjs/common';
 import { BidLifecycleService } from '../bids/bid-lifecycle.service';
 import { BidRecordingUploadService } from '../bids/recording/bid-recording-upload.service';
-import { MailService } from '../mail/mail.service';
 import { LensAskAiService } from './lens-ask-ai.service';
 import { LensAuthGuard, type LensAuthedRequest } from './lens-auth.guard';
+import { LensGmailService } from './lens-gmail.service';
 import { LensJobsService } from './lens-jobs.service';
 
 @Controller('athens-lens')
@@ -24,7 +24,7 @@ export class AthensLensController {
     private readonly lifecycle: BidLifecycleService,
     private readonly recordings: BidRecordingUploadService,
     private readonly askAi: LensAskAiService,
-    private readonly mail: MailService,
+    private readonly gmail: LensGmailService,
   ) {}
 
   @Get('jobs')
@@ -193,17 +193,15 @@ export class AthensLensController {
     @Query('pageSize') pageSize?: string,
     @Query('label') label?: string,
   ) {
-    return this.mail.listThreads({
-      applierName: req.athensLensSession!.applierName,
+    return this.gmail.listMessages(req.athensLensSession!.applierName, {
       page: page ? Number(page) : 1,
-      pageSize: pageSize ? Number(pageSize) : 25,
+      pageSize: pageSize ? Number(pageSize) : 15,
       label: label || undefined,
-      folder: 'inbox',
     });
   }
 
   @Get('gmail/message-bodies')
-  async gmailBodies(
+  gmailBodies(
     @Req() req: LensAuthedRequest,
     @Query('ids') ids?: string,
     @Query('label') label?: string,
@@ -211,21 +209,11 @@ export class AthensLensController {
     const idList = String(ids || '')
       .split(',')
       .map((s) => s.trim())
-      .filter(Boolean)
-      .slice(0, 20);
-    const bodies = [];
-    for (const id of idList) {
-      try {
-        const msg = await this.mail.getMessage(
-          req.athensLensSession!.applierName,
-          id,
-          label || 'inbox',
-        );
-        bodies.push(msg);
-      } catch {
-        /* skip missing */
-      }
-    }
-    return { success: true, bodies };
+      .filter(Boolean);
+    return this.gmail.listBodies(
+      req.athensLensSession!.applierName,
+      idList,
+      label || undefined,
+    );
   }
 }

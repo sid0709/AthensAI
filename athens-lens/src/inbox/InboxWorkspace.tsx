@@ -62,8 +62,19 @@ export function InboxWorkspace({
   const selectedMessageId = route.itemId ?? messages[0]?.id ?? null;
   const selectedMessage = messages.find((message) => message.id === selectedMessageId) ?? messages[0] ?? null;
   const bodyRequestKey = `${selectedMessageId ?? "none"}:${bodyAttempt}`;
+  const prefetchIds = messages
+    .filter((message) => !message.bodyLoaded)
+    .map((message) => message.id)
+    .slice(0, 8)
+    .join(",");
 
-  // Only load the selected message body — keeps inbox list snappy.
+  // Prefetch visible page bodies so clicks hit cache instead of a cold IMAP round-trip.
+  useEffect(() => {
+    if (!prefetchIds) return;
+    void loadInboxBodies(session, inboxRepository, prefetchIds.split(","));
+  }, [inboxRepository, prefetchIds, session]);
+
+  // Selected message: ensure body is loading (no-op when prefetch already cached).
   useEffect(() => {
     if (!selectedMessage || selectedMessage.bodyLoaded) return;
     let isActive = true;

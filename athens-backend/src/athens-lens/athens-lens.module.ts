@@ -9,6 +9,7 @@ import { AthensLensController } from './athens-lens.controller';
 import { LensAskAiService } from './lens-ask-ai.service';
 import { LensAuthGuard } from './lens-auth.guard';
 import { LensAuthService } from './lens-auth.service';
+import { LensGmailService } from './lens-gmail.service';
 import { LensJobsService } from './lens-jobs.service';
 import { LensSessionService } from './lens-session.service';
 
@@ -21,6 +22,7 @@ import { LensSessionService } from './lens-session.service';
     LensAuthGuard,
     LensJobsService,
     LensAskAiService,
+    LensGmailService,
   ],
 })
 export class AthensLensModule {}

@@ -1,6 +1,6 @@
 {
   "name": "athens-lens",
-  "version": "0.3.29",
+  "version": "0.3.31",
   "private": true,
   "type": "module",
   "scripts": {

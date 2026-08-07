@@ -2,11 +2,11 @@ import { Injectable } from '@nestjs/common';
 import type { Resume, Prisma } from '@prisma/client';
 import type { ProfileLlmAuth } from '../ai/auth/profile-llm-auth.service';
 import { OpenAiChatService } from '../ai/openai/openai-chat.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { RESUME_SKILL_ANALYSIS_PROMPT } from './analyze/resume-skill-analysis.prompt';
 import { parseSkillProfileJson } from './analyze/resume-skill-parse';
 import { RESUME_ANALYZE_TEXT_MAX_CHARS } from './constants/resume-skill.constants';
 import type { ResumeAnalysisObject } from './mappers/resume.mapper';
+import { ResumeWriteService } from './resume-write.service';
 
 export type ResumeAnalyzeItemResult = {
   resumeId: string;
@@ -20,7 +20,7 @@ export type ResumeAnalyzeItemResult = {
 export class ResumeAnalyzeProcessService {
   constructor(
     private readonly chat: OpenAiChatService,
-    private readonly prisma: PrismaService,
+    private readonly writes: ResumeWriteService,
   ) {}
 
   async analyzeOne(input: {
@@ -43,9 +43,9 @@ export class ResumeAnalyzeProcessService {
     const text = String(resume.extractedText || '').trim();
     if (!text) {
       const message = 'No extracted text available for analysis';
-      await this.prisma.resume.update({
-        where: { id: resume.id },
-        data: { analysisError: message, analyzed: false },
+      await this.writes.update(resume.id, {
+        analysisError: message,
+        analyzed: false,
       });
       return { resumeId: resume.id, status: 'failed', error: message };
     }
@@ -75,9 +75,9 @@ export class ResumeAnalyzeProcessService {
       const skills = parseSkillProfileJson(result.content);
       if (!skills.length) {
         const message = 'Model returned no skills';
-        await this.prisma.resume.update({
-          where: { id: resume.id },
-          data: { analysisError: message, analyzed: false },
+        await this.writes.update(resume.id, {
+          analysisError: message,
+          analyzed: false,
         });
         return { resumeId: resume.id, status: 'failed', error: message };
       }
@@ -89,14 +89,11 @@ export class ResumeAnalyzeProcessService {
         usage: result.usage ?? null,
       } as Prisma.InputJsonValue;
 
-      await this.prisma.resume.update({
-        where: { id: resume.id },
-        data: {
-          analyzed: true,
-          analyzedAt: new Date(),
-          analysis,
-          analysisError: null,
-        },
+      await this.writes.update(resume.id, {
+        analyzed: true,
+        analyzedAt: new Date(),
+        analysis,
+        analysisError: null,
       });
 
       return {
@@ -107,10 +104,7 @@ export class ResumeAnalyzeProcessService {
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err;
       const message = err instanceof Error ? err.message : String(err);
-      await this.prisma.resume.update({
-        where: { id: resume.id },
-        data: { analysisError: message },
-      });
+      await this.writes.update(resume.id, { analysisError: message });
       return { resumeId: resume.id, status: 'failed', error: message };
     }
   }

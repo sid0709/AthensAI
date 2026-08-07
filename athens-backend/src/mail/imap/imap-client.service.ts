@@ -15,6 +15,10 @@ import {
 } from '../mappers/folder-mapper';
 import { ImapPoolService } from './imap-pool.service';
 import { withImapRetry } from './imap-retry';
+import {
+  fetchTextBodyByUid,
+  type LensImapBody,
+} from './imap-text-body';
 
 @Injectable()
 export class ImapClientService {
@@ -406,5 +410,104 @@ export class ImapClientService {
       }
       return null;
     });
+  }
+
+  /**
+   * Page envelopes from a Gmail label mailbox (labels are IMAP folders).
+   * Newest-first; page 1 is the latest pageSize messages.
+   */
+  async fetchLabelMailboxEnvelopes(
+    email: string,
+    password: string,
+    mailboxPath: string,
+    opts: { page?: number; pageSize?: number } = {},
+  ): Promise<{
+    messages: Array<{
+      uid: number;
+      from: string;
+      fromName: string;
+      subject: string;
+      date: Date | null;
+      seen: boolean;
+    }>;
+    total: number;
+    hasMore: boolean;
+  }> {
+    const path = String(mailboxPath || '').trim();
+    if (!path) throw new Error('mailboxPath is required');
+    return this.withPath(email, password, path, async (client) => {
+      const box = client.mailbox;
+      const total = box && typeof box === 'object' ? box.exists ?? 0 : 0;
+      if (total === 0) return { messages: [], total: 0, hasMore: false };
+
+      const size = Math.min(Math.max(Number(opts.pageSize) || 15, 1), 50);
+      const pageNumber = Math.max(1, Number(opts.page) || 1);
+      const end = total - (pageNumber - 1) * size;
+      const start = Math.max(1, end - size + 1);
+      if (end < 1) return { messages: [], total, hasMore: false };
+
+      const messages: Array<{
+        uid: number;
+        from: string;
+        fromName: string;
+        subject: string;
+        date: Date | null;
+        seen: boolean;
+      }> = [];
+      for await (const message of client.fetch(`${start}:${end}`, {
+        envelope: true,
+        flags: true,
+        uid: true,
+      })) {
+        const from = message.envelope?.from?.[0];
+        messages.push({
+          uid: message.uid,
+          from: from?.address || '',
+          fromName: from?.name || from?.address || '',
+          subject: message.envelope?.subject || '',
+          date: message.envelope?.date ?? null,
+          seen: message.flags?.has('\\Seen') ?? false,
+        });
+      }
+
+      messages.sort(
+        (left, right) =>
+          new Date(right.date || 0).getTime() -
+          new Date(left.date || 0).getTime(),
+      );
+      return { messages, total, hasMore: start > 1 };
+    });
+  }
+
+  /**
+   * Fast path for Lens: envelope + text MIME part only (no full MIME parse).
+   * Parallel across the IMAP pool so click (1 UID) and prefetch (N UIDs) stay warm.
+   */
+  async fetchTextBodiesByUid(
+    email: string,
+    password: string,
+    mailboxPath: string,
+    uids: number[],
+    maxBytes = 100_000,
+  ): Promise<LensImapBody[]> {
+    const path = String(mailboxPath || '').trim();
+    if (!path) throw new Error('mailboxPath is required');
+    const requested = [
+      ...new Set(
+        uids.filter((uid) => Number.isSafeInteger(uid) && uid > 0),
+      ),
+    ];
+    if (!requested.length) return [];
+
+    const settled = await Promise.allSettled(
+      requested.map((uid) =>
+        this.withPath(email, password, path, (client) =>
+          fetchTextBodyByUid(client, uid, maxBytes),
+        ),
+      ),
+    );
+    return settled.flatMap((result) =>
+      result.status === 'fulfilled' && result.value ? [result.value] : [],
+    );
   }
 }

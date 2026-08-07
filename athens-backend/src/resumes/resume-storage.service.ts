@@ -95,15 +95,22 @@ export class ResumeStorageService {
     }
   }
 
+  /**
+   * Permanently remove the Storage object. Missing objects are ignored;
+   * other Firebase errors propagate so callers do not silently orphan blobs.
+   */
   async delete(storagePath: string): Promise<void> {
     const normalized = String(storagePath || '').replace(/^\/+/, '');
     if (!normalized) return;
     try {
-      await this.admin.storageBucket().file(normalized).delete({ ignoreNotFound: true });
+      await this.admin
+        .storageBucket()
+        .file(normalized)
+        .delete({ ignoreNotFound: true });
     } catch (err) {
-      this.logger.warn(
-        `Resume delete failed (${normalized}): ${err instanceof Error ? err.message : String(err)}`,
-      );
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Resume Storage delete failed (${normalized}): ${message}`);
+      throw new Error(`Failed to delete resume file from Storage: ${message}`);
     }
   }
 }

@@ -1,3 +1,4 @@
+import { toMongoDate } from '../../prisma/mongo-standalone';
 import type { ListJobsQueryDto } from '../dto/list-jobs.query.dto';
 
 function escapeRegex(text: string): string {
@@ -73,8 +74,14 @@ export function buildJobsMongoMatch(
     match.source = { $in: sources };
   }
 
-  const from = query.postedFrom ? parseDayStart(query.postedFrom) : null;
-  const to = query.postedTo ? parseDayEnd(query.postedTo) : null;
+  // $runCommandRaw requires Extended JSON dates ({ $date }), not JS Date /
+  // ISO strings — otherwise BSON Date postedAt never matches the range.
+  const from = query.postedFrom
+    ? toMongoDate(parseDayStart(query.postedFrom))
+    : null;
+  const to = query.postedTo
+    ? toMongoDate(parseDayEnd(query.postedTo))
+    : null;
   if (from || to) {
     match.postedAt = {
       ...(from ? { $gte: from } : {}),

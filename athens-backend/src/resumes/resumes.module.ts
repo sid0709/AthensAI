@@ -10,6 +10,7 @@ import { ResumeAnalyzeSessionService } from './resume-analyze-session.service';
 import { ResumeStorageService } from './resume-storage.service';
 import { ResumeTextService } from './resume-text.service';
 import { ResumeUploadService } from './resume-upload.service';
+import { ResumeWriteService } from './resume-write.service';
 import { ResumeService } from './resume.service';
 import { ResumesController } from './resumes.controller';
 
@@ -22,6 +23,7 @@ import { ResumesController } from './resumes.controller';
   ],
   providers: [
     ResumeService,
+    ResumeWriteService,
     ResumeUploadService,
     ResumeStorageService,
     ResumeTextService,

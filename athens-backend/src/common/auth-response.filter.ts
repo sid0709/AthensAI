@@ -26,12 +26,22 @@ export class AuthResponseFilter implements ExceptionFilter {
         const payload = body as {
           message?: string | string[];
           error?: string;
+          code?: string;
         };
         message = Array.isArray(payload.message)
           ? payload.message.join(', ')
           : String(payload.message || message);
         if (typeof payload.error === 'string' && payload.error) {
           error = payload.error;
+        }
+        if (typeof payload.code === 'string' && payload.code) {
+          res.status(status).json({
+            success: false,
+            code: payload.code,
+            message,
+            error: error ?? message,
+          });
+          return;
         }
       }
     } else if (exception instanceof Error) {

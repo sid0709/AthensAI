@@ -2,6 +2,7 @@ import { ArrowLeft, Check, Copy, LoaderCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import type { InboxMessage } from "../types";
 import { MailSenderIcon } from "./MailSenderIcon";
+import { MessageBodyParagraphs } from "./MessageBodyParagraphs";
 
 interface MessageDetailProps {
   message: InboxMessage;
@@ -76,9 +77,7 @@ export function MessageDetail({ message, bodyError, onRetry, onBack }: MessageDe
             </section>
           ) : (
             <section className="message-body">
-              {message.body.length > 0
-                ? message.body.map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>)
-                : <p>No text content.</p>}
+              <MessageBodyParagraphs paragraphs={message.body} />
             </section>
           )}
         </div>

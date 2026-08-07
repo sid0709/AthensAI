@@ -1,8 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { BidStatusQueueService } from '../bids/bid-status-queue.service';
-import { isoOrNull } from '../bids/lib/iso';
-import { normalizeJobMetadata } from '../jobs/mappers/job-metadata.mapper';
 import { PrismaService } from '../prisma/prisma.service';
+import { mapAthensLensJob } from './mappers/athens-lens-job.mapper';
 
 @Injectable()
 export class LensJobsService {
@@ -59,67 +58,4 @@ export class LensJobsService {
       total: mapped.length,
     };
   }
-}
-
-function mapAthensLensJob(
-  job: {
-    id: string;
-    title: string;
-    companyName: string;
-    postedAt: Date;
-    applyLink: string | null;
-    description: string | null;
-    source: string;
-    metadata: unknown;
-    aiSkills: unknown;
-  },
-  status: { bidReadyAt: Date | null; postedAt: Date | null },
-  recommend?: {
-    recommendedResumeStack: string | null;
-    recommendedResumeReason: string | null;
-    useCustomizedResume: boolean;
-    recommendWarning: string | null;
-    recommendedAt: Date | null;
-  } | null,
-) {
-  const meta = normalizeJobMetadata(job.metadata) ?? {};
-  const details = meta.details ?? {};
-  const scrape = meta.scrape ?? {};
-  const skills = Array.isArray(job.aiSkills)
-    ? (job.aiSkills as Array<{ name?: string }>)
-        .map((s) => String(s?.name || '').trim())
-        .filter(Boolean)
-    : Array.isArray(scrape.skills)
-      ? scrape.skills
-      : [];
-
-  const posted = status.postedAt ?? job.postedAt;
-  const bidReady = status.bidReadyAt;
-
-  return {
-    id: job.id,
-    title: job.title,
-    company: job.companyName,
-    companyLogoUrl: meta.companyLogo || null,
-    location: details.location || '',
-    workMode: details.remote || '',
-    employmentType: details.time || '',
-    seniority: details.seniority || '',
-    salary: details.salary || '',
-    experience: '',
-    postedAt: posted ? posted.toISOString().slice(0, 10) : null,
-    skills,
-    tags: Array.isArray(scrape.tags) ? scrape.tags : [],
-    applicantsText: scrape.applicants?.text || null,
-    description: job.description || '',
-    responsibilities: [] as string[],
-    qualifications: [] as string[],
-    applyUrl: job.applyLink || null,
-    bidReadyAt: bidReady ? bidReady.toISOString().slice(0, 10) : null,
-    recommendedResumeStack: recommend?.recommendedResumeStack ?? null,
-    recommendedResumeReason: recommend?.recommendedResumeReason ?? null,
-    useCustomizedResume: Boolean(recommend?.useCustomizedResume),
-    recommendWarning: recommend?.recommendWarning ?? null,
-    recommendedAt: isoOrNull(recommend?.recommendedAt ?? null),
-  };
 }

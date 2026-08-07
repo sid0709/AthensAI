@@ -40,6 +40,7 @@ import { SmtpClientService } from './smtp/smtp-client.service';
     MailCredentialsService,
     MailAiLabelService,
     MailLabelDefinitionsService,
+    ImapClientService,
   ],
 })
 export class MailModule {}
