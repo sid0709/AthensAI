@@ -1,13 +1,13 @@
 import { Controller, Get } from '@nestjs/common';
-import { SkillExtractQueryService } from './skill-extract-query.service';
+import { AiAnalyzeSessionService } from './ai-analyze/ai-analyze-session.service';
 
+/** Legacy route alias for AI Analyze status (Job Search “Extract skills” badge). */
 @Controller('jobs/skill-extract')
 export class SkillExtractController {
-  constructor(private readonly skillExtract: SkillExtractQueryService) {}
+  constructor(private readonly aiAnalyze: AiAnalyzeSessionService) {}
 
-  /** Pending badge for Job Search “Extract skills”. AI run not wired yet. */
   @Get('status')
   status() {
-    return this.skillExtract.status();
+    return this.aiAnalyze.status();
   }
 }

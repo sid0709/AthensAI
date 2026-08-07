@@ -7,7 +7,6 @@ export type {
   SkillGraph,
   ActivationResult,
 } from "./knowledgeGraph";
-export type { Application } from "./application";
 export type {
   RunSummary,
   JobRow,

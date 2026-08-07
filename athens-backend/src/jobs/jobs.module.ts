@@ -1,5 +1,11 @@
 import { Module } from '@nestjs/common';
+import { AiModule } from '../ai/ai.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { AiAnalyzeController } from './ai-analyze/ai-analyze.controller';
+import { AiAnalyzeProcessService } from './ai-analyze/ai-analyze-process.service';
+import { AiAnalyzeSessionService } from './ai-analyze/ai-analyze-session.service';
+import { AiAnalyzeClaimService } from './claim/ai-analyze-claim.service';
+import { TitleReviewClaimService } from './claim/title-review-claim.service';
 import { CompanyCatalogTotalService } from './company-catalog-total.service';
 import { CompanyMembershipService } from './company-membership.service';
 import { ExposeJobsController } from './expose-jobs.controller';
@@ -15,16 +21,18 @@ import { JobsService } from './jobs.service';
 import { RegisterJobService } from './register-job.service';
 import { SaveJobService } from './save-job.service';
 import { SkillExtractController } from './skill-extract.controller';
-import { SkillExtractQueryService } from './skill-extract-query.service';
 import { TempJobPromotionService } from './temp-job-promotion.service';
 import { TempJobQueueService } from './temp-job-queue.service';
 import { TitleReviewController } from './title-review.controller';
 import { TitleReviewQueryService } from './title-review-query.service';
+import { TitleReviewProcessService } from './title-review/title-review-process.service';
+import { TitleReviewSessionService } from './title-review/title-review-session.service';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, AiModule],
   controllers: [
     TitleReviewController,
+    AiAnalyzeController,
     SkillExtractController,
     ExposeJobsController,
     JobsBulkController,
@@ -41,8 +49,13 @@ import { TitleReviewQueryService } from './title-review-query.service';
     JobStatusCountsService,
     JobStatusService,
     TempJobQueueService,
+    TitleReviewClaimService,
+    AiAnalyzeClaimService,
     TitleReviewQueryService,
-    SkillExtractQueryService,
+    TitleReviewProcessService,
+    TitleReviewSessionService,
+    AiAnalyzeProcessService,
+    AiAnalyzeSessionService,
     SaveJobService,
     RegisterJobService,
     TempJobPromotionService,

@@ -1,10 +1,7 @@
 import type { View } from "../types";
 
 export const BETA_VIEWS = new Set<View>([
-  "ats",
-  "copilot",
   "calendar",
-  "interviews",
   "reports",
 ]);
 

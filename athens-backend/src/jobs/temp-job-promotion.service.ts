@@ -4,7 +4,7 @@ import { isJobCatalogReady } from './constants/job-catalog-readiness.constants';
 
 /**
  * Moves a ready TempJob into `jobs` via registerJob (delete from temp).
- * AI pipelines call this after both title review and skill extract complete.
+ * AI pipelines call this after both title review and AI analyze complete.
  */
 @Injectable()
 export class TempJobPromotionService {

@@ -9,7 +9,7 @@ import {
 } from './constants/job-pipeline.constants';
 
 /**
- * Queue membership for title review / skill extract is derived from temp_jobs
+ * Queue membership for title review / AI analyze is derived from temp_jobs
  * fields (no athens_metadata join).
  *
  * Failed title-review rows are keyed by nested metadata, so counts/lists that

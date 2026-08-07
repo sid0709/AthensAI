@@ -1,5 +1,5 @@
 import React from "react";
-import { Sparkles, Mail, Video, Send } from "lucide-react";
+import { Mail, Send } from "lucide-react";
 import { display } from "../../../lib/utils";
 import { useAuth } from "@/context/auth-context";
 import { dashboardAccountName, dashboardGreeting } from "../dashboardIdentity";
@@ -29,17 +29,9 @@ export function DashboardHero({ onNavigate }: DashboardHeroProps) {
             <Send className="w-4 h-4" />
             Apply
           </button>
-          <button type="button" onClick={() => onNavigate?.("interviews")} className="flex items-center gap-2 bg-secondary border border-border px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-muted min-h-10">
-            <Video className="w-4 h-4" />
-            Prep
-          </button>
           <button type="button" onClick={() => onNavigate?.("mail")} className="flex items-center gap-2 bg-secondary border border-border px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-muted min-h-10">
             <Mail className="w-4 h-4" />
             Mail
-          </button>
-          <button type="button" onClick={() => onNavigate?.("copilot")} className="flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 text-violet-700 dark:text-violet-300 px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-violet-500/15 min-h-10">
-            <Sparkles className="w-4 h-4" />
-            Copilot
           </button>
         </div>
       </div>

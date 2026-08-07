@@ -15,5 +15,6 @@ import { ProfileSecretsService } from './secrets/profile-secrets.service';
     LlmKeyService,
     PersonalLlmService,
   ],
+  exports: [ProfileSecretsService, PersonalLlmService],
 })
 export class PersonalModule {}

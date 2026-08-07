@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Loader2, Play, AlertCircle } from "lucide-react";
+import { useApplier } from "@/context/applier-context";
 import { fetchFirebaseStorageUrl } from "../../../api/firebase";
 
 export function isVideoFile(name: string, contentType: string | null): boolean {
@@ -21,6 +22,8 @@ export function VideoPlayerModal({
   file: { name: string; fullPath: string; size: number; contentType: string | null } | null;
   onClose: () => void;
 }) {
+  const { applier } = useApplier();
+  const requesterName = String(applier?.name || "").trim() || undefined;
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +38,7 @@ export function VideoPlayerModal({
     setLoading(true);
     setError(null);
     setUrl(null);
-    void fetchFirebaseStorageUrl(file.fullPath)
+    void fetchFirebaseStorageUrl(file.fullPath, { requesterName })
       .then((res) => {
         if (!cancelled) setUrl(res.url);
       })
@@ -48,7 +51,7 @@ export function VideoPlayerModal({
     return () => {
       cancelled = true;
     };
-  }, [open, file]);
+  }, [open, file, requesterName]);
 
   useEffect(() => {
     if (!open) return;

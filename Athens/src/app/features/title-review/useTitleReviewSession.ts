@@ -1,9 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import { fetchTitleReviewStatus, type TitleReviewSession } from "@/app/api/jobTitleReview";
+import {
+  fetchTitleReviewStatus,
+  startTitleReview,
+  stopTitleReview,
+  type TitleReviewSession,
+} from "@/app/api/jobTitleReview";
 import type { BackgroundTask } from "@/app/api/backgroundTasks";
 import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
+
+function profileIdOf(applier: { _id?: unknown } | null | undefined): string | undefined {
+  const id = applier?._id;
+  return typeof id === "string" && id.trim() ? id.trim() : undefined;
+}
 
 function taskSession(task: BackgroundTask | null, fallback: TitleReviewSession) {
   if (!task) return fallback;
@@ -55,11 +65,12 @@ export function useTitleReviewSession({
   autoLoad = true,
 }: { enabled?: boolean; autoLoad?: boolean; pollWhenIdle?: boolean } = {}) {
   const { applier } = useApplier();
-  const { latestTask, cancelTask } = useBackgroundTasks();
+  const { latestTask } = useBackgroundTasks();
   const task = latestTask("title_review");
   const [fallback, setFallback] = useState<TitleReviewSession>({ running: false, status: "idle" });
   const [loading, setLoading] = useState(false);
   const session = useMemo(() => taskSession(task, fallback), [fallback, task]);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
     if (!enabled || !applier?.name) return null;
@@ -80,30 +91,61 @@ export function useTitleReviewSession({
     if (task && !task.status.match(/^(queued|running|cancelling)$/)) void refresh();
   }, [refresh, task?.id, task?.status]);
 
+  // In-process athens-backend sessions: poll status while running (no background-task bus).
+  useEffect(() => {
+    if (!enabled || !session.running) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    pollRef.current = setInterval(() => {
+      void refresh();
+    }, 1500);
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [enabled, refresh, session.running]);
+
   const start = useCallback(async () => {
     if (!applier?.name) return null;
-    toast.info("Title review AI is not wired yet", {
-      description:
-        fallback.pending != null
-          ? `${fallback.pending} title(s) still need review. List data is live from temp_jobs.`
-          : "List data is live from temp_jobs.",
-    });
-    return null;
-  }, [applier?.name, fallback.pending]);
-
-  const stop = useCallback(async () => {
-    if (!task || !["queued", "running", "cancelling"].includes(task.status)) return;
     setLoading(true);
     try {
-      await cancelTask(task.id);
-      await refresh();
+      const next = await startTitleReview(applier.name, profileIdOf(applier));
+      setFallback(next);
+      if (next.running) {
+        toast.success("Title review started");
+      } else {
+        toast.info(next.message || "Nothing to review");
+      }
+      return next;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to start title review");
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [applier]);
+
+  const stop = useCallback(async () => {
+    if (!applier?.name) return;
+    if (!session.running && session.status !== "stopping") return;
+    setLoading(true);
+    try {
+      const next = await stopTitleReview(applier.name, profileIdOf(applier));
+      setFallback(next);
       toast.info("Title review stopped");
+      await refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to stop title review");
     } finally {
       setLoading(false);
     }
-  }, [cancelTask, refresh, task]);
+  }, [applier, refresh, session.running, session.status]);
 
   const hydrate = useCallback((next: TitleReviewSession) => setFallback(next), []);
 

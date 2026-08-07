@@ -50,16 +50,6 @@ export class TitleReviewQueryService {
     private readonly queues: TempJobQueueService,
   ) {}
 
-  async status() {
-    const counts = await this.queues.titleReviewCounts();
-    return {
-      success: true as const,
-      running: false,
-      status: 'idle' as const,
-      ...counts,
-    };
-  }
-
   async list(query: ListTitleReviewQueryDto) {
     const started = Date.now();
     const tab = String(query.tab || 'unreviewed').trim();
@@ -135,13 +125,5 @@ export class TitleReviewQueryService {
         returnedRows: ordered.length,
       },
     };
-  }
-
-  async bootstrap(query: ListTitleReviewQueryDto) {
-    const [session, list] = await Promise.all([
-      this.status(),
-      this.list(query),
-    ]);
-    return { ...list, session };
   }
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useApplier } from "@/context/applier-context";
 import {
   fetchFirebaseCollections,
   fetchFirebaseDocument,
@@ -13,7 +14,14 @@ import {
   type FirebaseStorageFolder,
 } from "../../../api/firebase";
 
+function useRequesterName(): string | undefined {
+  const { applier } = useApplier();
+  const name = String(applier?.name || "").trim();
+  return name || undefined;
+}
+
 export function useFirebaseStatus() {
+  const requesterName = useRequesterName();
   const [status, setStatus] = useState<FirebaseStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,14 +30,14 @@ export function useFirebaseStatus() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchFirebaseStatus();
+      const res = await fetchFirebaseStatus({ requesterName });
       setStatus(res.status);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [requesterName]);
 
   useEffect(() => {
     void refetch();
@@ -39,6 +47,7 @@ export function useFirebaseStatus() {
 }
 
 export function useFirebaseCollections(parentPath: string) {
+  const requesterName = useRequesterName();
   const [collections, setCollections] = useState<FirebaseCollection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +56,7 @@ export function useFirebaseCollections(parentPath: string) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchFirebaseCollections(parentPath);
+      const res = await fetchFirebaseCollections(parentPath, { requesterName });
       setCollections(res.collections);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -55,7 +64,7 @@ export function useFirebaseCollections(parentPath: string) {
     } finally {
       setLoading(false);
     }
-  }, [parentPath]);
+  }, [parentPath, requesterName]);
 
   useEffect(() => {
     void refetch();
@@ -65,6 +74,7 @@ export function useFirebaseCollections(parentPath: string) {
 }
 
 export function useFirebaseDocuments(collectionPath: string | null) {
+  const requesterName = useRequesterName();
   const [documents, setDocuments] = useState<FirebaseDocumentSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +83,11 @@ export function useFirebaseDocuments(collectionPath: string | null) {
   const [filter, setFilter] = useState("");
 
   const load = useCallback(
-    async (opts?: { append?: boolean; cursor?: string | null; search?: { field: string; value: string } }) => {
+    async (opts?: {
+      append?: boolean;
+      cursor?: string | null;
+      search?: { field: string; value: string };
+    }) => {
       if (!collectionPath) {
         setDocuments([]);
         setHasMore(false);
@@ -89,6 +103,7 @@ export function useFirebaseDocuments(collectionPath: string | null) {
             field: opts.search.field,
             value: opts.search.value,
             limit: 100,
+            requesterName,
           });
           setDocuments(res.documents);
           setHasMore(false);
@@ -98,8 +113,11 @@ export function useFirebaseDocuments(collectionPath: string | null) {
             path: collectionPath,
             limit: 50,
             cursor: opts?.cursor || undefined,
+            requesterName,
           });
-          setDocuments((prev) => (opts?.append ? [...prev, ...res.documents] : res.documents));
+          setDocuments((prev) =>
+            opts?.append ? [...prev, ...res.documents] : res.documents,
+          );
           setHasMore(res.hasMore);
           setNextCursor(res.nextCursor);
         }
@@ -110,7 +128,7 @@ export function useFirebaseDocuments(collectionPath: string | null) {
         setLoading(false);
       }
     },
-    [collectionPath],
+    [collectionPath, requesterName],
   );
 
   useEffect(() => {
@@ -125,7 +143,10 @@ export function useFirebaseDocuments(collectionPath: string | null) {
   const filtered = filter.trim()
     ? documents.filter((d) => {
         const q = filter.toLowerCase();
-        return d.id.toLowerCase().includes(q) || JSON.stringify(d.data).toLowerCase().includes(q);
+        return (
+          d.id.toLowerCase().includes(q) ||
+          JSON.stringify(d.data).toLowerCase().includes(q)
+        );
       })
     : documents;
 
@@ -144,6 +165,7 @@ export function useFirebaseDocuments(collectionPath: string | null) {
 }
 
 export function useFirebaseDocument(docPath: string | null) {
+  const requesterName = useRequesterName();
   const [document, setDocument] = useState<FirebaseDocumentSummary | null>(null);
   const [subcollections, setSubcollections] = useState<FirebaseCollection[]>([]);
   const [loading, setLoading] = useState(false);
@@ -159,7 +181,7 @@ export function useFirebaseDocument(docPath: string | null) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    void fetchFirebaseDocument(docPath)
+    void fetchFirebaseDocument(docPath, { requesterName })
       .then((res) => {
         if (cancelled) return;
         setDocument(res.document);
@@ -177,12 +199,13 @@ export function useFirebaseDocument(docPath: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [docPath]);
+  }, [docPath, requesterName]);
 
   return { document, subcollections, loading, error };
 }
 
 export function useFirebaseStorage(prefix: string) {
+  const requesterName = useRequesterName();
   const [folders, setFolders] = useState<FirebaseStorageFolder[]>([]);
   const [files, setFiles] = useState<FirebaseStorageFile[]>([]);
   const [bucket, setBucket] = useState<string | null>(null);
@@ -199,6 +222,7 @@ export function useFirebaseStorage(prefix: string) {
           prefix,
           pageToken: opts?.pageToken || undefined,
           limit: 100,
+          requesterName,
         });
         setBucket(res.bucket);
         setFolders(res.folders);
@@ -214,7 +238,7 @@ export function useFirebaseStorage(prefix: string) {
         setLoading(false);
       }
     },
-    [prefix],
+    [prefix, requesterName],
   );
 
   useEffect(() => {

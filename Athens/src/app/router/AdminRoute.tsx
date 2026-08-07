@@ -33,7 +33,7 @@ export function AdminRoute({ children }: { children: ReactNode }) {
           </div>
           <h1 className="text-xl font-bold text-foreground">Admin access required</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            AI usage dashboards are only available to accounts with admin permission.
+            This view is only available to accounts with admin permission.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             <Link

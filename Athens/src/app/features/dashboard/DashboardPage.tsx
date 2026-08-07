@@ -1,6 +1,7 @@
 import React from "react";
 import { PageShell } from "../../components/layout/PageShell";
 import { useAppNavigationOptional } from "../../context/AppNavigationContext";
+import type { View } from "../../types";
 import { DashboardHero } from "./components/DashboardHero";
 import { DashboardKpiGrid } from "./components/DashboardKpiGrid";
 import { ActivityChart } from "./components/ActivityChart";
@@ -25,7 +26,7 @@ export function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <ActivityChart />
           <div className="space-y-5">
-            <UpcomingInterviewsPanel interviews={upcoming} onNavigatePrep={() => appNav?.navigate("interviews")} />
+            <UpcomingInterviewsPanel interviews={upcoming} onNavigate={() => appNav?.navigate("calendar")} />
             <MiniCalendarStrip onNavigate={() => appNav?.navigate("calendar")} />
           </div>
         </div>

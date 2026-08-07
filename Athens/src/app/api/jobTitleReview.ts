@@ -118,22 +118,40 @@ export async function fetchTitleReviewStatus(applierName: string): Promise<Title
   });
 }
 
-export async function startTitleReview(applierName: string) {
+export async function startTitleReview(
+  applierName: string,
+  profileId?: string,
+): Promise<TitleReviewSession & { success: boolean; started?: boolean }> {
   const response = await fetch(`${API_BASE}/jobs/title-review/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ applierName }),
+    body: JSON.stringify({
+      applierName,
+      ...(profileId ? { profileId } : {}),
+    }),
   });
-  return parseJson<{ success: boolean; started: boolean; pending?: number; message?: string }>(response);
+  const data = await parseJson<TitleReviewSession & { success: boolean; message?: string }>(
+    response,
+  );
+  return { ...data, started: Boolean(data.running) };
 }
 
-export async function stopTitleReview(applierName: string) {
+export async function stopTitleReview(
+  applierName?: string,
+  profileId?: string,
+): Promise<TitleReviewSession & { success: boolean; stopped?: boolean }> {
   const response = await fetch(`${API_BASE}/jobs/title-review/stop`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ applierName }),
+    body: JSON.stringify({
+      ...(applierName ? { applierName } : {}),
+      ...(profileId ? { profileId } : {}),
+    }),
   });
-  return parseJson<{ success: boolean; stopped: boolean; message?: string }>(response);
+  const data = await parseJson<TitleReviewSession & { success: boolean; message?: string }>(
+    response,
+  );
+  return { ...data, stopped: !data.running };
 }
 
 function titleReviewParams(options: TitleReviewListOptions) {

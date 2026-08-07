@@ -5,10 +5,10 @@ import { formatTimeRange, type CalendarEvent } from "../../../data/calendar";
 
 type UpcomingInterviewsPanelProps = {
   interviews: CalendarEvent[];
-  onNavigatePrep?: () => void;
+  onNavigate?: () => void;
 };
 
-export function UpcomingInterviewsPanel({ interviews, onNavigatePrep }: UpcomingInterviewsPanelProps) {
+export function UpcomingInterviewsPanel({ interviews, onNavigate }: UpcomingInterviewsPanelProps) {
   return (
     <div className="bg-card border border-border rounded-xl p-5 shadow-sm h-full">
       <div className="flex items-center gap-2 mb-4">
@@ -23,7 +23,7 @@ export function UpcomingInterviewsPanel({ interviews, onNavigatePrep }: Upcoming
             <button
               key={e.id}
               type="button"
-              onClick={onNavigatePrep}
+              onClick={onNavigate}
               className="w-full flex items-start gap-3 p-3 rounded-xl bg-secondary/40 border border-border/50 hover:bg-secondary/70 transition-colors text-left"
             >
               <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center text-violet-600 font-bold text-sm flex-shrink-0">

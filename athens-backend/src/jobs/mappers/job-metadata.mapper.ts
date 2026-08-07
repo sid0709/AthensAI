@@ -24,6 +24,8 @@ export type JobMetadataCapsule = {
   companyLogo?: string;
   details?: JobDetailsCapsule;
   titleReview?: unknown;
+  /** AI Analyze lease / error capsule (staging); stripped or kept as opaque on promote. */
+  aiAnalyze?: unknown;
   scrape?: JobScrapeCapsule;
 };
 
@@ -137,6 +139,7 @@ export function normalizeJobMetadata(
   const details = normalizeJobDetails(meta.details);
   if (details) next.details = details;
   if (meta.titleReview != null) next.titleReview = meta.titleReview;
+  if (meta.aiAnalyze != null) next.aiAnalyze = meta.aiAnalyze;
   const scrape = normalizeJobScrape(meta.scrape);
   if (scrape) next.scrape = scrape;
   return Object.keys(next).length ? next : undefined;

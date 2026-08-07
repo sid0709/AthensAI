@@ -63,18 +63,41 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/jobs/bulk` | Extension scrape ingest — `{ jobs: [...] }` → prenorm → `temp_jobs` |
 | POST | `/api/expose/jobs` | LI-scrapper ingest — single job or `{ jobs: [...] }` → prenorm → `temp_jobs` |
 | POST | `/api/expose/jobs/check` | LI-scrapper — `{ jobID }` exists in `temp_jobs` or `jobs` via `metadata.legacyId` |
-| GET | `/api/jobs/title-review/status` | Title-review queue counts from **temp_jobs** fields |
+| GET | `/api/jobs/title-review/status` | Live title-review session + queue counts from **temp_jobs** |
+| POST | `/api/jobs/title-review/start` | Body: `{ applierName?, profileId? }` — starts Review Title (profile LLM key) |
+| POST | `/api/jobs/title-review/stop` | Abort session + release leases |
 | GET | `/api/jobs/title-review` | Paginated title-review list on **temp_jobs**. Query: `tab`, `page`, `limit`, `q`, `sort` |
-| GET | `/api/jobs/title-review/bootstrap` | List + idle session counts |
-| GET | `/api/jobs/skill-extract/status` | Skill-extract pending badge on **temp_jobs** |
+| GET | `/api/jobs/title-review/bootstrap` | List + live session |
+| GET | `/api/jobs/ai-analyze/status` | Live AI Analyze session + pending badge on **temp_jobs** |
+| POST | `/api/jobs/ai-analyze/start` | Body: `{ applierName?, profileId? }` — details + skills (profile LLM key) |
+| POST | `/api/jobs/ai-analyze/stop` | Abort session + release leases |
+| GET | `/api/jobs/skill-extract/status` | Alias of AI Analyze status (legacy client path) |
 
-- Job Search reads **`jobs` only**. Incomplete title-review / skill-extract rows live in **`temp_jobs`** and are invisible to search.
+- Job Search reads **`jobs` only**. Incomplete title-review / AI Analyze rows live in **`temp_jobs`** and are invisible to search.
 - Queue membership is derived from `temp_jobs` (`titleReviewLabel` / `aiSkillStatus` / `metadata.titleReview`) — there is no `athens_metadata` collection.
+- Review Title must approve a title before AI Analyze (`titleReviewLabel=APPROVED` + open `aiSkillStatus`). AI Analyze writes `metadata.details` + `aiSkills`, then `promoteIfReady`.
+- LLM calls use the signed-in profile’s encrypted API key + default model. Throughput knobs: `LLM_*` / `JOB_TITLE_REVIEW_*` / `JOB_AI_ANALYZE_*` in `.env.example`.
 - Only `status=all` returns catalog rows today; other status tabs return an empty page (list-by-status not wired yet).
 - List responses **omit** `description` (lean `select` + `@@index([postedAt])`). Unfiltered totals are cached in-process (~60s); filtered lists still `count`.
 - Filters and offset pagination (`page` / `pageSize`) hit Prisma against `AthensDB.jobs`.
 - With `profileId` (`account_info._id`): badge counts load from `job_status_counts` at O(1); page rows hydrate `viewerStatus` from `job_statuses` (one doc per profile × job).
 - Response: `{ success, data, pagination, statusCounts, hasMore }`.
+
+## Firebase Atlas (admin explorer)
+
+Requires header `x-applier-name` with `account_info.permission === "admin"`. Uses Firebase Admin SDK (Firestore + Storage) — not Prisma/Mongo.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/firebase/status` | Connectivity + project meta |
+| GET | `/api/firebase/collections` | Query: `parent?` (doc path or empty = root) |
+| GET | `/api/firebase/documents` | Query: `path`, `limit?`, `cursor?`, `orderField?` |
+| GET | `/api/firebase/document` | Query: `path` |
+| GET | `/api/firebase/storage` | Query: `prefix?`, `pageToken?`, `limit?` |
+| GET | `/api/firebase/storage/url` | Query: `path` → signed read URL |
+| POST | `/api/firebase/search` | Body: `{ path, field, op?, value, limit? }` |
+
+Env: `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`, `GOOGLE_APPLICATION_CREDENTIALS` (service-account JSON path).
 
 ### Metadata capsule
 
@@ -104,7 +127,7 @@ Legacy keys `companyTags`, `details.position`, `details.money`, and `details.dat
 | Collection | Role |
 |------------|------|
 | `jobs` | Searchable catalog. Rows are title-approved **and** skill-pipeline done (`extracted` or `skipped_duplicate`). Strict Prisma `Job` shape. |
-| `temp_jobs` | Staging ingest queue (shape ≠ Job). LI-scrapper / Extension land here via prenorm + `saveJob`. Title Review + Extract Skills filter this collection. Promote via `registerJob` / `TempJobPromotionService.promoteIfReady` (move, not copy). |
+| `temp_jobs` | Staging ingest queue (shape ≠ Job). LI-scrapper / Extension land here via prenorm + `saveJob`. Title Review + AI Analyze filter this collection. Promote via `registerJob` / `TempJobPromotionService.promoteIfReady` (move, not copy). |
 
 One-shot reshape + move incomplete catalog rows: `npm run migrate:temp-jobs`. Ingest-schema align: `npm run migrate:temp-ingest`.
 
