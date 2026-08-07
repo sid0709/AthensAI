@@ -36,15 +36,6 @@ export class ResumesController {
     return { success: true as const, resumes: list };
   }
 
-  @Get(':id')
-  async get(
-    @Param('id') id: string,
-    @Query('ownerName') ownerName: string,
-  ) {
-    const resume = await this.resumes.get(id, ownerName);
-    return { success: true as const, resume };
-  }
-
   @Post()
   async upload(@Body() body: UploadResumeDto) {
     const resume = await this.resumes.create(body);
@@ -55,6 +46,15 @@ export class ResumesController {
   async bulk(@Body() body: BulkUploadResumesDto) {
     const result = await this.resumes.bulkCreate(body);
     return { success: true as const, ...result };
+  }
+
+  @Get(':id')
+  async get(
+    @Param('id') id: string,
+    @Query('ownerName') ownerName: string,
+  ) {
+    const resume = await this.resumes.get(id, ownerName);
+    return { success: true as const, resume };
   }
 
   @Put(':id/primary')

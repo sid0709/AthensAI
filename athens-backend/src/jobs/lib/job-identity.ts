@@ -1,10 +1,14 @@
 /** Canonical company/title text for cross-source identity dedupe. */
 export function normalizeJobIdentityText(value: unknown): string {
-  return String(value ?? '')
-    .normalize('NFKC')
-    .trim()
-    .replace(/\s+/gu, ' ')
-    .toLowerCase();
+  const text =
+    typeof value === 'string'
+      ? value
+      : value == null
+        ? ''
+        : typeof value === 'number' || typeof value === 'boolean'
+          ? String(value)
+          : '';
+  return text.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase();
 }
 
 export function buildJobIdentityKeys(

@@ -14,10 +14,7 @@ import {
 export type DuplicateHit = {
   id: string;
   reason: string;
-  code:
-    | 'DUPLICATE_JOB_ID'
-    | 'DUPLICATE_APPLY_LINK'
-    | 'DUPLICATE_COMPANY_TITLE';
+  code: 'DUPLICATE_JOB_ID' | 'DUPLICATE_APPLY_LINK' | 'DUPLICATE_COMPANY_TITLE';
 };
 
 type DedupeInput = {
@@ -168,7 +165,8 @@ export class JobDedupeService {
 }
 
 function asObjectIdHex(value: unknown): string | null {
-  if (typeof value === 'string' && /^[a-fA-F0-9]{24}$/.test(value)) return value;
+  if (typeof value === 'string' && /^[a-fA-F0-9]{24}$/.test(value))
+    return value;
   if (value && typeof value === 'object' && '$oid' in value) {
     const oid = (value as { $oid?: unknown }).$oid;
     return typeof oid === 'string' && /^[a-fA-F0-9]{24}$/.test(oid)

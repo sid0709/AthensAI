@@ -113,16 +113,21 @@ export type ResumeSkillAnalysisResult = {
 export async function analyzeUserResume(
   ownerName: string,
   resumeId: string,
-  options?: { force?: boolean },
-): Promise<ResumeSkillAnalysisResult> {
-  const data = await apiFetch<ResumeSkillAnalysisResult>(
-    `/personal/user-resumes/${encodeURIComponent(resumeId)}/analyze`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ownerName, force: Boolean(options?.force) }),
-    },
-  );
+  options?: { force?: boolean; profileId?: string },
+): Promise<{ success: boolean; running: boolean; sessionId?: string | null }> {
+  const data = await apiFetch<{
+    success: boolean;
+    running: boolean;
+    sessionId?: string | null;
+  }>(`/personal/user-resumes/${encodeURIComponent(resumeId)}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ownerName,
+      force: Boolean(options?.force),
+      ...(options?.profileId ? { profileId: options.profileId } : {}),
+    }),
+  });
   return data;
 }
 

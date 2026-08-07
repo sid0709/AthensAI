@@ -16,6 +16,7 @@ import {
 } from './mappers/resume.mapper';
 import { ResumeStorageService } from './resume-storage.service';
 import { ResumeUploadService } from './resume-upload.service';
+import { ResumeCatalogSyncService } from './resume-catalog-sync.service';
 
 @Injectable()
 export class ResumeService {
@@ -24,6 +25,7 @@ export class ResumeService {
     private readonly accounts: AccountInfoService,
     private readonly storage: ResumeStorageService,
     private readonly upload: ResumeUploadService,
+    private readonly catalog: ResumeCatalogSyncService,
   ) {}
 
   create(input: Parameters<ResumeUploadService['create']>[0]) {
@@ -40,20 +42,6 @@ export class ResumeService {
   ): Promise<UserResumeSummary[]> {
     const acc = await this.resolveAccount(ownerName, options?.profileId);
     const source = asText(options?.source).trim();
-    const where: {
-      profileId: string;
-      source?: string;
-      OR?: Array<{ source?: string } | { source: { equals: undefined } }>;
-    } = { profileId: acc.id };
-
-    if (source === 'generated') {
-      where.source = 'generated';
-    } else if (source === 'uploaded') {
-      where.OR = [{ source: 'uploaded' }, { source: { equals: undefined } }];
-      // Prisma Mongo: treat missing/uploaded as uploaded
-      delete where.OR;
-      where.source = 'uploaded';
-    }
 
     const rows = await this.prisma.resume.findMany({
       where:
@@ -111,7 +99,7 @@ export class ResumeService {
     id: string,
     ownerName: string,
   ): Promise<UserResumeSummary> {
-    await this.findOwned(id, ownerName);
+    const row = await this.findOwned(id, ownerName);
     const updated = await this.prisma.resume.update({
       where: { id },
       data: {
@@ -121,6 +109,7 @@ export class ResumeService {
         analysisError: null,
       },
     });
+    await this.catalog.syncStack(row.profileId, row.title);
     return toResumeSummary(updated);
   }
 

@@ -18,11 +18,14 @@ export class ResumeTextService {
         return buffer.toString('utf8');
       }
       if (mimeType === 'application/pdf' || lower.endsWith('.pdf')) {
-        const pdfParse = (await import('pdf-parse')).default as (
-          data: Buffer,
-        ) => Promise<{ text?: string }>;
-        const result = await pdfParse(buffer);
-        return result?.text || '';
+        const { PDFParse } = await import('pdf-parse');
+        const parser = new PDFParse({ data: buffer });
+        try {
+          const result = await parser.getText();
+          return result?.text || '';
+        } finally {
+          await parser.destroy().catch(() => undefined);
+        }
       }
       if (
         mimeType ===

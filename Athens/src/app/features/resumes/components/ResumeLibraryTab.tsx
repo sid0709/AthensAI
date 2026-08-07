@@ -3,7 +3,12 @@ import { formatDistanceToNow } from "date-fns";
 import { Link } from "react-router";
 import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles, Eye, Eraser } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
-import { useBackgroundTasks } from "../../../context/BackgroundTaskContext";
+import {
+  startResumeAnalyze,
+  stopResumeAnalyze,
+  waitForResumeAnalyze,
+  type ResumeAnalyzeSession,
+} from "@/app/api/resumeAnalyze";
 import { resolveProfileDefaultModel } from "../../agents/avalon/ai/model";
 import { PATHS } from "../../../config/routes";
 import { SearchField } from "../../../components/shared/SearchField";
@@ -51,8 +56,6 @@ type PendingFile = { file: File; techStack?: string; relativePath?: string };
 
 export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLibraryTabProps) {
   const { applier, applierReady } = useApplier();
-  const { latestTask, startTask, cancelTask, waitForTask } = useBackgroundTasks();
-  const analysisTask = latestTask("resume_skill_analysis");
   const [libraryView, setLibraryView] = useState<LibraryView>("uploaded");
   const [q, setQ] = useState("");
   const [stackFilter, setStackFilter] = useState<string>("all");
@@ -64,6 +67,7 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
   const [bulkPending, setBulkPending] = useState<PendingFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgress | null>(null);
+  const [analyzeSession, setAnalyzeSession] = useState<ResumeAnalyzeSession | null>(null);
   const [clearingAnalysis, setClearingAnalysis] = useState(false);
   const [previewResume, setPreviewResume] = useState<UserResumeSummary | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -122,26 +126,33 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
   const allFilteredSelected =
     selectableFiltered.length > 0 && selectableFiltered.every((r) => selectedIds.has(r.id));
   const someFilteredSelected = selectableFiltered.some((r) => selectedIds.has(r.id));
-  const activeAnalysisTask = analysisTask && ["queued", "running", "cancelling"].includes(analysisTask.status)
-    ? analysisTask
-    : null;
-  const analyzing = analyzeProgress != null || activeAnalysisTask != null;
+  const analyzing =
+    analyzeProgress != null ||
+    analyzeSession?.status === "running" ||
+    analyzeSession?.status === "stopping";
+  const stoppingAnalysis = analyzeSession?.status === "stopping";
   const selectedAnalyzedCount = selectedResumes.filter((r) => r.analyzed).length;
 
-  useEffect(() => {
-    if (!activeAnalysisTask) return;
-    const failed = Object.entries(activeAnalysisTask.progress.items || {})
-      .filter(([, item]) => item.status === "failed")
-      .map(([id, item]) => ({
-        fileName: resumes.find((resume) => resume.id === id)?.fileName || id,
-        error: item.error || "Analysis failed",
-      }));
-    setAnalyzeProgress({
-      current: Number(activeAnalysisTask.progress.completed ?? 0) + Number(activeAnalysisTask.progress.failed ?? 0),
-      total: Number(activeAnalysisTask.progress.total ?? 0),
-      failed,
-    });
-  }, [activeAnalysisTask, resumes]);
+  const applyAnalyzeSessionProgress = useCallback(
+    (session: ResumeAnalyzeSession) => {
+      setAnalyzeSession(session);
+      const items = session.progress?.items || session.items || {};
+      const failed = Object.entries(items)
+        .filter(([, item]) => item.status === "failed")
+        .map(([id, item]) => ({
+          fileName: resumes.find((resume) => resume.id === id)?.fileName || id,
+          error: item.error || "Analysis failed",
+        }));
+      const completed = Number(session.completed ?? session.progress?.completed ?? 0);
+      const failedCount = Number(session.failed ?? session.progress?.failed ?? 0);
+      setAnalyzeProgress({
+        current: completed + failedCount,
+        total: Number(session.total ?? session.progress?.total ?? 0),
+        failed,
+      });
+    },
+    [resumes],
+  );
 
   const handleSingleFilePick = (files: FileList | null) => {
     if (!files?.[0]) return;
@@ -257,12 +268,18 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
     setError(null);
     setAnalyzeProgress({ current: 0, total: toAnalyze.length, failed: [] });
     try {
-      const task = await startTask("resume_skill_analysis", {
+      const started = await startResumeAnalyze({
+        applierName: ownerName,
+        profileId: ownerId || undefined,
         resumeIds: toAnalyze.map((resume) => resume.id),
         force: alreadyAnalyzed.length > 0,
       });
-      const finished = await waitForTask(task.id);
-      const failed = Object.entries(finished.progress.items || {})
+      applyAnalyzeSessionProgress(started);
+      const finished = await waitForResumeAnalyze({
+        onProgress: applyAnalyzeSessionProgress,
+      });
+      const items = finished.progress?.items || finished.items || {};
+      const failed = Object.entries(items)
         .filter(([, item]) => item.status === "failed")
         .map(([id, item]) => ({
           fileName: toAnalyze.find((resume) => resume.id === id)?.fileName || id,
@@ -276,13 +293,15 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
       setError(err instanceof Error ? err.message : "Analysis failed");
     } finally {
       setAnalyzeProgress(null);
+      setAnalyzeSession(null);
     }
   };
 
   const handleStopAnalysis = async () => {
-    if (!activeAnalysisTask || activeAnalysisTask.status === "cancelling") return;
+    if (!analyzing || stoppingAnalysis) return;
     try {
-      await cancelTask(activeAnalysisTask.id);
+      const stopped = await stopResumeAnalyze();
+      applyAnalyzeSessionProgress(stopped);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to stop analysis");
     }
@@ -408,7 +427,7 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
               <Sparkles className="w-4 h-4" />
             )}
             {analyzing
-              ? activeAnalysisTask?.status === "cancelling" ? "Stopping analysis…" : "Stop analysis"
+              ? stoppingAnalysis ? "Stopping analysis…" : "Stop analysis"
               : `Analyze selected (${selectedIds.size})`}
           </button>
           {hasLlmKey && defaultModel ? (

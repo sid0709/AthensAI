@@ -1,12 +1,17 @@
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { AuthResponseFilter } from './common/auth-response.filter';
 import { loadAppConfig } from './config/app.config';
 
 async function bootstrap() {
   const config = loadAppConfig();
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Resume library bulk uploads send base64 file payloads (default Express limit is ~100kb).
+  app.useBodyParser('json', { limit: '32mb' });
+  app.useBodyParser('urlencoded', { limit: '32mb', extended: true });
 
   app.setGlobalPrefix('api');
   app.useGlobalFilters(new AuthResponseFilter());

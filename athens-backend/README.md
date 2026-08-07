@@ -76,6 +76,26 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/jobs/ai-analyze/stop` | Abort session + release leases |
 | GET | `/api/jobs/skill-extract/status` | Alias of AI Analyze status (legacy client path) |
 
+## Resume library
+
+Binary files: Firebase Storage `{slug(ownerName)}_{profileId}/resumes/{sha256}`. Metadata + analysis: Mongo `resumes`.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/personal/user-resumes` | Query: `ownerName`, `source?`, `profileId?` |
+| GET | `/api/personal/user-resumes/:id` | Detail + `contentBase64`. Query: `ownerName` |
+| POST | `/api/personal/user-resumes` | Single upload (base64 + `techStack` title) |
+| POST | `/api/personal/user-resumes/bulk` | Bulk → `{ ok, failed }` |
+| PUT | `/api/personal/user-resumes/:id/primary` | Body: `{ ownerName }` |
+| DELETE | `/api/personal/user-resumes/:id` | Query: `ownerName` |
+| POST | `/api/personal/user-resumes/:id/clear-analysis` | Clear skills |
+| POST | `/api/personal/user-resumes/:id/analyze` | Start 1-id analyze session |
+| POST | `/api/resumes/analyze/start` | `{ applierName, profileId?, resumeIds, force? }` — WaveBatch parallel skill analysis |
+| POST | `/api/resumes/analyze/stop` | Abort session |
+| GET | `/api/resumes/analyze/status` | Progress per `resumeId` |
+
+API `techStack` ↔ Mongo `title`. Skills in `analysis.skills`; syncs `account_info.resumeAnalysisCatalog[title]`. Knob: `RESUME_ANALYZE_BATCH_CONCURRENCY` (default 8).
+
 - Job Search reads **`jobs` only**. Incomplete title-review / AI Analyze rows live in **`temp_jobs`** and are invisible to search.
 - **Ingest dedupe** (`SaveJobService`): before insert, check `temp_jobs` **and** `jobs`. Duplicate when `metadata.legacyId` matches, or `applyLink` matches within `JOB_DEDUP_WINDOW_DAYS` (default 14), or normalized `companyName`+`title` match within that window. Response stays Extension/LI-compatible: `{ success: true, created: false, duplicate: true, reason, code }` (HTTP 200) — row is **not** added.
 - New rows stamp `model_schema_code` from `JOB_MODEL_SCHEMA_CODE` (default `mongodb-athens-2026-08-06`).
@@ -87,6 +107,40 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 - Filters and offset pagination (`page` / `pageSize`) hit Prisma against `AthensDB.jobs`.
 - With `profileId` (`account_info._id`): badge counts load from `job_status_counts` at O(1); page rows hydrate `viewerStatus` from `job_statuses` (one doc per profile × job).
 - Response: `{ success, data, pagination, statusCounts, hasMore }`.
+
+## Mail (Gmail IMAP/SMTP)
+
+Uses profile `email` + decrypted `gmailAppPassword`. List responses omit full body (`hasBody: false`); open a message to fetch content. AI label definitions live on `account_info.mailAiLabelDefinitions`.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/mail/credentials` | `{ configured, email? }` |
+| GET | `/api/mail/labels` | Custom Gmail labels |
+| POST | `/api/mail/labels` | Create label `{ applierName, name, parentId? }` |
+| DELETE | `/api/mail/labels/:labelId` | Delete label |
+| GET | `/api/mail/threads` | List (no body). Query: `applierName`, `folder`, `label`, `search`, `unlabeled`, `page`, `pageSize`, `cacheOnly`, `force` |
+| GET | `/api/mail/messages/:uid` | Full body on open |
+| GET | `/api/mail/folder-counts` | Badge totals |
+| POST | `/api/mail/sync` | Incremental sync |
+| POST | `/api/mail/sync/initial` | Initial page populate |
+| POST | `/api/mail/sync/older` | Stub compatible response |
+| POST | `/api/mail/send` | SMTP send |
+| PATCH | `/api/mail/messages/:uid` | seen / starred / move / labels |
+| GET/PUT | `/api/mail/label-definitions` | AI definitions (beta) |
+| POST | `/api/mail/ai-write` | Compose AI (beta) |
+| POST | `/api/mail/ai-label` | Enqueues `mail_ai_label` background task (beta) |
+
+## Background tasks
+
+Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default) claims `mail_ai_label` tasks.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/api/background-tasks` | `{ type, applierName, profileId?, requestId?, payload }` |
+| GET | `/api/background-tasks` | Query: `profileId`, `active`, `limit` |
+| GET | `/api/background-tasks/:taskId` | Public task snapshot |
+| POST | `/api/background-tasks/:taskId/cancel` | Soft cancel |
+| GET | `/api/background-tasks/events?profileId=` | SSE snapshot / updates / heartbeat |
 
 ## Firebase Atlas (admin explorer)
 
