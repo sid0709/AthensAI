@@ -139,6 +139,7 @@ export function mapTaskToBidResult(
     recommendedResume,
     submissionResume: null,
     recommendedResumeStack: stack,
+    recommendedResumeId: task.recommendedResumeId ?? null,
     recommendedResumeReason: task.recommendedResumeReason ?? null,
     useCustomizedResume: useCustomized,
     recommendWarning: task.recommendWarning ?? null,

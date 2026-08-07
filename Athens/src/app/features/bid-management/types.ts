@@ -10,7 +10,7 @@ export type FlagLight = "green" | "red" | null;
 
 export type RejectSource = "submitted" | "skipped";
 
-export type BidAiMode = "llm" | "heuristic";
+export type BidAiMode = "llm" | "heuristic" | "manual";
 
 export type BidFormAnswer = {
   question: string;

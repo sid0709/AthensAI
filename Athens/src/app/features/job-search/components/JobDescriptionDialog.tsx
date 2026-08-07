@@ -110,6 +110,7 @@ export function JobDescriptionDialog({
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
+  onChangeRecommendedResume,
 }: JobDescriptionDialogProps) {
   const { displayJob: detailJob, loading, error } = useJobDetail(job, open);
   const j = detailJob ?? job;
@@ -188,14 +189,30 @@ export function JobDescriptionDialog({
 
           {j.recommendedResumeStack || j.useCustomizedResume ? (
             <div className="mt-4 rounded-xl border border-primary/25 bg-primary/[0.07] px-4 py-3.5 shadow-sm">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-primary">
-                Recommended resume
-              </p>
-              <p className="mt-1 text-base font-bold leading-snug text-foreground">
-                {j.recommendedResumeStack
-                  ? j.recommendedResumeStack
-                  : "Customized resume"}
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-primary">
+                    Recommended resume
+                    {j.recommendMode === "manual" ? " · manual" : null}
+                  </p>
+                  <p className="mt-1 text-base font-bold leading-snug text-foreground">
+                    {j.recommendedResumeStack
+                      ? j.recommendedResumeStack
+                      : "Customized resume"}
+                  </p>
+                </div>
+                {onChangeRecommendedResume ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={onChangeRecommendedResume}
+                  >
+                    Change
+                  </Button>
+                ) : null}
+              </div>
               {j.recommendedResumeReason ? (
                 <p className="mt-1.5 text-sm leading-relaxed text-foreground/80">
                   {j.recommendedResumeReason}
@@ -206,6 +223,20 @@ export function JobDescriptionDialog({
                   {j.recommendWarning}
                 </p>
               ) : null}
+            </div>
+          ) : onChangeRecommendedResume && j.status === "bid-ready" ? (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border px-4 py-3">
+              <p className="text-sm text-muted-foreground">
+                No Library resume assigned yet.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onChangeRecommendedResume}
+              >
+                Choose Library resume
+              </Button>
             </div>
           ) : resumeRank?.recommendedResumeTechStack ? (
             <p className="mt-3 text-xs text-muted-foreground">

@@ -446,6 +446,7 @@ function JobSearchPageContent() {
             onGenerateResume={(job) => {
               void generateForJob(job);
             }}
+            onPatchJob={patchJob}
           />
         </TabTransition>
       )}

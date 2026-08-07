@@ -28,6 +28,7 @@ type JobListViewProps = {
   onCancel?: (job: Job) => void;
   resumeStates?: Record<string, JobResumeGenerationState>;
   onGenerateResume?: (job: Job) => void;
+  onPatchJob?: (job: Job) => void;
 };
 
 export function JobListView({
@@ -53,6 +54,7 @@ export function JobListView({
   onCancel,
   resumeStates,
   onGenerateResume,
+  onPatchJob,
 }: JobListViewProps) {
   const displayGroups = useMemo(() => groups, [groups]);
   const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
@@ -97,6 +99,7 @@ export function JobListView({
         onCancel={onCancel}
         resumeStates={resumeStates}
         onGenerateResume={onGenerateResume}
+        onPatchJob={onPatchJob}
         onLoadMore={onLoadCompanyMembers}
         onRemoveOtherJobs={onRemoveOtherCompanyJobs
           ? (activeJob) => onRemoveOtherCompanyJobs(group, activeJob)

@@ -82,7 +82,6 @@ export class SetRecommendedResumeService {
       recommendWarning: null,
       recommendedAt: new Date(),
       recommendMode: 'manual',
-      recommendUsage: undefined,
       recommendRequestId: null,
       resumeStackMatch,
     });

@@ -95,7 +95,9 @@ function normalizeBidResult(row: BidResult): BidResult {
     recommendedAt:
       typeof row.recommendedAt === "string" ? row.recommendedAt : null,
     recommendMode:
-      row.recommendMode === "llm" || row.recommendMode === "heuristic"
+      row.recommendMode === "llm" ||
+      row.recommendMode === "heuristic" ||
+      row.recommendMode === "manual"
         ? row.recommendMode
         : null,
     recommendUsage:
