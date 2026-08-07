@@ -29,12 +29,33 @@ model AccountInfo {
   @@map("account_info")
 }
 
+/// Employer identity for Job Search grouping. jobIds are catalog `jobs` ids, newest-first.
+model Company {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  /// Normalized companyName (trim + lowercase + collapse whitespace).
+  companyKey   String   @unique
+  companyName  String
+  companyLogo  String?
+  companyUrl   String?
+  jobIds       String[] @db.ObjectId
+  lastPostedAt DateTime
+  /// Denormalized jobIds.length for cheap unfiltered counts.
+  jobCount     Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([lastPostedAt(sort: Desc)])
+  @@map("companies")
+}
+
 /// Lean Job Search catalog (searchable). Incomplete title-review / skill-extract rows live in `temp_jobs`.
 /// Filter/search fields are flat; capsules live in metadata.
 model Job {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   title            String
   companyName      String
+  /// FK to companies._id (no Prisma relation — membership lives on Company.jobIds).
+  companyId        String?  @db.ObjectId
   source           String
   postedAt         DateTime
   titleReviewLabel String
@@ -60,18 +81,22 @@ model Job {
   @@index([titleReviewLabel, source, postedAt(sort: Desc)])
   @@index([sourceCatalog, titleReviewLabel, postedAt(sort: Desc)])
   @@index([createdBy, postedAt(sort: Desc)])
+  @@index([companyId, postedAt(sort: Desc)])
   @@map("jobs")
 }
 
-/// Staging catalog for jobs awaiting title review and/or skill extraction.
-/// Same document shape as `jobs`. Title Review + Extract Skills operate here.
-/// Promote into `jobs` only when titleReviewLabel=APPROVED and aiSkillStatus is done.
+/// Staging ingest shape (≠ Job). Scrapers land here after prenorm.
+/// Title Review + Skill Extract filter this collection directly (no athens_metadata).
+/// Promote into `jobs` via registerJob when titleReviewLabel=APPROVED and aiSkillStatus is done.
 model TempJob {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   title            String
   companyName      String
+  companyId        String?  @db.ObjectId
   source           String
   postedAt         DateTime
+  /// Raw relative posting text from scrapers (e.g. "2 days ago").
+  postedAgo        String?
   titleReviewLabel String
   sourceCatalog    String   @default("market")
   companyLink      String?
@@ -84,7 +109,7 @@ model TempJob {
   createdBy        String
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-  /// { legacyId?, companyLogo?, details?: { location?, time?, remote?, seniority?, salary? }, titleReview? }
+  /// { legacyId?, companyLogo?, details?, titleReview?, scrape? }
   metadata         Json?
 
   @@index([postedAt(sort: Desc)])
@@ -92,6 +117,7 @@ model TempJob {
   @@index([titleReviewLabel, source, postedAt(sort: Desc)])
   @@index([aiSkillStatus, postedAt(sort: Desc)])
   @@index([createdBy, postedAt(sort: Desc)])
+  @@index([companyId, postedAt(sort: Desc)])
   @@map("temp_jobs")
 }
 
@@ -129,25 +155,4 @@ model JobStatusCounts {
   account AccountInfo @relation(fields: [profileId], references: [id])
 
   @@map("job_status_counts")
-}
-
-/// Shared catalog work queues (not per-profile). One membership row per queue × job.
-/// Join `jobId` → `temp_jobs` while pipelines run; row deleted on promote to `jobs`.
-/// Badge counts = count by queue (+ state).
-model AthensMetadata {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  /// title_review | skill_extract
-  queue     String
-  /// title_review: pending | review_required | failed
-  /// skill_extract: pending | failed
-  state     String
-  /// ObjectId of the `temp_jobs` document being processed.
-  jobId     String   @db.ObjectId
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([queue, jobId])
-  @@index([queue, state])
-  @@index([jobId])
-  @@map("athens_metadata")
 }

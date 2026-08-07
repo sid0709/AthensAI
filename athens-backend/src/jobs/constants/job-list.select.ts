@@ -8,6 +8,7 @@ export const JOB_LIST_SELECT = {
   id: true,
   title: true,
   companyName: true,
+  companyId: true,
   source: true,
   postedAt: true,
   applyLink: true,

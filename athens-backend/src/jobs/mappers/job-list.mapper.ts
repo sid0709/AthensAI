@@ -17,7 +17,10 @@ type JobListSource = Pick<
   | 'aiSkillStatus'
   | 'sourceCatalog'
   | 'metadata'
-> & { description?: string | null };
+> & {
+  description?: string | null;
+  companyId?: string | null;
+};
 
 /** Map Prisma Job (list or detail) → shape expected by Athens `mapDocToJob`. */
 export function mapJobToListDoc(
@@ -31,14 +34,20 @@ export function mapJobToListDoc(
     'description' in job && typeof job.description === 'string'
       ? job.description
       : undefined;
+  const companyId =
+    typeof job.companyId === 'string' && job.companyId.trim()
+      ? job.companyId.trim()
+      : undefined;
 
   return {
     _id: job.id,
     title: job.title,
     companyName: job.companyName,
+    ...(companyId ? { companyId } : {}),
     company: {
       name: job.companyName,
       ...(logo ? { logo } : {}),
+      ...(job.companyLink ? { url: job.companyLink } : {}),
     },
     source: job.source,
     postedAt: job.postedAt.toISOString(),

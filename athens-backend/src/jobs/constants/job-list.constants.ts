@@ -23,3 +23,6 @@ export const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
 
 export const PAGE_SIZE_DEFAULT = 25;
 export const PAGE_SIZE_MAX = 100;
+
+/** Initial nested jobs returned per company group on GET /jobs. */
+export const COMPANY_MEMBERS_PAGE_SIZE = 10;

@@ -54,56 +54,59 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/personal/default-model` | `{ applierName, provider, model, profileId? }` — validates key then saves |
 | POST | `/api/personal/llm-key-check` | `{ provider, apiKey?, applierName? }` |
 
-## Job Search catalog (read-only)
+## Job Search catalog
 
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/api/jobs` | Query: `status`, `q`, `company`, `source`, `postedFrom`, `postedTo`, `sort`, `aiExtracted`, `page`, `pageSize`, `profileId` |
 | GET | `/api/jobs/:id` | Full job (incl. `description`) for View JD. Query: `applierName`, `profileId` |
-| GET | `/api/jobs/title-review/status` | Shared title-review queue counts from `athens_metadata` (temp_jobs) |
-| GET | `/api/jobs/title-review` | Paginated title-review list (join metadata → **temp_jobs**). Query: `tab`, `page`, `limit`, `q`, `sort` |
+| POST | `/api/jobs/bulk` | Extension scrape ingest — `{ jobs: [...] }` → prenorm → `temp_jobs` |
+| POST | `/api/expose/jobs` | LI-scrapper ingest — single job or `{ jobs: [...] }` → prenorm → `temp_jobs` |
+| POST | `/api/expose/jobs/check` | LI-scrapper — `{ jobID }` exists in `temp_jobs` or `jobs` via `metadata.legacyId` |
+| GET | `/api/jobs/title-review/status` | Title-review queue counts from **temp_jobs** fields |
+| GET | `/api/jobs/title-review` | Paginated title-review list on **temp_jobs**. Query: `tab`, `page`, `limit`, `q`, `sort` |
 | GET | `/api/jobs/title-review/bootstrap` | List + idle session counts |
-| GET | `/api/jobs/skill-extract/status` | Shared skill-extract pending badge on **temp_jobs** |
+| GET | `/api/jobs/skill-extract/status` | Skill-extract pending badge on **temp_jobs** |
 
 - Job Search reads **`jobs` only**. Incomplete title-review / skill-extract rows live in **`temp_jobs`** and are invisible to search.
+- Queue membership is derived from `temp_jobs` (`titleReviewLabel` / `aiSkillStatus` / `metadata.titleReview`) — there is no `athens_metadata` collection.
 - Only `status=all` returns catalog rows today; other status tabs return an empty page (list-by-status not wired yet).
 - List responses **omit** `description` (lean `select` + `@@index([postedAt])`). Unfiltered totals are cached in-process (~60s); filtered lists still `count`.
 - Filters and offset pagination (`page` / `pageSize`) hit Prisma against `AthensDB.jobs`.
 - With `profileId` (`account_info._id`): badge counts load from `job_status_counts` at O(1); page rows hydrate `viewerStatus` from `job_statuses` (one doc per profile × job).
 - Response: `{ success, data, pagination, statusCounts, hasMore }`.
 
-### Metadata capsule (`Job.metadata` / `TempJob.metadata`)
+### Metadata capsule
+
+**Job** (catalog):
+
+```text
+{ legacyId?, companyLogo?, details?: { location?, time?, remote?, seniority?, salary? }, titleReview? }
+```
+
+**TempJob** (staging ingest, may also include scrape extras):
 
 ```text
 {
   legacyId?, companyLogo?,
   details?: { location?, time?, remote?, seniority?, salary? },
-  titleReview?
+  titleReview?,
+  scrape?: { tags?, companyTags?, skills?, applicants?, duplicateWindowDays? }
 }
 ```
 
-Legacy keys `companyTags`, `details.position`, `details.money`, and `details.date` are removed by `npm run migrate:temp-jobs`.
+TempJob also has optional top-level `postedAgo` (raw relative text). `registerJob` drops `postedAgo` and `metadata.scrape` when moving into `jobs`.
+
+Legacy keys `companyTags`, `details.position`, `details.money`, and `details.date` are removed by `npm run migrate:temp-jobs`. Align existing temp rows to the ingest schema with `npm run migrate:temp-ingest` (`-- --dry-run` to preview).
 
 ### Catalog split (`jobs` vs `temp_jobs`)
 
 | Collection | Role |
 |------------|------|
-| `jobs` | Searchable catalog. Rows are title-approved **and** skill-pipeline done (`extracted` or `skipped_duplicate`). |
-| `temp_jobs` | Staging. Title Review + Extract Skills operate here. Promote into `jobs` when both pipelines complete (`TempJobPromotionService.promoteIfReady` — AI not wired yet). |
+| `jobs` | Searchable catalog. Rows are title-approved **and** skill-pipeline done (`extracted` or `skipped_duplicate`). Strict Prisma `Job` shape. |
+| `temp_jobs` | Staging ingest queue (shape ≠ Job). LI-scrapper / Extension land here via prenorm + `saveJob`. Title Review + Extract Skills filter this collection. Promote via `registerJob` / `TempJobPromotionService.promoteIfReady` (move, not copy). |
 
-One-shot reshape + move: `npm run migrate:temp-jobs` (add `-- --dry-run` to preview). Then rebuild queues: `npm run backfill:metadata`.
-
-### Shared catalog queues (`athens_metadata`)
-
-Not per-profile (unlike `job_statuses`). One membership document per `queue` × `jobId` where **`jobId` → `temp_jobs._id`**:
-
-| Field | Values |
-|-------|--------|
-| `queue` | `title_review` \| `skill_extract` |
-| `state` | title: `pending` \| `review_required` \| `failed`; skills: `pending` \| `failed` |
-| `jobId` | `temp_jobs._id` |
-
-Rebuild from `temp_jobs` with `npm run backfill:metadata` after `prisma:push` / `migrate:temp-jobs`.
+One-shot reshape + move incomplete catalog rows: `npm run migrate:temp-jobs`. Ingest-schema align: `npm run migrate:temp-ingest`.
 
 ### Profile-owned status collections
 
@@ -114,7 +117,7 @@ Rebuild from `temp_jobs` with `npm run backfill:metadata` after `prisma:push` / 
 
 Incrementing counts when a new catalog job is ingested (touch every profile) is deferred.
 
-Populate the job catalog with `npm run migrate:jobs` (see script header for flags). After schema changes: `npm run prisma:generate` and `npm run prisma:push`.
+After schema changes: `npm run prisma:generate` and `npm run prisma:push`.
 
 ## Verify
 

@@ -85,8 +85,8 @@ export function useTitleReviewSession({
     toast.info("Title review AI is not wired yet", {
       description:
         fallback.pending != null
-          ? `${fallback.pending} title(s) still need review. List data is live from athens_metadata.`
-          : "List data is live from athens_metadata.",
+          ? `${fallback.pending} title(s) still need review. List data is live from temp_jobs.`
+          : "List data is live from temp_jobs.",
     });
     return null;
   }, [applier?.name, fallback.pending]);

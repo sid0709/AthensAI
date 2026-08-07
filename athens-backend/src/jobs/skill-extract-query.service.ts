@@ -1,13 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { AthensMetadataService } from './athens-metadata.service';
+import { TempJobQueueService } from './temp-job-queue.service';
 
 @Injectable()
 export class SkillExtractQueryService {
-  constructor(private readonly metadata: AthensMetadataService) {}
+  constructor(private readonly queues: TempJobQueueService) {}
 
-  /** Read-only status from temp_jobs queue — pending badge only; AI not wired yet. */
+  /** Read-only badge from `temp_jobs` — AI extraction not wired yet. */
   async status() {
-    const pending = await this.metadata.skillExtractPendingCount();
+    const pending = await this.queues.skillExtractPendingCount();
     return {
       success: true as const,
       running: false,

@@ -1,6 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
 import type { ListJobsQueryDto } from './dto/list-jobs.query.dto';
 import {
   EMPTY_STATUS_COUNTS,
@@ -8,51 +6,19 @@ import {
   PAGE_SIZE_MAX,
   type JobStatusTab,
 } from './constants/job-list.constants';
-import { JOB_LIST_SELECT } from './constants/job-list.select';
+import { CompanyCatalogTotalService } from './company-catalog-total.service';
 import { JobCatalogTotalService } from './job-catalog-total.service';
 import { JobStatusCountsService } from './job-status-counts.service';
-import { JobStatusService } from './job-status.service';
-import { mapJobToListDoc } from './mappers/job-list.mapper';
-
-function parseSources(raw: string | undefined): string[] {
-  const text = String(raw ?? '').trim();
-  if (!text || text === 'all') return [];
-  return [
-    ...new Set(
-      text
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ),
-  ];
-}
-
-function parseDayStart(isoDate: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate.trim());
-  if (!match) return null;
-  const d = new Date(
-    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])),
-  );
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function parseDayEnd(isoDate: string): Date | null {
-  const start = parseDayStart(isoDate);
-  if (!start) return null;
-  return new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
-}
-
-function isEmptyWhere(where: Prisma.JobWhereInput): boolean {
-  return Object.keys(where).length === 0;
-}
+import { JobsCompanyListService } from './jobs-company-list.service';
+import { buildJobsPrismaWhere, isEmptyWhere } from './lib/jobs-where';
 
 @Injectable()
 export class JobsQueryService {
   constructor(
-    private readonly prisma: PrismaService,
     private readonly catalogTotal: JobCatalogTotalService,
+    private readonly companyCatalogTotal: CompanyCatalogTotalService,
     private readonly statusCounts: JobStatusCountsService,
-    private readonly jobStatuses: JobStatusService,
+    private readonly companyList: JobsCompanyListService,
   ) {}
 
   async list(query: ListJobsQueryDto) {
@@ -66,90 +32,73 @@ export class JobsQueryService {
 
     // Status tabs other than All need job_statuses joins — not wired yet.
     if (status !== 'all') {
-      const peek = this.catalogTotal.peek() ?? 0;
-      const counts = await this.statusCounts.getTabCounts(profileId, peek);
+      const peekJobs = this.catalogTotal.peek() ?? 0;
+      const counts = await this.statusCounts.getTabCounts(profileId, peekJobs);
       return this.emptyPage(page, pageSize, counts);
     }
 
-    const where = this.buildWhere(query);
+    const where = buildJobsPrismaWhere(query);
     const unfiltered = isEmptyWhere(where);
-    const peekTotal = unfiltered ? (this.catalogTotal.peek() ?? 0) : 0;
+    const peekJobs = unfiltered ? (this.catalogTotal.peek() ?? 0) : 0;
 
-    // One Mongo round-trip wave: page rows + total + badge counts.
-    const [total, rows, tabCounts] = await Promise.all([
-      unfiltered
-        ? this.catalogTotal.getUnfiltered()
-        : this.prisma.job.count({ where }),
-      this.prisma.job.findMany({
-        where,
-        select: JOB_LIST_SELECT,
-        orderBy: { postedAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      this.statusCounts.getTabCounts(profileId, peekTotal),
-    ]);
+    if (unfiltered) {
+      const [companyTotal, jobTotal, data, tabCounts] = await Promise.all([
+        this.companyCatalogTotal.getUnfiltered(),
+        this.catalogTotal.getUnfiltered(),
+        this.companyList.listUnfiltered(page, pageSize, profileId),
+        this.statusCounts.getTabCounts(profileId, peekJobs),
+      ]);
 
-    if (unfiltered && tabCounts.all !== total) {
-      tabCounts.all = total;
+      if (tabCounts.all !== jobTotal) {
+        tabCounts.all = jobTotal;
+      }
+
+      const totalPages =
+        companyTotal === 0 ? 0 : Math.ceil(companyTotal / pageSize);
+      return {
+        success: true as const,
+        data,
+        pagination: {
+          total: companyTotal,
+          totalJobs: jobTotal,
+          unit: 'companies' as const,
+          page,
+          limit: pageSize,
+          totalPages,
+        },
+        statusCounts: tabCounts,
+        hasMore: page * pageSize < companyTotal,
+        nextCursor: null,
+      };
     }
 
-    const stateByJobId = await this.jobStatuses.statesForJobs(
-      profileId,
-      rows.map((row) => row.id),
-    );
+    const [filtered, tabCounts] = await Promise.all([
+      this.companyList.listFiltered(query, page, pageSize, profileId),
+      this.statusCounts.getTabCounts(profileId, peekJobs),
+    ]);
 
-    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+    // Filtered "all" badge uses matching job count for this request.
+    tabCounts.all = filtered.jobTotal;
+
+    const totalPages =
+      filtered.companyTotal === 0
+        ? 0
+        : Math.ceil(filtered.companyTotal / pageSize);
     return {
       success: true as const,
-      data: rows.map((row) =>
-        mapJobToListDoc(row, stateByJobId.get(row.id) || 'posted'),
-      ),
+      data: filtered.data,
       pagination: {
-        total,
-        totalJobs: total,
-        unit: 'jobs' as const,
+        total: filtered.companyTotal,
+        totalJobs: filtered.jobTotal,
+        unit: 'companies' as const,
         page,
         limit: pageSize,
         totalPages,
       },
       statusCounts: tabCounts,
-      hasMore: page * pageSize < total,
+      hasMore: page * pageSize < filtered.companyTotal,
       nextCursor: null,
     };
-  }
-
-  private buildWhere(query: ListJobsQueryDto): Prisma.JobWhereInput {
-    const where: Prisma.JobWhereInput = {};
-    const q = String(query.q ?? '').trim();
-    if (q) {
-      where.title = { contains: q, mode: 'insensitive' };
-    }
-
-    const company = String(query.company ?? '').trim();
-    if (company) {
-      where.companyName = { contains: company, mode: 'insensitive' };
-    }
-
-    const sources = parseSources(query.source);
-    if (sources.length) {
-      where.source = { in: sources };
-    }
-
-    const from = query.postedFrom ? parseDayStart(query.postedFrom) : null;
-    const to = query.postedTo ? parseDayEnd(query.postedTo) : null;
-    if (from || to) {
-      where.postedAt = {
-        ...(from ? { gte: from } : {}),
-        ...(to ? { lte: to } : {}),
-      };
-    }
-
-    if (query.aiExtracted) {
-      where.aiSkillStatus = 'extracted';
-    }
-
-    return where;
   }
 
   private emptyPage(
@@ -163,7 +112,7 @@ export class JobsQueryService {
       pagination: {
         total: 0,
         totalJobs: 0,
-        unit: 'jobs' as const,
+        unit: 'companies' as const,
         page,
         limit: pageSize,
         totalPages: 0,

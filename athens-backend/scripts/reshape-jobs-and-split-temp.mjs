@@ -202,7 +202,7 @@ async function main() {
   const tempCount = await tempJobs.countDocuments();
   console.log(`[migrate:temp-jobs] counts jobs=${jobsCount} temp_jobs=${tempCount}`);
   console.log(
-    '[migrate:temp-jobs] next: npm run backfill:metadata (rebuilds athens_metadata from temp_jobs)',
+    '[migrate:temp-jobs] next: npm run prisma:generate (Title Review / Skill Extract read temp_jobs directly)',
   );
 
   await client.close();

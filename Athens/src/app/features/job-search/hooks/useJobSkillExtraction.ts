@@ -38,8 +38,8 @@ export function useJobSkillExtraction() {
     toast.info("Skill extraction AI is not wired yet", {
       description:
         pending != null
-          ? `${pending} APPROVED job(s) still need skills. Badge count is live from athens_metadata.`
-          : "Badge count is live from athens_metadata.",
+          ? `${pending} APPROVED job(s) still need skills. Badge count is live from temp_jobs.`
+          : "Badge count is live from temp_jobs.",
     });
     return null;
   }, [pending]);

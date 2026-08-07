@@ -1,4 +1,4 @@
-import { JOB_TITLE_REVIEW_LABELS } from './athens-metadata.constants';
+import { JOB_TITLE_REVIEW_LABELS } from './job-pipeline.constants';
 
 /** `aiSkillStatus` values that count as skill-pipeline complete (ready for `jobs`). */
 export const JOB_SKILL_STATUS_DONE = [
