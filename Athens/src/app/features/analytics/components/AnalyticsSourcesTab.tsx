@@ -76,7 +76,7 @@ export function AnalyticsSourcesTab({
           ) : (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart
-                data={analytics.pipelineBySource.slice(0, 8)}
+                data={analytics.pipelineBySource}
                 margin={{ top: 4, right: 4, bottom: 0, left: -20 }}
               >
                 <CartesianGrid strokeDasharray="2 4" stroke="rgba(0,0,0,0.06)" vertical={false} />
