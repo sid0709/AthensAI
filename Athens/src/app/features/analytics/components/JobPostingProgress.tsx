@@ -39,7 +39,7 @@ export function JobPostingProgress({ range, analytics }: { range: DateRange; ana
         {!hasSeries ? (
           <AnalyticsEmpty message="No job postings were recorded in this date range." />
         ) : (
-          <ResponsiveContainer width="100%" height={320}>
+          <ResponsiveContainer width="100%" height={420}>
             <AreaChart data={analytics.postingsArea} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
               <CartesianGrid strokeDasharray="2 4" stroke="rgba(0,0,0,0.06)" vertical={false} />
               <XAxis
@@ -58,23 +58,30 @@ export function JobPostingProgress({ range, analytics }: { range: DateRange; ana
               <Tooltip content={<ChartTip />} />
               <Legend
                 verticalAlign="top"
-                height={36}
+                align="left"
                 iconType="circle"
-                wrapperStyle={{ fontSize: 12, paddingBottom: 8 }}
+                wrapperStyle={{
+                  fontSize: 11,
+                  paddingBottom: 12,
+                  lineHeight: "22px",
+                  maxHeight: 96,
+                  overflow: "auto",
+                }}
               />
               {analytics.postingSourceKeys.map((source, index) => {
-                const color = sourceChartColor(index);
+                const color = sourceChartColor(source, index);
                 return (
                   <Area
                     key={source}
-                    type="linear"
+                    type="monotone"
                     dataKey={source}
                     name={source}
                     stackId="postings"
                     stroke={color}
                     fill={color}
-                    fillOpacity={0.85}
-                    strokeWidth={1}
+                    fillOpacity={0.72}
+                    strokeWidth={1.5}
+                    isAnimationActive={false}
                   />
                 );
               })}

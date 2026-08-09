@@ -1,20 +1,58 @@
 import type { DailyPostingBySourceRow } from "../../../api/reports";
+import { JobSourceTitles } from "../../../data/jobs/pub";
 
-/** Stable palette for dynamic job sources (protocol colors, not domain labels). */
+/**
+ * Distinct chart colors for every catalog source (same order as Job Search).
+ * Extra hues cover unknown/non-catalog labels without recycling early.
+ */
 export const SOURCE_CHART_COLORS = [
-  "#C0504D",
-  "#9BBB59",
-  "#8064A2",
-  "#4F81BD",
-  "#F59E0B",
-  "#2DD4BF",
-  "#EC4899",
-  "#64748B",
+  "#2563EB", // LinkedIn
+  "#DC2626", // Indeed
+  "#0D9488", // ZipRecruiter
+  "#7C3AED", // Wellfound
+  "#EA580C", // Dice
+  "#16A34A", // Greenhouse
+  "#DB2777", // Workday
+  "#0891B2", // Workable
+  "#CA8A04", // Ashby
+  "#4F46E5", // Lever
+  "#E11D48", // Jobvite
+  "#059669", // SmartRecruiters
+  "#9333EA", // BambooHR
+  "#0284C7", // Recruitee
+  "#C026D3", // Teamtailor
+  "#65A30D", // Personio
+  "#F97316", // Rippling
+  "#6366F1", // Dover
+  "#14B8A6", // Applytojob
+  "#F43F5E", // Jobdiva
+  "#8B5CF6", // Breezy
+  "#0EA5E9", // Gusto
+  "#A855F7", // Rippling-ATS
+  "#84CC16", // Pinpointhq
+  "#EF4444", // Freshteam
+  "#06B6D4", // Recruiterflow
+  "#D946EF", // Gem
+  "#F59E0B", // OracleCloud
+  "#3B82F6", // Paylocity
+  "#22C55E", // ADP
+  "#EC4899", // iCIMS
+  "#10B981", // UltiPro
+  "#8B5CF6", // UKG
+  "#F97316", // Paycom
+  "#6366F1", // DayforceHCM
+  "#14B8A6", // Zohorecruit
+  "#EAB308", // BestJobTool
+  "#64748B", // Taleo
+  "#94A3B8", // Other
+  "#FB7185",
+  "#38BDF8",
+  "#A3E635",
+  "#C084FC",
+  "#FDBA74",
+  "#5EEAD4",
+  "#F9A8D4",
 ] as const;
-
-/** Max distinct source series on the stacked area chart; remainder folds into one bucket. */
-export const MAX_POSTING_SOURCE_SERIES = 8;
-export const OTHER_SOURCES_LABEL = "Other sources";
 
 export type PostingsAreaPoint = {
   date: string;
@@ -28,12 +66,14 @@ export function formatDayLabel(isoDate: string): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Pivot flat `{ date, source, count }` rows into stacked area chart points. */
+/**
+ * Pivot flat `{ date, source, count }` rows into stacked area chart points.
+ * Series = every source with data in range, ordered like Job Search catalog.
+ */
 export function pivotPostingsBySource(
   rows: DailyPostingBySourceRow[],
   startDate: string,
   endDate: string,
-  maxSeries = MAX_POSTING_SOURCE_SERIES,
 ): { points: PostingsAreaPoint[]; sources: string[] } {
   const sourceTotals = new Map<string, number>();
   const byDate = new Map<string, Map<string, number>>();
@@ -49,36 +89,23 @@ export function pivotPostingsBySource(
     byDate.set(date, day);
   }
 
-  const ranked = [...sourceTotals.entries()].sort(
-    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
-  );
-  const foldRemainder = ranked.length > maxSeries;
-  const keepCount = foldRemainder ? Math.max(1, maxSeries - 1) : ranked.length;
-  const keep = new Set(ranked.slice(0, keepCount).map(([s]) => s));
-
-  if (foldRemainder) {
-    for (const [date, day] of byDate) {
-      let other = 0;
-      for (const [source, count] of [...day.entries()]) {
-        if (keep.has(source)) continue;
-        other += count;
-        day.delete(source);
-      }
-      if (other > 0) {
-        day.set(OTHER_SOURCES_LABEL, (day.get(OTHER_SOURCES_LABEL) ?? 0) + other);
-      }
-      byDate.set(date, day);
-    }
-  }
-
-  const sources = [
-    ...ranked.filter(([s]) => keep.has(s)).map(([s]) => s),
-    ...(foldRemainder ? [OTHER_SOURCES_LABEL] : []),
-  ];
-
-  if (sources.length === 0) {
+  const present = [...sourceTotals.keys()];
+  if (present.length === 0) {
     return { points: [], sources: [] };
   }
+
+  const catalog = JobSourceTitles as readonly string[];
+  const catalogSet = new Set(catalog);
+  const sources = [
+    ...catalog.filter((title) => sourceTotals.has(title)),
+    ...present
+      .filter((source) => !catalogSet.has(source))
+      .sort(
+        (a, b) =>
+          (sourceTotals.get(b) ?? 0) - (sourceTotals.get(a) ?? 0) ||
+          a.localeCompare(b),
+      ),
+  ];
 
   const start = startOfUtcDay(startDate);
   const end = startOfUtcDay(endDate);
@@ -122,6 +149,17 @@ function startOfUtcDay(iso: string): Date | null {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
-export function sourceChartColor(index: number): string {
-  return SOURCE_CHART_COLORS[index % SOURCE_CHART_COLORS.length];
+/** Stable color for a source title (catalog index, then hash for unknowns). */
+export function sourceChartColor(source: string, fallbackIndex = 0): string {
+  const catalogIndex = (JobSourceTitles as readonly string[]).indexOf(source);
+  if (catalogIndex >= 0) {
+    return SOURCE_CHART_COLORS[catalogIndex % SOURCE_CHART_COLORS.length];
+  }
+  let hash = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    hash = (hash * 31 + source.charCodeAt(i)) >>> 0;
+  }
+  return SOURCE_CHART_COLORS[
+    (hash + fallbackIndex) % SOURCE_CHART_COLORS.length
+  ];
 }

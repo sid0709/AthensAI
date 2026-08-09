@@ -83,7 +83,7 @@ export type TitleReviewListOptions = {
   page: number;
   limit: number;
   q?: string;
-  sort?: "confidence_desc" | "newest" | "oldest";
+  sort?: "confidence_asc" | "confidence_desc" | "newest" | "oldest";
 };
 
 /** Exact number of jobs that have not completed title classification yet. */
