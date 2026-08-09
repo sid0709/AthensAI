@@ -162,7 +162,7 @@ export class LensAskAiService {
         requestedModel: auth.model,
         billedModel: model,
         apiKey: auth.apiKey,
-        usage: event.usage as ChatUsage | null,
+        usage: event.usage,
         durationMs,
         success: true,
       });

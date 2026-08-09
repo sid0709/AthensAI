@@ -34,9 +34,7 @@ function parseDayEnd(isoDate: string): Date | null {
 }
 
 export type JobsIdConstraint =
-  | { includeIds: string[] }
-  | { excludeIds: string[] }
-  | null;
+  { includeIds: string[] } | { excludeIds: string[] } | null;
 
 /** Mongo $match for filtered company grouping (mirrors JobsQueryService.buildWhere). */
 export function buildJobsMongoMatch(
@@ -79,9 +77,7 @@ export function buildJobsMongoMatch(
   const from = query.postedFrom
     ? toMongoDate(parseDayStart(query.postedFrom))
     : null;
-  const to = query.postedTo
-    ? toMongoDate(parseDayEnd(query.postedTo))
-    : null;
+  const to = query.postedTo ? toMongoDate(parseDayEnd(query.postedTo)) : null;
   if (from || to) {
     match.postedAt = {
       ...(from ? { $gte: from } : {}),

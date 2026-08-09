@@ -71,11 +71,7 @@ export class LensGmailService {
     }
   }
 
-  async listBodies(
-    applierName: string,
-    idsRaw: string[],
-    labelRaw?: string,
-  ) {
+  async listBodies(applierName: string, idsRaw: string[], labelRaw?: string) {
     const ids = [
       ...new Set(
         idsRaw

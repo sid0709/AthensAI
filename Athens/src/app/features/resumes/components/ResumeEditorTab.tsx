@@ -61,17 +61,6 @@ export function ResumeEditorTab({
     else if (result.error) setGenError(result.error);
   };
 
-  const handlePdf = useCallback(async () => {
-    setExporting(true);
-    try {
-      await editor.exportResume("pdf");
-    } catch (err) {
-      setGenError(err instanceof Error ? err.message : "PDF export failed");
-    } finally {
-      setExporting(false);
-    }
-  }, [editor]);
-
   const handleWord = useCallback(async () => {
     setExporting(true);
     try {
@@ -156,7 +145,6 @@ export function ResumeEditorTab({
             onTemplate={() => setTemplateOpen(true)}
             onTheme={() => setThemeOpen(true)}
             onLayout={() => setLayoutOpen(true)}
-            onPdf={handlePdf}
             onWord={handleWord}
             exporting={exporting}
           />

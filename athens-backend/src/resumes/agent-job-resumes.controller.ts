@@ -1,4 +1,10 @@
-import { Body, Controller, Post, UsePipes, ValidationPipe } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
 import { ArrayMaxSize, IsArray, IsString } from 'class-validator';
 import { AgentJobResumesService } from './agent-job-resumes.service';
 

@@ -1,7 +1,4 @@
-import {
-  FORM_PROFILE_MAX_CHARS,
-  FORM_TREE_MAX_CHARS,
-} from '../ask-ai.prompt';
+import { FORM_PROFILE_MAX_CHARS, FORM_TREE_MAX_CHARS } from '../ask-ai.prompt';
 
 export type NormalizedPageContext = {
   url: string;

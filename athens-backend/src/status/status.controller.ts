@@ -5,10 +5,7 @@ import {
   Header,
   Query,
 } from '@nestjs/common';
-import {
-  LIVE_MINUTES,
-  overallStatus,
-} from './constants/status-components';
+import { LIVE_MINUTES, overallStatus } from './constants/status-components';
 import { StatusStoreService } from './status-store.service';
 
 @Controller('status')
@@ -20,9 +17,7 @@ export class StatusController {
   async current() {
     const components = await this.store.readCurrentStatus();
     const timestamps = components.map((component) =>
-      component.lastCheckedAt
-        ? new Date(component.lastCheckedAt).getTime()
-        : 0,
+      component.lastCheckedAt ? new Date(component.lastCheckedAt).getTime() : 0,
     );
     const latest = timestamps.length ? Math.max(...timestamps) : 0;
     return {
@@ -36,10 +31,7 @@ export class StatusController {
 
   @Get('history')
   @Header('Cache-Control', 'public, max-age=60')
-  async history(
-    @Query('days') daysRaw?: string,
-    @Query('to') to?: string,
-  ) {
+  async history(@Query('days') daysRaw?: string, @Query('to') to?: string) {
     const days = Math.min(Math.max(Number(daysRaw || 90), 1), 90);
     const from = new Date(Date.now() - days * 86400000)
       .toISOString()

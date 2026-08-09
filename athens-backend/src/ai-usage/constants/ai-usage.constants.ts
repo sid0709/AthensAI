@@ -60,4 +60,5 @@ export const AI_USAGE_FEATURES = {
   jobTitleReview: 'job-title-review',
   recommendResume: 'recommend-resume',
   resumeAnalyze: 'resume-analyze',
+  resumeCoverageAnalyze: 'resume-coverage-analysis',
 } as const;

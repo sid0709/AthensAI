@@ -78,7 +78,7 @@ export class MailSyncService {
       creds.password,
     );
     await this.cache.upsertSyncState(creds.applierName, {
-      gmailLabelsJson: labels as unknown as Prisma.InputJsonValue,
+      gmailLabelsJson: labels,
     });
     return labels;
   }

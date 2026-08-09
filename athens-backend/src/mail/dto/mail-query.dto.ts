@@ -10,7 +10,8 @@ import {
 
 function asString(value: unknown): string {
   if (value == null) return '';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value === 'string' || typeof value === 'number')
+    return String(value);
   return '';
 }
 

@@ -187,9 +187,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                 showDownloadLog={Boolean(genProgress)}
                 onDownloadLog={handleDownloadLog}
                 exporting={exporting}
-                onExportPdf={() => void exportResume("pdf")}
                 onExportDocx={() => void exportResume("docx")}
-                disablePdf={usingUploadedTemplate}
                 disableThemeLayout={usingUploadedTemplate}
               />
             </div>

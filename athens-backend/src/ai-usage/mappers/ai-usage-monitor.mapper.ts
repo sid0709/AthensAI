@@ -1,4 +1,7 @@
-import { EMPTY_AI_USAGE_TOTALS, type AiUsageTotals } from '../constants/ai-usage.constants';
+import {
+  EMPTY_AI_USAGE_TOTALS,
+  type AiUsageTotals,
+} from '../constants/ai-usage.constants';
 import { roundCostUsd } from '../lib/mask-api-key';
 
 export type AiUsageBucket = AiUsageTotals & {

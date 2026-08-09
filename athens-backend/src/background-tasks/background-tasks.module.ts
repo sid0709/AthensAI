@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
+import { ResumesModule } from '../resumes/resumes.module';
 import { BackgroundTasksController } from './background-tasks.controller';
 import { BackgroundTasksEventsController } from './background-tasks-events.controller';
 import { BackgroundTasksService } from './background-tasks.service';
@@ -8,16 +9,13 @@ import { TaskStoreService } from './task-store.service';
 import { BackgroundTaskWorker } from './worker/background-task.worker';
 
 @Module({
-  imports: [AuthModule, forwardRef(() => MailModule)],
-  controllers: [
-    BackgroundTasksEventsController,
-    BackgroundTasksController,
+  imports: [
+    AuthModule,
+    forwardRef(() => MailModule),
+    forwardRef(() => ResumesModule),
   ],
-  providers: [
-    TaskStoreService,
-    BackgroundTasksService,
-    BackgroundTaskWorker,
-  ],
+  controllers: [BackgroundTasksEventsController, BackgroundTasksController],
+  providers: [TaskStoreService, BackgroundTasksService, BackgroundTaskWorker],
   exports: [BackgroundTasksService],
 })
 export class BackgroundTasksModule {}

@@ -23,7 +23,8 @@ export function matchUploadToRecommended(
   const recommended = normalizeResumeLabel(recommendedName);
   if (!upload || !recommended) return 'unknown';
   if (upload === recommended) return 'match';
-  if (upload.includes(recommended) || recommended.includes(upload)) return 'match';
+  if (upload.includes(recommended) || recommended.includes(upload))
+    return 'match';
   return 'mismatch';
 }
 
@@ -32,7 +33,11 @@ function skillNamesFromCatalogEntry(entry: unknown): string[] {
     return entry
       .map((item) => {
         if (typeof item === 'string') return item.trim();
-        if (item && typeof item === 'object' && typeof (item as { name?: string }).name === 'string') {
+        if (
+          item &&
+          typeof item === 'object' &&
+          typeof (item as { name?: string }).name === 'string'
+        ) {
           return String((item as { name: string }).name).trim();
         }
         return '';
@@ -40,7 +45,7 @@ function skillNamesFromCatalogEntry(entry: unknown): string[] {
       .filter(Boolean);
   }
   if (entry && typeof entry === 'object') {
-    return Object.keys(entry as object)
+    return Object.keys(entry)
       .map((k) => String(k).trim())
       .filter(Boolean);
   }
@@ -54,7 +59,7 @@ export function compressResumeCatalog(catalog: unknown): {
   if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog)) {
     return { text: '', stackNames: [] };
   }
-  const stackNames = Object.keys(catalog as object).filter((k) => String(k).trim());
+  const stackNames = Object.keys(catalog).filter((k) => String(k).trim());
   const blocks = stackNames.map((stack) => {
     const skills = skillNamesFromCatalogEntry(
       (catalog as Record<string, unknown>)[stack],
@@ -78,7 +83,8 @@ export function resolveCatalogKey(
   }
   for (const key of stackNames) {
     const keyNorm = normalizeResumeLabel(key);
-    if (keyNorm.includes(normalized) || normalized.includes(keyNorm)) return key;
+    if (keyNorm.includes(normalized) || normalized.includes(keyNorm))
+      return key;
   }
   return null;
 }

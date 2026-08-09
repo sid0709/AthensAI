@@ -302,19 +302,19 @@ export async function deleteGenerationRun(id: string, applierName: string): Prom
   return { deleted: true, generationId: id };
 }
 
-/** Render a stored generation to PDF and trigger a browser download. */
-export async function downloadGenerationPdf(id: string, fallbackName = "Resume.pdf"): Promise<void> {
+/** Render a stored generation to DOCX and trigger a browser download. */
+export async function downloadGenerationDocx(id: string, fallbackName = "Resume.docx"): Promise<void> {
   const res = await fetch(
-    `${base()}/personal/resume-generations/${encodeURIComponent(id)}/pdf?download=1`,
+    `${base()}/personal/resume-generations/${encodeURIComponent(id)}/docx?download=1`,
   );
   if (!res.ok) {
     const data = (await parseJson(res)) as { error?: string } | null;
-    throw new Error(data?.error || `PDF download failed (${res.status})`);
+    throw new Error(data?.error || `Word download failed (${res.status})`);
   }
   const disposition = res.headers.get("Content-Disposition") || "";
   const matched = /filename="([^"]+)"/i.exec(disposition);
   let fileName = matched?.[1] || fallbackName;
-  if (!fileName.toLowerCase().endsWith(".pdf")) fileName = `${fileName}.pdf`;
+  if (!fileName.toLowerCase().endsWith(".docx")) fileName = `${fileName.replace(/\.(pdf|doc)$/i, "")}.docx`;
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -325,6 +325,9 @@ export async function downloadGenerationPdf(id: string, fallbackName = "Resume.p
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+/** @deprecated Use downloadGenerationDocx — PDF export is not supported. */
+export const downloadGenerationPdf = downloadGenerationDocx;
 
 export async function fetchGenerationDetail(id: string, applierName: string): Promise<HistoryRunDetail> {
   const data = await apiFetch<{ run: Record<string, unknown> }>(

@@ -104,7 +104,9 @@ export class MailAiLabelService {
     );
     const allowedLabels = labels.map((l) => l.path || l.name).filter(Boolean);
     if (!allowedLabels.length) {
-      throw new Error('Create at least one custom Gmail label before AI labeling.');
+      throw new Error(
+        'Create at least one custom Gmail label before AI labeling.',
+      );
     }
     const labelDefinitions = await this.definitions.get(creds.applierName);
     return {
@@ -379,9 +381,7 @@ export class MailAiLabelService {
     const row = parsed?.results?.[0];
     return {
       action: (row?.action || 'needs_body') as
-        | 'label'
-        | 'no_match'
-        | 'needs_body',
+        'label' | 'no_match' | 'needs_body',
       label: row?.label ?? null,
       usage: result.usage as Record<string, unknown> | undefined,
     };
@@ -450,7 +450,7 @@ function mergeUsage(
     out[key] =
       typeof av === 'number' || typeof bv === 'number'
         ? (typeof av === 'number' ? av : 0) + (typeof bv === 'number' ? bv : 0)
-        : av ?? bv;
+        : (av ?? bv);
   }
   return out;
 }

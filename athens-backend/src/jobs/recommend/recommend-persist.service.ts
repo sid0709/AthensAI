@@ -27,8 +27,7 @@ export class RecommendPersistService {
       input.applierName,
       input.jobId,
     );
-    const stack =
-      input.matchedCatalogKey || input.recommendedResume || null;
+    const stack = input.matchedCatalogKey || input.recommendedResume || null;
     const resumeStackMatch = matchUploadToRecommended(
       existing?.resumeOriginalName,
       stack,
@@ -46,8 +45,7 @@ export class RecommendPersistService {
         recommendedAt: new Date(),
         recommendMode: input.mode,
         recommendUsage: (input.usage ?? undefined) as
-          | Prisma.InputJsonValue
-          | undefined,
+          Prisma.InputJsonValue | undefined,
         recommendRequestId: input.requestId ?? null,
         resumeStackMatch,
       },
@@ -58,9 +56,7 @@ export class RecommendPersistService {
       jobId: input.jobId,
       vendorTaskId: doc.id,
       eventType: 'recommend_resume',
-      eventKey: input.requestId
-        ? `ai:${input.requestId}`
-        : undefined,
+      eventKey: input.requestId ? `ai:${input.requestId}` : undefined,
       feature: 'bid-recommend-resume',
       meta: {
         recommendedResumeStack: stack,

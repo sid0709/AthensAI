@@ -23,7 +23,7 @@ export class BackgroundTasksEventsController {
         return {
           type: 'snapshot',
           data: { tasks: listed.tasks },
-        } as MessageEvent;
+        };
       }),
     );
 
@@ -34,25 +34,19 @@ export class BackgroundTasksEventsController {
         const changed = await store.listSince(pid, since);
         if (!changed.length) return [] as MessageEvent[];
         since = new Date();
-        return changed.map(
-          (task) =>
-            ({
-              type: 'task-updated',
-              data: { task: store.toPublic(task) },
-            }) as MessageEvent,
-        );
+        return changed.map((task) => ({
+          type: 'task-updated',
+          data: { task: store.toPublic(task) },
+        }));
       }),
       switchMap((events) => of(...events)),
     );
 
     const heartbeat$ = interval(SSE_HEARTBEAT_MS).pipe(
-      map(
-        () =>
-          ({
-            type: 'heartbeat',
-            data: { at: new Date().toISOString() },
-          }) as MessageEvent,
-      ),
+      map(() => ({
+        type: 'heartbeat',
+        data: { at: new Date().toISOString() },
+      })),
     );
 
     return merge(snapshot$, updates$, heartbeat$);

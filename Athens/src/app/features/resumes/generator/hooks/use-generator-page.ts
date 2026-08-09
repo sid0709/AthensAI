@@ -176,7 +176,7 @@ export function useGeneratorPage() {
     : templateById(config.templateId);
   const [uploadedTemplates, setUploadedTemplates] = useState<UploadedTemplateManifest[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
-  const [exporting, setExporting] = useState<null | "pdf" | "docx">(null);
+  const [exporting, setExporting] = useState<null | "docx">(null);
 
   // True once a history run has been explicitly loaded into the editor. The
   // async DB-config restore below resolves after mount, so without this guard it
@@ -232,9 +232,8 @@ export function useGeneratorPage() {
     }
   }, [put]);
 
-  // This preference affects server-driven Job Search and Agent runs, so persist
-  // it immediately instead of waiting for the general editor debounce. That
-  // keeps a quick navigation away from the Editor from cancelling the change.
+  // This preference affects server-driven Job Search and Agent runs, so flush
+  // the same coalesced Mongo write path used by other ResumeConfig edits.
   const setDynamicCareerTitles = useCallback((enabled: boolean) => {
     const next = { ...config, dynamicCareerTitles: enabled };
     const stored = serializeStoredConfig(next);
@@ -291,23 +290,11 @@ export function useGeneratorPage() {
   })();
   const setTheme = (patch: Partial<ResumeTheme>) => setConfig((c) => ({ ...c, theme: { ...c.theme, ...patch } }));
 
-  // Export the live preview to PDF via the backend (headless Chromium). We send
-  // the preview's already-rendered, inline-styled DOM so the PDF matches exactly,
-  // and let the server paginate with real per-page margins.
-  // Export the live preview to PDF or Word. Both reuse the exact same rendered
-  // HTML so the document styling stays consistent across formats.
-  const exportResume = async (format: "pdf" | "docx") => {
-    const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.${format}`;
+  // Export the live preview to Word (DOCX only — PDF is not supported).
+  const exportResume = async (format: "docx" = "docx") => {
+    const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.docx`;
 
     if (usingUploadedTemplate) {
-      if (format === "pdf") {
-        notify({
-          title: "PDF not available",
-          description: "Uploaded templates export to Word only so your original formatting is preserved.",
-          tone: "warning",
-        });
-        return;
-      }
       if (!generated) {
         notify({ title: "Nothing to export", description: "Generate resume content first.", tone: "warning" });
         return;
@@ -350,26 +337,17 @@ export function useGeneratorPage() {
       return;
     }
 
-    let payload: Record<string, unknown>;
-    if (format === "pdf") {
-      // PDF renders the live DOM via puppeteer (pixel-exact with the preview).
-      const pageEl = document.querySelector("#resume-print-root .resume-page") as HTMLElement | null;
-      if (!pageEl) {
-        notify({ title: "Nothing to export", description: "The resume preview isn't ready yet.", tone: "warning" });
-        return;
-      }
-      const fontLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
-        .map((l) => (l as HTMLLinkElement).href)
-        .filter((h) => /fonts\.googleapis\.com|fonts\.gstatic\.com/.test(h));
-      payload = { html: pageEl.innerHTML, paper: theme.paper, marginInches: theme.margin, font: fontStack(theme.font), baseSizePt: theme.baseSize, fontLinks, fileName };
-    } else {
-      // Word is built from a structured model (spec-valid OOXML, opens in Word).
-      payload = { model: buildResumeModel(config, generated, identity), paper: theme.paper, marginInches: theme.margin, font: fontStack(theme.font), fileName };
-    }
-    setExporting(format);
+    void format;
+    const payload = {
+      model: buildResumeModel(config, generated, identity),
+      paper: theme.paper,
+      marginInches: theme.margin,
+      font: fontStack(theme.font),
+      fileName,
+    };
+    setExporting("docx");
     try {
-      const endpoint = format === "pdf" ? "/personal/resume-pdf" : "/personal/resume-docx";
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await fetch(`${API_BASE}/personal/resume-docx`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -395,7 +373,7 @@ export function useGeneratorPage() {
       URL.revokeObjectURL(url);
     } catch (e) {
       notify({
-        title: `Export ${format === "pdf" ? "PDF" : "Word"} failed`,
+        title: "Export Word failed",
         description: e instanceof Error ? e.message : String(e),
         tone: "error",
       });
@@ -600,9 +578,10 @@ export function useGeneratorPage() {
     void refreshUploadedTemplates();
   }, [refreshUploadedTemplates]);
 
-  // Persist locally immediately. Remote writes are debounced, serialized, and
-  // coalesced so rapid editor changes never create a queue of stale Firestore
-  // transactions that blocks jobs and status requests.
+  // Persist ResumeConfig locally and to Mongo on every change. Writes are
+  // coalesced (latest snapshot wins) while a request is in flight so typing a
+  // prompt does not enqueue a backlog of stale PUTs. Job description is omitted
+  // by serializeStoredConfig — it is application-run state, not ResumeConfig.
   useEffect(() => {
     if (configHydratedFor !== configOwnerKey) return;
     const stored = serializeStoredConfig(config);
@@ -613,14 +592,10 @@ export function useGeneratorPage() {
     }
     const applierName = applier?.name;
     if (!applierName) return;
-    const serialized = JSON.stringify(stored);
-    const key = `${applierName}\u0000${serialized}`;
+    const key = `${applierName}\u0000${JSON.stringify(stored)}`;
     if (key === configSaveRef.current.lastSavedKey) return;
-    const t = setTimeout(() => {
-      configSaveRef.current.queued = { applierName, config: stored, key };
-      void flushConfigSave();
-    }, 800);
-    return () => clearTimeout(t);
+    configSaveRef.current.queued = { applierName, config: stored, key };
+    void flushConfigSave();
   }, [config, applier?.name, configHydratedFor, configOwnerKey, flushConfigSave]);
 
   const loadIdentity = useCallback(async () => {

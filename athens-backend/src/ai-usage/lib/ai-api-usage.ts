@@ -46,7 +46,9 @@ export type BuildAiApiUsageEntryParams = {
 export function buildAiApiUsageEntry(
   params: BuildAiApiUsageEntryParams,
 ): Record<string, unknown> {
-  const billed = String(params.billedModel || params.requestedModel || '').trim();
+  const billed = String(
+    params.billedModel || params.requestedModel || '',
+  ).trim();
   const requested = String(params.requestedModel || billed || '').trim();
   const cost = costFromUsage(billed, params.rawUsage || {});
   const rates = ratesForBilledModel(billed);
@@ -99,8 +101,7 @@ export function tokensToRawUsage(params: {
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
-    total_tokens:
-      params.totalTokens ?? promptTokens + completionTokens,
+    total_tokens: params.totalTokens ?? promptTokens + completionTokens,
     prompt_tokens_details:
       cachedTokens > 0 ? { cached_tokens: cachedTokens } : undefined,
   };

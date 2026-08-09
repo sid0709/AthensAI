@@ -48,7 +48,8 @@ export class ResumeUploadService {
     if (!title) throw bad('techStack is required');
     if (!fileName) throw bad('fileName is required');
     if (!contentBase64) throw bad('contentBase64 is required');
-    if (!OBJECT_ID_PATTERN.test(ownerId)) throw bad('Valid ownerId is required');
+    if (!OBJECT_ID_PATTERN.test(ownerId))
+      throw bad('Valid ownerId is required');
 
     const acc = await this.resolveOwner(ownerName, ownerId);
     return this.createForAccount(acc, {
@@ -77,7 +78,8 @@ export class ResumeUploadService {
     const ownerName = asText(input.ownerName).trim();
     const ownerId = asText(input.ownerId).trim();
     if (!ownerName) throw bad('ownerName is required');
-    if (!OBJECT_ID_PATTERN.test(ownerId)) throw bad('Valid ownerId is required');
+    if (!OBJECT_ID_PATTERN.test(ownerId))
+      throw bad('Valid ownerId is required');
 
     const acc = await this.resolveOwner(ownerName, ownerId);
     const items = input.items || [];
@@ -100,7 +102,7 @@ export class ResumeUploadService {
             },
             { ensurePrimary: false },
           );
-          return { ok: summary as UserResumeSummary | null, failed: null };
+          return { ok: summary, failed: null };
         } catch (err) {
           return {
             ok: null,

@@ -79,8 +79,7 @@ export class ReportsPostingsService {
     const rows = await this.aggregateJobs(pipeline);
     const out = new Map<string, number>();
     for (const row of rows) {
-      const source =
-        String(row._id ?? '').trim() || REPORT_EMPTY_SOURCE;
+      const source = String(row._id ?? '').trim() || REPORT_EMPTY_SOURCE;
       const count = Number(row.count) || 0;
       if (count > 0) out.set(source, count);
     }
@@ -114,7 +113,9 @@ export class ReportsPostingsService {
           row.scheduled > 0 ||
           row.declined > 0,
       )
-      .sort((a, b) => b.postings - a.postings || a.source.localeCompare(b.source));
+      .sort(
+        (a, b) => b.postings - a.postings || a.source.localeCompare(b.source),
+      );
   }
 
   private postedAtMatch(

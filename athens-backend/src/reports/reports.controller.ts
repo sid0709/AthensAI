@@ -33,9 +33,6 @@ export class ReportsController {
 
   @Get('daily-postings-by-source')
   dailyPostingsBySource(@Query() query: ReportsRangeQueryDto) {
-    return this.reports.dailyPostingsBySource(
-      query.startDate,
-      query.endDate,
-    );
+    return this.reports.dailyPostingsBySource(query.startDate, query.endDate);
   }
 }

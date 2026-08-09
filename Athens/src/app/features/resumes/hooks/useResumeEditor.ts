@@ -356,45 +356,21 @@ export function useResumeEditor() {
   }, [adoptTask, draft, applier?._id, applier?.name, generatorIdentity, persist, waitForTask]);
 
   const exportResume = useCallback(
-    async (format: "pdf" | "docx") => {
+    async (_format: "docx" = "docx") => {
       if (!draft) throw new Error("No draft");
       const identity = draft.generatorIdentity ?? generatorIdentity;
-      const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.${format}`;
-
-      if (format === "pdf") {
-        const pageEl = document.querySelector("#resume-print-root .resume-page") as HTMLElement | null;
-        if (!pageEl) throw new Error("Preview not ready");
-        const fontLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
-          .map((l) => (l as HTMLLinkElement).href)
-          .filter((h) => /fonts\.googleapis\.com|fonts\.gstatic\.com/.test(h));
-        await exportResumeServer(
-          "pdf",
-          {
-            html: pageEl.innerHTML,
-            paper: draft.theme.paperSize,
-            marginInches: draft.theme.marginIn,
-            font: fontStack(draft.theme.font),
-            baseSizePt: draft.theme.bodySizePt,
-            fontLinks,
-            fileName,
-          },
+      const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.docx`;
+      await exportResumeServer(
+        {
+          model: buildResumeModel(draft, identity),
+          paper: draft.theme.paperSize,
+          marginInches: draft.theme.marginIn,
+          font: fontStack(draft.theme.font),
           fileName,
-          API_BASE,
-        );
-      } else {
-        await exportResumeServer(
-          "docx",
-          {
-            model: buildResumeModel(draft, identity),
-            paper: draft.theme.paperSize,
-            marginInches: draft.theme.marginIn,
-            font: fontStack(draft.theme.font),
-            fileName,
-          },
-          fileName,
-          API_BASE,
-        );
-      }
+        },
+        fileName,
+        API_BASE,
+      );
     },
     [draft, generatorIdentity],
   );

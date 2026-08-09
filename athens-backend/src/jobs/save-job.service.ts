@@ -42,7 +42,9 @@ function legacyIdFrom(data: PrenormTempJobInput): string | undefined {
 }
 
 function newObjectIdHex(): string {
-  const time = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+  const time = Math.floor(Date.now() / 1000)
+    .toString(16)
+    .padStart(8, '0');
   const rest = randomBytes(8).toString('hex');
   return `${time}${rest}`;
 }
@@ -93,7 +95,9 @@ export class SaveJobService {
           _id: { $oid: id },
           title: data.title,
           companyName: data.companyName,
-          ...(data.companyId ? { companyId: { $oid: String(data.companyId) } } : {}),
+          ...(data.companyId
+            ? { companyId: { $oid: String(data.companyId) } }
+            : {}),
           source: data.source,
           postedAt: data.postedAt,
           ...(data.postedAgo ? { postedAgo: data.postedAgo } : {}),

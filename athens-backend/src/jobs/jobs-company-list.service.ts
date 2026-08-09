@@ -97,7 +97,11 @@ export class JobsCompanyListService {
       'includeIds' in idConstraint &&
       idConstraint.includeIds.length === 0
     ) {
-      return { data: [] as Record<string, unknown>[], companyTotal: 0, jobTotal: 0 };
+      return {
+        data: [] as Record<string, unknown>[],
+        companyTotal: 0,
+        jobTotal: 0,
+      };
     }
 
     const match = buildJobsMongoMatch(query, idConstraint);

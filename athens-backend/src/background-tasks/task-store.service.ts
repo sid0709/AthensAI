@@ -1,11 +1,18 @@
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { BackgroundTask, Prisma } from '@prisma/client';
+import {
+  rawInsertOne,
+  withReplicaSetFallback,
+} from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   BACKGROUND_TASK_STATUSES,
   WORKER_LEASE_MS,
 } from './constants/task-types';
 import { publicTaskSnapshot } from './task-payload';
+
+const BACKGROUND_TASKS_COLLECTION = 'background_tasks';
+const RESERVATIONS_COLLECTION = 'background_task_reservations';
 
 @Injectable()
 export class TaskStoreService {
@@ -42,11 +49,7 @@ export class TaskStoreService {
     });
   }
 
-  async list(opts: {
-    profileId?: string;
-    active?: boolean;
-    limit?: number;
-  }) {
+  async list(opts: { profileId?: string; active?: boolean; limit?: number }) {
     const limit = Math.min(100, Math.max(1, opts.limit || 50));
     const where: Prisma.BackgroundTaskWhereInput = {};
     if (opts.profileId) where.profileId = opts.profileId;
@@ -72,30 +75,85 @@ export class TaskStoreService {
     profileId?: string;
     applierName?: string;
     payload: Record<string, unknown>;
-  }) {
-    return this.prisma.backgroundTask.create({
-      data: {
-        requestId: input.requestId,
-        type: input.type,
-        status: BACKGROUND_TASK_STATUSES.QUEUED,
-        profileId: input.profileId,
-        applierName: input.applierName,
-        payload: input.payload as Prisma.InputJsonValue,
-        progress: {},
-        eventSequence: 0,
+    progress?: Record<string, unknown>;
+  }): Promise<BackgroundTask> {
+    const now = new Date();
+    const data = {
+      requestId: input.requestId ?? null,
+      type: input.type,
+      status: BACKGROUND_TASK_STATUSES.QUEUED,
+      profileId: input.profileId ?? null,
+      applierName: input.applierName ?? null,
+      payload: input.payload as Prisma.InputJsonValue,
+      progress: (input.progress || {}) as Prisma.InputJsonValue,
+      eventSequence: 0,
+    };
+
+    return withReplicaSetFallback(
+      () =>
+        this.prisma.backgroundTask.create({
+          data: {
+            requestId: data.requestId ?? undefined,
+            type: data.type,
+            status: data.status,
+            profileId: data.profileId ?? undefined,
+            applierName: data.applierName ?? undefined,
+            payload: data.payload,
+            progress: data.progress,
+            eventSequence: 0,
+          },
+        }),
+      async () => {
+        await rawInsertOne(this.prisma, BACKGROUND_TASKS_COLLECTION, {
+          ...data,
+          result: null,
+          error: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          createdAt: now,
+          startedAt: null,
+          cancelRequestedAt: null,
+          cancelAcknowledgedAt: null,
+          finishedAt: null,
+          updatedAt: now,
+        });
+        const created = input.requestId
+          ? await this.findByRequestId(input.requestId)
+          : await this.prisma.backgroundTask.findFirst({
+              where: {
+                type: input.type,
+                applierName: input.applierName,
+                status: BACKGROUND_TASK_STATUSES.QUEUED,
+              },
+              orderBy: { createdAt: 'desc' },
+            });
+        if (!created) {
+          throw new Error('Failed to load background_tasks after raw insert');
+        }
+        return created;
       },
-    });
+    );
   }
 
   async reserve(key: string, taskId: string, ttlMs = 24 * 60 * 60 * 1000) {
+    const now = new Date();
+    const expiresAt = new Date(Date.now() + ttlMs);
     try {
-      await this.prisma.backgroundTaskReservation.create({
-        data: {
-          key,
-          taskId,
-          expiresAt: new Date(Date.now() + ttlMs),
+      await withReplicaSetFallback(
+        () =>
+          this.prisma.backgroundTaskReservation.create({
+            data: { key, taskId, expiresAt },
+          }),
+        async () => {
+          await rawInsertOne(this.prisma, RESERVATIONS_COLLECTION, {
+            key,
+            taskId,
+            expiresAt,
+            createdAt: now,
+          });
+          return null;
         },
-      });
+      );
       return true;
     } catch {
       return false;
@@ -111,14 +169,24 @@ export class TaskStoreService {
     progress: Record<string, unknown>,
     patch: { status?: string; eventSequence?: number } = {},
   ) {
-    return this.prisma.backgroundTask.update({
-      where: { id },
-      data: {
-        progress: progress as Prisma.InputJsonValue,
-        ...(patch.status ? { status: patch.status } : {}),
-        eventSequence: { increment: 1 },
+    return withReplicaSetFallback(
+      () =>
+        this.prisma.backgroundTask.update({
+          where: { id },
+          data: {
+            progress: progress as Prisma.InputJsonValue,
+            ...(patch.status ? { status: patch.status } : {}),
+            eventSequence: { increment: 1 },
+          },
+        }),
+      async () => {
+        await this.rawPatch(id, {
+          progress,
+          ...(patch.status ? { status: patch.status } : {}),
+        });
+        return this.findById(id);
       },
-    });
+    );
   }
 
   async complete(
@@ -131,46 +199,81 @@ export class TaskStoreService {
       | typeof BACKGROUND_TASK_STATUSES.CANCELLED,
     error?: string,
   ) {
-    return this.prisma.backgroundTask.update({
-      where: { id },
-      data: {
-        status,
-        result: result as Prisma.InputJsonValue,
-        error: error || null,
-        finishedAt: new Date(),
-        leaseOwner: null,
-        leaseExpiresAt: null,
-        eventSequence: { increment: 1 },
+    return withReplicaSetFallback(
+      () =>
+        this.prisma.backgroundTask.update({
+          where: { id },
+          data: {
+            status,
+            result: result as Prisma.InputJsonValue,
+            error: error || null,
+            finishedAt: new Date(),
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            eventSequence: { increment: 1 },
+          },
+        }),
+      async () => {
+        await this.rawPatch(id, {
+          status,
+          result,
+          error: error || null,
+          finishedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+        });
+        return this.findById(id);
       },
-    });
+    );
   }
 
   async requestCancel(id: string) {
     const task = await this.findById(id);
     if (!task) return null;
     if (task.status === BACKGROUND_TASK_STATUSES.QUEUED) {
-      return this.prisma.backgroundTask.update({
-        where: { id },
-        data: {
-          status: BACKGROUND_TASK_STATUSES.CANCELLED,
-          cancelRequestedAt: new Date(),
-          finishedAt: new Date(),
-          eventSequence: { increment: 1 },
+      return withReplicaSetFallback(
+        () =>
+          this.prisma.backgroundTask.update({
+            where: { id },
+            data: {
+              status: BACKGROUND_TASK_STATUSES.CANCELLED,
+              cancelRequestedAt: new Date(),
+              finishedAt: new Date(),
+              eventSequence: { increment: 1 },
+            },
+          }),
+        async () => {
+          await this.rawPatch(id, {
+            status: BACKGROUND_TASK_STATUSES.CANCELLED,
+            cancelRequestedAt: new Date(),
+            finishedAt: new Date(),
+          });
+          return this.findById(id);
         },
-      });
+      );
     }
     if (
       task.status === BACKGROUND_TASK_STATUSES.RUNNING ||
       task.status === BACKGROUND_TASK_STATUSES.CANCELLING
     ) {
-      return this.prisma.backgroundTask.update({
-        where: { id },
-        data: {
-          status: BACKGROUND_TASK_STATUSES.CANCELLING,
-          cancelRequestedAt: new Date(),
-          eventSequence: { increment: 1 },
+      return withReplicaSetFallback(
+        () =>
+          this.prisma.backgroundTask.update({
+            where: { id },
+            data: {
+              status: BACKGROUND_TASK_STATUSES.CANCELLING,
+              cancelRequestedAt: new Date(),
+              eventSequence: { increment: 1 },
+            },
+          }),
+        async () => {
+          await this.rawPatch(id, {
+            status: BACKGROUND_TASK_STATUSES.CANCELLING,
+            cancelRequestedAt: new Date(),
+          });
+          return this.findById(id);
         },
-      });
+      );
     }
     return task;
   }
@@ -187,22 +290,49 @@ export class TaskStoreService {
     });
     for (const task of candidates) {
       try {
-        const updated = await this.prisma.backgroundTask.updateMany({
-          where: {
-            id: task.id,
-            status: BACKGROUND_TASK_STATUSES.QUEUED,
+        const claimed = await withReplicaSetFallback(
+          async () => {
+            const updated = await this.prisma.backgroundTask.updateMany({
+              where: {
+                id: task.id,
+                status: BACKGROUND_TASK_STATUSES.QUEUED,
+              },
+              data: {
+                status: BACKGROUND_TASK_STATUSES.RUNNING,
+                startedAt: now,
+                leaseOwner: workerId,
+                leaseExpiresAt: new Date(Date.now() + WORKER_LEASE_MS),
+                eventSequence: { increment: 1 },
+              },
+            });
+            return updated.count === 1;
           },
-          data: {
-            status: BACKGROUND_TASK_STATUSES.RUNNING,
-            startedAt: now,
-            leaseOwner: workerId,
-            leaseExpiresAt: new Date(Date.now() + WORKER_LEASE_MS),
-            eventSequence: { increment: 1 },
+          async () => {
+            const result = await this.prisma.$runCommandRaw({
+              update: BACKGROUND_TASKS_COLLECTION,
+              updates: [
+                {
+                  q: { _id: { $oid: task.id }, status: BACKGROUND_TASK_STATUSES.QUEUED },
+                  u: {
+                    $set: {
+                      status: BACKGROUND_TASK_STATUSES.RUNNING,
+                      startedAt: { $date: now.toISOString() },
+                      leaseOwner: workerId,
+                      leaseExpiresAt: {
+                        $date: new Date(Date.now() + WORKER_LEASE_MS).toISOString(),
+                      },
+                      updatedAt: { $date: new Date().toISOString() },
+                    },
+                    $inc: { eventSequence: 1 },
+                  },
+                  multi: false,
+                },
+              ],
+            });
+            return Number((result as { n?: number }).n ?? 0) === 1;
           },
-        });
-        if (updated.count === 1) {
-          return this.findById(task.id);
-        }
+        );
+        if (claimed) return this.findById(task.id);
       } catch {
         /* race */
       }
@@ -211,12 +341,35 @@ export class TaskStoreService {
   }
 
   async heartbeat(id: string, workerId: string) {
-    await this.prisma.backgroundTask.updateMany({
-      where: { id, leaseOwner: workerId },
-      data: {
-        leaseExpiresAt: new Date(Date.now() + WORKER_LEASE_MS),
+    await withReplicaSetFallback(
+      () =>
+        this.prisma.backgroundTask.updateMany({
+          where: { id, leaseOwner: workerId },
+          data: {
+            leaseExpiresAt: new Date(Date.now() + WORKER_LEASE_MS),
+          },
+        }),
+      async () => {
+        await this.prisma.$runCommandRaw({
+          update: BACKGROUND_TASKS_COLLECTION,
+          updates: [
+            {
+              q: { _id: { $oid: id }, leaseOwner: workerId },
+              u: {
+                $set: {
+                  leaseExpiresAt: {
+                    $date: new Date(Date.now() + WORKER_LEASE_MS).toISOString(),
+                  },
+                  updatedAt: { $date: new Date().toISOString() },
+                },
+              },
+              multi: false,
+            },
+          ],
+        });
+        return { count: 1 };
       },
-    });
+    );
   }
 
   async listSince(profileId: string, since: Date) {
@@ -227,6 +380,30 @@ export class TaskStoreService {
       },
       orderBy: { updatedAt: 'asc' },
       take: 100,
+    });
+  }
+
+  private async rawPatch(id: string, set: Record<string, unknown>) {
+    await this.prisma.$runCommandRaw({
+      update: BACKGROUND_TASKS_COLLECTION,
+      updates: [
+        {
+          q: { _id: { $oid: id } },
+          u: {
+            $set: {
+              ...Object.fromEntries(
+                Object.entries(set).map(([k, v]) => [
+                  k,
+                  v instanceof Date ? { $date: v.toISOString() } : v,
+                ]),
+              ),
+              updatedAt: { $date: new Date().toISOString() },
+            },
+            $inc: { eventSequence: 1 },
+          },
+          multi: false,
+        },
+      ],
     });
   }
 }

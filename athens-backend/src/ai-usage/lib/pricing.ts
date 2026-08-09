@@ -8,8 +8,18 @@ export type PricingRow = {
 };
 
 export const STANDARD_PRICING: PricingRow[] = [
-  { prefix: 'deepseek-v4-pro', input: 0.435, cachedInput: 0.003625, output: 0.87 },
-  { prefix: 'deepseek-v4-flash', input: 0.14, cachedInput: 0.0028, output: 0.28 },
+  {
+    prefix: 'deepseek-v4-pro',
+    input: 0.435,
+    cachedInput: 0.003625,
+    output: 0.87,
+  },
+  {
+    prefix: 'deepseek-v4-flash',
+    input: 0.14,
+    cachedInput: 0.0028,
+    output: 0.28,
+  },
   { prefix: 'deepseek-reasoner', input: 0.55, cachedInput: 0.14, output: 2.19 },
   { prefix: 'deepseek-chat', input: 0.27, cachedInput: 0.07, output: 1.1 },
   { prefix: 'gpt-5.6-terra', input: 2, cachedInput: 0.2, output: 12 },
@@ -42,16 +52,31 @@ export const STANDARD_PRICING: PricingRow[] = [
   { prefix: 'o3-mini', input: 1.1, cachedInput: 0.55, output: 4.4 },
   { prefix: 'o3', input: 2, cachedInput: 0.5, output: 8 },
   { prefix: 'o4-mini', input: 1.1, cachedInput: 0.275, output: 4.4 },
-  { prefix: 'gpt-4-turbo-2024-04-09', input: 10, cachedInput: null, output: 30 },
+  {
+    prefix: 'gpt-4-turbo-2024-04-09',
+    input: 10,
+    cachedInput: null,
+    output: 30,
+  },
   { prefix: 'gpt-4-turbo', input: 10, cachedInput: null, output: 30 },
   { prefix: 'gpt-4-0125-preview', input: 10, cachedInput: null, output: 30 },
-  { prefix: 'gpt-4-1106-vision-preview', input: 10, cachedInput: null, output: 30 },
+  {
+    prefix: 'gpt-4-1106-vision-preview',
+    input: 10,
+    cachedInput: null,
+    output: 30,
+  },
   { prefix: 'gpt-4-1106-preview', input: 10, cachedInput: null, output: 30 },
   { prefix: 'gpt-4-32k', input: 60, cachedInput: null, output: 120 },
   { prefix: 'gpt-4-0613', input: 30, cachedInput: null, output: 60 },
   { prefix: 'gpt-4-0314', input: 30, cachedInput: null, output: 60 },
   { prefix: 'gpt-3.5-turbo-16k-0613', input: 3, cachedInput: null, output: 4 },
-  { prefix: 'gpt-3.5-turbo-instruct', input: 1.5, cachedInput: null, output: 2 },
+  {
+    prefix: 'gpt-3.5-turbo-instruct',
+    input: 1.5,
+    cachedInput: null,
+    output: 2,
+  },
   { prefix: 'gpt-3.5-turbo-0125', input: 0.5, cachedInput: null, output: 1.5 },
   { prefix: 'gpt-3.5-turbo-1106', input: 1, cachedInput: null, output: 2 },
   { prefix: 'gpt-3.5-turbo-0613', input: 1.5, cachedInput: null, output: 2 },
@@ -64,7 +89,9 @@ const SORTED = [...STANDARD_PRICING].sort(
   (a, b) => b.prefix.length - a.prefix.length,
 );
 
-export function findPricing(model: string | undefined | null): PricingRow | null {
+export function findPricing(
+  model: string | undefined | null,
+): PricingRow | null {
   if (!model) return null;
   const id = model.toLowerCase();
   for (const row of SORTED) {
@@ -88,11 +115,9 @@ export function parsePromptUsage(
   const promptTokens =
     Number(usage?.prompt_tokens ?? usage?.input_tokens ?? 0) || 0;
   const details = usage?.prompt_tokens_details as
-    | { cached_tokens?: unknown }
-    | undefined;
+    { cached_tokens?: unknown } | undefined;
   const inputDetails = usage?.input_tokens_details as
-    | { cached_tokens?: unknown }
-    | undefined;
+    { cached_tokens?: unknown } | undefined;
   const cacheHit =
     Number(
       usage?.prompt_cache_hit_tokens ??
