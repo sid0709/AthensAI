@@ -48,13 +48,13 @@ import { useTitleReviewSession } from "./useTitleReviewSession";
 import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
 
 type ReviewTab = "unreviewed" | "review_required" | "failed";
-type ReviewSort = "confidence_desc" | "newest" | "oldest";
+type ReviewSort = "confidence_asc" | "confidence_desc" | "newest" | "oldest";
 type DeletionProgressState = TitleReviewRemovalProgress & {
   phase: "deleting" | "refreshing" | "complete" | "partial";
 };
 
 function defaultSortForTab(tab: ReviewTab): ReviewSort {
-  return tab === "review_required" ? "confidence_desc" : "newest";
+  return tab === "review_required" ? "confidence_asc" : "newest";
 }
 
 function formatDate(value?: string | null) {
@@ -647,6 +647,7 @@ export function TitleReviewPage() {
                 onChange={(value) => setSort(value as ReviewSort)}
                 options={tab === "review_required"
                   ? [
+                      { value: "confidence_asc", label: "Confidence: low to high" },
                       { value: "confidence_desc", label: "Confidence: high to low" },
                       { value: "newest", label: "Newest" },
                       { value: "oldest", label: "Oldest" },

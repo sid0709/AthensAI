@@ -29,6 +29,8 @@ Optional: `VPS_SSH_PORT` (default `22`), `PUBLIC_ORIGIN` for extension bake URLs
 
 Restrict each environment’s **Deployment branches** to the matching branch (`main` for Production, `stage` for Stage).
 
+Also add a branch rule **`refs/pull/*/merge`** on both environments so pull-request **Build & push** jobs can read that environment’s secrets. Without it, PR checks fail immediately with “Branch refs/pull/N/merge is not allowed to deploy…”. VPS deploy still only runs on push to `stage` / `main`.
+
 App secrets (`DATABASE_URL`, Firebase credentials, encryption key) live only on each VPS in `/opt/nextoffer/deploy.env` — see [`docker/deploy.env.example`](docker/deploy.env.example). Do not put them in GitHub Actions.
 
 ### Rollback

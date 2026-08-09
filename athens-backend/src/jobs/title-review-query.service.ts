@@ -32,6 +32,16 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function titleReviewSort(sort: string): Record<string, 1 | -1> {
+  if (sort === 'confidence_asc') {
+    return { 'metadata.titleReview.confidence': 1, postedAt: -1 };
+  }
+  if (sort === 'confidence_desc') {
+    return { 'metadata.titleReview.confidence': -1, postedAt: -1 };
+  }
+  return { postedAt: sort === 'oldest' ? 1 : -1 };
+}
+
 function asObjectIdHex(value: unknown): string | null {
   if (typeof value === 'string' && /^[a-fA-F0-9]{24}$/.test(value))
     return value;
@@ -58,7 +68,6 @@ export class TitleReviewQueryService {
     const limit = Math.min(500, Math.max(1, query.limit ?? 50));
     const q = String(query.q ?? '').trim();
     const sort = String(query.sort || 'newest').trim();
-    const sortDir = sort === 'oldest' ? 1 : -1;
 
     const match: Record<string, unknown> = {
       ...this.queues.titleReviewMongoMatch(state),
@@ -74,7 +83,7 @@ export class TitleReviewQueryService {
         filter: match as Prisma.InputJsonValue,
         options: {
           projection: { _id: 1 },
-          sort: { postedAt: sortDir },
+          sort: titleReviewSort(sort),
           skip: (page - 1) * limit,
           limit,
         },
