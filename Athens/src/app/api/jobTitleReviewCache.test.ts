@@ -18,7 +18,7 @@ const options: TitleReviewListOptions = {
   page: 1,
   limit: 500,
   q: "",
-  sort: "confidence_desc",
+  sort: "confidence_asc",
 };
 
 function response(revision = "1"): TitleReviewListResponse {
