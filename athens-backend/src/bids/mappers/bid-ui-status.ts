@@ -15,8 +15,10 @@ export function deriveBidUiStatus(task: {
   if ((REVIEW_STATUSES as readonly string[]).includes(review)) {
     return review as ReviewStatus;
   }
-  if (task.progress === 'skipped' || task.status === 'skipped') return 'skipped';
-  if (task.progress === 'completed' || task.status === 'done') return 'submitted';
+  if (task.progress === 'skipped' || task.status === 'skipped')
+    return 'skipped';
+  if (task.progress === 'completed' || task.status === 'done')
+    return 'submitted';
   if (task.bidderInProcess) return 'in_process';
   return 'pending';
 }

@@ -29,7 +29,7 @@ export function toMongoJson(value: unknown): Prisma.InputJsonValue {
     return null as unknown as Prisma.InputJsonValue;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => toMongoJson(item)) as Prisma.InputJsonValue;
+    return value.map((item) => toMongoJson(item));
   }
   if (typeof value === 'object') {
     const obj = value as Record<string, unknown>;
@@ -44,7 +44,7 @@ export function toMongoJson(value: unknown): Prisma.InputJsonValue {
     }
     return out;
   }
-  return value as Prisma.InputJsonValue;
+  return value;
 }
 
 /** Delete matching docs via the Mongo wire protocol (no Prisma transaction). */

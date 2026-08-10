@@ -15,7 +15,9 @@ function displayText(value: unknown, fallback = ''): string {
 
 function isoDate(value: Date | string | null | undefined): string {
   if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? '' : value.toISOString().slice(0, 10);
+    return Number.isNaN(value.getTime())
+      ? ''
+      : value.toISOString().slice(0, 10);
   }
   if (typeof value === 'string' && value.trim()) {
     const d = new Date(value);
@@ -70,7 +72,7 @@ function skillNames(
       .filter(Boolean);
     if (fromAi.length) return [...new Set(fromAi)];
   }
-  return Array.isArray(meta?.scrape?.skills) ? [...meta!.scrape!.skills!] : [];
+  return Array.isArray(meta?.scrape?.skills) ? [...meta.scrape.skills] : [];
 }
 
 /** Lens Bid Ready job shape — string fields match Athens-server (never null). */
@@ -98,7 +100,8 @@ export function mapAthensLensJob(
   const meta = normalizeJobMetadata(job.metadata);
   const details = meta?.details ?? {};
 
-  const recommendedResumeStack = text(recommend?.recommendedResumeStack) || null;
+  const recommendedResumeStack =
+    text(recommend?.recommendedResumeStack) || null;
   const recommendedResumeReason =
     text(recommend?.recommendedResumeReason) || null;
   const recommendWarning = text(recommend?.recommendWarning) || null;
@@ -116,7 +119,7 @@ export function mapAthensLensJob(
     experience: '',
     postedAt: isoDate(status.postedAt ?? job.postedAt),
     skills: skillNames(job.aiSkills, meta),
-    tags: Array.isArray(meta?.scrape?.tags) ? [...meta!.scrape!.tags!] : [],
+    tags: Array.isArray(meta?.scrape?.tags) ? [...meta.scrape.tags] : [],
     applicantsText: applicantsText(meta),
     description:
       text(job.description) || 'No job description has been provided.',

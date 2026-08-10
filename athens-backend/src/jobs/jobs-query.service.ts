@@ -39,7 +39,11 @@ export class JobsQueryService {
     const countWhere = unfiltered
       ? where
       : { ...where, companyId: { not: null } };
-    if (idConstraint && 'includeIds' in idConstraint && !idConstraint.includeIds.length) {
+    if (
+      idConstraint &&
+      'includeIds' in idConstraint &&
+      !idConstraint.includeIds.length
+    ) {
       const tabCounts = unfiltered
         ? await this.jobStatuses.tabCounts(profileId, peekJobs)
         : await this.jobStatuses.filteredTabCounts(profileId, countWhere);

@@ -81,8 +81,7 @@ export async function fetchTextBodyByUid(
       maxBytes,
     });
     const raw = await readStreamText(download?.content);
-    bodyText =
-      htmlPart && !plainPart ? htmlToStructuredText(raw) : raw;
+    bodyText = htmlPart && !plainPart ? htmlToStructuredText(raw) : raw;
   } else {
     const fetched = await client.fetchOne(
       String(uid),

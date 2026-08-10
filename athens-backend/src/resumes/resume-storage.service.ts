@@ -21,7 +21,11 @@ export class ResumeStorageService {
 
   constructor(private readonly admin: FirebaseAdminService) {}
 
-  buildPath(ownerName: string, profileId: string, contentSha256: string): string {
+  buildPath(
+    ownerName: string,
+    profileId: string,
+    contentSha256: string,
+  ): string {
     return `${storageSlug(ownerName)}_${profileId}/resumes/${contentSha256}`;
   }
 
@@ -67,7 +71,10 @@ export class ResumeStorageService {
     const normalized = String(storagePath || '').replace(/^\/+/, '');
     if (!normalized) return null;
     try {
-      const [buf] = await this.admin.storageBucket().file(normalized).download();
+      const [buf] = await this.admin
+        .storageBucket()
+        .file(normalized)
+        .download();
       return buf;
     } catch (err) {
       this.logger.warn(
@@ -109,7 +116,9 @@ export class ResumeStorageService {
         .delete({ ignoreNotFound: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Resume Storage delete failed (${normalized}): ${message}`);
+      this.logger.error(
+        `Resume Storage delete failed (${normalized}): ${message}`,
+      );
       throw new Error(`Failed to delete resume file from Storage: ${message}`);
     }
   }

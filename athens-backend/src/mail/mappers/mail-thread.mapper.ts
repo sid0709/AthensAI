@@ -56,17 +56,14 @@ export function messageToThread(
   doc: ThreadLikeDoc,
   { includeBody = true }: { includeBody?: boolean } = {},
 ) {
-  const date =
-    doc.date instanceof Date ? doc.date : new Date(doc.date || 0);
+  const date = doc.date instanceof Date ? doc.date : new Date(doc.date || 0);
   const safeDate = Number.isNaN(date.getTime()) ? new Date(0) : date;
   const gmailLabels = doc.gmailLabels?.length
     ? doc.gmailLabels
     : doc.labels || [];
   const customLabels = doc.gmailLabels?.length
     ? extractCustomLabels(doc.gmailLabels)
-    : (doc.labels || []).filter(
-        (l) => l !== 'starred' && l !== 'Starred',
-      );
+    : (doc.labels || []).filter((l) => l !== 'starred' && l !== 'Starred');
 
   const fromName =
     doc.from?.name ||
@@ -86,9 +83,7 @@ export function messageToThread(
     fromEmail,
     subj: doc.subject || '(No subject)',
     prev: doc.preview || '',
-    body: includeBody
-      ? doc.bodyText || doc.preview || ''
-      : doc.preview || '',
+    body: includeBody ? doc.bodyText || doc.preview || '' : doc.preview || '',
     bodyHtml: includeBody ? doc.bodyHtml || null : null,
     time: formatMailTime(safeDate),
     date: safeDate.toISOString(),

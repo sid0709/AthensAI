@@ -27,7 +27,8 @@ type ItemProgress = {
 
 type SessionState = {
   sessionId: string;
-  status: 'running' | 'stopping' | 'completed' | 'cancelled' | 'failed' | 'idle';
+  status:
+    'running' | 'stopping' | 'completed' | 'cancelled' | 'failed' | 'idle';
   auth: ProfileLlmAuth;
   controller: AbortController;
   startedAt: string;
@@ -62,7 +63,10 @@ export class ResumeAnalyzeSessionService {
     resumeIds: string[];
     force?: boolean;
   }) {
-    if (this.session?.status === 'running' || this.session?.status === 'stopping') {
+    if (
+      this.session?.status === 'running' ||
+      this.session?.status === 'stopping'
+    ) {
       throw new BadRequestException({
         success: false,
         message: 'Resume analysis is already running.',

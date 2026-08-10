@@ -24,12 +24,18 @@ export class StatusAdminController {
 
   @Post('incidents')
   async create(@Body() body: CreateIncidentDto) {
-    const component = String(body.component || '').trim().slice(0, 80);
+    const component = String(body.component || '')
+      .trim()
+      .slice(0, 80);
     const definition = getComponentDefinitions().find(
       (item) => item.id === component,
     );
-    const title = String(body.title || '').trim().slice(0, 160);
-    const description = String(body.description || '').trim().slice(0, 1000);
+    const title = String(body.title || '')
+      .trim()
+      .slice(0, 160);
+    const description = String(body.description || '')
+      .trim()
+      .slice(0, 1000);
     if (!definition || !title || !description) {
       throw new BadRequestException(
         'component, title, and description are required',
@@ -43,7 +49,9 @@ export class StatusAdminController {
     const incident = await this.store.createManualIncident({
       component,
       status,
-      severity: String(body.severity || 'warning').trim().slice(0, 30),
+      severity: String(body.severity || 'warning')
+        .trim()
+        .slice(0, 30),
       title,
       description,
     });
@@ -52,7 +60,9 @@ export class StatusAdminController {
 
   @Patch('incidents/:id')
   async update(@Param('id') idRaw: string, @Body() body: UpdateIncidentDto) {
-    const id = String(idRaw || '').trim().slice(0, 180);
+    const id = String(idRaw || '')
+      .trim()
+      .slice(0, 180);
     if (!id || id.includes('/')) {
       throw new BadRequestException('Invalid incident id');
     }
@@ -61,7 +71,9 @@ export class StatusAdminController {
     )
       ? String(body.status)
       : null;
-    const message = String(body.message || '').trim().slice(0, 1000);
+    const message = String(body.message || '')
+      .trim()
+      .slice(0, 1000);
     if (!status && !message) {
       throw new BadRequestException('status or message is required');
     }

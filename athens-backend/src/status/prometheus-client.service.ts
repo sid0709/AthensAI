@@ -16,10 +16,11 @@ type PromOptions = { baseUrl?: string; fetchImpl?: typeof fetch };
 @Injectable()
 export class PrometheusClientService {
   private base(url?: string): string {
-    return (url || process.env.PROMETHEUS_URL || DEFAULT_PROMETHEUS_URL).replace(
-      /\/+$/,
-      '',
-    );
+    return (
+      url ||
+      process.env.PROMETHEUS_URL ||
+      DEFAULT_PROMETHEUS_URL
+    ).replace(/\/+$/, '');
   }
 
   private async request(
@@ -80,7 +81,10 @@ export class PrometheusClientService {
     );
   }
 
-  private scalar(data: Awaited<ReturnType<PrometheusClientService['query']>>, name: string) {
+  private scalar(
+    data: Awaited<ReturnType<PrometheusClientService['query']>>,
+    name: string,
+  ) {
     if (data?.resultType !== 'vector') {
       throw new Error(`Prometheus returned an invalid response for ${name}`);
     }
@@ -100,9 +104,15 @@ export class PrometheusClientService {
       ]),
     );
     const values = Object.fromEntries(entries) as Record<string, number>;
-    for (const name of ['cpuUtilization', 'memoryUtilization', 'diskUtilization']) {
+    for (const name of [
+      'cpuUtilization',
+      'memoryUtilization',
+      'diskUtilization',
+    ]) {
       if (values[name] < 0 || values[name] > 1) {
-        throw new Error(`Prometheus returned an out-of-range value for ${name}`);
+        throw new Error(
+          `Prometheus returned an out-of-range value for ${name}`,
+        );
       }
     }
     if (
@@ -193,10 +203,7 @@ export class PrometheusClientService {
   }
 
   private mergeRangeSeries(
-    seriesByName: Record<
-      string,
-      { values?: Array<[number, string]> } | null
-    >,
+    seriesByName: Record<string, { values?: Array<[number, string]> } | null>,
     transforms: Record<string, (value: number) => number> = {},
   ) {
     const points = new Map<number, Record<string, unknown>>();
@@ -327,9 +334,7 @@ export class PrometheusClientService {
             );
             const lower = timestamp.getTime() / 1000;
             const upper = lower + bucketSeconds;
-            const severityValues = [
-              ...(series?.severity.entries() || []),
-            ]
+            const severityValues = [...(series?.severity.entries() || [])]
               .filter(([time]) => time >= lower && time < upper)
               .map(([, value]) => value);
             const known = severityValues.filter((value) => value < 4);
@@ -350,8 +355,7 @@ export class PrometheusClientService {
                   ? 'unknown'
                   : SEVERITY_STATUS[Math.round(worst)] || 'unknown',
               availabilityPercent: availabilityValues.length
-                ? (100 *
-                    availabilityValues.reduce((sum, v) => sum + v, 0)) /
+                ? (100 * availabilityValues.reduce((sum, v) => sum + v, 0)) /
                   availabilityValues.length
                 : null,
               sampleCount: availabilityValues.length,

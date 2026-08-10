@@ -108,7 +108,8 @@ export class SetRecommendedResumeService {
       recommendedResumeReason: reason,
       useCustomizedResume: false,
       recommendWarning: null as string | null,
-      recommendedAt: doc.recommendedAt?.toISOString() ?? new Date().toISOString(),
+      recommendedAt:
+        doc.recommendedAt?.toISOString() ?? new Date().toISOString(),
       recommendMode: 'manual' as const,
       resumeStackMatch,
     };

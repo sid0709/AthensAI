@@ -1,9 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma, UploadSession } from '@prisma/client';
-import {
-  rawInsertOne,
-  rawUpdateMany,
-} from '../../prisma/mongo-standalone';
+import { rawInsertOne, rawUpdateMany } from '../../prisma/mongo-standalone';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UPLOAD_SESSION_TTL_MS } from '../constants/bid-status.constants';
 

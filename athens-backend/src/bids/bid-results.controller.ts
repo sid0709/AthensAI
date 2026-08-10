@@ -46,18 +46,12 @@ export class BidResultsController {
   }
 
   @Get(':id/events')
-  events(
-    @Param('id') id: string,
-    @Query('applierName') applierName: string,
-  ) {
+  events(@Param('id') id: string, @Query('applierName') applierName: string) {
     return this.bids.eventsForId(applierName, id);
   }
 
   @Get(':id/ai-usage')
-  aiUsage(
-    @Param('id') id: string,
-    @Query('applierName') applierName: string,
-  ) {
+  aiUsage(@Param('id') id: string, @Query('applierName') applierName: string) {
     return this.bids.aiUsage(applierName, id);
   }
 

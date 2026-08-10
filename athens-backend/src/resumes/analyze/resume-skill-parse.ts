@@ -86,8 +86,7 @@ export function capResumeSkillProfile(
     const limit = RESUME_SKILL_CATEGORY_LIMITS[cat];
     const trimmed = list
       .filter(
-        (s) =>
-          s.level >= RESUME_SKILL_TRIM_MIN_LEVEL || list.length <= limit,
+        (s) => s.level >= RESUME_SKILL_TRIM_MIN_LEVEL || list.length <= limit,
       )
       .slice(0, limit);
     capped.push(...trimmed);

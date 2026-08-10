@@ -90,13 +90,11 @@ export async function downloadBlob(blob: Blob, fileName: string) {
 }
 
 export async function exportResumeServer(
-  format: "pdf" | "docx",
   payload: Record<string, unknown>,
   fileName: string,
   apiBase: string,
 ) {
-  const endpoint = format === "pdf" ? "/personal/resume-pdf" : "/personal/resume-docx";
-  const res = await fetch(`${apiBase.replace(/\/$/, "")}${endpoint}`, {
+  const res = await fetch(`${apiBase.replace(/\/$/, "")}/personal/resume-docx`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

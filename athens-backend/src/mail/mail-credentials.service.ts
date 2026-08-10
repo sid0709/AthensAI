@@ -66,6 +66,10 @@ export class MailCredentialsService {
   }
 
   isBeta(tier: string | null | undefined): boolean {
-    return String(tier ?? '').trim().toLowerCase() === BETA_TIER;
+    return (
+      String(tier ?? '')
+        .trim()
+        .toLowerCase() === BETA_TIER
+    );
   }
 }

@@ -63,9 +63,7 @@ export function toResumeSummary(row: Resume): UserResumeSummary {
     fileName: row.fileName,
     mimeType: row.mimeType,
     sizeBytes: row.sizeBytes ?? 0,
-    extractedText: row.extractedText
-      ? row.extractedText.slice(0, 500)
-      : '',
+    extractedText: row.extractedText ? row.extractedText.slice(0, 500) : '',
     isPrimary: Boolean(row.isPrimary),
     source: row.source === 'generated' ? 'generated' : 'uploaded',
     generationId: row.generationId ?? undefined,

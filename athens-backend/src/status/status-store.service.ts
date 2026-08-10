@@ -310,15 +310,13 @@ export class StatusStoreService {
       create: {
         source: STATUS_SOURCE,
         version: 2,
-        components: components as unknown as Prisma.InputJsonValue,
-        activeIncidentIds:
-          activeIncidentIds as unknown as Prisma.InputJsonValue,
+        components: components,
+        activeIncidentIds: activeIncidentIds,
       },
       update: {
         version: 2,
-        components: components as unknown as Prisma.InputJsonValue,
-        activeIncidentIds:
-          activeIncidentIds as unknown as Prisma.InputJsonValue,
+        components: components,
+        activeIncidentIds: activeIncidentIds,
       },
     });
     return components;
@@ -346,11 +344,11 @@ export class StatusStoreService {
         source: STATUS_SOURCE,
         version: 2,
         complete: true,
-        components: rollup.components as unknown as Prisma.InputJsonValue,
+        components: rollup.components,
       },
       update: {
         complete: true,
-        components: rollup.components as unknown as Prisma.InputJsonValue,
+        components: rollup.components,
       },
     });
   }
@@ -416,7 +414,7 @@ export class StatusStoreService {
       data: {
         ...(input.status ? { status: input.status } : {}),
         ...(input.status === 'resolved' ? { resolvedAt: now } : {}),
-        updates: updates as unknown as Prisma.InputJsonValue,
+        updates: updates,
       },
     });
     return publicIncident(row);

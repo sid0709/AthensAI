@@ -37,7 +37,9 @@ export class MailService {
 
   private requireBeta(tier: string | null) {
     if (!this.credentials.isBeta(tier)) {
-      throw new ForbiddenException('Beta access required for this mail feature.');
+      throw new ForbiddenException(
+        'Beta access required for this mail feature.',
+      );
     }
   }
 
@@ -105,7 +107,8 @@ export class MailService {
       throw new BadRequestException('Invalid message uid');
     }
     let doc = await this.cache.getMessage(creds.applierName, uid);
-    const mailbox = doc?.mailbox || (folder ? undefined : ALL_MAIL_PATH) || ALL_MAIL_PATH;
+    const mailbox =
+      doc?.mailbox || (folder ? undefined : ALL_MAIL_PATH) || ALL_MAIL_PATH;
 
     if (!doc?.hasBody) {
       const body = await this.imap.fetchMessageBody(
@@ -137,11 +140,7 @@ export class MailService {
           body,
           doc.mailbox,
         );
-        doc = await this.cache.getMessage(
-          creds.applierName,
-          uid,
-          doc.mailbox,
-        );
+        doc = await this.cache.getMessage(creds.applierName, uid, doc.mailbox);
       }
     }
 
@@ -155,7 +154,10 @@ export class MailService {
 
   async folderCounts(applierName: string, force = false) {
     const creds = await this.requireCreds(applierName);
-    const { counts, cached } = await this.syncService.refreshFolderCounts(creds, force);
+    const { counts, cached } = await this.syncService.refreshFolderCounts(
+      creds,
+      force,
+    );
     return { success: true, counts, cached };
   }
 
@@ -165,9 +167,18 @@ export class MailService {
     return { success: true, ...result };
   }
 
-  async syncInitial(applierName: string, folder?: string, page?: number, pageSize?: number) {
+  async syncInitial(
+    applierName: string,
+    folder?: string,
+    page?: number,
+    pageSize?: number,
+  ) {
     const creds = await this.requireCreds(applierName);
-    const result = await this.syncService.syncInitial(creds, { folder, page, pageSize });
+    const result = await this.syncService.syncInitial(creds, {
+      folder,
+      page,
+      pageSize,
+    });
     return {
       success: true,
       threads: result.messages.map((m) =>
@@ -232,7 +243,8 @@ export class MailService {
   ) {
     const creds = await this.requireCreds(applierName);
     const uid = Number(uidRaw);
-    if (!Number.isFinite(uid)) throw new BadRequestException('Invalid message uid');
+    if (!Number.isFinite(uid))
+      throw new BadRequestException('Invalid message uid');
     const doc = await this.cache.getMessage(creds.applierName, uid);
     const mailbox = doc?.mailbox || ALL_MAIL_PATH;
 
@@ -302,11 +314,17 @@ export class MailService {
       mailbox,
     );
 
-    const updated = await this.cache.getMessage(creds.applierName, uid, mailbox);
+    const updated = await this.cache.getMessage(
+      creds.applierName,
+      uid,
+      mailbox,
+    );
     if (!updated) throw new NotFoundException('Message not found');
     return {
       success: true,
-      thread: messageToThread(updated, { includeBody: Boolean(updated.hasBody) }),
+      thread: messageToThread(updated, {
+        includeBody: Boolean(updated.hasBody),
+      }),
     };
   }
 

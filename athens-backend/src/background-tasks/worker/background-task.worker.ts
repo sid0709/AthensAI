@@ -1,7 +1,14 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleInit,
+  forwardRef,
+} from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { MailAiLabelService } from '../../mail/mail-ai-label.service';
 import { MailCredentialsService } from '../../mail/mail-credentials.service';
+import { ResumeGenerateWorkerService } from '../../resumes/generator/resume-generate-worker.service';
 import { BackgroundTasksService } from '../background-tasks.service';
 import {
   BACKGROUND_TASK_STATUSES,
@@ -21,6 +28,8 @@ export class BackgroundTaskWorker implements OnModuleInit {
     private readonly tasks: BackgroundTasksService,
     private readonly mailCreds: MailCredentialsService,
     private readonly aiLabel: MailAiLabelService,
+    @Inject(forwardRef(() => ResumeGenerateWorkerService))
+    private readonly resumeGen: ResumeGenerateWorkerService,
   ) {}
 
   onModuleInit() {
@@ -29,7 +38,9 @@ export class BackgroundTaskWorker implements OnModuleInit {
       .toLowerCase();
     if (mode === 'off' || mode === 'disabled') {
       this.tasks.setWorkerHealthy(false);
-      this.logger.warn('Background worker disabled via BACKGROUND_WORKERS_MODE');
+      this.logger.warn(
+        'Background worker disabled via BACKGROUND_WORKERS_MODE',
+      );
       return;
     }
     this.tasks.setWorkerHealthy(true);
@@ -46,18 +57,59 @@ export class BackgroundTaskWorker implements OnModuleInit {
     this.running = true;
     try {
       const store = this.tasks.getStore();
-      const task = await store.claimNext(
-        this.workerId,
-        BACKGROUND_TASK_TYPES.MAIL_AI_LABEL,
-      );
+      const task =
+        (await store.claimNext(
+          this.workerId,
+          BACKGROUND_TASK_TYPES.MAIL_AI_LABEL,
+        )) ||
+        (await store.claimNext(
+          this.workerId,
+          BACKGROUND_TASK_TYPES.RESUME_GENERATION,
+        ));
       if (!task) return;
-      await this.processMailAiLabel(task.id);
+      if (task.type === BACKGROUND_TASK_TYPES.RESUME_GENERATION) {
+        await this.processResumeGeneration(task.id);
+      } else {
+        await this.processMailAiLabel(task.id);
+      }
     } catch (err) {
       this.logger.error(
         `Worker tick failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
       this.running = false;
+    }
+  }
+
+  private async processResumeGeneration(taskId: string) {
+    const store = this.tasks.getStore();
+    const task = await store.findById(taskId);
+    if (!task) return;
+
+    const abort = new AbortController();
+    const heartbeat = setInterval(() => {
+      void store.heartbeat(taskId, this.workerId);
+      void store.findById(taskId).then((fresh) => {
+        if (fresh?.status === BACKGROUND_TASK_STATUSES.CANCELLING) {
+          abort.abort();
+        }
+      });
+    }, WORKER_HEARTBEAT_MS);
+
+    try {
+      await this.resumeGen.processTask(task, store, abort.signal);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await store.complete(
+        taskId,
+        {},
+        abort.signal.aborted
+          ? BACKGROUND_TASK_STATUSES.CANCELLED
+          : BACKGROUND_TASK_STATUSES.FAILED,
+        message,
+      );
+    } finally {
+      clearInterval(heartbeat);
     }
   }
 
@@ -102,23 +154,24 @@ export class BackgroundTaskWorker implements OnModuleInit {
         messageIds,
         signal: abort.signal,
         onProgress: async (progress: MailAiLabelProgress) => {
-          await store.updateProgress(taskId, progress as unknown as Record<string, unknown>, {
-            status:
-              abort.signal.aborted
-                ? BACKGROUND_TASK_STATUSES.CANCELLING
-                : BACKGROUND_TASK_STATUSES.RUNNING,
+          await store.updateProgress(taskId, progress, {
+            status: abort.signal.aborted
+              ? BACKGROUND_TASK_STATUSES.CANCELLING
+              : BACKGROUND_TASK_STATUSES.RUNNING,
           });
         },
       });
 
-      const failed = batch.results.filter((r: { error?: string }) => r.error).length;
+      const failed = batch.results.filter(
+        (r: { error?: string }) => r.error,
+      ).length;
       const status = abort.signal.aborted
         ? BACKGROUND_TASK_STATUSES.CANCELLED
         : failed > 0
           ? BACKGROUND_TASK_STATUSES.COMPLETED_WITH_ERRORS
           : BACKGROUND_TASK_STATUSES.COMPLETED;
 
-      await store.complete(taskId, batch as unknown as Record<string, unknown>, status);
+      await store.complete(taskId, batch, status);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await store.complete(

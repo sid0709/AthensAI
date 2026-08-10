@@ -134,6 +134,25 @@ Binary files: Firebase Storage `{slug(ownerName)}_{profileId}/resumes/{sha256}`.
 
 API `techStack` ↔ Mongo `title`. Skills live on each resume in `analysis.skills`. Knob: `RESUME_ANALYZE_BATCH_CONCURRENCY` (default 8).
 
+## Resume Generator (Editor-core)
+
+Persistent config + Skill Coverage + background section generation. Collections: `resume_generator_config`, `resume_generations`, `background_task_inputs`. Uses the profile default LLM key/model. Export is **DOCX only** (no PDF).
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/personal/resume-generator/config?applierName=` | Load migrated v4 config |
+| PUT | `/api/personal/resume-generator/config` | `{ applierName, config }` |
+| POST | `/api/personal/resume-generator/analyze` | Skill Coverage ledger `{ applierName, jobDescription, identity?, coverage? }` |
+| POST | `/api/personal/resume-generate` | Enqueue `resume_generation` → `{ success, created, inputId, task }` (HTTP 202) |
+| GET | `/api/personal/resume-generation-tasks/:inputId` | Partial sections + final result |
+| GET | `/api/personal/resume-generations` | History list (`applierName`, filters, `includeFacets=1`) |
+| GET | `/api/personal/resume-generations/:id` | Full run |
+| GET | `/api/personal/resume-generations/:id/docx` | History DOCX download |
+| DELETE | `/api/personal/resume-generations/:id` | Delete run + linked library resume |
+| POST | `/api/personal/resume-docx` | Structured model → DOCX |
+
+Background worker also claims `resume_generation` (in addition to `mail_ai_label`).
+
 - Job Search reads **`jobs` only**. Incomplete title-review / AI Analyze rows live in **`temp_jobs`** and are invisible to search.
 - **Ingest dedupe** (`SaveJobService`): before insert, check `temp_jobs` **and** `jobs`. Duplicate when `metadata.legacyId` matches, or `applyLink` matches within `JOB_DEDUP_WINDOW_DAYS` (default 14), or normalized `companyName`+`title` match within that window. Response stays Extension/LI-compatible: `{ success: true, created: false, duplicate: true, reason, code }` (HTTP 200) — row is **not** added.
 - New rows stamp `model_schema_code` from `JOB_MODEL_SCHEMA_CODE` (default `mongodb-athens-2026-08-06`).
@@ -170,7 +189,7 @@ Uses profile `email` + decrypted `gmailAppPassword`. List responses omit full bo
 
 ## Background tasks
 
-Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default) claims `mail_ai_label` tasks.
+Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default) claims `mail_ai_label` and `resume_generation` tasks.
 
 | Method | Path | Notes |
 |--------|------|-------|

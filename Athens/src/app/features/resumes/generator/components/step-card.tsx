@@ -3,12 +3,40 @@ import { AlertTriangle, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { Dropdown, Field } from "../adapters/ui";
 import { PURPOSES, SECTION_LABEL, type GenStep, type Purpose, type StepKind } from "../types";
 import {
-  defaultPromptFor,
   defaultSchemaFor,
 } from "../constants/defaults";
 import { isValidJson } from "../utils/identity";
 import { areaCls, inputCls } from "../styles";
 import { JobRefField } from "./job-ref-field";
+
+/** Markdown snapshot of a generation step (header + prompt body). */
+export function stepPromptMarkdown(step: GenStep, index: number): string {
+  const name = step.name.trim() || `Step ${index + 1}`;
+  const section = SECTION_LABEL[step.purpose] ?? step.purpose;
+  const kind = step.kind === "final" ? "Final" : "Fine-tune";
+  const skip = step.skipForStructuredJobs ? "Yes" : "No";
+  const prompt = step.prompt.trim() || "_(empty)_";
+  return [
+    `# ${name}`,
+    "",
+    `- **Step:** ${index + 1}`,
+    `- **Section:** ${section}`,
+    `- **Type:** ${kind}`,
+    `- **Skip for structured jobs:** ${skip}`,
+    "",
+    "## Prompt",
+    "",
+    prompt,
+    "",
+  ].join("\n");
+}
+
+/** Concatenate every step into one markdown document. */
+export function allStepsPromptMarkdown(steps: GenStep[]): string {
+  return steps
+    .map((step, index) => stepPromptMarkdown(step, index))
+    .join("\n---\n\n");
+}
 
 export function StepCard({
   step,
@@ -149,8 +177,8 @@ export function StepCard({
         <span className="text-[11px] leading-snug text-neutral-500 dark:text-white/60">
           <span className="font-medium text-neutral-700 dark:text-white/80">Skip for structured jobs</span> — don't
           run this step for Job Search / Agent runs, where the job already carries fetched skills. Reference them in a
-          later prompt via <code className="text-sky-600 dark:text-sky-300">{"{job_skills}"}</code>. In this Editor,
-          that token resolves from the current Skill Coverage. Free-text generation on this page always runs the step.
+          later prompt via <code className="text-sky-600 dark:text-sky-300">{"{job_skills}"}</code>. Free-text
+          generation on this page always runs the step.
         </span>
       </label>
 

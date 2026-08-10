@@ -3,8 +3,7 @@ import type { CheckResult } from './types/status.types';
 export function stabilizeStatus(
   result: CheckResult,
   previous:
-    | { status?: string; rawStatus?: string; statusStreak?: number }
-    | undefined,
+    { status?: string; rawStatus?: string; statusStreak?: number } | undefined,
   options: {
     warningSamples?: number;
     criticalSamples?: number;

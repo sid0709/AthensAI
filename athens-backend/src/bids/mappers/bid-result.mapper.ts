@@ -64,9 +64,7 @@ export function mapTaskToBidResult(
   let recommendedResume: Record<string, unknown> | null = null;
   if (stack) {
     recommendedResume = {
-      name: useCustomized
-        ? 'Use customized resume'
-        : `Recommended · ${stack}`,
+      name: useCustomized ? 'Use customized resume' : `Recommended · ${stack}`,
       techStack: stack,
       source: 'Library recommend',
       fileName: null,

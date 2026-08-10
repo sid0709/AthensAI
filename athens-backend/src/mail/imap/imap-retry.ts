@@ -23,7 +23,9 @@ export function formatImapError(error: unknown): string {
     responseText?: string;
   };
   const base = String(err.message || error).trim() || 'IMAP error';
-  const status = String(err.responseStatus || '').trim().toUpperCase();
+  const status = String(err.responseStatus || '')
+    .trim()
+    .toUpperCase();
   const text = String(err.responseText || '').trim();
   if (!status && !text) return base;
   const detail = [status, text].filter(Boolean).join(' ');
@@ -36,7 +38,11 @@ export function isRetryableImapError(
   signal?: AbortSignal,
 ): boolean {
   if (!error || signal?.aborted) return false;
-  const err = error as { name?: string; message?: string; responseStatus?: string };
+  const err = error as {
+    name?: string;
+    message?: string;
+    responseStatus?: string;
+  };
   if (err.name === 'AbortError') return false;
 
   const message = String(err.message || error);
@@ -83,7 +89,10 @@ export async function withImapRetry<T>(
   } = {},
 ): Promise<T> {
   const attempts = Math.max(1, Number(options.attempts) || DEFAULT_ATTEMPTS);
-  const baseDelayMs = Math.max(50, Number(options.baseDelayMs) || BASE_DELAY_MS);
+  const baseDelayMs = Math.max(
+    50,
+    Number(options.baseDelayMs) || BASE_DELAY_MS,
+  );
   const signal = options.signal;
   let lastError: unknown;
 

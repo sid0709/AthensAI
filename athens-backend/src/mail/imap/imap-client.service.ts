@@ -1,10 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import {
-  ALL_MAIL_PATH,
-  FOLDER_MAILBOX,
-} from '../constants/mail.constants';
+import { ALL_MAIL_PATH, FOLDER_MAILBOX } from '../constants/mail.constants';
 import {
   displayLabelName,
   folderToMailbox,
@@ -15,10 +12,7 @@ import {
 } from '../mappers/folder-mapper';
 import { ImapPoolService } from './imap-pool.service';
 import { withImapRetry } from './imap-retry';
-import {
-  fetchTextBodyByUid,
-  type LensImapBody,
-} from './imap-text-body';
+import { fetchTextBodyByUid, type LensImapBody } from './imap-text-body';
 
 @Injectable()
 export class ImapClientService {
@@ -37,10 +31,18 @@ export class ImapClientService {
     const normalizedEmail = String(email ?? '').trim();
     const normalizedPassword = String(password ?? '').replace(/\s/g, '');
     if (!normalizedEmail || !normalizedPassword) {
-      return { ok: false as const, error: 'Email and Gmail app password are required.' };
+      return {
+        ok: false as const,
+        error: 'Email and Gmail app password are required.',
+      };
     }
     try {
-      await this.withPath(normalizedEmail, normalizedPassword, undefined, async () => true);
+      await this.withPath(
+        normalizedEmail,
+        normalizedPassword,
+        undefined,
+        async () => true,
+      );
       return { ok: true as const, email: normalizedEmail };
     } catch (error) {
       const message =
@@ -60,7 +62,7 @@ export class ImapClientService {
     const mailboxPath = folderToMailbox(folder);
     return this.withPath(email, password, mailboxPath, async (client) => {
       const box = client.mailbox;
-      const total = box && typeof box === 'object' ? box.exists ?? 0 : 0;
+      const total = box && typeof box === 'object' ? (box.exists ?? 0) : 0;
       if (total === 0) return { messages: [], total: 0, mailbox: mailboxPath };
 
       const size = Math.min(Math.max(pageSize, 1), 100);
@@ -173,7 +175,7 @@ export class ImapClientService {
         const lock = await client.getMailboxLock(path);
         try {
           const box = client.mailbox;
-          const total = box && typeof box === 'object' ? box.exists ?? 0 : 0;
+          const total = box && typeof box === 'object' ? (box.exists ?? 0) : 0;
           const unseen = await client.search({ seen: false });
           const unread = Array.isArray(unseen) ? unseen.length : 0;
           counts[folder] = { total, unread, badge: unread };
@@ -199,13 +201,17 @@ export class ImapClientService {
 
       for (const box of mailboxes) {
         const path = displayLabelName(box.path);
-        if (!path || path.startsWith('[Gmail]') || path.startsWith('[Google]')) {
+        if (
+          !path ||
+          path.startsWith('[Gmail]') ||
+          path.startsWith('[Google]')
+        ) {
           continue;
         }
         if (isSystemLabel(path)) continue;
 
         const parts = path.split('/');
-        const name = parts[parts.length - 1]!;
+        const name = parts[parts.length - 1];
         const parentPath =
           parts.length > 1 ? parts.slice(0, -1).join('/') : undefined;
         const parentId = parentPath
@@ -243,7 +249,7 @@ export class ImapClientService {
       return {
         id: fullPath.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         name: fullPath,
-        shortName: parts[parts.length - 1]!,
+        shortName: parts[parts.length - 1],
         path: fullPath,
         parentId: parentPath
           ? parentPath.toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -400,12 +406,16 @@ export class ImapClientService {
     mailboxPath = ALL_MAIL_PATH,
   ): Promise<MailMessageDoc | null> {
     return this.withPath(email, password, mailboxPath, async (client) => {
-      for await (const message of client.fetch(String(uid), {
-        envelope: true,
-        flags: true,
-        uid: true,
-        labels: true,
-      }, { uid: true })) {
+      for await (const message of client.fetch(
+        String(uid),
+        {
+          envelope: true,
+          flags: true,
+          uid: true,
+          labels: true,
+        },
+        { uid: true },
+      )) {
         return messageToDoc(message, applierName, mailboxPath);
       }
       return null;
@@ -437,7 +447,7 @@ export class ImapClientService {
     if (!path) throw new Error('mailboxPath is required');
     return this.withPath(email, password, path, async (client) => {
       const box = client.mailbox;
-      const total = box && typeof box === 'object' ? box.exists ?? 0 : 0;
+      const total = box && typeof box === 'object' ? (box.exists ?? 0) : 0;
       if (total === 0) return { messages: [], total: 0, hasMore: false };
 
       const size = Math.min(Math.max(Number(opts.pageSize) || 15, 1), 50);
@@ -493,9 +503,7 @@ export class ImapClientService {
     const path = String(mailboxPath || '').trim();
     if (!path) throw new Error('mailboxPath is required');
     const requested = [
-      ...new Set(
-        uids.filter((uid) => Number.isSafeInteger(uid) && uid > 0),
-      ),
+      ...new Set(uids.filter((uid) => Number.isSafeInteger(uid) && uid > 0)),
     ];
     if (!requested.length) return [];
 

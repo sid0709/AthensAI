@@ -151,17 +151,13 @@ export class ReportsApplicationsService {
     return empty;
   }
 
-  private activityDateMatch(
-    range: ParsedDateRange,
-  ): Record<string, unknown> {
+  private activityDateMatch(range: ParsedDateRange): Record<string, unknown> {
     // Prefer updatedAt (last transition); fall back handled in $group date expr.
     const clause = mongoDateFieldMatch('updatedAt', range);
     return clause ?? {};
   }
 
-  private async resolveProfileId(
-    applierName?: string,
-  ): Promise<string | null> {
+  private async resolveProfileId(applierName?: string): Promise<string | null> {
     const name = String(applierName || '').trim();
     if (!name) return null;
     const account = await this.accounts.findByName(name);

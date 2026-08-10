@@ -37,8 +37,12 @@ export class BackgroundTasksService {
     profileId?: string;
     applierName?: string;
     payload?: Record<string, unknown>;
+    progress?: Record<string, unknown>;
   }) {
-    if (input.type !== BACKGROUND_TASK_TYPES.MAIL_AI_LABEL) {
+    const allowed =
+      input.type === BACKGROUND_TASK_TYPES.MAIL_AI_LABEL ||
+      input.type === BACKGROUND_TASK_TYPES.RESUME_GENERATION;
+    if (!allowed) {
       throw new BadRequestException(
         `Unsupported background task type: ${input.type}`,
       );
@@ -58,7 +62,11 @@ export class BackgroundTasksService {
 
     const account = await this.accounts.findByName(applierName);
     if (!account) throw new NotFoundException('Account not found');
-    if (!this.mailCreds.isBeta(account.tier)) {
+
+    if (
+      input.type === BACKGROUND_TASK_TYPES.MAIL_AI_LABEL &&
+      !this.mailCreds.isBeta(account.tier)
+    ) {
       throw new BadRequestException('Beta access required for mail_ai_label');
     }
 
@@ -104,6 +112,7 @@ export class BackgroundTasksService {
       profileId: input.profileId || account.id,
       applierName: account.name,
       payload,
+      progress: input.progress,
     });
 
     if (input.requestId) {
@@ -117,11 +126,7 @@ export class BackgroundTasksService {
     };
   }
 
-  async list(opts: {
-    profileId?: string;
-    active?: boolean;
-    limit?: number;
-  }) {
+  async list(opts: { profileId?: string; active?: boolean; limit?: number }) {
     const tasks = await this.store.list(opts);
     return {
       success: true,

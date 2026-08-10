@@ -1,4 +1,6 @@
-export function isoOrNull(value: Date | string | null | undefined): string | null {
+export function isoOrNull(
+  value: Date | string | null | undefined,
+): string | null {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value.toISOString();
   }

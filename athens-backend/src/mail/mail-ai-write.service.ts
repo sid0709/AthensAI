@@ -39,7 +39,10 @@ export class MailAiWriteService {
       model: auth.model,
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: userParts.join('\n\n') || 'Write a short email.' },
+        {
+          role: 'user',
+          content: userParts.join('\n\n') || 'Write a short email.',
+        },
       ],
       temperature: 0.4,
       usageMeta: {

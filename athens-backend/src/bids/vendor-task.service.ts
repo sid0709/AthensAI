@@ -123,7 +123,10 @@ export class VendorTaskService {
     }
   }
 
-  async listForApplier(applierName: string, limit: number): Promise<VendorTask[]> {
+  async listForApplier(
+    applierName: string,
+    limit: number,
+  ): Promise<VendorTask[]> {
     try {
       return await this.prisma.vendorTask.findMany({
         where: { applierName },
@@ -141,7 +144,10 @@ export class VendorTaskService {
     }
   }
 
-  async listRejected(applierName: string, limit: number): Promise<VendorTask[]> {
+  async listRejected(
+    applierName: string,
+    limit: number,
+  ): Promise<VendorTask[]> {
     return this.prisma.vendorTask.findMany({
       where: { applierName, reviewStatus: 'rejected' },
       orderBy: [{ lastRejectedAt: 'desc' }, { updatedAt: 'desc' }],
@@ -224,9 +230,7 @@ export class VendorTaskService {
     return serializeVendorTask(doc);
   }
 
-  private async createTask(
-    data: Record<string, unknown>,
-  ): Promise<VendorTask> {
+  private async createTask(data: Record<string, unknown>): Promise<VendorTask> {
     const now = new Date();
     const createData = {
       ...data,
@@ -267,7 +271,7 @@ export class VendorTaskService {
     try {
       return await this.prisma.vendorTask.update({
         where: { id },
-        data: data as Prisma.VendorTaskUpdateInput,
+        data: data,
       });
     } catch (error) {
       if (!isReplicaSetRequired(error)) throw error;
@@ -286,11 +290,9 @@ export class VendorTaskService {
   }
 
   private async repairDates(): Promise<void> {
-    await repairStringDateFields(
-      this.prisma,
-      VENDOR_TASKS_COLLECTION,
-      [...VENDOR_TASK_DATE_FIELDS],
-    );
+    await repairStringDateFields(this.prisma, VENDOR_TASKS_COLLECTION, [
+      ...VENDOR_TASK_DATE_FIELDS,
+    ]);
   }
 }
 

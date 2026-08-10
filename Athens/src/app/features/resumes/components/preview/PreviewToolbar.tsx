@@ -1,4 +1,4 @@
-import { LayoutTemplate, Palette, ListOrdered, FileDown, FileType } from "lucide-react";
+import { LayoutTemplate, Palette, ListOrdered, FileType } from "lucide-react";
 import { cn } from "../../../../lib/utils";
 
 type PreviewToolbarProps = {
@@ -7,7 +7,6 @@ type PreviewToolbarProps = {
   onTemplate: () => void;
   onTheme: () => void;
   onLayout: () => void;
-  onPdf: () => void;
   onWord: () => void;
   exporting?: boolean;
   className?: string;
@@ -19,7 +18,6 @@ export function PreviewToolbar({
   onTemplate,
   onTheme,
   onLayout,
-  onPdf,
   onWord,
   exporting,
   className,
@@ -37,7 +35,6 @@ export function PreviewToolbar({
       <ToolbarBtn icon={Palette} label="Theme" onClick={onTheme} />
       <ToolbarBtn icon={ListOrdered} label="Layout" onClick={onLayout} />
       <div className="w-px h-6 bg-border mx-1" />
-      <ToolbarBtn icon={FileDown} label="PDF" onClick={onPdf} disabled={exporting} />
       <ToolbarBtn icon={FileType} label="Word" onClick={onWord} disabled={exporting} primary />
     </div>
   );

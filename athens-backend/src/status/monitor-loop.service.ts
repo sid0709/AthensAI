@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { BackgroundTasksService } from '../background-tasks/background-tasks.service';
 import { BACKGROUND_TASK_STATUSES } from '../background-tasks/constants/task-types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -52,7 +57,9 @@ export class MonitorLoopService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     if (!isMonitoringEnabled()) {
-      this.logger.log('Production monitoring loop is disabled in this environment');
+      this.logger.log(
+        'Production monitoring loop is disabled in this environment',
+      );
       return;
     }
     void this.tick();
@@ -176,18 +183,15 @@ export class MonitorLoopService implements OnModuleInit, OnModuleDestroy {
         ? Math.max(0, (now.getTime() - oldest.getTime()) / 1000)
         : 0;
       const expiredLeaseCount = running.filter(
-        (row) => row.leaseExpiresAt && row.leaseExpiresAt.getTime() < now.getTime(),
+        (row) =>
+          row.leaseExpiresAt && row.leaseExpiresAt.getTime() < now.getTime(),
       ).length;
       setGauge(
         'athens_background_queue_oldest_age_seconds',
         {},
         oldestQueueAgeSeconds,
       );
-      setGauge(
-        'athens_background_expired_lease_count',
-        {},
-        expiredLeaseCount,
-      );
+      setGauge('athens_background_expired_lease_count', {}, expiredLeaseCount);
       if (expiredLeaseCount > 0) {
         throw new Error(
           `${expiredLeaseCount} running task lease(s) have expired`,

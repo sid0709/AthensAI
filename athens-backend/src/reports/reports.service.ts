@@ -17,11 +17,7 @@ export class ReportsService {
   ) {
     const [postingsBySource, statusBySource] = await Promise.all([
       this.postings.postingsBySource(startDate, endDate),
-      this.applications.statusCountsBySource(
-        applierName,
-        startDate,
-        endDate,
-      ),
+      this.applications.statusCountsBySource(applierName, startDate, endDate),
     ]);
     const data = this.postings.mergeSourceSummary(
       postingsBySource,

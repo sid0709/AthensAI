@@ -53,9 +53,7 @@ export function serializeBidAiUsageRow(
       : null;
   const u = nested ?? doc;
 
-  const inputTokens = num(
-    u.inputTokens ?? u.promptTokens ?? u.prompt_tokens,
-  );
+  const inputTokens = num(u.inputTokens ?? u.promptTokens ?? u.prompt_tokens);
   const cachedInputTokens = num(
     u.cachedInputTokens ?? u.cachedTokens ?? u.cached_tokens,
   );
@@ -71,19 +69,14 @@ export function serializeBidAiUsageRow(
 
   return {
     id: idOf(doc, fallbackId),
-    requestId:
-      text(doc.requestId ?? u.requestId, 200) ??
-      text(fallbackId, 200),
+    requestId: text(doc.requestId ?? u.requestId, 200) ?? text(fallbackId, 200),
     feature: text(doc.feature, 120),
     provider: text(doc.provider ?? u.provider, 80),
     requestedModel: text(
       doc.requestedModel ?? u.requestedModel ?? u.model,
       200,
     ),
-    billedModel: text(
-      doc.billedModel ?? u.billedModel ?? u.model,
-      200,
-    ),
+    billedModel: text(doc.billedModel ?? u.billedModel ?? u.model, 200),
     inputTokens,
     cachedInputTokens,
     outputTokens,
@@ -121,7 +114,7 @@ export function rowFromVendorEmbeddedUsage(input: {
       applierName: input.applierName,
       jobId: input.jobId,
       createdAt: input.at ?? null,
-      usage: input.usage as Record<string, unknown>,
+      usage: input.usage,
     },
     input.id,
   );
