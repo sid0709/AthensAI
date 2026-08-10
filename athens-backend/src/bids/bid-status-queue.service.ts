@@ -5,6 +5,7 @@ import {
   deleteManyWithFallback,
   rawInsertOne,
   rawUpdateMany,
+  isInconsistentDateTime,
   repairStringDateFields,
   withReplicaSetFallback,
 } from '../prisma/mongo-standalone';
@@ -260,11 +261,4 @@ export class BidStatusQueueService {
       });
     }
   }
-}
-
-function isInconsistentDateTime(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /Failed to convert .+ to 'DateTime'|Inconsistent column data/i.test(
-    message,
-  );
 }

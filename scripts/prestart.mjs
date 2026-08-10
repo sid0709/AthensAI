@@ -28,13 +28,27 @@ if (String(process.env.FIREBASE_PROJECT_ID || '').trim()) {
 	console.warn('[prestart] FIREBASE_PROJECT_ID unset — Firebase explorer / Storage features will fail.');
 }
 
-const prisma = spawnSync('npm', ['run', 'prisma:generate', '--prefix', 'athens-backend'], {
+const prismaGenerate = spawnSync(
+	'npm',
+	['run', 'prisma:generate', '--prefix', 'athens-backend'],
+	{
+		stdio: 'inherit',
+		cwd: ROOT,
+	},
+);
+if (prismaGenerate.status !== 0) {
+	console.error('[prestart] prisma generate failed');
+	process.exit(prismaGenerate.status ?? 1);
+}
+
+// Keep local Mongo indexes in sync with schema.prisma (same as VPS entrypoint).
+const prismaPush = spawnSync('npm', ['run', 'prisma:push', '--prefix', 'athens-backend'], {
 	stdio: 'inherit',
 	cwd: ROOT,
 });
-if (prisma.status !== 0) {
-	console.error('[prestart] prisma generate failed');
-	process.exit(prisma.status ?? 1);
+if (prismaPush.status !== 0) {
+	console.error('[prestart] prisma db push failed');
+	process.exit(prismaPush.status ?? 1);
 }
 
 console.log('[prestart] Bootstrap complete.');
