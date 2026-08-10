@@ -12,6 +12,7 @@ import {
   TITLE_REVIEW_PROCESSING_STATES,
 } from './constants/job-pipeline.constants';
 import { normalizeJobIds } from './lib/normalize-job-ids';
+import { resolveCatalogSource } from './lib/resolve-catalog-source';
 
 export type ApproveTitleReviewResult = {
   success: true;
@@ -47,6 +48,7 @@ export class TitleReviewApproveService {
         title: true,
         titleReviewLabel: true,
         aiSkillStatus: true,
+        applyLink: true,
         metadata: true,
       },
     });
@@ -77,6 +79,7 @@ export class TitleReviewApproveService {
 
     const setFields = {
       titleReviewLabel: JOB_TITLE_REVIEW_LABELS.APPROVED,
+      source: resolveCatalogSource(row.applyLink),
       metadata: asInputJson(meta),
       updatedAt: { $date: new Date().toISOString() },
       // Ensure claimable for AI Analyze when skill status was never set.
