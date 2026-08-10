@@ -222,10 +222,19 @@ export function buildDateFolders(results: BidResult[]): DateFolder[] {
 }
 
 export function formatDuration(sec: number | null): string {
-  if (sec == null) return "—";
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+  if (sec == null || !Number.isFinite(sec)) return "—";
+  const total = Math.max(0, sec);
+  let m = Math.floor(total / 60);
+  // Cap fractional seconds at 2 decimals (avg bid time is often non-integer).
+  let s = Math.round((total % 60) * 100) / 100;
+  if (s >= 60) {
+    m += 1;
+    s = 0;
+  }
+  const sStr = Number.isInteger(s)
+    ? String(s).padStart(2, "0")
+    : s.toFixed(2).padStart(5, "0");
+  return `${m}:${sStr}`;
 }
 
 export function formatWhen(iso: string | null): string {
