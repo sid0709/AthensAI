@@ -119,6 +119,11 @@ function mergeGenerationStep(
     kind: String(event.kind || previous?.kind || ""),
     status: previous?.status === "done" ? "done" : status,
     ...(event.usage ? { usage: event.usage as UsageBreakdown } : previous?.usage ? { usage: previous.usage } : {}),
+    ...("output" in event
+      ? { output: event.output }
+      : previous && "output" in previous
+        ? { output: previous.output }
+        : {}),
   };
   const steps = [...base.steps.filter((step) => step.index !== index), nextStep]
     .sort((left, right) => left.index - right.index);
@@ -138,6 +143,30 @@ function plannedGenerationSteps(plan: Array<Pick<GenStep, "name" | "purpose" | "
     kind: step.kind,
     status: "pending",
   }));
+}
+
+/** Mark checklist steps done and attach per-step model outputs when available. */
+function hydrateGenProgressSteps(
+  plan: Array<Pick<GenStep, "name" | "purpose" | "kind">>,
+  current: GenProgressStep[] | undefined,
+  perStep: unknown,
+): GenProgressStep[] {
+  const base = (current?.length ? current : plannedGenerationSteps(plan)).map((step) => ({
+    ...step,
+    status: "done" as const,
+  }));
+  if (!Array.isArray(perStep) || !perStep.length) return base;
+  let next: GenProgress = { steps: base, cumulative: null, done: true };
+  for (const entry of perStep) {
+    if (!entry || typeof entry !== "object") continue;
+    const event = entry as Record<string, unknown>;
+    next = mergeGenerationStep(next, {
+      ...event,
+      phase: String(event.phase || "step-done"),
+      status: "done",
+    });
+  }
+  return next.steps.map((step) => ({ ...step, status: "done" as const }));
 }
 
 export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
@@ -282,10 +311,16 @@ export function useGeneratorPage() {
         })
         .filter(Boolean)
         .join("\n"),
+      source_resume: identity ? JSON.stringify(identity, null, 2) : "",
     };
+    map.work_experience = map.career;
     careers.forEach((c, i) => {
       map[`company${i + 1}`] = formatCompanyToken(c);
     });
+    // Preview chips for draft tokens stay empty until a prior step exists.
+    for (const purpose of ["summary", "skills", "experience", "education", "projects"] as const) {
+      map[`draft_${purpose}`] = "";
+    }
     return map;
   })();
   const setTheme = (patch: Partial<ResumeTheme>) => setConfig((c) => ({ ...c, theme: { ...c.theme, ...patch } }));
@@ -854,20 +889,26 @@ export function useGeneratorPage() {
       systemInstruction: config.systemInstruction,
       jobDescription: config.jobDescription,
       steps: plan,
-      coverage: config.coverage.enabled && coverageIsCurrent && coverageAnalysis
-        ? { analysis: coverageAnalysis, decisions: coverageDecisions, settings: config.coverage }
-        : null,
+      coverage: null,
     }),
     [
       applier?._id,
       applier?.name,
-      config,
-      coverageAnalysis,
-      coverageDecisions,
-      coverageIsCurrent,
+      config.dynamicCareerTitles,
+      config.jobDescription,
+      config.layout,
+      config.model,
+      config.provider,
+      config.reasoningEffort,
+      config.systemInstruction,
+      config.templateId,
+      config.theme,
       identity,
       plan,
-      template,
+      template.columns,
+      template.heading,
+      template.headingAlign,
+      template.sidebar,
     ],
   );
 
@@ -960,7 +1001,12 @@ export function useGeneratorPage() {
 				if (shouldReadTerminal) {
 					setGenerating(false);
 					setGenProgress((current) => ({
-						steps: current?.steps ?? [],
+						steps: hydrateGenProgressSteps(
+							plan,
+							current?.steps,
+							(stored.result as { perStep?: unknown } | null)?.perStep
+								?? item?.generationSteps,
+						),
 						cumulative: (stored.result?.usage as UsageBreakdown) ?? current?.cumulative ?? null,
 						done: true,
 						message: terminalFailureMessage,
@@ -1086,29 +1132,6 @@ export function useGeneratorPage() {
     }
 
     let generationPayload = requestPayload;
-    if (config.coverage.enabled) {
-      const analysis = coverageIsCurrent && coverageAnalysis
-        ? coverageAnalysis
-        : await runCoverageAnalysis();
-      if (!analysis) return false;
-      const decisions: Record<string, CoverageDecision> = {
-        ...defaultCoverageDecisions(analysis, config.coverage.experienceRequirementThreshold),
-        ...(coverageIsCurrent ? coverageDecisions : {}),
-      };
-      const unresolved = analysis.skills.filter((skill) => !decisions[skill.id]);
-      if (unresolved.length) {
-        notify({
-          title: "Confirm unverified skills",
-          description: `${unresolved.length} JD skill${unresolved.length === 1 ? " needs" : "s need"} a quick Used, Familiar, or Not used decision.`,
-          tone: "warning",
-        });
-        return false;
-      }
-      generationPayload = {
-        ...requestPayload,
-        coverage: { analysis, decisions, settings: config.coverage },
-      };
-    }
     setGenerating(true);
     setUsage(null);
     setGenerated(null);
@@ -1137,8 +1160,14 @@ export function useGeneratorPage() {
       const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
       setUsage(nextUsage);
       setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
+      const terminalItem = terminal.progress?.items?.[queued.inputId];
       setGenProgress((current) => ({
-        steps: current?.steps ?? [],
+        steps: hydrateGenProgressSteps(
+          plan,
+          current?.steps,
+          (stored.result as { perStep?: unknown }).perStep
+            ?? terminalItem?.generationSteps,
+        ),
         cumulative: nextUsage,
         done: true,
         message: null,

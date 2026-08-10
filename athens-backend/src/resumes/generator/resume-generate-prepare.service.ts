@@ -3,7 +3,6 @@ import { ProfileLlmAuthService } from '../../ai/auth/profile-llm-auth.service';
 import { AccountInfoService } from '../../auth/account-info.service';
 import { PURPOSE_SET } from './constants/generator.constants';
 import { cleanString } from './lib/clean-string';
-import { normalizeResumeCoverageContract } from './lib/coverage-contract';
 
 export type PrepareGenerationOk = {
   ok: true;
@@ -13,7 +12,8 @@ export type PrepareGenerationOk = {
   steps: Record<string, unknown>[];
   isBeta: boolean;
   dynamicCareerTitles: boolean;
-  coverageContract: ReturnType<typeof normalizeResumeCoverageContract>;
+  /** Skill Coverage is no longer applied to generation. */
+  coverageContract: null;
   profileId: string;
   applierName: string;
 };
@@ -68,16 +68,6 @@ export class ResumeGeneratePrepareService {
       };
     }
 
-    const coverageContract = normalizeResumeCoverageContract(body.coverage);
-    if (coverageContract?.unresolved?.length) {
-      const n = coverageContract.unresolved.length;
-      return {
-        ok: false,
-        status: 409,
-        error: `Review ${n} unresolved resume skill${n === 1 ? '' : 's'} before generation.`,
-      };
-    }
-
     const account = await this.accounts.findByName(auth.applierName);
     const isBeta =
       String(account?.tier ?? '')
@@ -92,7 +82,7 @@ export class ResumeGeneratePrepareService {
       steps,
       isBeta,
       dynamicCareerTitles: body.dynamicCareerTitles === true,
-      coverageContract,
+      coverageContract: null,
       profileId: auth.profileId,
       applierName: auth.applierName,
     };

@@ -158,7 +158,7 @@ export function defaultGeneratorConfig() {
     systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
     steps: STEP_PURPOSES.map((p) => finalStep(p)),
     coverage: {
-      enabled: true,
+      enabled: false,
       experienceRequirementThreshold: 4,
       aliases: {} as Record<string, string[]>,
     },

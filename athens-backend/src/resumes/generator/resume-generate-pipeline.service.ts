@@ -2,17 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { AiChatWithUsageService } from '../../ai-usage/ai-chat-with-usage.service';
 import type { ChatMessage } from '../../ai/openai/openai.types';
 import { PURPOSE_SET } from './constants/generator.constants';
+import { applyPromptTokens } from './lib/apply-prompt-tokens';
 import { cleanString } from './lib/clean-string';
-import {
-  normalizeSkillsSectionToContract,
-  resumeCoveragePrompt,
-} from './lib/coverage-contract';
 import {
   buildContextBlock,
   optionalCareerDetailsPrompt,
 } from './lib/generation-context';
 import { parseJsonLoose } from './lib/parse-json-loose';
-import { buildTokenMap, resolveResumePromptSkills } from './lib/token-map';
+import { buildTokenMap, formatDraftToken, resolveResumePromptSkills } from './lib/token-map';
 import {
   appendExperienceTitlePolicy,
   applyTitlePolicyToSections,
@@ -64,23 +61,23 @@ export class ResumeGeneratePipelineService {
     throwIfAborted();
 
     const identity = opts.identity ?? {};
-    const coverageContract = prep.coverageContract;
-    const tokenMap = {
+    const baseTokenMap = {
       ...buildTokenMap(
         identity,
         opts.jobDescription,
-        resolveResumePromptSkills(opts.jobSkills, coverageContract),
+        resolveResumePromptSkills(opts.jobSkills, null),
       ),
       source_resume: JSON.stringify(identity, null, 2),
     };
-    const applyTokens = (text: unknown) => applyPromptTokens(text, tokenMap);
 
     const dynamicTitles = Boolean(prep.dynamicCareerTitles);
     const careers = sourceCareers(identity);
     const systemContent = [
-      applyTokens(opts.systemInstruction || 'You are an expert resume writer.'),
+      applyPromptTokens(
+        opts.systemInstruction || 'You are an expert resume writer.',
+        baseTokenMap,
+      ),
       buildContextBlock(identity),
-      resumeCoveragePrompt(coverageContract),
       optionalCareerDetailsPrompt(identity),
     ]
       .filter(Boolean)
@@ -95,22 +92,13 @@ export class ResumeGeneratePipelineService {
       const index = offset + 1;
       const isFinal = step.kind === 'final';
       const name = cleanString(step.name) || `Step ${index}`;
-      let userContent = applyTokens(step.prompt || '');
-      if (isFinal && step.purpose === 'experience') {
-        userContent = appendExperienceTitlePolicy(userContent, {
-          dynamicCareerTitles: dynamicTitles,
-          jobDescription: opts.jobDescription,
-          careers,
-        });
-      }
-      if (isFinal && step.schema) {
-        userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${
-          typeof step.schema === 'string'
-            ? step.schema
-            : JSON.stringify(step.schema)
-        }`;
-      }
-      return { step, index, isFinal, name, userContent };
+      return {
+        step,
+        index,
+        isFinal,
+        name,
+        promptTemplate: String(step.prompt || ''),
+      };
     });
 
     const seriesByPurpose = new Map<string, typeof preparedSteps>();
@@ -124,9 +112,30 @@ export class ResumeGeneratePipelineService {
 
     const runPurposeSeries = async (purposeSteps: typeof preparedSteps) => {
       let priorMessages: ChatMessage[] = [];
+      let priorDraft: unknown = '';
       for (const prepared of purposeSteps) {
         throwIfAborted();
-        const { step, index, isFinal, name, userContent } = prepared;
+        const { step, index, isFinal, name, promptTemplate } = prepared;
+        const purpose = cleanString(step.purpose) || `step-${index}`;
+        const tokenMap: Record<string, string> = {
+          ...baseTokenMap,
+          [`draft_${purpose}`]: formatDraftToken(priorDraft),
+        };
+        let userContent = applyPromptTokens(promptTemplate, tokenMap);
+        if (isFinal && step.purpose === 'experience') {
+          userContent = appendExperienceTitlePolicy(userContent, {
+            dynamicCareerTitles: dynamicTitles,
+            jobDescription: opts.jobDescription,
+            careers,
+          });
+        }
+        if (isFinal && step.schema) {
+          userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${
+            typeof step.schema === 'string'
+              ? step.schema
+              : JSON.stringify(step.schema)
+          }`;
+        }
         onStep?.({
           phase: 'step-start',
           index,
@@ -179,12 +188,6 @@ export class ResumeGeneratePipelineService {
                 dynamicTitles,
               )?.experience;
             }
-            if (step.purpose === 'skills') {
-              output = normalizeSkillsSectionToContract(
-                output,
-                coverageContract,
-              );
-            }
           } catch (err) {
             if (Number.isInteger((err as { status?: number })?.status))
               throw err;
@@ -199,6 +202,8 @@ export class ResumeGeneratePipelineService {
             sections[String(step.purpose)] = output;
           }
         }
+
+        priorDraft = output;
 
         const stepUsage = usageWithCost(stepUsageRaw);
         usage = addUsage(usage, stepUsage);
@@ -234,33 +239,9 @@ export class ResumeGeneratePipelineService {
       sections,
       perStep,
       usage,
-      coverageContract: coverageContract ?? null,
+      coverageContract: null,
       isBeta: Boolean(prep.isBeta),
       dynamicCareerTitles: dynamicTitles,
     };
   }
-}
-
-function applyPromptTokens(
-  text: unknown,
-  tokenMap: Record<string, string>,
-): string {
-  const unresolved = new Set<string>();
-  const resolved = cleanString(text).replace(/\{[a-z0-9_]+\}/gi, (match) => {
-    const key = match.slice(1, -1).toLowerCase();
-    if (Object.prototype.hasOwnProperty.call(tokenMap, key)) {
-      return tokenMap[key];
-    }
-    unresolved.add(match);
-    return match;
-  });
-  if (unresolved.size) {
-    throw Object.assign(
-      new Error(
-        `Unresolved prompt token${unresolved.size === 1 ? '' : 's'}: ${[...unresolved].join(', ')}.`,
-      ),
-      { status: 400 },
-    );
-  }
-  return resolved;
 }

@@ -97,10 +97,31 @@ export class ResumeGenerateWorkerService {
           inputId,
           signal,
           (step) => {
+            const previous =
+              items[inputId] && typeof items[inputId] === 'object'
+                ? (items[inputId] as Record<string, unknown>)
+                : {};
+            const priorSteps = Array.isArray(previous.generationSteps)
+              ? [...(previous.generationSteps as unknown[])]
+              : [];
+            const stepEvent =
+              step.stepEvent && typeof step.stepEvent === 'object'
+                ? (step.stepEvent as Record<string, unknown>)
+                : null;
+            if (stepEvent) {
+              const idx = Number(stepEvent.index);
+              const without = priorSteps.filter((entry) => {
+                if (!entry || typeof entry !== 'object') return true;
+                return Number((entry as { index?: unknown }).index) !== idx;
+              });
+              priorSteps.splice(0, priorSteps.length, ...without, stepEvent);
+            }
             items[inputId] = {
-              ...(items[inputId] || {}),
+              ...previous,
               status: 'running',
               ...step,
+              generationSteps: priorSteps,
+              stepRevision: Number(previous.stepRevision || 0) + 1,
             };
             void report();
           },
@@ -113,6 +134,15 @@ export class ResumeGenerateWorkerService {
           generationId: result.generationId || null,
           resultRecordId: inputId,
           recovered: result.recovered === true,
+          generationSteps: Array.isArray(
+            (items[inputId] as { generationSteps?: unknown })?.generationSteps,
+          )
+            ? (items[inputId] as { generationSteps: unknown[] }).generationSteps
+            : [],
+          stepRevision:
+            Number(
+              (items[inputId] as { stepRevision?: unknown })?.stepRevision || 0,
+            ) + 1,
         };
       } catch (err) {
         if (isAbortError(err) || signal.aborted) {

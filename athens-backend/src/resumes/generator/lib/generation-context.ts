@@ -17,8 +17,8 @@ export function optionalCareerDetailsPrompt(
   return `OPTIONAL CAREER DETAILS — ${missing.length} career description${
     missing.length === 1 ? ' is' : 's are'
   } blank.
-Career descriptions are optional and blank descriptions must not produce empty Experience roles. Treat Skill Coverage terms marked Used as explicitly confirmed candidate experience. Distribute those confirmed terms conservatively among suitable roles based on title and chronology, and write non-quantified bullets describing their technical function and practical purpose from the job description.
-Use each candidate-confirmed term in at most one suitable blank role unless separate role evidence is supplied. Keep a blank role to one or two conservative bullets and do not invent employer-specific facts, metrics, achievements, project names, internal systems, team size, ownership, or technologies outside the confirmed Used set.`;
+Career descriptions are optional and blank descriptions must not produce empty Experience roles. Infer credible, non-quantified bullets from role titles, chronology, and the job description only where needed to keep every role substantive.
+Keep blank roles to one or two conservative bullets and do not invent employer-specific facts, metrics, achievements, project names, internal systems, team size, or ownership.`;
 }
 
 /** Stable candidate profile block for prompt-cache friendly system content. */

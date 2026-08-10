@@ -6,7 +6,7 @@ import {
 import { cleanString } from './clean-string';
 
 export const DEFAULT_COVERAGE_SETTINGS = Object.freeze({
-  enabled: true,
+  enabled: false,
   experienceRequirementThreshold: 4,
   aliases: {},
 });
@@ -33,7 +33,7 @@ export function normalizeCoverageSettings(value: unknown) {
       ? (value as Record<string, unknown>)
       : {};
   return {
-    enabled: true,
+    enabled: false,
     experienceRequirementThreshold: 4,
     aliases: normalizeAliases(raw.aliases),
   };

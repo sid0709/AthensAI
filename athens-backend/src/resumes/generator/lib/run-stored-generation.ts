@@ -141,6 +141,7 @@ export async function runStoredResumeGeneration(
       provider: prep.providerId,
       model: prep.model,
       sections: finalized.sections,
+      perStep: generated.perStep,
       usage: finalized.usage,
       skillProfile: finalized.skillProfile,
       techStack: finalized.techStack,

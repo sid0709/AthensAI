@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Circle,
   Coins,
+  Copy,
   Eye,
   FileText,
   LayoutTemplate,
@@ -14,10 +15,10 @@ import {
   Palette,
   Plus,
   RefreshCw,
-  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { Field, Dropdown } from "../adapters/ui";
+import { useNotify } from "../adapters/notify";
 import { Checkbox } from "@/app/components/ui/checkbox";
 import {
   Sheet,
@@ -26,19 +27,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/app/components/ui/sheet";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
 import { DesignModal } from "../components/design-modal";
 import { SectionLayoutPanel, TemplatePanel, ThemePanel } from "../components/document-design-panels";
 import { PreviewToolbar, type DesignPanel } from "../components/preview-toolbar";
 import { SectionTitle } from "../components/editor-ui";
 import { JobRefField } from "../components/job-ref-field";
-import { StepCard } from "../components/step-card";
+import { allStepsPromptMarkdown, StepCard } from "../components/step-card";
 import { ResumePreview } from "../preview/resume-preview";
 import { UploadedTemplatePreview } from "../preview/uploaded-template-preview";
 import { PAGE } from "../preview/utils";
@@ -46,29 +40,14 @@ import { JOB_DESC_TOKEN } from "../constants/tokens";
 import { FALLBACK_MODELS, PROVIDER_OPTIONS, REASONING_OPTIONS } from "../constants/defaults";
 import { areaCls, cardCls, inputCls } from "../styles";
 import { fmtCost, fmtTokens, stepOutputText } from "../utils/format";
-import { defaultCoverageDecision } from "../utils/coverage";
 import { resolvePromptTokens } from "../utils/prompt-tokens";
 import { usageTokenLabels } from "../../../../lib/runUsage";
 import type { GeneratorPageVm } from "../hooks/use-generator-page";
-import type { CoverageDecision, ProviderId, Purpose, ReasoningEffort } from "../types";
+import type { ProviderId, Purpose, ReasoningEffort } from "../types";
 import { PURPOSES, SECTION_LABEL } from "../types";
 
-const COVERAGE_CHIP: Record<CoverageDecision, { label: string; className: string }> = {
-  used: {
-    label: "Used",
-    className: "border-sky-300 bg-sky-100 text-sky-700 hover:bg-sky-200 dark:border-sky-400/30 dark:bg-sky-500/15 dark:text-sky-200 dark:hover:bg-sky-500/25",
-  },
-  familiar: {
-    label: "Familiar only",
-    className: "border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:border-emerald-400/30 dark:bg-emerald-500/15 dark:text-emerald-200 dark:hover:bg-emerald-500/25",
-  },
-  exclude: {
-    label: "Not used",
-    className: "border-rose-300 bg-rose-100 text-rose-700 hover:bg-rose-200 dark:border-rose-400/30 dark:bg-rose-500/15 dark:text-rose-200 dark:hover:bg-rose-500/25",
-  },
-};
-
 export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
+  const { notify } = useNotify();
   const {
     applier,
     config,
@@ -81,7 +60,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     identity,
     generated,
     generating,
-    analyzingCoverage,
     genProgress,
     usage,
     validation,
@@ -120,12 +98,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     exportResume,
     handleDownloadLog,
     handlePreviewEdit,
-    coverageAnalysis,
-    coverageDecisions,
     generationError,
-    coverageIsCurrent,
-    setCoverageDecision,
-    runCoverageAnalysis,
     configHydrated,
   } = vm;
 
@@ -244,23 +217,11 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               {[
                 { label: "Career profile", ready: Boolean(identity), running: false, detail: identity ? `${identity.careers.length} roles loaded` : "Waiting for profile" },
                 { label: "Resume config", ready: configHydrated, running: false, detail: configHydrated ? "v4 loaded & autosaved" : "Loading saved config" },
-                {
-                  label: "JD skill ledger",
-                  ready: coverageIsCurrent,
-                  running: analyzingCoverage,
-                  detail: analyzingCoverage
-                    ? "Analyzing before generation…"
-                    : coverageIsCurrent
-                      ? `${coverageAnalysis?.skills.length ?? 0} skills mapped`
-                      : "Runs automatically before generation",
-                },
               ].map((item) => (
                 <div key={item.label} className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
                   <div className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-white/75">
                     {item.running
                       ? <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-500" />
-                      : item.failed
-                        ? <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
                       : item.ready
                         ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
                         : <Circle className="h-3.5 w-3.5 text-neutral-300 dark:text-white/20" />}
@@ -271,7 +232,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               ))}
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
-              Paste a job description and choose Generate. Athens analyzes missing or stale Skill Coverage, uses it to guide the configured prompts, and saves each final generated section.
+              Paste a job description and choose Generate. Athens runs your configured prompts for Summary, Skills, and Experience in parallel and saves each final section.
             </p>
           </div>
 
@@ -358,9 +319,19 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                 {genProgress.steps.map((s) => {
                   const open = previewStep === s.index;
                   const hasOutput = s.status === "done" && s.output != null;
+                  const canPreview = s.status === "done";
                   return (
                     <li key={s.index} className="rounded-lg border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-white/[0.03] px-3 py-2">
-                      <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={!canPreview}
+                        onClick={() => {
+                          if (!canPreview) return;
+                          setPreviewStep(open ? null : s.index);
+                        }}
+                        className={`flex w-full items-center gap-2 text-left ${canPreview ? "cursor-pointer" : "cursor-default"}`}
+                        title={canPreview ? (open ? "Hide step output" : "Preview this step's output") : undefined}
+                      >
                         <span className="shrink-0">
                           {s.status === "done" ? (
                             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
@@ -381,21 +352,16 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                             {fmtTokens(s.usage.totalTokens)} tok · {fmtCost(s.usage.cost)}
                           </span>
                         )}
-                        {hasOutput && (
-                          <button
-                            type="button"
-                            onClick={() => setPreviewStep(open ? null : s.index)}
-                            title="View this step's raw output"
-                            className="shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-neutral-200 dark:border-white/10 hover:bg-neutral-100 dark:hover:bg-white/5"
-                          >
+                        {canPreview && (
+                          <span className="shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-neutral-200 dark:border-white/10 text-neutral-500 dark:text-white/50">
                             <Eye className="w-3 h-3" />
-                            {open ? "hide" : "view"}
-                          </button>
+                            {open ? "hide" : hasOutput ? "view" : "done"}
+                          </span>
                         )}
-                      </div>
-                      {open && hasOutput && (
+                      </button>
+                      {open && (
                         <pre className="mt-2 max-h-72 overflow-auto rounded-md bg-neutral-950 text-neutral-100 text-[10.5px] leading-snug p-2.5 whitespace-pre-wrap">
-                          {stepOutputText(s.output)}
+                          {hasOutput ? stepOutputText(s.output) : "No model output was stored for this step."}
                         </pre>
                       )}
                     </li>
@@ -481,77 +447,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
             </label>
           </div>
 
-          <div className={cardCls}>
-            <SectionTitle icon={ShieldCheck}>
-              Skill coverage
-            </SectionTitle>
-
-            {analyzingCoverage ? (
-              <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-xs text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200">
-                <Loader2 className="h-4 w-4 animate-spin" /> Extracting named JD skills and checking profile evidence…
-              </div>
-            ) : !coverageIsCurrent ? (
-              <div className="rounded-xl border border-dashed border-neutral-300 p-4 text-center dark:border-white/15">
-                <p className="text-xs text-neutral-500 dark:text-white/50">
-                  Skill extraction starts automatically when you generate. You can also analyze now.
-                </p>
-                <button
-                  type="button"
-                  disabled={!config.jobDescription.trim() || !applier?.name}
-                  onClick={() => void runCoverageAnalysis()}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-1.5 text-xs hover:bg-neutral-100 disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
-                >
-                  <Sparkles className="h-3.5 w-3.5" /> Analyze JD skills
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-neutral-500 dark:text-white/45">
-                  <span>Profile-evidenced skills default to Used; inferred and unsupported terms to Familiar. Priority 4+ Used JD skills are required in Experience.</span>
-                  <button type="button" onClick={() => void runCoverageAnalysis()} className="ml-auto text-sky-600 hover:underline dark:text-sky-300">
-                    Reanalyze
-                  </button>
-                </div>
-
-                <div className="flex flex-wrap gap-1.5">
-                  {(coverageAnalysis?.skills ?? []).map((skill) => {
-                    const decision = coverageDecisions[skill.id]
-                      ?? defaultCoverageDecision(skill, config.coverage.experienceRequirementThreshold);
-                    const chip = COVERAGE_CHIP[decision];
-                    return (
-                      <DropdownMenu key={skill.id}>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10.5px] font-medium transition ${chip.className}`}
-                            aria-label={`${skill.name}: ${chip.label}. Click to choose a status.`}
-                            title={`${skill.name} — ${chip.label} — ${skill.origin} · ${skill.confidence} · priority ${skill.requirement}/5. ${skill.sourceText}`}
-                          >
-                            {skill.name}
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="min-w-36">
-                          <DropdownMenuRadioGroup
-                            value={decision}
-                            onValueChange={(value) => setCoverageDecision(skill.id, value as CoverageDecision)}
-                          >
-                            {(Object.entries(COVERAGE_CHIP) as Array<[CoverageDecision, (typeof COVERAGE_CHIP)[CoverageDecision]]>)
-                              .map(([value, option]) => (
-                                <DropdownMenuRadioItem key={value} value={value}>
-                                  {option.label}
-                                </DropdownMenuRadioItem>
-                              ))}
-                          </DropdownMenuRadioGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    );
-                  })}
-                </div>
-
-              </div>
-            )}
-          </div>
-
           <details className={cardCls}>
             <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium tracking-tight">
               <ListChecks className="h-4 w-4 text-sky-500" />
@@ -562,9 +457,32 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               <ChevronDown className="h-4 w-4 text-neutral-400" />
             </summary>
             <div className="mt-4 border-t border-neutral-200 pt-4 dark:border-white/10">
-              <p className="mb-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
-                Experience, Skills, and Summary run in parallel. Within each section, steps remain sequential and later steps see every earlier prompt and response.
-              </p>
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <p className="text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
+                  Experience, Skills, and Summary run in parallel. Within each section, steps remain sequential and later steps see every earlier prompt and response.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await navigator.clipboard.writeText(allStepsPromptMarkdown(steps));
+                        notify({
+                          title: "All prompts copied",
+                          description: `${steps.length} step${steps.length === 1 ? "" : "s"} as markdown.`,
+                          tone: "success",
+                        });
+                      } catch {
+                        notify({ title: "Copy failed", description: "Could not write to the clipboard.", tone: "error" });
+                      }
+                    })();
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-medium text-neutral-700 hover:bg-neutral-100 dark:border-white/10 dark:text-white/80 dark:hover:bg-white/5"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy prompts as markdown
+                </button>
+              </div>
               <div className="flex flex-wrap gap-2 mb-3">
                 {PURPOSES.map((p) => (
                   <span
@@ -690,7 +608,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               System instruction
             </SheetTitle>
             <SheetDescription className="text-xs leading-relaxed">
-              Global truth, coverage, and writing rules. Changes save automatically with the résumé configuration.
+              Global writing rules for generation. Changes save automatically with the résumé configuration.
             </SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto p-5">
