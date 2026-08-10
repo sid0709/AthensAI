@@ -6,6 +6,11 @@
  * Usage:
  *   npm run backfill:job-source
  *   npm run backfill:job-source -- --dry-run
+ *   npm run backfill:job-source -- --linkedin-only
+ *   npm run backfill:job-source -- --linkedin-only --dry-run
+ *
+ * `--linkedin-only` limits to rows whose current `source` is LinkedIn
+ * (case-insensitive: `linkedin` / `LinkedIn`), matching mislabeled LI-scrapper ingest.
  */
 import 'dotenv/config';
 import { MongoClient } from 'mongodb';
@@ -29,23 +34,41 @@ function isDryRun(argv) {
   return argv.includes('--dry-run');
 }
 
+function isLinkedInOnly(argv) {
+  return argv.includes('--linkedin-only');
+}
+
+function isLinkedInSource(source) {
+  return String(source ?? '')
+    .trim()
+    .toLowerCase() === 'linkedin';
+}
+
 /**
  * @param {import('mongodb').Collection} collection
- * @param {{ urlField: string, label: string, dryRun: boolean }} opts
+ * @param {{ urlField: string, label: string, dryRun: boolean, linkedInOnly: boolean }} opts
  */
-async function cleanseCollection(collection, { urlField, label, dryRun }) {
+async function cleanseCollection(collection, { urlField, label, dryRun, linkedInOnly }) {
   const stats = {
     scanned: 0,
     unchanged: 0,
     updated: 0,
     missingUrl: 0,
+    skipped: 0,
     samples: /** @type {Array<{ id: string, from: string, to: string, url: string }>} */ ([]),
   };
 
-  const cursor = collection.find(
-    {},
-    { projection: { [urlField]: 1, source: 1 } },
-  );
+  const filter = linkedInOnly
+    ? {
+        $expr: {
+          $eq: [{ $toLower: { $ifNull: ['$source', ''] } }, 'linkedin'],
+        },
+      }
+    : {};
+
+  const cursor = collection.find(filter, {
+    projection: { [urlField]: 1, source: 1 },
+  });
 
   /** @type {import('mongodb').AnyBulkWriteOperation[]} */
   let ops = [];
@@ -69,6 +92,11 @@ async function cleanseCollection(collection, { urlField, label, dryRun }) {
 
   for await (const doc of cursor) {
     stats.scanned += 1;
+    if (linkedInOnly && !isLinkedInSource(doc.source)) {
+      stats.skipped += 1;
+      continue;
+    }
+
     const rawUrl = doc[urlField];
     const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
     if (!url) stats.missingUrl += 1;
@@ -112,6 +140,7 @@ async function cleanseCollection(collection, { urlField, label, dryRun }) {
 async function main() {
   const argv = process.argv.slice(2);
   const dryRun = isDryRun(argv);
+  const linkedInOnly = isLinkedInOnly(argv);
   const url = requireDbUrl();
   const client = new MongoClient(url);
   await client.connect();
@@ -119,7 +148,7 @@ async function main() {
 
   console.log(
     `[backfill:job-source] db=${db.databaseName} dryRun=${dryRun} ` +
-      `SOURCE_MAP_VERSION=${SOURCE_MAP_VERSION}`,
+      `linkedinOnly=${linkedInOnly} SOURCE_MAP_VERSION=${SOURCE_MAP_VERSION}`,
   );
 
   const t0 = Date.now();
@@ -134,11 +163,12 @@ async function main() {
       urlField,
       label: name,
       dryRun,
+      linkedInOnly,
     });
     console.log(
       `[backfill:job-source] ${name}: scanned=${stats.scanned} ` +
         `updated=${stats.updated} unchanged=${stats.unchanged} ` +
-        `missingUrl=${stats.missingUrl}`,
+        `missingUrl=${stats.missingUrl} skipped=${stats.skipped}`,
     );
     for (const sample of stats.samples) {
       console.log(

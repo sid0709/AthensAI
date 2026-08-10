@@ -110,6 +110,7 @@ export class AiAnalyzeProcessService {
         sessionId: input.sessionId,
         metadata: meta,
         aiSkills: parsed.skills,
+        applyLink: job.applyLink,
       });
       if (!ok) {
         stats.failed += 1;

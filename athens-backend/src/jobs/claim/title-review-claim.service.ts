@@ -6,6 +6,7 @@ import {
   JOB_TITLE_REVIEW_LABELS,
   TITLE_REVIEW_PROCESSING_STATES,
 } from '../constants/job-pipeline.constants';
+import { resolveCatalogSource } from '../lib/resolve-catalog-source';
 import {
   TEMP_JOBS_COLLECTION,
   asMetaObject,
@@ -36,6 +37,8 @@ export class TitleReviewClaimService {
           title: true,
           companyName: true,
           description: true,
+          applyLink: true,
+          source: true,
           metadata: true,
           titleReviewLabel: true,
           aiSkillStatus: true,
@@ -56,7 +59,7 @@ export class TitleReviewClaimService {
   }): Promise<boolean> {
     const row = await this.prisma.tempJob.findUnique({
       where: { id: input.id },
-      select: { metadata: true, title: true },
+      select: { metadata: true, title: true, applyLink: true },
     });
     if (!row || row.title !== input.title) return false;
     if (
@@ -77,6 +80,8 @@ export class TitleReviewClaimService {
       classifiedAt: new Date().toISOString(),
     };
 
+    const source = resolveCatalogSource(row.applyLink);
+
     const result = await this.prisma.$runCommandRaw({
       update: TEMP_JOBS_COLLECTION,
       updates: [
@@ -89,6 +94,7 @@ export class TitleReviewClaimService {
           u: {
             $set: {
               titleReviewLabel: input.label,
+              source,
               metadata: asInputJson(meta),
               updatedAt: { $date: new Date().toISOString() },
             },

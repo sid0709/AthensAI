@@ -7,6 +7,7 @@ import {
   JOB_SKILL_EXTRACT_OPEN_STATUSES,
   JOB_TITLE_REVIEW_LABELS,
 } from '../constants/job-pipeline.constants';
+import { resolveCatalogSource } from '../lib/resolve-catalog-source';
 import {
   TEMP_JOBS_COLLECTION,
   asMetaObject,
@@ -34,6 +35,8 @@ export class AiAnalyzeClaimService {
         title: true,
         companyName: true,
         description: true,
+        applyLink: true,
+        source: true,
         metadata: true,
         titleReviewLabel: true,
         aiSkillStatus: true,
@@ -57,7 +60,9 @@ export class AiAnalyzeClaimService {
     sessionId: string;
     metadata: Record<string, unknown>;
     aiSkills: unknown;
+    applyLink?: string | null;
   }): Promise<boolean> {
+    const source = resolveCatalogSource(input.applyLink);
     const result = await this.prisma.$runCommandRaw({
       update: TEMP_JOBS_COLLECTION,
       updates: [
@@ -70,6 +75,7 @@ export class AiAnalyzeClaimService {
           u: {
             $set: {
               aiSkillStatus: JOB_AI_SKILL_STATUSES.EXTRACTED,
+              source,
               aiSkills: input.aiSkills as Prisma.InputJsonValue,
               metadata: asInputJson(input.metadata),
               updatedAt: { $date: new Date().toISOString() },
