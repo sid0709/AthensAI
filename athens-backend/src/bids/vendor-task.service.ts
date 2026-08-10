@@ -1,7 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import type { Job, Prisma, VendorTask } from '@prisma/client';
-import { inferJobSource } from '../jobs/lib/infer-job-source';
-import { normalizeJobMetadata } from '../jobs/mappers/job-metadata.mapper';
 import {
   isInconsistentDateTime,
   isReplicaSetRequired,
@@ -12,6 +10,14 @@ import {
   withReplicaSetFallback,
 } from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  isBlankCompany,
+  isBlankTitle,
+  jobIdentitySnapshot,
+  mergeMissingJobIdentity,
+  needsJobIdentityBackfill,
+  resolveJobIdentity,
+} from './lib/job-identity-snapshot';
 import { serializeVendorTask } from './mappers/vendor-task.mapper';
 
 /** Must match `@@map("vendor_tasks")` on VendorTask in schema.prisma. */
@@ -181,18 +187,7 @@ export class VendorTaskService {
     bidReadyDate: Date;
   }): Promise<VendorTask> {
     const { applierName, job, bidReadyDate } = input;
-    const meta = normalizeJobMetadata(job.metadata) ?? {};
-    const location = meta.details?.location ?? '';
-    const workMode = meta.details?.remote ?? '';
-    const applyUrl = job.applyLink ?? null;
-    const snapshot = {
-      title: job.title || 'Untitled role',
-      company: job.companyName || '',
-      applyUrl,
-      source: job.source || inferJobSource(applyUrl),
-      location,
-      workMode,
-    };
+    const snapshot = jobIdentitySnapshot(job);
 
     const existing = await this.findByApplierJob(applierName, job.id);
     if (existing) {
@@ -220,12 +215,20 @@ export class VendorTaskService {
     opts?: { incRejectCount?: boolean; incResubmitCount?: boolean },
   ): Promise<VendorTask> {
     const existing = await this.findByApplierJob(applierName, jobId);
+    const needsIdentity = existing
+      ? needsJobIdentityBackfill(existing) ||
+        (!existing.bidReadyDate && fields.bidReadyDate === undefined)
+      : needsJobIdentityBackfill(fields) || fields.bidReadyDate == null;
+    const identity = needsIdentity
+      ? await resolveJobIdentity(this.prisma, applierName, jobId)
+      : null;
 
     if (existing) {
       const updateData: Record<string, unknown> = { ...fields };
       if (existing.bidReadyDate && 'bidReadyDate' in updateData) {
         delete updateData.bidReadyDate;
       }
+      mergeMissingJobIdentity(updateData, identity, existing);
       if (opts?.incRejectCount) {
         updateData.rejectCount = (existing.rejectCount || 0) + 1;
       }
@@ -235,14 +238,17 @@ export class VendorTaskService {
       return this.updateById(existing.id, updateData);
     }
 
-    return this.createTask({
+    const createData: Record<string, unknown> = {
       status: 'pending',
+      ...(identity?.snapshot ?? {}),
       ...fields,
       applierName,
       jobId,
       rejectCount: opts?.incRejectCount ? 1 : 0,
       resubmitCount: opts?.incResubmitCount ? 1 : 0,
-    });
+    };
+    mergeMissingJobIdentity(createData, identity, null);
+    return this.createTask(createData);
   }
 
   serialize(doc: VendorTask): Record<string, unknown> {
@@ -251,11 +257,15 @@ export class VendorTaskService {
 
   private async createTask(data: Record<string, unknown>): Promise<VendorTask> {
     const now = new Date();
-    // Raw Mongo inserts skip Prisma @default(now()) — always set required dates.
+    // Raw Mongo inserts skip Prisma @default — always set required dates + identity.
     const addedAt = (data.addedAt as Date) || now;
     const createdAt = (data.createdAt as Date) || now;
+    const title = isBlankTitle(data.title) ? 'Untitled role' : String(data.title);
+    const company = isBlankCompany(data.company) ? '' : String(data.company);
     const createData = {
       ...data,
+      title,
+      company,
       addedAt,
       createdAt,
       updatedAt: now,
@@ -268,6 +278,8 @@ export class VendorTaskService {
         const jobId = String(data.jobId || '');
         await rawInsertOne(this.prisma, VENDOR_TASKS_COLLECTION, {
           ...stripUndefined(data),
+          title,
+          company,
           addedAt,
           rejectCount: Number(data.rejectCount || 0),
           resubmitCount: Number(data.resubmitCount || 0),
