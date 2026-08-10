@@ -93,6 +93,17 @@ export async function rawUpdateMany(
   return Number((result as { n?: number }).n ?? 0);
 }
 
+/** Prisma failed to map a stored value to DateTime (string, null, etc.). */
+export function isInconsistentDateTime(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /Failed to convert .+ to 'DateTime'/i.test(message) ||
+    /Error converting field .+ DateTime/i.test(message) ||
+    /Inconsistent column data/i.test(message) ||
+    /incompatible value of ["']?null["']?/i.test(message)
+  );
+}
+
 /**
  * Convert string ISO timestamps → BSON Date for fields Prisma maps as DateTime.
  * Uses aggregation-pipeline update (`$toDate`). Safe to call repeatedly.
@@ -109,6 +120,39 @@ export async function repairStringDateFields(
         {
           q: { [field]: { $type: 'string' } },
           u: [{ $set: { [field]: { $toDate: `$${field}` } } }],
+          multi: true,
+        },
+      ],
+    });
+  }
+}
+
+/**
+ * Backfill null/missing DateTime fields that Prisma maps as non-nullable.
+ * Prefers bidReadyDate → createdAt → updatedAt → $$NOW.
+ */
+export async function repairNullDateFields(
+  prisma: PrismaClient,
+  collection: string,
+  fields: string[],
+): Promise<void> {
+  const fallback = {
+    $ifNull: [
+      '$bidReadyDate',
+      {
+        $ifNull: ['$createdAt', { $ifNull: ['$updatedAt', '$$NOW'] }],
+      },
+    ],
+  };
+  for (const field of fields) {
+    await prisma.$runCommandRaw({
+      update: collection,
+      updates: [
+        {
+          q: {
+            $or: [{ [field]: null }, { [field]: { $exists: false } }],
+          },
+          u: [{ $set: { [field]: fallback } }],
           multi: true,
         },
       ],

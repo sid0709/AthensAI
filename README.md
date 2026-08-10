@@ -40,8 +40,10 @@ npm start
 `npm start` automatically:
 
 1. **Validates** `athens-backend/.env` (`DATABASE_URL`, encryption key)
-2. **Runs** `prisma generate`
+2. **Runs** `prisma generate` and `prisma db push` (indexes / unique constraints)
 3. **Launches** athens-backend (watch) and Athens UI
+
+VPS deploys do the same `prisma db push` in `docker/entrypoint.sh` before the API starts, so production Mongo stays aligned with `schema.prisma`.
 
 | Service | URL |
 |---------|-----|

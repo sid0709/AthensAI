@@ -16,8 +16,11 @@ cp .env.example .env
 # Set DATABASE_URL — database name must be AthensDB
 npm install
 npm run prisma:generate
+npm run prisma:push
 npm run start:dev
 ```
+
+After every schema change, run generate + push against the target DB (local and VPS). The Docker entrypoint runs `prisma:push` on container start so deploys do not serve a new client against stale indexes.
 
 Default listen: `http://127.0.0.1:8980/api`
 
