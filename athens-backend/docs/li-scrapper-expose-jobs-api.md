@@ -81,7 +81,7 @@ Accepts either a **single job object** or a **batch** `{ "jobs": [ ... ] }`.
 | `jobDescription` | **yes** | string | Aliases: `job_description`, `description`. Non-empty after trim. |
 | `jobLink` | **yes** | string (http/https URL) | Apply / offsite URL. Aliases: `job_link`, `applyLink`, `url`. Must pass `^https?://`. |
 | `companyIcon` | no | string (http/https URL) | Company logo. Aliases: `company_icon`. Stored as `metadata.companyLogo`. |
-| `source` | no | string | e.g. `"linkedin"`. If omitted, server infers from `jobLink`, else `"Other"`. |
+| `source` | no | string | e.g. `"linkedin"` from LI-scrapper. Stored on ingest as sent; **Title Review / AI Analyze** rewrite `source` from `jobLink`/`applyLink` via `inferJobSource` (Greenhouse, Ashby, LinkedIn, …). |
 | `postedAt` | no | string | Relative scrape text (`"2 days ago"`, `"3 hours ago"`, …). Also accepted as `postedAgo` / `posted_ago`. Parsed into absolute `postedAt`; raw string kept as `postedAgo`. |
 | `jobID` | no (strongly recommended) | string | Dedup key → `metadata.legacyId`. Current convention: `"linkedin-" + digits`. Aliases: `job_id`, `jobId`. |
 
@@ -213,7 +213,7 @@ Server maps the scrape body into a staging row (not the searchable `jobs` catalo
 |-------------------|--------|
 | `title` | `jobTitle` |
 | `companyName` | `companyName` |
-| `source` | `source` (or inferred) |
+| `source` | `source` (ingest); rewritten from apply URL at Title Review / AI Analyze |
 | `postedAt` | parsed from `postedAt` / `postedAgo` (else now) |
 | `postedAgo` | raw relative string when provided |
 | `description` | `jobDescription` |

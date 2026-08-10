@@ -9,6 +9,8 @@ export type ClaimedTempJob = {
   title: string;
   companyName: string;
   description: string | null;
+  applyLink: string | null;
+  source: string;
   metadata: unknown;
   titleReviewLabel: string;
   aiSkillStatus: string | null;
