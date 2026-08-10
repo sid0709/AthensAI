@@ -57,9 +57,16 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent);
-  color: #fff;
   border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.brand-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .brand-name {
