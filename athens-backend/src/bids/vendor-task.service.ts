@@ -3,9 +3,11 @@ import type { Job, Prisma, VendorTask } from '@prisma/client';
 import { inferJobSource } from '../jobs/lib/infer-job-source';
 import { normalizeJobMetadata } from '../jobs/mappers/job-metadata.mapper';
 import {
+  isInconsistentDateTime,
   isReplicaSetRequired,
   rawInsertOne,
   rawUpdateMany,
+  repairNullDateFields,
   repairStringDateFields,
   withReplicaSetFallback,
 } from '../prisma/mongo-standalone';
@@ -27,6 +29,13 @@ const VENDOR_TASK_DATE_FIELDS = [
   'recommendedAt',
   'analyzedAt',
   'flagAnalyzedAt',
+  'createdAt',
+  'updatedAt',
+] as const;
+
+/** Non-nullable DateTime columns — null in Mongo breaks Prisma reads. */
+const VENDOR_TASK_REQUIRED_DATE_FIELDS = [
+  'addedAt',
   'createdAt',
   'updatedAt',
 ] as const;
@@ -148,11 +157,21 @@ export class VendorTaskService {
     applierName: string,
     limit: number,
   ): Promise<VendorTask[]> {
-    return this.prisma.vendorTask.findMany({
-      where: { applierName, reviewStatus: 'rejected' },
-      orderBy: [{ lastRejectedAt: 'desc' }, { updatedAt: 'desc' }],
-      take: limit,
-    });
+    try {
+      return await this.prisma.vendorTask.findMany({
+        where: { applierName, reviewStatus: 'rejected' },
+        orderBy: [{ lastRejectedAt: 'desc' }, { updatedAt: 'desc' }],
+        take: limit,
+      });
+    } catch (error) {
+      if (!isInconsistentDateTime(error)) throw error;
+      await this.repairDates();
+      return this.prisma.vendorTask.findMany({
+        where: { applierName, reviewStatus: 'rejected' },
+        orderBy: [{ lastRejectedAt: 'desc' }, { updatedAt: 'desc' }],
+        take: limit,
+      });
+    }
   }
 
   /** Upsert stub when Job Search marks Bid Ready. Does not restamp bidReadyDate. */
@@ -232,9 +251,13 @@ export class VendorTaskService {
 
   private async createTask(data: Record<string, unknown>): Promise<VendorTask> {
     const now = new Date();
+    // Raw Mongo inserts skip Prisma @default(now()) — always set required dates.
+    const addedAt = (data.addedAt as Date) || now;
+    const createdAt = (data.createdAt as Date) || now;
     const createData = {
       ...data,
-      createdAt: (data.createdAt as Date) || now,
+      addedAt,
+      createdAt,
       updatedAt: now,
     } as Prisma.VendorTaskCreateInput;
 
@@ -245,13 +268,14 @@ export class VendorTaskService {
         const jobId = String(data.jobId || '');
         await rawInsertOne(this.prisma, VENDOR_TASKS_COLLECTION, {
           ...stripUndefined(data),
+          addedAt,
           rejectCount: Number(data.rejectCount || 0),
           resubmitCount: Number(data.resubmitCount || 0),
           useCustomizedResume: Boolean(data.useCustomizedResume),
           resumeRenamed: Boolean(data.resumeRenamed),
           resumeMismatch: Boolean(data.resumeMismatch),
           bidderInProcess: Boolean(data.bidderInProcess),
-          createdAt: now,
+          createdAt,
           updatedAt: now,
         });
         const created = await this.findByApplierJob(applierName, jobId);
@@ -293,6 +317,9 @@ export class VendorTaskService {
     await repairStringDateFields(this.prisma, VENDOR_TASKS_COLLECTION, [
       ...VENDOR_TASK_DATE_FIELDS,
     ]);
+    await repairNullDateFields(this.prisma, VENDOR_TASKS_COLLECTION, [
+      ...VENDOR_TASK_REQUIRED_DATE_FIELDS,
+    ]);
   }
 }
 
@@ -304,11 +331,4 @@ function stripUndefined(
     if (value !== undefined) out[key] = value;
   }
   return out;
-}
-
-function isInconsistentDateTime(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /Failed to convert .+ to 'DateTime'|Inconsistent column data/i.test(
-    message,
-  );
 }

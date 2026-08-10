@@ -21,5 +21,11 @@ export MONITORING_ENABLED="${MONITORING_ENABLED:-true}"
 export PROMETHEUS_URL="${PROMETHEUS_URL:-http://prometheus:9090}"
 
 echo "[entrypoint] Firebase runtime configured for ${FIREBASE_PROJECT_ID}"
+
+# Mongo indexes / unique constraints must match schema.prisma before Nest serves.
+# Image build only runs prisma generate; db push needs DATABASE_URL at runtime.
+echo "[entrypoint] syncing Prisma schema (prisma db push)"
+npm run prisma:push --prefix athens-backend
+
 echo "[entrypoint] starting athens-backend on :${PORT} (workers=${BACKGROUND_WORKERS_MODE})"
 exec supervisord -c /app/docker/supervisord.conf
