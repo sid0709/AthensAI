@@ -1,4 +1,10 @@
-import { IsArray, IsBoolean, IsOptional, IsString, ArrayMaxSize } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+  ArrayMaxSize,
+} from 'class-validator';
 
 /** Max jobs per recommend-resumes bulk request (legacy Athens-server contract). */
 const MAX_RECOMMEND_JOBS = 40;

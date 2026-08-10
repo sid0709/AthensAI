@@ -243,7 +243,11 @@ export class MailCacheService {
         });
       } catch (error) {
         if (!isReplicaSetRequired(error)) throw error;
-        await this.rawUpdate(MAIL_SYNC_STATE, { _id: { $oid: existing.id } }, update);
+        await this.rawUpdate(
+          MAIL_SYNC_STATE,
+          { _id: { $oid: existing.id } },
+          update,
+        );
         const row = await this.getSyncState(applierName);
         if (!row) throw new Error('Failed to load updated mail sync state');
         return row;
@@ -288,7 +292,7 @@ export class MailCacheService {
       if (isUniqueConflict(error)) {
         await this.prisma.mailMessage.update({
           where: { applierName_mailbox_uid: key },
-          data: update as Prisma.MailMessageUpdateInput,
+          data: update,
         });
         return;
       }
@@ -310,7 +314,7 @@ export class MailCacheService {
     try {
       await this.prisma.mailMessage.update({
         where: { id },
-        data: update as Prisma.MailMessageUpdateInput,
+        data: update,
       });
     } catch (error) {
       if (!isReplicaSetRequired(error)) throw error;
@@ -321,7 +325,9 @@ export class MailCacheService {
   private async rawInsert(collection: string, data: Record<string, unknown>) {
     await this.prisma.$runCommandRaw({
       insert: collection,
-      documents: [toMongoDoc({ ...omitUndefined(data), updatedAt: new Date() })],
+      documents: [
+        toMongoDoc({ ...omitUndefined(data), updatedAt: new Date() }),
+      ],
       ordered: true,
     } as unknown as Prisma.InputJsonObject);
   }
@@ -342,9 +348,7 @@ export class MailCacheService {
   }
 }
 
-function omitUndefined(
-  data: Record<string, unknown>,
-): Record<string, unknown> {
+function omitUndefined(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
     if (v !== undefined) out[k] = v;

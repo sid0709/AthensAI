@@ -1,4 +1,4 @@
-import { Download, FileJson, FileType2, LayoutTemplate, ListChecks, Palette } from "lucide-react";
+import { FileJson, FileType2, LayoutTemplate, ListChecks, Palette } from "lucide-react";
 
 export type DesignPanel = "template" | "theme" | "layout";
 
@@ -13,19 +13,15 @@ export function PreviewToolbar({
   showDownloadLog,
   onDownloadLog,
   exporting,
-  onExportPdf,
   onExportDocx,
-  disablePdf,
   disableThemeLayout,
 }: {
   activePanel: DesignPanel | null;
   onOpenPanel: (panel: DesignPanel) => void;
   showDownloadLog: boolean;
   onDownloadLog: () => void;
-  exporting: "pdf" | "docx" | null;
-  onExportPdf: () => void;
+  exporting: "docx" | null;
   onExportDocx: () => void;
-  disablePdf?: boolean;
   disableThemeLayout?: boolean;
 }) {
   return (
@@ -68,16 +64,6 @@ export function PreviewToolbar({
           <span className="hidden sm:inline">Log</span>
         </button>
       )}
-      <button
-        type="button"
-        onClick={onExportPdf}
-        disabled={exporting !== null || disablePdf}
-        className={btn}
-        title={disablePdf ? "PDF export not available for uploaded templates" : "Export PDF"}
-      >
-        <Download className="w-3.5 h-3.5" />
-        {exporting === "pdf" ? "Exporting…" : "PDF"}
-      </button>
       <button
         type="button"
         onClick={onExportDocx}

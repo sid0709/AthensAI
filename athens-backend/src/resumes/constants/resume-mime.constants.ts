@@ -6,5 +6,4 @@ export const RESUME_ALLOWED_MIME = new Set([
   'text/plain',
 ]);
 
-export const RESUME_MIME_HINT =
-  'Unsupported file type. Use PDF, DOCX, or TXT.';
+export const RESUME_MIME_HINT = 'Unsupported file type. Use PDF, DOCX, or TXT.';

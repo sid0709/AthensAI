@@ -67,7 +67,7 @@ function normalizeCoverageSettings(value: unknown): ResumeCoverageSettings {
     if (cleaned.length) aliases[name] = cleaned;
   }
   return {
-    enabled: true,
+    enabled: false,
     experienceRequirementThreshold: 4,
     aliases,
   };
@@ -310,7 +310,7 @@ export const defaultConfig = (): GeneratorConfig => {
     jobDescription: "",
     steps: PURPOSES.map((p) => finalStep(p)),
     coverage: {
-      enabled: true,
+      enabled: false,
       experienceRequirementThreshold: 4,
       aliases: {},
     },

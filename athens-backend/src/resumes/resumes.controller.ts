@@ -49,10 +49,7 @@ export class ResumesController {
   }
 
   @Get(':id')
-  async get(
-    @Param('id') id: string,
-    @Query('ownerName') ownerName: string,
-  ) {
+  async get(@Param('id') id: string, @Query('ownerName') ownerName: string) {
     const resume = await this.resumes.get(id, ownerName);
     return { success: true as const, resume };
   }
@@ -89,10 +86,7 @@ export class ResumesController {
   }
 
   @Delete(':id')
-  async remove(
-    @Param('id') id: string,
-    @Query('ownerName') ownerName: string,
-  ) {
+  async remove(@Param('id') id: string, @Query('ownerName') ownerName: string) {
     return this.resumes.delete(id, ownerName);
   }
 }

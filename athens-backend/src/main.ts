@@ -15,7 +15,7 @@ async function bootstrap() {
   app.useBodyParser('json', { limit: '32mb' });
   app.useBodyParser('urlencoded', { limit: '32mb', extended: true });
 
-	app.setGlobalPrefix('api', {
+  app.setGlobalPrefix('api', {
     exclude: [
       { path: 'readyz', method: RequestMethod.GET },
       { path: 'healthz', method: RequestMethod.GET },

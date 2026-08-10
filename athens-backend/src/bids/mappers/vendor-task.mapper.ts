@@ -145,7 +145,9 @@ export function serializeVendorTask(doc: VendorTask): Record<string, unknown> {
       : null,
   );
 
-  const status = (VENDOR_TASK_STATUSES as readonly string[]).includes(doc.status)
+  const status = (VENDOR_TASK_STATUSES as readonly string[]).includes(
+    doc.status,
+  )
     ? doc.status
     : 'pending';
 

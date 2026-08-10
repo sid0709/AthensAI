@@ -49,7 +49,12 @@ export function extractFormAnswersFromPartialText(
 
   for (const raw of source.split('\n')) {
     const line = raw.trim();
-    if (!line || line.startsWith('#') || line.startsWith('{') || line.startsWith('[')) {
+    if (
+      !line ||
+      line.startsWith('#') ||
+      line.startsWith('{') ||
+      line.startsWith('[')
+    ) {
       continue;
     }
     const numbered = line.match(/^(\d+)\s*[:.)\-]\s*(.+)$/);

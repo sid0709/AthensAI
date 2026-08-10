@@ -15,6 +15,20 @@ export function normalizeTaskPayload(
     }
     return { messageIds: ids.slice(0, MAIL_AI_LABEL_MAX_IDS) };
   }
+  if (type === BACKGROUND_TASK_TYPES.RESUME_GENERATION) {
+    const requestRecordIds = Array.isArray(raw.requestRecordIds)
+      ? raw.requestRecordIds.map((id) => String(id)).filter(Boolean)
+      : [];
+    const jobIds = Array.isArray(raw.jobIds)
+      ? raw.jobIds.map((id) => String(id)).filter(Boolean)
+      : [];
+    return {
+      requestRecordIds,
+      jobIds,
+      deferPdf: raw.deferPdf === true,
+      forceRegenerate: raw.forceRegenerate === true,
+    };
+  }
   return { ...raw };
 }
 

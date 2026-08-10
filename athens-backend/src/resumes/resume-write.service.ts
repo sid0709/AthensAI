@@ -93,10 +93,7 @@ export class ResumeWriteService {
     );
   }
 
-  async update(
-    id: string,
-    data: Prisma.ResumeUpdateInput,
-  ): Promise<Resume> {
+  async update(id: string, data: Prisma.ResumeUpdateInput): Promise<Resume> {
     return withReplicaSetFallback(
       () => this.prisma.resume.update({ where: { id }, data }),
       async () => {

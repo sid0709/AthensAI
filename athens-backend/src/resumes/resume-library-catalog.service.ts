@@ -1,7 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  compressResumeCatalog,
-} from '../bids/lib/resume-catalog';
+import { compressResumeCatalog } from '../bids/lib/resume-catalog';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -38,9 +36,7 @@ export class ResumeLibraryCatalogService {
   }
 }
 
-function skillEntriesFromAnalysis(
-  analysis: unknown,
-): Array<{ name: string }> {
+function skillEntriesFromAnalysis(analysis: unknown): Array<{ name: string }> {
   if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)) {
     return [];
   }

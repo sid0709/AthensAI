@@ -1,5 +1,6 @@
 export const BACKGROUND_TASK_TYPES = {
   MAIL_AI_LABEL: 'mail_ai_label',
+  RESUME_GENERATION: 'resume_generation',
 } as const;
 
 export type BackgroundTaskType =

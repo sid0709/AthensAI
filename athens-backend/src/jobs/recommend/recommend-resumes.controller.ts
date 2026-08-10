@@ -1,4 +1,10 @@
-import { Body, Controller, Post, UsePipes, ValidationPipe } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
 import { RecommendResumesDto } from './dto/recommend-resumes.dto';
 import { SetRecommendedResumeDto } from './dto/set-recommended-resume.dto';
 import { RecommendResumesService } from './recommend-resumes.service';

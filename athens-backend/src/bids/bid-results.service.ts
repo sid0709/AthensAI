@@ -15,7 +15,10 @@ import {
   REJECTED_LIST_LIMIT,
 } from './constants/bid-status.constants';
 import { asDate } from './lib/iso';
-import { mapTaskToBidResult, stripBidResultIdPrefix } from './mappers/bid-result.mapper';
+import {
+  mapTaskToBidResult,
+  stripBidResultIdPrefix,
+} from './mappers/bid-result.mapper';
 import { rowFromVendorEmbeddedUsage } from './mappers/bid-ai-usage.mapper';
 import { deriveBidUiStatus } from './mappers/bid-ui-status';
 import { VendorTaskService } from './vendor-task.service';
@@ -63,13 +66,9 @@ export class BidResultsService {
       const serialized = this.vendorTasks.serialize(task);
       if (row.bidReadyAt) {
         serialized.bidReadyDate = row.bidReadyAt.toISOString();
-        serialized.addedAt =
-          (serialized.addedAt as string) || row.bidReadyAt.toISOString();
+        serialized.addedAt = serialized.addedAt || row.bidReadyAt.toISOString();
       }
-      if (
-        row.state === 'bid-completed' &&
-        serialized.status !== 'skipped'
-      ) {
+      if (row.state === 'bid-completed' && serialized.status !== 'skipped') {
         serialized.status = 'done';
         serialized.progress = 'completed';
       }
@@ -174,7 +173,9 @@ export class BidResultsService {
 
   async recordingUrl(applierName: string, pathRaw: string) {
     const account = await this.requireAccount(applierName);
-    const path = String(pathRaw || '').trim().replace(/^\/+/, '');
+    const path = String(pathRaw || '')
+      .trim()
+      .replace(/^\/+/, '');
     if (!path.startsWith(BID_RECORDINGS_PREFIX) || path.includes('..')) {
       throw new BadRequestException({
         success: false,
@@ -226,10 +227,7 @@ export class BidResultsService {
 
   async eventsForId(applierName: string, id: string) {
     const task = await this.resolveTask(applierName, id);
-    const events = await this.events.listForJob(
-      task.applierName,
-      task.jobId,
-    );
+    const events = await this.events.listForJob(task.applierName, task.jobId);
     return { success: true as const, events };
   }
 
@@ -300,8 +298,7 @@ export class BidResultsService {
       const reason = String(input.rejectReason || '')
         .trim()
         .slice(0, 2000);
-      const rejectSource =
-        task.status === 'skipped' ? 'skipped' : 'submitted';
+      const rejectSource = task.status === 'skipped' ? 'skipped' : 'submitted';
       fields.rejectReason = reason || null;
       fields.rejectSource = rejectSource;
       fields.lastRejectedAt = now;

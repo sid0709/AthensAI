@@ -119,6 +119,11 @@ function mergeGenerationStep(
     kind: String(event.kind || previous?.kind || ""),
     status: previous?.status === "done" ? "done" : status,
     ...(event.usage ? { usage: event.usage as UsageBreakdown } : previous?.usage ? { usage: previous.usage } : {}),
+    ...("output" in event
+      ? { output: event.output }
+      : previous && "output" in previous
+        ? { output: previous.output }
+        : {}),
   };
   const steps = [...base.steps.filter((step) => step.index !== index), nextStep]
     .sort((left, right) => left.index - right.index);
@@ -138,6 +143,30 @@ function plannedGenerationSteps(plan: Array<Pick<GenStep, "name" | "purpose" | "
     kind: step.kind,
     status: "pending",
   }));
+}
+
+/** Mark checklist steps done and attach per-step model outputs when available. */
+function hydrateGenProgressSteps(
+  plan: Array<Pick<GenStep, "name" | "purpose" | "kind">>,
+  current: GenProgressStep[] | undefined,
+  perStep: unknown,
+): GenProgressStep[] {
+  const base = (current?.length ? current : plannedGenerationSteps(plan)).map((step) => ({
+    ...step,
+    status: "done" as const,
+  }));
+  if (!Array.isArray(perStep) || !perStep.length) return base;
+  let next: GenProgress = { steps: base, cumulative: null, done: true };
+  for (const entry of perStep) {
+    if (!entry || typeof entry !== "object") continue;
+    const event = entry as Record<string, unknown>;
+    next = mergeGenerationStep(next, {
+      ...event,
+      phase: String(event.phase || "step-done"),
+      status: "done",
+    });
+  }
+  return next.steps.map((step) => ({ ...step, status: "done" as const }));
 }
 
 export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
@@ -176,7 +205,7 @@ export function useGeneratorPage() {
     : templateById(config.templateId);
   const [uploadedTemplates, setUploadedTemplates] = useState<UploadedTemplateManifest[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
-  const [exporting, setExporting] = useState<null | "pdf" | "docx">(null);
+  const [exporting, setExporting] = useState<null | "docx">(null);
 
   // True once a history run has been explicitly loaded into the editor. The
   // async DB-config restore below resolves after mount, so without this guard it
@@ -232,9 +261,8 @@ export function useGeneratorPage() {
     }
   }, [put]);
 
-  // This preference affects server-driven Job Search and Agent runs, so persist
-  // it immediately instead of waiting for the general editor debounce. That
-  // keeps a quick navigation away from the Editor from cancelling the change.
+  // This preference affects server-driven Job Search and Agent runs, so flush
+  // the same coalesced Mongo write path used by other ResumeConfig edits.
   const setDynamicCareerTitles = useCallback((enabled: boolean) => {
     const next = { ...config, dynamicCareerTitles: enabled };
     const stored = serializeStoredConfig(next);
@@ -283,31 +311,25 @@ export function useGeneratorPage() {
         })
         .filter(Boolean)
         .join("\n"),
+      source_resume: identity ? JSON.stringify(identity, null, 2) : "",
     };
+    map.work_experience = map.career;
     careers.forEach((c, i) => {
       map[`company${i + 1}`] = formatCompanyToken(c);
     });
+    // Preview chips for draft tokens stay empty until a prior step exists.
+    for (const purpose of ["summary", "skills", "experience", "education", "projects"] as const) {
+      map[`draft_${purpose}`] = "";
+    }
     return map;
   })();
   const setTheme = (patch: Partial<ResumeTheme>) => setConfig((c) => ({ ...c, theme: { ...c.theme, ...patch } }));
 
-  // Export the live preview to PDF via the backend (headless Chromium). We send
-  // the preview's already-rendered, inline-styled DOM so the PDF matches exactly,
-  // and let the server paginate with real per-page margins.
-  // Export the live preview to PDF or Word. Both reuse the exact same rendered
-  // HTML so the document styling stays consistent across formats.
-  const exportResume = async (format: "pdf" | "docx") => {
-    const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.${format}`;
+  // Export the live preview to Word (DOCX only — PDF is not supported).
+  const exportResume = async (format: "docx" = "docx") => {
+    const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.docx`;
 
     if (usingUploadedTemplate) {
-      if (format === "pdf") {
-        notify({
-          title: "PDF not available",
-          description: "Uploaded templates export to Word only so your original formatting is preserved.",
-          tone: "warning",
-        });
-        return;
-      }
       if (!generated) {
         notify({ title: "Nothing to export", description: "Generate resume content first.", tone: "warning" });
         return;
@@ -350,26 +372,17 @@ export function useGeneratorPage() {
       return;
     }
 
-    let payload: Record<string, unknown>;
-    if (format === "pdf") {
-      // PDF renders the live DOM via puppeteer (pixel-exact with the preview).
-      const pageEl = document.querySelector("#resume-print-root .resume-page") as HTMLElement | null;
-      if (!pageEl) {
-        notify({ title: "Nothing to export", description: "The resume preview isn't ready yet.", tone: "warning" });
-        return;
-      }
-      const fontLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
-        .map((l) => (l as HTMLLinkElement).href)
-        .filter((h) => /fonts\.googleapis\.com|fonts\.gstatic\.com/.test(h));
-      payload = { html: pageEl.innerHTML, paper: theme.paper, marginInches: theme.margin, font: fontStack(theme.font), baseSizePt: theme.baseSize, fontLinks, fileName };
-    } else {
-      // Word is built from a structured model (spec-valid OOXML, opens in Word).
-      payload = { model: buildResumeModel(config, generated, identity), paper: theme.paper, marginInches: theme.margin, font: fontStack(theme.font), fileName };
-    }
-    setExporting(format);
+    void format;
+    const payload = {
+      model: buildResumeModel(config, generated, identity),
+      paper: theme.paper,
+      marginInches: theme.margin,
+      font: fontStack(theme.font),
+      fileName,
+    };
+    setExporting("docx");
     try {
-      const endpoint = format === "pdf" ? "/personal/resume-pdf" : "/personal/resume-docx";
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await fetch(`${API_BASE}/personal/resume-docx`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -395,7 +408,7 @@ export function useGeneratorPage() {
       URL.revokeObjectURL(url);
     } catch (e) {
       notify({
-        title: `Export ${format === "pdf" ? "PDF" : "Word"} failed`,
+        title: "Export Word failed",
         description: e instanceof Error ? e.message : String(e),
         tone: "error",
       });
@@ -600,9 +613,10 @@ export function useGeneratorPage() {
     void refreshUploadedTemplates();
   }, [refreshUploadedTemplates]);
 
-  // Persist locally immediately. Remote writes are debounced, serialized, and
-  // coalesced so rapid editor changes never create a queue of stale Firestore
-  // transactions that blocks jobs and status requests.
+  // Persist ResumeConfig locally and to Mongo on every change. Writes are
+  // coalesced (latest snapshot wins) while a request is in flight so typing a
+  // prompt does not enqueue a backlog of stale PUTs. Job description is omitted
+  // by serializeStoredConfig — it is application-run state, not ResumeConfig.
   useEffect(() => {
     if (configHydratedFor !== configOwnerKey) return;
     const stored = serializeStoredConfig(config);
@@ -613,14 +627,10 @@ export function useGeneratorPage() {
     }
     const applierName = applier?.name;
     if (!applierName) return;
-    const serialized = JSON.stringify(stored);
-    const key = `${applierName}\u0000${serialized}`;
+    const key = `${applierName}\u0000${JSON.stringify(stored)}`;
     if (key === configSaveRef.current.lastSavedKey) return;
-    const t = setTimeout(() => {
-      configSaveRef.current.queued = { applierName, config: stored, key };
-      void flushConfigSave();
-    }, 800);
-    return () => clearTimeout(t);
+    configSaveRef.current.queued = { applierName, config: stored, key };
+    void flushConfigSave();
   }, [config, applier?.name, configHydratedFor, configOwnerKey, flushConfigSave]);
 
   const loadIdentity = useCallback(async () => {
@@ -879,20 +889,26 @@ export function useGeneratorPage() {
       systemInstruction: config.systemInstruction,
       jobDescription: config.jobDescription,
       steps: plan,
-      coverage: config.coverage.enabled && coverageIsCurrent && coverageAnalysis
-        ? { analysis: coverageAnalysis, decisions: coverageDecisions, settings: config.coverage }
-        : null,
+      coverage: null,
     }),
     [
       applier?._id,
       applier?.name,
-      config,
-      coverageAnalysis,
-      coverageDecisions,
-      coverageIsCurrent,
+      config.dynamicCareerTitles,
+      config.jobDescription,
+      config.layout,
+      config.model,
+      config.provider,
+      config.reasoningEffort,
+      config.systemInstruction,
+      config.templateId,
+      config.theme,
       identity,
       plan,
-      template,
+      template.columns,
+      template.heading,
+      template.headingAlign,
+      template.sidebar,
     ],
   );
 
@@ -985,7 +1001,12 @@ export function useGeneratorPage() {
 				if (shouldReadTerminal) {
 					setGenerating(false);
 					setGenProgress((current) => ({
-						steps: current?.steps ?? [],
+						steps: hydrateGenProgressSteps(
+							plan,
+							current?.steps,
+							(stored.result as { perStep?: unknown } | null)?.perStep
+								?? item?.generationSteps,
+						),
 						cumulative: (stored.result?.usage as UsageBreakdown) ?? current?.cumulative ?? null,
 						done: true,
 						message: terminalFailureMessage,
@@ -1111,29 +1132,6 @@ export function useGeneratorPage() {
     }
 
     let generationPayload = requestPayload;
-    if (config.coverage.enabled) {
-      const analysis = coverageIsCurrent && coverageAnalysis
-        ? coverageAnalysis
-        : await runCoverageAnalysis();
-      if (!analysis) return false;
-      const decisions: Record<string, CoverageDecision> = {
-        ...defaultCoverageDecisions(analysis, config.coverage.experienceRequirementThreshold),
-        ...(coverageIsCurrent ? coverageDecisions : {}),
-      };
-      const unresolved = analysis.skills.filter((skill) => !decisions[skill.id]);
-      if (unresolved.length) {
-        notify({
-          title: "Confirm unverified skills",
-          description: `${unresolved.length} JD skill${unresolved.length === 1 ? " needs" : "s need"} a quick Used, Familiar, or Not used decision.`,
-          tone: "warning",
-        });
-        return false;
-      }
-      generationPayload = {
-        ...requestPayload,
-        coverage: { analysis, decisions, settings: config.coverage },
-      };
-    }
     setGenerating(true);
     setUsage(null);
     setGenerated(null);
@@ -1162,8 +1160,14 @@ export function useGeneratorPage() {
       const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
       setUsage(nextUsage);
       setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
+      const terminalItem = terminal.progress?.items?.[queued.inputId];
       setGenProgress((current) => ({
-        steps: current?.steps ?? [],
+        steps: hydrateGenProgressSteps(
+          plan,
+          current?.steps,
+          (stored.result as { perStep?: unknown }).perStep
+            ?? terminalItem?.generationSteps,
+        ),
         cumulative: nextUsage,
         done: true,
         message: null,

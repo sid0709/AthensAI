@@ -66,10 +66,7 @@ export class MailController {
   }
 
   @Get('messages/:uid')
-  message(
-    @Param('uid') uid: string,
-    @Query() query: GetMessageQueryDto,
-  ) {
+  message(@Param('uid') uid: string, @Query() query: GetMessageQueryDto) {
     return this.mail.getMessage(query.applierName, uid, query.folder);
   }
 
@@ -108,10 +105,7 @@ export class MailController {
   }
 
   @Patch('messages/:uid')
-  patch(
-    @Param('uid') uid: string,
-    @Body() body: PatchMessageDto,
-  ) {
+  patch(@Param('uid') uid: string, @Body() body: PatchMessageDto) {
     return this.mail.patchMessage(body.applierName, uid, body);
   }
 

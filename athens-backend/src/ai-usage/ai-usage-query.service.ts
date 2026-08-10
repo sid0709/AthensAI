@@ -38,10 +38,7 @@ export class AiUsageQueryService {
   async summary(query: AiUsageFilterInput) {
     const match = buildAiUsageRawMatch(query);
     const [totals, byProvider, byFeature, byDay] = await Promise.all([
-      this.aggregate([
-        { $match: match },
-        { $group: AI_USAGE_TOTALS_GROUP },
-      ]),
+      this.aggregate([{ $match: match }, { $group: AI_USAGE_TOTALS_GROUP }]),
       this.aggregate([
         { $match: match },
         {
@@ -73,7 +70,7 @@ export class AiUsageQueryService {
     ]);
 
     return {
-      totals: (totals[0] as Record<string, unknown>) ?? {
+      totals: totals[0] ?? {
         ...EMPTY_AI_USAGE_TOTALS,
       },
       byProvider,
@@ -88,8 +85,6 @@ export class AiUsageQueryService {
     const raw = await this.prisma.aiApiUsage.aggregateRaw({
       pipeline: pipeline as Prisma.InputJsonValue[],
     });
-    return Array.isArray(raw)
-      ? (raw as Record<string, unknown>[])
-      : [];
+    return Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
   }
 }

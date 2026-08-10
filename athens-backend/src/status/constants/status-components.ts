@@ -73,9 +73,7 @@ export function statusMessage(status: string): string {
   return 'Monitoring data is unavailable or stale.';
 }
 
-export function overallStatus(
-  components: Array<{ status: string }>,
-): string {
+export function overallStatus(components: Array<{ status: string }>): string {
   if (components.some((item) => item.status === 'major_outage')) {
     return 'major_outage';
   }

@@ -96,10 +96,7 @@ export class BidLifecycleService {
       typeof input.biddingDurationSec === 'number'
         ? input.biddingDurationSec
         : null;
-    if (
-      duration == null &&
-      existing?.bidderInProcessAt instanceof Date
-    ) {
+    if (duration == null && existing?.bidderInProcessAt instanceof Date) {
       duration = Math.max(
         0,
         (now.getTime() - existing.bidderInProcessAt.getTime()) / 1000,
@@ -215,16 +212,13 @@ export class BidLifecycleService {
 
     const doc = await this.vendorTasks.upsertFields(account.name, job.id, {
       analysisSummary: input.summary?.trim() || null,
-      analysisFormAnswers: answers as unknown as Prisma.InputJsonValue,
+      analysisFormAnswers: answers,
       analysisMode:
-        input.mode === 'llm' || input.mode === 'heuristic'
-          ? input.mode
-          : 'llm',
+        input.mode === 'llm' || input.mode === 'heuristic' ? input.mode : 'llm',
       analysisPageUrl: input.pageUrl?.trim() || null,
       analysisPageTitle: input.pageTitle?.trim() || null,
       analysisUsage: (input.usage ?? undefined) as
-        | Prisma.InputJsonValue
-        | undefined,
+        Prisma.InputJsonValue | undefined,
       analysisRequestId: input.requestId?.trim() || null,
       analyzedAt: new Date(),
     });
@@ -270,8 +264,7 @@ export class BidLifecycleService {
     const expectedName =
       String(input.expectedName || '').trim() ||
       buildProfileResumeFileName(account.name, ext);
-    const cleanedName =
-      String(input.cleanedName || '').trim() || originalName;
+    const cleanedName = String(input.cleanedName || '').trim() || originalName;
     const renamed = cleanedName !== originalName;
     const mismatch = isResumeNameMismatch(cleanedName, expectedName);
 
@@ -295,7 +288,7 @@ export class BidLifecycleService {
       ].join('|');
 
     const priorAudits = Array.isArray(existing?.resumeAudits)
-      ? (existing!.resumeAudits as Array<Record<string, unknown>>)
+      ? (existing.resumeAudits as Array<Record<string, unknown>>)
       : [];
     const duplicate = priorAudits.some((a) => a.auditKey === auditKey);
     const auditEntry = {
@@ -311,9 +304,7 @@ export class BidLifecycleService {
       auditKey,
       recordedAt: new Date().toISOString(),
     };
-    const resumeAudits = duplicate
-      ? priorAudits
-      : [...priorAudits, auditEntry];
+    const resumeAudits = duplicate ? priorAudits : [...priorAudits, auditEntry];
 
     const doc = await this.vendorTasks.upsertFields(account.name, job.id, {
       resumeOriginalName: originalName,
@@ -377,7 +368,7 @@ export class BidLifecycleService {
       now;
 
     const prior = Array.isArray(existing?.recordings)
-      ? (existing!.recordings as Array<Record<string, unknown>>)
+      ? (existing.recordings as Array<Record<string, unknown>>)
       : [];
     const entry = {
       storagePath: input.storagePath,

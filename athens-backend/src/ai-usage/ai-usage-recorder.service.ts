@@ -10,10 +10,7 @@ import {
   AI_USAGE_COLLECTION,
   AI_USAGE_SERVICE,
 } from './constants/ai-usage.constants';
-import {
-  buildAiApiUsageEntry,
-  tokensToRawUsage,
-} from './lib/ai-api-usage';
+import { buildAiApiUsageEntry, tokensToRawUsage } from './lib/ai-api-usage';
 
 export type AiUsageRecordMeta = {
   feature: string;
@@ -69,7 +66,7 @@ export class AiUsageRecorderService {
         applierName: input.applierName,
         jobId: input.jobId,
         path: input.path,
-      }) as Record<string, unknown>;
+      });
 
       const data = toPrismaCreate(entry);
       await withReplicaSetFallback(
@@ -79,7 +76,7 @@ export class AiUsageRecorderService {
             ...data,
             createdAt: new Date(),
             service: AI_USAGE_SERVICE,
-          } as Prisma.InputJsonValue);
+          });
           return null;
         },
       );
@@ -101,7 +98,9 @@ function toPrismaCreate(
     requestedModel: asOptStr(entry.requestedModel),
     billedModel: asOptStr(entry.billedModel),
     modelMismatch:
-      typeof entry.modelMismatch === 'boolean' ? entry.modelMismatch : undefined,
+      typeof entry.modelMismatch === 'boolean'
+        ? entry.modelMismatch
+        : undefined,
     apiKey: asOptStr(entry.apiKey) ?? '',
     inputTokens: asOptInt(entry.inputTokens),
     cachedInputTokens: asOptInt(entry.cachedInputTokens),
@@ -109,10 +108,7 @@ function toPrismaCreate(
     totalTokens: asOptInt(entry.totalTokens),
     costUsd: typeof entry.costUsd === 'number' ? entry.costUsd : undefined,
     priced: typeof entry.priced === 'boolean' ? entry.priced : undefined,
-    rates:
-      rates && typeof rates === 'object'
-        ? (rates as Prisma.InputJsonValue)
-        : undefined,
+    rates: rates && typeof rates === 'object' ? rates : undefined,
     startedAt: entry.startedAt instanceof Date ? entry.startedAt : undefined,
     durationMs: asOptInt(entry.durationMs),
     success: typeof entry.success === 'boolean' ? entry.success : true,

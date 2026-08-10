@@ -93,8 +93,7 @@ export class AthensLensAskAiController {
             : err instanceof Error
               ? err.message
               : 'Unable to analyze the open page';
-        const status =
-          err instanceof HttpException ? err.getStatus() : 500;
+        const status = err instanceof HttpException ? err.getStatus() : 500;
         writeAskAiSse(res, 'error', { message, status });
       }
     } finally {
@@ -119,11 +118,13 @@ function writeJsonError(res: Response, err: unknown): void {
   if (err instanceof HttpException) {
     const status = err.getStatus();
     const body = err.getResponse();
-    res.status(status).json(
-      typeof body === 'object' && body
-        ? body
-        : { success: false, message: String(body) },
-    );
+    res
+      .status(status)
+      .json(
+        typeof body === 'object' && body
+          ? body
+          : { success: false, message: String(body) },
+      );
     return;
   }
   res.status(500).json({

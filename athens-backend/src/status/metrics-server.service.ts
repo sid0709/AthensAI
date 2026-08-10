@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import http from 'node:http';
 import { renderMetrics } from './metrics/metrics-registry';
 
@@ -10,7 +15,9 @@ export class MetricsServerService implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     const port = Number(process.env.METRICS_PORT || 9101);
     const host = process.env.METRICS_HOST || '0.0.0.0';
-    if (String(process.env.METRICS_ENABLED || 'true').toLowerCase() === 'false') {
+    if (
+      String(process.env.METRICS_ENABLED || 'true').toLowerCase() === 'false'
+    ) {
       return;
     }
     this.server = http.createServer((req, res) => {

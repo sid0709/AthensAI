@@ -65,15 +65,14 @@ export function mapGmailLabelsToFolder(
   if (!labels || labels.size === 0) return 'archive';
   if (hasLabel(labels, '\\trash') || hasLabel(labels, 'trash')) return 'trash';
   if (hasLabel(labels, '\\junk') || hasLabel(labels, 'spam')) return 'spam';
-  if (hasLabel(labels, '\\drafts') || hasLabel(labels, 'drafts')) return 'drafts';
+  if (hasLabel(labels, '\\drafts') || hasLabel(labels, 'drafts'))
+    return 'drafts';
   if (hasLabel(labels, '\\sent') || hasLabel(labels, 'sent')) return 'sent';
   if (hasLabel(labels, '\\inbox') || hasLabel(labels, 'inbox')) return 'inbox';
   return 'archive';
 }
 
-export function gmailLabelsToArray(
-  labels: Set<string> | undefined,
-): string[] {
+export function gmailLabelsToArray(labels: Set<string> | undefined): string[] {
   if (!labels || labels.size === 0) return [];
   return [...labels].map((l) => displayLabelName(l));
 }

@@ -1,6 +1,10 @@
 import type { AccountInfo } from '@prisma/client';
 import { AI_USAGE_KEY_PROVIDERS } from '../constants/ai-usage.constants';
-import { fingerprintApiKey, maskApiKey, roundCostUsd } from '../lib/mask-api-key';
+import {
+  fingerprintApiKey,
+  maskApiKey,
+  roundCostUsd,
+} from '../lib/mask-api-key';
 import {
   emptyUsageBucket,
   type AiUsageBucket,

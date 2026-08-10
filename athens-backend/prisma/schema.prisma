@@ -335,7 +335,87 @@ model Resume {
   @@index([profileId, uploadedAt(sort: Desc)])
   @@index([profileId, title])
   @@index([ownerName, uploadedAt(sort: Desc)])
+  @@index([generationId])
   @@map("resumes")
+}
+
+/// Persistent Resume Generator settings (Profile-scoped). Collection: resume_generator_config.
+model ResumeGeneratorConfig {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  applierName String
+  profileId   String?
+  /// Canonical v4 generator config JSON
+  config      Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([applierName, updatedAt(sort: Desc)])
+  @@index([profileId])
+  @@map("resume_generator_config")
+}
+
+/// Completed / failed Resume Generator application runs. Collection: resume_generations.
+model ResumeGeneration {
+  id                     String    @id @default(auto()) @map("_id") @db.ObjectId
+  applierName            String?
+  provider               String?
+  model                  String?
+  status                 String
+  backgroundTaskInputId  String?
+  /// Snapshot of generator config used for this run
+  config                 Json?
+  identity               Json?
+  jobDescription         String?
+  coverageAnalysis       Json?
+  coverageContract       Json?
+  sections               Json?
+  perStep                Json?
+  usage                  Json?
+  skillProfile           Json?
+  techStack              String?
+  skillAnalysisError     String?
+  analyzed               Boolean   @default(false)
+  analyzedAt             DateTime?
+  isBeta                 Boolean   @default(false)
+  dynamicCareerTitles    Boolean   @default(false)
+  titlePolicyVersion     Int?
+  titlePolicyFingerprint String?
+  identitySyncedAt       String?
+  identityRefreshedAt    DateTime?
+  startedAt              DateTime?
+  finishedAt             DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([applierName, startedAt(sort: Desc)])
+  @@index([backgroundTaskInputId])
+  @@index([applierName, status])
+  @@map("resume_generations")
+}
+
+/// Idempotent generation request payloads (sha256 hex id). Collection: background_task_inputs.
+model BackgroundTaskInput {
+  id              String    @id @map("_id")
+  kind            String
+  requestId       String?
+  profileId       String?
+  applierName     String?
+  status          String
+  request         Json?
+  partialSections Json?
+  result          Json?
+  error           String?
+  workerTaskId    String?
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  updatedAt       DateTime  @updatedAt
+  expiresAt       DateTime?
+
+  @@index([applierName, status])
+  @@index([requestId])
+  @@index([expiresAt])
+  @@map("background_task_inputs")
 }
 
 /// Cached Gmail message (list = headers/snippet; body filled on open).

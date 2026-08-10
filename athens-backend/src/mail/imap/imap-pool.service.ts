@@ -48,7 +48,9 @@ export class ImapPoolService implements OnModuleDestroy {
       entry = await this.acquire(email, password);
       if (!entry) {
         if (Date.now() - startedAt > MAX_WAIT_MS) {
-          throw new Error('IMAP connection pool exhausted — all connections busy');
+          throw new Error(
+            'IMAP connection pool exhausted — all connections busy',
+          );
         }
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
       }
@@ -78,7 +80,10 @@ export class ImapPoolService implements OnModuleDestroy {
     }
   }
 
-  private async createClient(email: string, password: string): Promise<ImapFlow> {
+  private async createClient(
+    email: string,
+    password: string,
+  ): Promise<ImapFlow> {
     const client = new ImapFlow({
       host: 'imap.gmail.com',
       port: 993,
@@ -146,7 +151,7 @@ export class ImapPoolService implements OnModuleDestroy {
     const now = Date.now();
     for (const [email, pool] of this.pools.entries()) {
       for (let i = pool.length - 1; i >= 0; i--) {
-        const entry = pool[i]!;
+        const entry = pool[i];
         if (entry.busy) continue;
         const idleMs = now - entry.lastUsedAt;
         if (idleMs > IDLE_TTL_MS || !this.isConnected(entry.client)) {

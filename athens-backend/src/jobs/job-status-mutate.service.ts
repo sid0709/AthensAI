@@ -4,7 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { BidStatusQueueService } from '../bids/bid-status-queue.service';
-import { deleteManyWithFallback, rawInsertOne, rawUpdateMany, withReplicaSetFallback } from '../prisma/mongo-standalone';
+import {
+  deleteManyWithFallback,
+  rawInsertOne,
+  rawUpdateMany,
+  withReplicaSetFallback,
+} from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   JOB_STATUS_STATES,

@@ -120,8 +120,7 @@ export class BidStatusQueueService {
     const { profileId, job } = input;
     const existing = await this.findStatusRow(profileId, job.id);
     const now = new Date();
-    const bidReadyAt =
-      existing?.bidReadyAt ?? input.existingBidReadyAt ?? now;
+    const bidReadyAt = existing?.bidReadyAt ?? input.existingBidReadyAt ?? now;
 
     if (existing) {
       await withReplicaSetFallback(
@@ -184,10 +183,7 @@ export class BidStatusQueueService {
     );
   }
 
-  async getBidReadyAt(
-    profileId: string,
-    jobId: string,
-  ): Promise<Date | null> {
+  async getBidReadyAt(profileId: string, jobId: string): Promise<Date | null> {
     try {
       const row = await this.prisma.jobStatus.findUnique({
         where: { profileId_jobId: { profileId, jobId } },
@@ -196,11 +192,9 @@ export class BidStatusQueueService {
       return row?.bidReadyAt ?? null;
     } catch (error) {
       if (!isInconsistentDateTime(error)) throw error;
-      await repairStringDateFields(
-        this.prisma,
-        JOB_STATUSES_COLLECTION,
-        [...JOB_STATUS_DATE_FIELDS],
-      );
+      await repairStringDateFields(this.prisma, JOB_STATUSES_COLLECTION, [
+        ...JOB_STATUS_DATE_FIELDS,
+      ]);
       const row = await this.prisma.jobStatus.findUnique({
         where: { profileId_jobId: { profileId, jobId } },
         select: { bidReadyAt: true },
@@ -225,11 +219,9 @@ export class BidStatusQueueService {
     } catch (error) {
       // Standalone raw writes once stored ISO strings; heal then retry.
       if (!isInconsistentDateTime(error)) throw error;
-      await repairStringDateFields(
-        this.prisma,
-        JOB_STATUSES_COLLECTION,
-        [...JOB_STATUS_DATE_FIELDS],
-      );
+      await repairStringDateFields(this.prisma, JOB_STATUSES_COLLECTION, [
+        ...JOB_STATUS_DATE_FIELDS,
+      ]);
       return this.prisma.jobStatus.findMany({
         where: { profileId, state: { in: states } },
         orderBy: [{ postedAt: 'desc' }, { updatedAt: 'desc' }],
@@ -260,11 +252,9 @@ export class BidStatusQueueService {
       });
     } catch (error) {
       if (!isInconsistentDateTime(error)) throw error;
-      await repairStringDateFields(
-        this.prisma,
-        JOB_STATUSES_COLLECTION,
-        [...JOB_STATUS_DATE_FIELDS],
-      );
+      await repairStringDateFields(this.prisma, JOB_STATUSES_COLLECTION, [
+        ...JOB_STATUS_DATE_FIELDS,
+      ]);
       return this.prisma.jobStatus.findUnique({
         where: { profileId_jobId: { profileId, jobId } },
       });

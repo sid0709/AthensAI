@@ -235,7 +235,9 @@ export class BidRecordingUploadService {
   }
 }
 
-async function sha256File(file: File): Promise<{ sha256: string; bytes: number }> {
+async function sha256File(
+  file: File,
+): Promise<{ sha256: string; bytes: number }> {
   const hash = createHash('sha256');
   let bytes = 0;
   await new Promise<void>((resolve, reject) => {
