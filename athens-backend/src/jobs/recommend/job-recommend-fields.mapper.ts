@@ -41,7 +41,8 @@ export function mapVendorTaskRecommendFields(row: {
         : null;
 
   return {
-    recommendedResumeStack: String(row.recommendedResumeStack || '').trim() || null,
+    recommendedResumeStack:
+      String(row.recommendedResumeStack || '').trim() || null,
     recommendedResumeId: String(row.recommendedResumeId || '').trim() || null,
     recommendedResumeReason:
       String(row.recommendedResumeReason || '').trim() || null,

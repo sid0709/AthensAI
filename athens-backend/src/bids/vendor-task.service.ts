@@ -260,7 +260,9 @@ export class VendorTaskService {
     // Raw Mongo inserts skip Prisma @default — always set required dates + identity.
     const addedAt = (data.addedAt as Date) || now;
     const createdAt = (data.createdAt as Date) || now;
-    const title = isBlankTitle(data.title) ? 'Untitled role' : String(data.title);
+    const title = isBlankTitle(data.title)
+      ? 'Untitled role'
+      : String(data.title);
     const company = isBlankCompany(data.company) ? '' : String(data.company);
     const createData = {
       ...data,

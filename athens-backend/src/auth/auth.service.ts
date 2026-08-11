@@ -5,13 +5,16 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type AccountInfo } from '@prisma/client';
+import { AccountCascadeDeleteService } from './account-cascade-delete.service';
 import { AccountInfoService } from './account-info.service';
 import {
   AuthMessages,
   MIN_NEW_PASSWORD_LENGTH,
 } from './constants/auth.constants';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
+import type { AccountDeleteProgressFn } from './lib/account-delete-progress';
 import { SignInDto } from './dto/signin.dto';
 import { SignUpDto } from './dto/signup.dto';
 import { VendorPasswordDto } from './dto/vendor-password.dto';
@@ -23,6 +26,7 @@ export class AuthService {
   constructor(
     private readonly accounts: AccountInfoService,
     private readonly passwords: PasswordService,
+    private readonly cascadeDelete: AccountCascadeDeleteService,
   ) {}
 
   async signin(dto: SignInDto) {
@@ -110,6 +114,54 @@ export class AuthService {
     await this.accounts.updatePassword(user.id, hashedPassword);
 
     return { success: true, message: AuthMessages.passwordUpdated };
+  }
+
+  async deleteAccount(dto: DeleteAccountDto) {
+    const user = await this.verifyDeleteAccount(dto);
+    await this.cascadeDelete.deleteAccount(user);
+    return { success: true, message: AuthMessages.accountDeleted };
+  }
+
+  async deleteAccountWithProgress(
+    dto: DeleteAccountDto,
+    onProgress: AccountDeleteProgressFn,
+  ): Promise<{ success: true; message: string }> {
+    await onProgress({
+      phase: 'verifying',
+      message: 'Verifying password…',
+      removed: 0,
+      total: 0,
+      percent: 0,
+    });
+    const user = await this.verifyDeleteAccount(dto);
+    await this.cascadeDelete.deleteAccount(user, onProgress);
+    return { success: true, message: AuthMessages.accountDeleted };
+  }
+
+  private async verifyDeleteAccount(
+    dto: DeleteAccountDto,
+  ): Promise<AccountInfo> {
+    const name = String(dto.name ?? '').trim();
+    const password = String(dto.password ?? '');
+    const confirmName = String(dto.confirmName ?? '').trim();
+
+    if (!name || !password || !confirmName) {
+      throw new BadRequestException(AuthMessages.deleteAccountRequired);
+    }
+    if (confirmName !== name) {
+      throw new BadRequestException(AuthMessages.confirmNameMismatch);
+    }
+
+    const user = await this.accounts.findByName(name, { exactFirst: true });
+    if (!user) {
+      throw new NotFoundException(AuthMessages.accountNotFound);
+    }
+
+    const valid = await this.passwords.verify(user.password, password);
+    if (!valid) {
+      throw new UnauthorizedException(AuthMessages.passwordIncorrect);
+    }
+    return user;
   }
 
   async setVendorPassword(dto: VendorPasswordDto) {

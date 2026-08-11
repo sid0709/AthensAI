@@ -108,9 +108,6 @@ export class OakProfilePromptService {
     delete raw.openaiApiKeyConfigured;
     delete raw.deepseekApiKeyConfigured;
 
-    return buildApplicantContext(
-      { id: account.id, name: account.name },
-      raw,
-    );
+    return buildApplicantContext({ id: account.id, name: account.name }, raw);
   }
 }

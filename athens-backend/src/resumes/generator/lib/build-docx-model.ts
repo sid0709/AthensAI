@@ -13,7 +13,8 @@ export function buildDocxModelFromGeneration(input: {
 }): Record<string, unknown> {
   const sections = input.sections;
   const identity = input.identity;
-  const config = input.config && typeof input.config === 'object' ? input.config : {};
+  const config =
+    input.config && typeof input.config === 'object' ? input.config : {};
   const theme =
     config.theme && typeof config.theme === 'object'
       ? (config.theme as Dict)
@@ -44,7 +45,8 @@ export function buildDocxModelFromGeneration(input: {
           skills: 'Skills',
           experience: 'Experience',
           education: 'Education',
-        }[type] ?? type);
+        }[type] ??
+          type);
       const headingColor = cleanString(row.titleColor) || accent;
       const bodySizePt = Number(row.bodySize) || baseSize;
       const titleSizePt = Number(row.titleSize) || titleSize;
@@ -66,7 +68,9 @@ export function buildDocxModelFromGeneration(input: {
         return { ...base, summary };
       }
       if (type === 'skills') {
-        const groups = Array.isArray((sections.skills as Dict | undefined)?.skills)
+        const groups = Array.isArray(
+          (sections.skills as Dict | undefined)?.skills,
+        )
           ? ((sections.skills as Dict).skills as Dict[])
           : [];
         return {
@@ -104,7 +108,9 @@ export function buildDocxModelFromGeneration(input: {
           ? (identity.education as Dict[])
           : Array.isArray((sections.education as Dict | undefined)?.education)
             ? ((sections.education as Dict).education as Dict[])
-            : Array.isArray((sections.education as Dict | undefined)?.educations)
+            : Array.isArray(
+                  (sections.education as Dict | undefined)?.educations,
+                )
               ? ((sections.education as Dict).educations as Dict[])
               : [];
         return {

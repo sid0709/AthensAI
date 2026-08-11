@@ -93,10 +93,17 @@ export function mergeMissingJobIdentity(
   if (isBlankCompany(target.company) && isBlankCompany(existing?.company)) {
     target.company = snapshot.company;
   }
-  if (target.applyUrl === undefined && !existing?.applyUrl && snapshot.applyUrl) {
+  if (
+    target.applyUrl === undefined &&
+    !existing?.applyUrl &&
+    snapshot.applyUrl
+  ) {
     target.applyUrl = snapshot.applyUrl;
   }
-  if (!String(target.source ?? existing?.source ?? '').trim() && snapshot.source) {
+  if (
+    !String(target.source ?? existing?.source ?? '').trim() &&
+    snapshot.source
+  ) {
     target.source = snapshot.source;
   }
   if (

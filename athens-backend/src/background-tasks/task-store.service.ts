@@ -312,14 +312,19 @@ export class TaskStoreService {
               update: BACKGROUND_TASKS_COLLECTION,
               updates: [
                 {
-                  q: { _id: { $oid: task.id }, status: BACKGROUND_TASK_STATUSES.QUEUED },
+                  q: {
+                    _id: { $oid: task.id },
+                    status: BACKGROUND_TASK_STATUSES.QUEUED,
+                  },
                   u: {
                     $set: {
                       status: BACKGROUND_TASK_STATUSES.RUNNING,
                       startedAt: { $date: now.toISOString() },
                       leaseOwner: workerId,
                       leaseExpiresAt: {
-                        $date: new Date(Date.now() + WORKER_LEASE_MS).toISOString(),
+                        $date: new Date(
+                          Date.now() + WORKER_LEASE_MS,
+                        ).toISOString(),
                       },
                       updatedAt: { $date: new Date().toISOString() },
                     },

@@ -33,4 +33,3 @@ import { StatusModule } from './status/status.module';
   ],
 })
 export class AppModule {}
-

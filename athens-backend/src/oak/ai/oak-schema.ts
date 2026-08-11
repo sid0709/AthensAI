@@ -104,7 +104,9 @@ export const MATCH_OPTION_FORMAT = {
   },
 };
 
-export function validatePlanShape(plan: unknown): asserts plan is Record<string, unknown> {
+export function validatePlanShape(
+  plan: unknown,
+): asserts plan is Record<string, unknown> {
   if (!plan || typeof plan !== 'object') {
     throw new Error('Plan must be a JSON object');
   }
