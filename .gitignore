@@ -72,5 +72,7 @@ coverage/
 # Terraform provider and module cache (generated locally; never commit)
 **/.terraform/
 
-# Nested repos (separate GitHub projects; develop independently)
-Oak/
+# Nested repos (separate GitHub projects; develop independently).
+# Anchor to repo root so case-insensitive FS matching does not also ignore
+# athens-backend/src/oak (Nest Oak module required by CI build).
+/Oak/
