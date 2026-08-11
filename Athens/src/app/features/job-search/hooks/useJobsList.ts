@@ -7,6 +7,11 @@ import { retryTransient } from "@/lib/transient-retry";
 import { mapDocToJob, normalizeId } from "../../../lib/job-adapters";
 import type { CompanyJobGroup, Job } from "../../../types";
 import { keepOnlyCompanyJob, removeCompanyJobs } from "../lib/companyGroupState";
+import {
+  extractRecommendSnapshot,
+  mergeRecommendSnapshot,
+  type JobRecommendSnapshot,
+} from "../lib/jobRecommendSnapshot";
 import type {
   JobSearchFilterState,
   JobStatusTab,
@@ -148,6 +153,22 @@ export function buildJobsListQuery(
   return `${JOB_LIST_ENDPOINT}?${params.toString()}`;
 }
 
+function applyRecommendCache(
+  groups: CompanyJobGroup[],
+  cache: Map<string, JobRecommendSnapshot>,
+): CompanyJobGroup[] {
+  return groups.map((group) => ({
+    ...group,
+    jobs: group.jobs.map((job) => {
+      const id = String(job.backendId || job.id || "").trim();
+      const merged = mergeRecommendSnapshot(job, id ? cache.get(id) : null);
+      const snap = extractRecommendSnapshot(merged);
+      if (snap && id) cache.set(id, snap);
+      return merged;
+    }),
+  }));
+}
+
 function mapResponseGroups(
   rows: NonNullable<ListResponse["data"]>,
   applier: ReturnType<typeof useApplier>["applier"],
@@ -225,6 +246,7 @@ export function useJobsList(
   const [retryRevision, setRetryRevision] = useState(0);
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const rawGroupsRef = useRef<CompanyJobGroup[]>([]);
+  const recommendCacheRef = useRef(new Map<string, JobRecommendSnapshot>());
   const applierRef = useRef(applier);
   rawGroupsRef.current = rawGroups;
   applierRef.current = applier;
@@ -259,6 +281,10 @@ export function useJobsList(
     settledKey !== currentQueryKey;
 
   useEffect(() => {
+    recommendCacheRef.current.clear();
+  }, [applier?._id]);
+
+  useEffect(() => {
     memberRequestTokensRef.current.clear();
     memberCursorsRef.current.clear();
     setMemberLoadingIds(new Set());
@@ -291,7 +317,12 @@ export function useJobsList(
       ) {
         return false;
       }
-      setRawGroups(mapResponseGroups(res.data, applierRef.current));
+      setRawGroups(
+        applyRecommendCache(
+          mapResponseGroups(res.data, applierRef.current),
+          recommendCacheRef.current,
+        ),
+      );
       setTotal(responseTotal);
       setTotalJobs(res.pagination?.totalJobs ?? countTotal ?? responseTotal);
       if (res.statusCounts) {
@@ -341,6 +372,11 @@ export function useJobsList(
   }, [currentQueryKey, retryRevision, request, applierReady, isDebouncing, listQueryPath, page, pageSize, debouncedFilters.statusTab]);
   const patchJob = useCallback(
     (updated: Job) => {
+      const snap = extractRecommendSnapshot(updated);
+      if (snap) {
+        const id = String(updated.backendId || updated.id || "").trim();
+        if (id) recommendCacheRef.current.set(id, snap);
+      }
       const previousJob = rawGroupsRef.current
         .flatMap((group) => group.jobs)
         .find((job) => job.id === updated.id || job.backendId === updated.backendId);

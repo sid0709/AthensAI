@@ -16,6 +16,7 @@ import {
   type JobStatusState,
 } from './constants/job-status-states.constants';
 import { mapJobToListDoc } from './mappers/job-list.mapper';
+import { JobRecommendFieldsService } from './recommend/job-recommend-fields.service';
 
 const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
 const MAX_BULK = 150;
@@ -47,6 +48,7 @@ export class JobStatusMutateService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bidQueue: BidStatusQueueService,
+    private readonly recommendFields: JobRecommendFieldsService,
   ) {}
 
   async apply(jobId: string, applierName: string, mutationId?: string) {
@@ -194,7 +196,7 @@ export class JobStatusMutateService {
       });
       return {
         success: true,
-        data: mapJobToListDoc(job, 'bid-ready'),
+        data: await this.jobDocWithRecommend(job, profileId, 'bid-ready'),
         changed,
         viewerStatus: 'bid-ready',
         mutationId: mutationId?.trim() || null,
@@ -203,7 +205,7 @@ export class JobStatusMutateService {
     await this.bidQueue.setBidCompleted({ profileId, job });
     return {
       success: true,
-      data: mapJobToListDoc(job, 'bid-completed'),
+      data: await this.jobDocWithRecommend(job, profileId, 'bid-completed'),
       changed: true,
       viewerStatus: 'bid-completed',
       mutationId: mutationId?.trim() || null,
@@ -276,7 +278,7 @@ export class JobStatusMutateService {
 
     return {
       success: true,
-      data: mapJobToListDoc(job, state),
+      data: await this.jobDocWithRecommend(job, profileId, state),
       changed,
       viewerStatus: state,
       mutationId: mutationId?.trim() || null,
@@ -311,11 +313,28 @@ export class JobStatusMutateService {
 
     return {
       success: true,
-      data: mapJobToListDoc(job, 'posted'),
+      data: await this.jobDocWithRecommend(job, profileId, 'posted'),
       changed: deletedCount > 0,
       viewerStatus: 'posted',
       mutationId: mutationId?.trim() || null,
     };
+  }
+
+  /** List-shaped job doc plus durable vendor_tasks recommend fields. */
+  private async jobDocWithRecommend(
+    job: Parameters<typeof mapJobToListDoc>[0],
+    profileId: string,
+    viewerStatus: string,
+  ): Promise<Record<string, unknown>> {
+    const doc = mapJobToListDoc(job, viewerStatus);
+    const recommendByJobId = await this.recommendFields.loadForProfile(
+      profileId,
+      [job.id],
+    );
+    const recommend =
+      recommendByJobId.get(job.id) ||
+      recommendByJobId.get(String(job.id).toLowerCase());
+    return recommend ? { ...doc, ...recommend } : doc;
   }
 
   private async requireJobAndProfile(jobIdRaw: string, applierName: string) {

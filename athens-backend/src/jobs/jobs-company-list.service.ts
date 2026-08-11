@@ -13,6 +13,7 @@ import {
   type CompanyGroupSource,
 } from './mappers/company-group.mapper';
 import { JobStatusService } from './job-status.service';
+import { JobRecommendFieldsService } from './recommend/job-recommend-fields.service';
 
 type AggregateFacetRow = {
   totals?: Array<{ companies?: number; jobs?: number }>;
@@ -59,6 +60,7 @@ export class JobsCompanyListService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobStatuses: JobStatusService,
+    private readonly recommendFields: JobRecommendFieldsService,
   ) {}
 
   /** Unfiltered: page companies by lastPostedAt, hydrate first N jobIds. */
@@ -208,7 +210,7 @@ export class JobsCompanyListService {
       memberIds,
     );
 
-    const recommendByJobId = await this.loadRecommendFields(
+    const recommendByJobId = await this.recommendFields.loadForProfile(
       profileId,
       memberIds,
     );
@@ -218,50 +220,13 @@ export class JobsCompanyListService {
       const jobsOut = Array.isArray(row.jobs) ? row.jobs : [];
       row.jobs = jobsOut.map((job) => {
         const id = String((job as { _id?: string })._id || '');
-        const recommend = recommendByJobId.get(id);
+        const recommend =
+          recommendByJobId.get(id) ||
+          recommendByJobId.get(id.toLowerCase());
         if (!recommend) return job;
         return { ...job, ...recommend };
       });
       return row;
     });
-  }
-
-  private async loadRecommendFields(
-    profileId: string,
-    jobIds: string[],
-  ): Promise<Map<string, Record<string, unknown>>> {
-    const out = new Map<string, Record<string, unknown>>();
-    if (!profileId || !jobIds.length) return out;
-    const account = await this.prisma.accountInfo.findUnique({
-      where: { id: profileId },
-      select: { name: true },
-    });
-    if (!account) return out;
-    const tasks = await this.prisma.vendorTask.findMany({
-      where: { applierName: account.name, jobId: { in: jobIds } },
-      select: {
-        jobId: true,
-        recommendedResumeStack: true,
-        recommendedResumeId: true,
-        recommendedResumeReason: true,
-        useCustomizedResume: true,
-        recommendWarning: true,
-        recommendedAt: true,
-        recommendMode: true,
-      },
-    });
-    for (const t of tasks) {
-      if (!t.recommendedResumeStack && !t.useCustomizedResume) continue;
-      out.set(t.jobId, {
-        recommendedResumeStack: t.recommendedResumeStack,
-        recommendedResumeId: t.recommendedResumeId,
-        recommendedResumeReason: t.recommendedResumeReason,
-        useCustomizedResume: t.useCustomizedResume,
-        recommendWarning: t.recommendWarning,
-        recommendedAt: t.recommendedAt?.toISOString() ?? null,
-        recommendMode: t.recommendMode,
-      });
-    }
-    return out;
   }
 }
