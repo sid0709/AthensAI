@@ -279,6 +279,22 @@ model AthensLensSession {
   @@map("athens_lens_sessions")
 }
 
+/// Oak extension / UI board bearer sessions. Doc id = sha256(token) hex.
+model OakSession {
+  id              String   @id @map("_id")
+  accountId       String
+  profileId       String
+  applierName     String
+  username        String
+  authenticatedAt DateTime
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([expiresAt])
+  @@map("oak_sessions")
+}
+
 /// Resumable bid-recording upload handshake (bytes in Firebase Storage).
 model UploadSession {
   id             String    @id @map("_id")

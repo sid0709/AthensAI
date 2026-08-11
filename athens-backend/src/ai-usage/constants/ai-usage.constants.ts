@@ -61,4 +61,6 @@ export const AI_USAGE_FEATURES = {
   recommendResume: 'recommend-resume',
   resumeAnalyze: 'resume-analyze',
   resumeCoverageAnalyze: 'resume-coverage-analysis',
+  oakAiAnalyze: 'oak-ai-analyze',
+  oakMatchOption: 'oak-match-option',
 } as const;

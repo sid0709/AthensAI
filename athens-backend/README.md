@@ -86,9 +86,27 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/jobs/ai-analyze/stop` | Abort session + release leases |
 | GET | `/api/jobs/skill-extract/status` | Alias of AI Analyze status (legacy client path) |
 
+## Oak (DOM relay + AI action plans)
+
+Oak Chrome extension + UI board authenticate with the same Athens account password as the web app, then call `/api/oak/*` and Socket.io path `/oak` on this process (port 8980). LLM calls use the signed-in profile’s API key + default model; applicant prompt context is sanitized `autoBidProfile` (API keys / app passwords stripped).
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/api/oak/auth/signin` | `{ name, password }` → Oak Bearer session |
+| POST | `/api/oak/auth/signout` | Bearer |
+| GET | `/api/oak/auth/me` | Bearer |
+| GET | `/api/oak/health` | Socket client count |
+| POST | `/api/oak/ai-analyze` | Bearer — `{ pureTree, metaTree, page? }` → action plan |
+| POST | `/api/oak/match-option` | Bearer — dropdown option match |
+| GET | `/api/oak/runtime-file` | Bearer — optional file from `OAK_RUNTIME_FILE_PATH` |
+
+Socket.io: path `/oak`, handshake `auth.token` = Oak access token. Query: `type` (`extension` \| `ui-board`), `name`.
+
+See `Oak/README.md` for client setup. Distinct from Jobs **`/api/jobs/ai-analyze`** (temp_jobs skill pipeline).
+
 ## Bid Management + Athens Lens
 
-Mongo owns metadata (`vendor_tasks`, `job_statuses`, `bid_review_events`, `athens_lens_sessions`, `upload_sessions`). Firebase Storage holds video bytes only under `bid-recordings/{applier}/{session}/{uploadId}.{ext}`.
+Mongo owns metadata (`vendor_tasks`, `job_statuses`, `bid_review_events`, `athens_lens_sessions`, `oak_sessions`, `upload_sessions`). Firebase Storage holds video bytes only under `bid-recordings/{applier}/{session}/{uploadId}.{ext}`.
 
 | Method | Path | Notes |
 |--------|------|-------|
