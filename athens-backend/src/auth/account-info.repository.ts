@@ -22,8 +22,31 @@ const ACCOUNT_INFO_COLLECTION = 'account_info';
 export class AccountInfoRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  findById(id: string): Promise<AccountInfo | null> {
-    return this.prisma.accountInfo.findUnique({ where: { id } });
+  /**
+   * Resolve by `_id`. Legacy Athens-server rows store `_id` as a plain string;
+   * Prisma `@db.ObjectId` findUnique misses those, so fall back via name.
+   */
+  async findById(id: string): Promise<AccountInfo | null> {
+    const trimmed = String(id || '').trim();
+    if (!trimmed) return null;
+
+    const byObjectId = await this.prisma.accountInfo.findUnique({
+      where: { id: trimmed },
+    });
+    if (byObjectId) return byObjectId;
+
+    const raw = await this.prisma.$runCommandRaw({
+      find: ACCOUNT_INFO_COLLECTION,
+      filter: mongoIdQuery(trimmed),
+      limit: 1,
+      projection: { name: 1 },
+    });
+    const doc = (
+      raw as { cursor?: { firstBatch?: Array<{ name?: unknown }> } }
+    ).cursor?.firstBatch?.[0];
+    const name = typeof doc?.name === 'string' ? doc.name.trim() : '';
+    if (!name) return null;
+    return this.prisma.accountInfo.findUnique({ where: { name } });
   }
 
   findByExactName(name: string): Promise<AccountInfo | null> {

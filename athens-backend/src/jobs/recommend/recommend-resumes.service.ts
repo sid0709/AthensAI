@@ -21,6 +21,7 @@ import { resolveCatalogKey } from '../../bids/lib/resume-catalog';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ResumeLibraryCatalogService } from '../../resumes/resume-library-catalog.service';
 import { VendorTaskService } from '../../bids/vendor-task.service';
+import { hasStoredRecommendation } from './job-recommend-fields.mapper';
 import {
   heuristicRecommend,
   normalizeRecommendJobIds,
@@ -87,10 +88,10 @@ export class RecommendResumesService {
     }
     const needsLlm = replaceExisting
       ? jobIds
-      : jobIds.filter(
-          (jobId) =>
-            !hasExistingRecommendation(existingByJobId.get(jobId) ?? null),
-        );
+      : jobIds.filter((jobId) => {
+          const existing = existingByJobId.get(jobId) ?? null;
+          return !(existing && hasStoredRecommendation(existing));
+        });
     const catalog =
       needsLlm.length > 0
         ? await this.libraryCatalog.compressForProfile(account.id)
@@ -102,7 +103,7 @@ export class RecommendResumesService {
         try {
           if (!replaceExisting) {
             const existing = existingByJobId.get(jobId) ?? null;
-            if (hasExistingRecommendation(existing)) {
+            if (existing && hasStoredRecommendation(existing)) {
               return {
                 jobId,
                 ok: true as const,
@@ -286,14 +287,4 @@ export class RecommendResumesService {
       requestId,
     };
   }
-}
-
-function hasExistingRecommendation(
-  task: Awaited<ReturnType<VendorTaskService['findByApplierJob']>>,
-): boolean {
-  if (!task) return false;
-  if (task.recommendedAt) return true;
-  if (String(task.recommendedResumeStack || '').trim()) return true;
-  if (task.useCustomizedResume) return true;
-  return false;
 }

@@ -7,6 +7,7 @@ import { BidsModule } from './bids/bids.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { JobsModule } from './jobs/jobs.module';
 import { MailModule } from './mail/mail.module';
+import { OakModule } from './oak/oak.module';
 import { PersonalModule } from './personal/personal.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReportsModule } from './reports/reports.module';
@@ -25,9 +26,11 @@ import { StatusModule } from './status/status.module';
     MailModule,
     BackgroundTasksModule,
     AthensLensModule,
+    OakModule,
     StatusModule,
     AiUsageModule,
     ReportsModule,
   ],
 })
 export class AppModule {}
+

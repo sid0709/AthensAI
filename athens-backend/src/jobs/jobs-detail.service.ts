@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { JobStatusService } from './job-status.service';
 import { mapJobToListDoc } from './mappers/job-list.mapper';
+import { JobRecommendFieldsService } from './recommend/job-recommend-fields.service';
 
 const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
 
@@ -14,6 +15,7 @@ export class JobsDetailService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobStatuses: JobStatusService,
+    private readonly recommendFields: JobRecommendFieldsService,
   ) {}
 
   /** Full job document for View JD (includes description). */
@@ -46,9 +48,19 @@ export class JobsDetailService {
       viewerStatus = states.get(jobId) || 'posted';
     }
 
+    const doc = mapJobToListDoc(job, viewerStatus);
+    const recommendByJobId = resolvedProfileId
+      ? await this.recommendFields.loadForProfile(resolvedProfileId, [jobId])
+      : applierName.trim()
+        ? await this.recommendFields.loadForApplier(applierName.trim(), [jobId])
+        : new Map();
+    const recommend =
+      recommendByJobId.get(jobId) ||
+      recommendByJobId.get(jobId.toLowerCase());
+
     return {
       success: true as const,
-      data: mapJobToListDoc(job, viewerStatus),
+      data: recommend ? { ...doc, ...recommend } : doc,
     };
   }
 

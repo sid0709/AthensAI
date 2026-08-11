@@ -1,0 +1,76 @@
+export const OAK_SESSIONS_COLLECTION = 'oak_sessions';
+
+export const OAK_SOCKET_PATH = '/oak';
+
+export const OAK_RUNTIME_FILE_KEY =
+  process.env.OAK_RUNTIME_FILE_KEY?.trim() || 'runtime_file';
+
+export const OPENAI_RESPONSES_URL =
+  process.env.OAK_OPENAI_API_URL?.trim() ||
+  'https://api.openai.com/v1/responses';
+
+export function oakMaxOutputTokens(): number {
+  const n = Number.parseInt(
+    String(process.env.OAK_MAX_OUTPUT_TOKENS || '12000'),
+    10,
+  );
+  return Number.isFinite(n) && n > 0 ? n : 12000;
+}
+
+export function oakTemperature(): number {
+  const n = Number.parseFloat(String(process.env.OAK_OPENAI_TEMPERATURE || '0.1'));
+  return Number.isFinite(n) ? n : 0.1;
+}
+
+export function oakReasoningEffort(): string | null {
+  const raw = process.env.OAK_OPENAI_REASONING_EFFORT?.trim().toLowerCase();
+  if (!raw) return null;
+  const allowed = new Set([
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+  ]);
+  return allowed.has(raw) ? raw : null;
+}
+
+/**
+ * GPT-5 / o-series Responses models reject custom `temperature`.
+ * Use reasoning.effort instead (env override, else a safe default).
+ */
+export function oakModelRejectsTemperature(model: string): boolean {
+  const m = model.trim().toLowerCase();
+  return (
+    m.startsWith('gpt-5') ||
+    m.startsWith('o1') ||
+    m.startsWith('o3') ||
+    m.startsWith('o4')
+  );
+}
+
+/** Reasoning effort to send when temperature is unsupported. */
+export function oakReasoningEffortForModel(model: string): string | null {
+  const configured = oakReasoningEffort();
+  if (configured) return configured;
+  if (oakModelRejectsTemperature(model)) return 'low';
+  return null;
+}
+
+export function oakRuntimeFilePath(): string | null {
+  const raw = process.env.OAK_RUNTIME_FILE_PATH?.trim();
+  return raw || null;
+}
+
+export function oakSessionTtlSeconds(): number {
+  const DEFAULT = 12 * 60 * 60;
+  const MIN = 5 * 60;
+  const MAX = 7 * 24 * 60 * 60;
+  const configured = Number.parseInt(
+    String(process.env.OAK_SESSION_TTL_SECONDS || ''),
+    10,
+  );
+  if (!Number.isFinite(configured)) return DEFAULT;
+  return Math.min(MAX, Math.max(MIN, configured));
+}
