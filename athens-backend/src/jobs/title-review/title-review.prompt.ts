@@ -9,17 +9,23 @@ Classify every supplied job title into exactly one label:
 - APPROVED
 - REVIEW_REQUIRED
 
-APPROVED means the title clearly represents hands-on, code-based technical work such as software engineering/development (including backend, frontend, full-stack, web, mobile, or applications), DevOps / SRE / platform engineering, or data / ML / AI engineering roles that imply building with code or infrastructure-as-code.
+Current APPROVED scope is software development, DevOps, data engineering, and platform engineering. Approve titles that clearly belong to that scope, including:
 
-Programming languages and frameworks do not need to appear in the title. Approve legitimate code-based engineering roles when the title itself makes that clear.
+- Software engineering/development (backend, frontend, full-stack, web, mobile, or applications), including senior engineer titles in that scope
+- DevOps / SRE / platform engineering
+- Data / ML / AI engineering that implies building with code or infrastructure-as-code
+- Solution architect roles tied to software, platform, DevOps, or data engineering
+- Forward deployed engineer roles that deliver software, platform, DevOps, or data engineering work
 
-Use REVIEW_REQUIRED for all other titles, including testing/QA-focused roles, embedded/firmware-only roles, low-code or enterprise-configuration specialist titles, hardware/non-software engineering, sales/marketing/recruiting/HR/finance/legal/customer-success/operations, product/project/program management, business analysis/consulting/support/help-desk, and ambiguous titles (e.g. Engineer, Developer, Architect, Technical Specialist, Consultant) without clear software context.
+Programming languages and frameworks do not need to appear in the title. Approve legitimate in-scope engineering and architecture roles when the title itself makes that clear.
+
+Use REVIEW_REQUIRED for titles outside that scope, including testing/QA-focused roles, embedded/firmware-only roles, low-code or enterprise-configuration specialist titles, hardware/non-software engineering, sales/marketing/recruiting/HR/finance/legal/customer-success/operations, product/project/program management, business analysis/consulting/support/help-desk, and ambiguous titles (e.g. Engineer, Developer, Architect, Technical Specialist, Consultant) without clear software, DevOps, data, or platform context. Do not send solution architect, senior in-scope engineering, or forward deployed engineer titles to REVIEW_REQUIRED when they clearly fit the scope above.
 
 Rules:
 
 - Judge only the supplied title.
-- Prefer REVIEW_REQUIRED when the title is ambiguous.
-- Seniority terms do not affect classification.
+- Prefer REVIEW_REQUIRED when the title is ambiguous and outside the stated scope.
+- Seniority terms alone do not approve a title, but senior titles that are clearly in scope remain APPROVED.
 - Do not approve a title merely because it contains “engineer,” “developer,” “technical,” “AI,” “data,” or “cloud.”
 - Return one result for every input entry.
 - Copy each input index and title exactly. Do not normalize, correct, or rewrite the title.

@@ -185,13 +185,15 @@ export class OakGatewayBootstrap implements OnModuleDestroy {
       return;
     }
 
-    extSocket.timeout(timeoutMs).emit(event, payload, (err: Error, res: unknown) => {
-      if (err) {
-        ack?.({ error: err.message ?? 'Extension request timed out' });
-        return;
-      }
-      ack?.(res ?? { error: 'No response from extension' });
-    });
+    extSocket
+      .timeout(timeoutMs)
+      .emit(event, payload, (err: Error, res: unknown) => {
+        if (err) {
+          ack?.({ error: err.message ?? 'Extension request timed out' });
+          return;
+        }
+        ack?.(res ?? { error: 'No response from extension' });
+      });
   }
 
   private relayPlanStepToExtension(
@@ -201,7 +203,8 @@ export class OakGatewayBootstrap implements OnModuleDestroy {
   ): void {
     const io = this.io!;
     const { extensionId, tabId, step, frameId } = payload ?? {};
-    const stepObj = step as { action?: string; element_index?: number } | undefined;
+    const stepObj = step as
+      { action?: string; element_index?: number } | undefined;
     if (!tabId || !stepObj?.action) {
       ack?.({ ok: false, error: 'Missing tabId or step' });
       return;

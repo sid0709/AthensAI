@@ -58,10 +58,7 @@ export type OakUsageSummary = {
   pricingNote?: string;
 };
 
-export function summarizeUsage(
-  usage: unknown,
-  model: string,
-): OakUsageSummary {
+export function summarizeUsage(usage: unknown, model: string): OakUsageSummary {
   const u = (usage && typeof usage === 'object' ? usage : {}) as Record<
     string,
     unknown

@@ -13,8 +13,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../../../components/ui/alert-dialog";
-import { changePassword, deleteAccount } from "../../../services/profileApi";
+import {
+  changePassword,
+  deleteAccount,
+  type DeleteAccountProgress,
+} from "../../../services/profileApi";
 import { clearResumeStorage } from "../../../services/resumeStorage";
+import { DeleteAccountProgressPanel } from "./DeleteAccountProgressPanel";
 
 /** Client keys tied to the signed-in applier — clear on account wipe. */
 async function clearApplierLocalData(applierName: string) {
@@ -38,6 +43,14 @@ async function clearApplierLocalData(applierName: string) {
   await Promise.allSettled([clearResumeStorage()]);
 }
 
+const INITIAL_PROGRESS: DeleteAccountProgress = {
+  phase: "verifying",
+  message: "Starting…",
+  removed: 0,
+  total: 0,
+  percent: 0,
+};
+
 export function SecurityTab() {
   const { user, signout } = useAuth();
   const navigate = useNavigate();
@@ -50,6 +63,9 @@ export function SecurityTab() {
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteConfirmName, setDeleteConfirmName] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [deleteProgress, setDeleteProgress] = useState<DeleteAccountProgress | null>(
+    null,
+  );
 
   const save = async () => {
     if (!user?.name) {
@@ -100,12 +116,26 @@ export function SecurityTab() {
       return;
     }
     setDeleting(true);
+    setDeleteProgress(INITIAL_PROGRESS);
     try {
-      const res = await deleteAccount(user.name, deletePassword, deleteConfirmName);
+      const res = await deleteAccount(
+        user.name,
+        deletePassword,
+        deleteConfirmName,
+        (progress) => setDeleteProgress(progress),
+      );
       if (!res.success) {
         toast.error(res.message || "Could not delete account");
+        setDeleteProgress(null);
         return;
       }
+      setDeleteProgress((prev) => ({
+        phase: "done",
+        message: "Finishing on this device…",
+        removed: prev?.removed ?? 0,
+        total: prev?.total ?? 0,
+        percent: 100,
+      }));
       await clearApplierLocalData(user.name);
       signout();
       setDeleteOpen(false);
@@ -113,10 +143,13 @@ export function SecurityTab() {
       navigate("/signin", { replace: true });
     } catch {
       toast.error("Could not delete account");
+      setDeleteProgress(null);
     } finally {
       setDeleting(false);
     }
   };
+
+  const showProgress = deleting && deleteProgress != null;
 
   return (
     <div className="max-w-md space-y-5">
@@ -175,6 +208,7 @@ export function SecurityTab() {
           onClick={() => {
             setDeletePassword("");
             setDeleteConfirmName("");
+            setDeleteProgress(null);
             setDeleteOpen(true);
           }}
           disabled={!user?.name}
@@ -189,54 +223,78 @@ export function SecurityTab() {
         onOpenChange={(open) => {
           if (deleting) return;
           setDeleteOpen(open);
+          if (!open) setDeleteProgress(null);
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete account permanently?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This deletes profile information, résumés, templates, agent runs, bid queue data,
-              and mail sync for{" "}
-              <span className="font-semibold text-foreground">{user?.name}</span>. Type your
-              account name and password to confirm.
-            </AlertDialogDescription>
+            <AlertDialogTitle>
+              {showProgress ? "Deleting account…" : "Delete account permanently?"}
+            </AlertDialogTitle>
+            {!showProgress ? (
+              <AlertDialogDescription>
+                This deletes profile information, résumés, templates, agent runs, bid queue data,
+                and mail sync for{" "}
+                <span className="font-semibold text-foreground">{user?.name}</span>. Type your
+                account name and password to confirm.
+              </AlertDialogDescription>
+            ) : (
+              <AlertDialogDescription>
+                Please keep this window open while we remove Firebase files, bid history, résumés,
+                and your account.
+              </AlertDialogDescription>
+            )}
           </AlertDialogHeader>
-          <div className="space-y-3 py-1">
-            <FormField label={`Type "${user?.name ?? ""}" to confirm`}>
-              <AthensInput
-                value={deleteConfirmName}
-                onChange={(e) => setDeleteConfirmName(e.target.value)}
-                autoComplete="off"
-                disabled={deleting}
-              />
-            </FormField>
-            <FormField label="Password">
-              <AthensInput
-                type="password"
-                value={deletePassword}
-                onChange={(e) => setDeletePassword(e.target.value)}
-                autoComplete="current-password"
-                disabled={deleting}
-              />
-            </FormField>
-          </div>
+
+          {showProgress && deleteProgress ? (
+            <DeleteAccountProgressPanel progress={deleteProgress} />
+          ) : (
+            <div className="space-y-3 py-1">
+              <FormField label={`Type "${user?.name ?? ""}" to confirm`}>
+                <AthensInput
+                  value={deleteConfirmName}
+                  onChange={(e) => setDeleteConfirmName(e.target.value)}
+                  autoComplete="off"
+                  disabled={deleting}
+                />
+              </FormField>
+              <FormField label="Password">
+                <AthensInput
+                  type="password"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  autoComplete="current-password"
+                  disabled={deleting}
+                />
+              </FormField>
+            </div>
+          )}
+
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={
-                deleting ||
-                !user?.name ||
-                deleteConfirmName !== user.name ||
-                !deletePassword
-              }
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={(e) => {
-                e.preventDefault();
-                void confirmDelete();
-              }}
-            >
-              {deleting ? "Deleting…" : "Delete forever"}
-            </AlertDialogAction>
+            {!showProgress ? (
+              <>
+                <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={
+                    deleting ||
+                    !user?.name ||
+                    deleteConfirmName !== user.name ||
+                    !deletePassword
+                  }
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void confirmDelete();
+                  }}
+                >
+                  Delete forever
+                </AlertDialogAction>
+              </>
+            ) : (
+              <p className="w-full text-center text-xs text-muted-foreground py-1">
+                This may take a minute for large accounts.
+              </p>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

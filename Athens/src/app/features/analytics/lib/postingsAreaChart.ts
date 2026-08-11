@@ -163,3 +163,120 @@ export function sourceChartColor(source: string, fallbackIndex = 0): string {
     (hash + fallbackIndex) % SOURCE_CHART_COLORS.length
   ];
 }
+
+/** Max named series on the Lens stacked chart (plus a trailing Other bucket). */
+export const POSTINGS_CHART_TOP_N = 7;
+
+/** Aggregated remainder series key for the display chart (distinct from a real source named "Other"). */
+export const POSTINGS_OTHER_KEY = "Other sources";
+
+/**
+ * Restrained Lens palette: brand blue for #1, then a short gray/blue ramp.
+ * Index 0 is the largest source; last index should be reserved for Other.
+ */
+export const LENS_SERIES_COLORS = [
+  "#1f6feb", // brand — top source
+  "#4a8af0",
+  "#7aa9f4",
+  "#a3c4f7",
+  "#8e8e8e",
+  "#5d5d5d",
+  "#3d3d3d",
+  "#c7c7c7", // Other
+] as const;
+
+export type SourcePeriodTotal = {
+  source: string;
+  count: number;
+  share: number;
+};
+
+/**
+ * Period totals for every source present in the full pivot, sorted by volume desc.
+ * Share is fraction of grand total (0–1).
+ */
+export function sourcePeriodTotals(
+  points: PostingsAreaPoint[],
+  sources: string[],
+): SourcePeriodTotal[] {
+  const counts = new Map<string, number>();
+  let grand = 0;
+  for (const source of sources) {
+    let n = 0;
+    for (const point of points) {
+      n += Number(point[source]) || 0;
+    }
+    if (n <= 0) continue;
+    counts.set(source, n);
+    grand += n;
+  }
+  return [...counts.entries()]
+    .map(([source, count]) => ({
+      source,
+      count,
+      share: grand > 0 ? count / grand : 0,
+    }))
+    .sort(
+      (a, b) => b.count - a.count || a.source.localeCompare(b.source),
+    );
+}
+
+/**
+ * Collapse a full source pivot into Top N named series + Other for the chart.
+ * When `focusSource` is set and outside the natural top N, it is promoted into
+ * the visible stack (bumping the smallest top source into Other).
+ */
+export function toTopNOtherSeries(
+  points: PostingsAreaPoint[],
+  sources: string[],
+  topN: number = POSTINGS_CHART_TOP_N,
+  focusSource: string | null = null,
+): { points: PostingsAreaPoint[]; series: string[] } {
+  const totals = sourcePeriodTotals(points, sources);
+  if (totals.length === 0) {
+    return { points: [], series: [] };
+  }
+
+  let named = totals.slice(0, topN).map((t) => t.source);
+  if (focusSource && !named.includes(focusSource) && totals.some((t) => t.source === focusSource)) {
+    named = [...named.slice(0, Math.max(0, topN - 1)), focusSource];
+  }
+
+  const namedSet = new Set(named);
+  const hasOther = totals.some((t) => !namedSet.has(t.source));
+  const series = hasOther ? [...named, POSTINGS_OTHER_KEY] : [...named];
+
+  const displayPoints: PostingsAreaPoint[] = points.map((point) => {
+    const next: PostingsAreaPoint = {
+      date: point.date,
+      label: point.label,
+      total: Number(point.total) || 0,
+    };
+    let other = 0;
+    for (const source of sources) {
+      const n = Number(point[source]) || 0;
+      if (namedSet.has(source)) {
+        next[source] = n;
+      } else {
+        other += n;
+      }
+    }
+    if (hasOther) {
+      next[POSTINGS_OTHER_KEY] = other;
+    }
+    return next;
+  });
+
+  return { points: displayPoints, series };
+}
+
+/** Color for a Top-N + Other display series index (Other always uses the last ramp slot). */
+export function lensSeriesColor(seriesKey: string, index: number, series: string[]): string {
+  if (seriesKey === POSTINGS_OTHER_KEY) {
+    return LENS_SERIES_COLORS[LENS_SERIES_COLORS.length - 1];
+  }
+  const namedCount = series.filter((s) => s !== POSTINGS_OTHER_KEY).length;
+  if (namedCount <= 1) return LENS_SERIES_COLORS[0];
+  const ramp = LENS_SERIES_COLORS.slice(0, LENS_SERIES_COLORS.length - 1);
+  return ramp[Math.min(index, ramp.length - 1)];
+}

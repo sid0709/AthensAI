@@ -221,8 +221,7 @@ export class JobsCompanyListService {
       row.jobs = jobsOut.map((job) => {
         const id = String((job as { _id?: string })._id || '');
         const recommend =
-          recommendByJobId.get(id) ||
-          recommendByJobId.get(id.toLowerCase());
+          recommendByJobId.get(id) || recommendByJobId.get(id.toLowerCase());
         if (!recommend) return job;
         return { ...job, ...recommend };
       });

@@ -51,7 +51,9 @@ export class ResumeExportDocxService {
     const accent = hex(model.accentColor) || '1f3a5f';
     const headerAlign =
       model.headerAlign === 'left' ? AlignmentType.LEFT : AlignmentType.CENTER;
-    const rightTab = Math.round((PAGE_IN[paper].w - marginIn * 2) * TWIPS_PER_IN);
+    const rightTab = Math.round(
+      (PAGE_IN[paper].w - marginIn * 2) * TWIPS_PER_IN,
+    );
     const baseRun = { font, size: baseSize, color: textColor };
     const children: Paragraph[] = [];
 
@@ -206,7 +208,9 @@ function appendSectionBody(
     return;
   }
   if (section.type === 'experience') {
-    for (const e of Array.isArray(section.experience) ? section.experience : []) {
+    for (const e of Array.isArray(section.experience)
+      ? section.experience
+      : []) {
       const exp = e as Record<string, unknown>;
       children.push(
         new Paragraph({
@@ -255,7 +259,9 @@ function appendSectionBody(
     return;
   }
   if (section.type === 'education') {
-    for (const ed of Array.isArray(section.education) ? section.education : []) {
+    for (const ed of Array.isArray(section.education)
+      ? section.education
+      : []) {
       const row = ed as Record<string, unknown>;
       children.push(
         new Paragraph({

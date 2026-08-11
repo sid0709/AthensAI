@@ -9,7 +9,11 @@ import {
   optionalCareerDetailsPrompt,
 } from './lib/generation-context';
 import { parseJsonLoose } from './lib/parse-json-loose';
-import { buildTokenMap, formatDraftToken, resolveResumePromptSkills } from './lib/token-map';
+import {
+  buildTokenMap,
+  formatDraftToken,
+  resolveResumePromptSkills,
+} from './lib/token-map';
 import {
   appendExperienceTitlePolicy,
   applyTitlePolicyToSections,

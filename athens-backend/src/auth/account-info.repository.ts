@@ -41,9 +41,8 @@ export class AccountInfoRepository {
       limit: 1,
       projection: { name: 1 },
     });
-    const doc = (
-      raw as { cursor?: { firstBatch?: Array<{ name?: unknown }> } }
-    ).cursor?.firstBatch?.[0];
+    const doc = (raw as { cursor?: { firstBatch?: Array<{ name?: unknown }> } })
+      .cursor?.firstBatch?.[0];
     const name = typeof doc?.name === 'string' ? doc.name.trim() : '';
     if (!name) return null;
     return this.prisma.accountInfo.findUnique({ where: { name } });
@@ -90,6 +89,32 @@ export class AccountInfoRepository {
     vendorPassword: string | null,
   ): Promise<void> {
     await this.updateFields(id, { vendorPassword });
+  }
+
+  async deleteById(id: string): Promise<void> {
+    const trimmed = String(id || '').trim();
+    if (!trimmed) return;
+    try {
+      await this.prisma.accountInfo.delete({ where: { id: trimmed } });
+    } catch (error) {
+      if (!isReplicaSetRequired(error)) {
+        // Legacy string `_id` or already absent — raw path covers both.
+        await this.rawDeleteById(trimmed);
+        return;
+      }
+      const matched = await this.rawDeleteById(trimmed);
+      if (matched < 1) {
+        throw new Error(`Account delete matched 0 documents for id=${trimmed}`);
+      }
+    }
+  }
+
+  private async rawDeleteById(id: string): Promise<number> {
+    const result = await this.prisma.$runCommandRaw({
+      delete: ACCOUNT_INFO_COLLECTION,
+      deletes: [{ q: mongoIdQuery(id), limit: 1 }],
+    });
+    return Number((result as { n?: number }).n ?? 0);
   }
 
   async updateAutoBidProfile(

@@ -25,9 +25,7 @@ export class OakMatchOptionService {
     fieldLabel?: string | null;
     typedQuery?: string | null;
   }) {
-    const list = input.options.filter(
-      (o) => typeof o === 'string' && o.trim(),
-    );
+    const list = input.options.filter((o) => typeof o === 'string' && o.trim());
     const auth = await this.llmAuth.resolve({
       profileId: input.profileId,
       applierName: input.applierName,

@@ -59,7 +59,7 @@ export class OakResponsesService {
     const model =
       typeof data.model === 'string' && data.model ? data.model : auth.model;
     return {
-      plan: plan as Record<string, unknown>,
+      plan: plan,
       model,
       responseId: typeof data.id === 'string' ? data.id : null,
       usage: summarizeUsage(data.usage, model),
@@ -174,8 +174,7 @@ function extractOutputText(data: Record<string, unknown>): string {
       );
     }
     if (item?.type !== 'message') continue;
-    for (const part of (item.content as Array<Record<string, unknown>>) ??
-      []) {
+    for (const part of (item.content as Array<Record<string, unknown>>) ?? []) {
       if (part?.type === 'output_text' && typeof part.text === 'string') {
         chunks.push(part.text);
       }

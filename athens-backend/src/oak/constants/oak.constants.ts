@@ -18,7 +18,9 @@ export function oakMaxOutputTokens(): number {
 }
 
 export function oakTemperature(): number {
-  const n = Number.parseFloat(String(process.env.OAK_OPENAI_TEMPERATURE || '0.1'));
+  const n = Number.parseFloat(
+    String(process.env.OAK_OPENAI_TEMPERATURE || '0.1'),
+  );
   return Number.isFinite(n) ? n : 0.1;
 }
 

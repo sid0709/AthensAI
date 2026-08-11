@@ -37,6 +37,8 @@ Default listen: `http://127.0.0.1:8980/api`
 | POST | `/api/auth/signin` | `{ name, password }` |
 | POST | `/api/auth/signup` | `{ name, password }` |
 | POST | `/api/auth/change-password` | `{ name, currentPassword, newPassword }` |
+| POST | `/api/auth/delete-account` | `{ name, password, confirmName }` — cascade wipe (account, resumes, bid history/videos, generator history, mail cache, sessions) |
+| POST | `/api/auth/delete-account/stream` | Same body; SSE `progress` / `done` / `error` events with `{ phase, message, removed, total, percent }` |
 | POST | `/api/auth/vendor-password` | `{ applierName, vendorPassword }` or `{ applierName, clear: true }` |
 | GET | `/api/account_info` | — |
 | GET | `/api/account_info/by/:name` | — |
