@@ -24,15 +24,29 @@ export class AuthResponseFilter implements ExceptionFilter {
         message = body;
       } else if (body && typeof body === 'object') {
         const payload = body as {
-          message?: string | string[];
-          error?: string;
-          code?: string;
+          message?: unknown;
+          error?: unknown;
+          code?: unknown;
         };
-        message = Array.isArray(payload.message)
-          ? payload.message.join(', ')
-          : String(payload.message || message);
+        const nested =
+          payload.message &&
+          typeof payload.message === 'object' &&
+          !Array.isArray(payload.message)
+            ? (payload.message as { message?: unknown; error?: unknown })
+            : null;
+        if (Array.isArray(payload.message)) {
+          message = payload.message.map(String).join(', ');
+        } else if (typeof payload.message === 'string' && payload.message) {
+          message = payload.message;
+        } else if (typeof nested?.message === 'string' && nested.message) {
+          message = nested.message;
+        } else if (payload.message != null) {
+          message = String(payload.message);
+        }
         if (typeof payload.error === 'string' && payload.error) {
           error = payload.error;
+        } else if (typeof nested?.error === 'string' && nested.error) {
+          error = nested.error;
         }
         if (typeof payload.code === 'string' && payload.code) {
           res.status(status).json({

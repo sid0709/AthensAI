@@ -6,14 +6,15 @@ import type { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { AuthResponseFilter } from './common/auth-response.filter';
 import { loadAppConfig } from './config/app.config';
+import { OakGatewayBootstrap } from './oak/gateway/oak-gateway.bootstrap';
 
 async function bootstrap() {
   const config = loadAppConfig();
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  // Resume library bulk uploads send base64 file payloads (default Express limit is ~100kb).
-  app.useBodyParser('json', { limit: '32mb' });
-  app.useBodyParser('urlencoded', { limit: '32mb', extended: true });
+  // Resume bulk uploads + Oak DOM trees need a larger body limit.
+  app.useBodyParser('json', { limit: '50mb' });
+  app.useBodyParser('urlencoded', { limit: '50mb', extended: true });
 
   app.setGlobalPrefix('api', {
     exclude: [
@@ -40,8 +41,10 @@ async function bootstrap() {
   });
 
   await app.listen(config.port);
+  const httpServer = app.getHttpServer();
+  app.get(OakGatewayBootstrap).attach(httpServer);
   console.log(
-    `athens-backend listening on http://127.0.0.1:${config.port}/api`,
+    `athens-backend listening on http://127.0.0.1:${config.port}/api (Oak socket path /oak)`,
   );
 }
 
