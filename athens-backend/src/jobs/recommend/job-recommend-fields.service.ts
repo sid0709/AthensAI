@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { AccountInfoRepository } from '../../auth/account-info.repository';
 import {
   isInconsistentDateTime,
   repairNullDateFields,
@@ -86,7 +87,10 @@ function remember(
  */
 @Injectable()
 export class JobRecommendFieldsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly accounts: AccountInfoRepository,
+  ) {}
 
   async loadForProfile(
     profileId: string,
@@ -103,10 +107,9 @@ export class JobRecommendFieldsService {
     ];
     if (!id || !ids.length) return out;
 
-    const account = await this.prisma.accountInfo.findUnique({
-      where: { id },
-      select: { name: true },
-    });
+    // Legacy account_info rows store `_id` as a plain string; Prisma ObjectId
+    // findUnique misses them — use the shared resolver that falls back.
+    const account = await this.accounts.findById(id);
     if (!account?.name) return out;
     return this.loadForApplier(account.name, ids);
   }
