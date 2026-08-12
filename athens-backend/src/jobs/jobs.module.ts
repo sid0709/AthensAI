@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
 import { AiUsageModule } from '../ai-usage/ai-usage.module';
+import { AuthModule } from '../auth/auth.module';
 import { BidsModule } from '../bids/bids.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ResumesModule } from '../resumes/resumes.module';
@@ -42,7 +43,14 @@ import { TitleReviewProcessService } from './title-review/title-review-process.s
 import { TitleReviewSessionService } from './title-review/title-review-session.service';
 
 @Module({
-  imports: [PrismaModule, AiModule, AiUsageModule, BidsModule, ResumesModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    AiModule,
+    AiUsageModule,
+    BidsModule,
+    ResumesModule,
+  ],
   controllers: [
     TitleReviewController,
     AiAnalyzeController,
