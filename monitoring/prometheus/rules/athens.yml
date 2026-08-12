@@ -4,8 +4,9 @@ groups:
     rules:
       - record: athens:node_cpu_utilization:ratio
         expr: 1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+      # Used ratio = 1 - available/total (NOT available/total).
       - record: athens:node_memory_utilization:ratio
-        expr: 1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+        expr: 1 - (node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"})
       - record: athens:root_filesystem_utilization:ratio
         expr: 1 - (node_filesystem_avail_bytes{mountpoint="/",fstype!="rootfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!="rootfs"})
       - record: athens:node_load_utilization:ratio
@@ -60,7 +61,7 @@ groups:
           summary: Athens VPS disk usage is critical
           description: Root filesystem usage is above 90 percent.
       - alert: AthensMemoryPressure
-        expr: athens:node_memory_utilization:ratio > 0.90
+        expr: 1 - (node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"}) > 0.90
         for: 5m
         labels:
           severity: warning
@@ -68,7 +69,7 @@ groups:
           summary: Athens VPS memory pressure is high
           description: Available-aware memory usage is above 90 percent.
       - alert: AthensMemoryCritical
-        expr: athens:node_memory_utilization:ratio > 0.95
+        expr: 1 - (node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"}) > 0.95
         for: 2m
         labels:
           severity: critical
