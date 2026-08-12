@@ -12,7 +12,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         { "expr": "athens:node_cpu_utilization:ratio * 100", "legendFormat": "CPU" },
-        { "expr": "athens:node_memory_utilization:ratio * 100", "legendFormat": "Memory" },
+        { "expr": "max(1 - (node_memory_MemAvailable_bytes{job=\"node\"} / node_memory_MemTotal_bytes{job=\"node\"})) * 100", "legendFormat": "Memory" },
         { "expr": "athens:root_filesystem_utilization:ratio * 100", "legendFormat": "Disk" }
       ],
       "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
