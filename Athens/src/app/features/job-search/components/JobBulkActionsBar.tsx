@@ -3,6 +3,7 @@ import { BookMarked, ClipboardList, Download, FileX, Loader2, Sparkles, Trash2, 
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { Progress } from "../../../components/ui/progress";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip";
 import { cn } from "../../../lib/utils";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
 import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
@@ -24,6 +25,8 @@ type JobBulkActionsBarProps = {
   onRemoveResumes?: () => void;
   onStopRemoveResumes?: () => void;
   onRecommendResumes?: () => void;
+  applyAllCompanyRoles?: boolean;
+  onApplyAllCompanyRolesChange?: (enabled: boolean) => void;
   resumeGenerating?: boolean;
   resumeStopping?: boolean;
   resumeRemoving?: boolean;
@@ -54,6 +57,8 @@ export function JobBulkActionsBar({
   onRemoveResumes,
   onStopRemoveResumes,
   onRecommendResumes,
+  applyAllCompanyRoles = false,
+  onApplyAllCompanyRolesChange,
   resumeGenerating = false,
   resumeStopping = false,
   resumeRemoving = false,
@@ -114,6 +119,33 @@ export function JobBulkActionsBar({
             )}
           </span>
         </label>
+
+        {onApplyAllCompanyRolesChange ? (
+          <>
+            <span className="h-4 w-px bg-border/80 shrink-0" aria-hidden />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <label className={cn("inline-flex items-center gap-2 select-none shrink-0", loading ? "cursor-wait" : "cursor-pointer")}>
+                  <Checkbox
+                    checked={applyAllCompanyRoles}
+                    onCheckedChange={(checked) => onApplyAllCompanyRolesChange(checked === true)}
+                    disabled={loading}
+                    aria-label="Apply all company roles"
+                  />
+                  <span className="text-sm whitespace-nowrap">
+                    <span className={applyAllCompanyRoles ? "font-medium text-foreground" : "text-muted-foreground"}>
+                      <span className="hidden sm:inline">Apply all company roles</span>
+                      <span className="sm:hidden">Company apply</span>
+                    </span>
+                  </span>
+                </label>
+              </TooltipTrigger>
+              <TooltipContent sideOffset={6}>
+                When you Apply a job, mark every other role at that company as applied
+              </TooltipContent>
+            </Tooltip>
+          </>
+        ) : null}
 
         {(resumeGenerating || resumeRemoving) && resumeProgress ? (
           <div className="hidden sm:flex flex-1 min-w-[6rem] max-w-xs items-center gap-2">

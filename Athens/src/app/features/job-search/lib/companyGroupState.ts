@@ -64,6 +64,7 @@ export function keepOnlyCompanyJob(
       ...group,
       jobs: [keptJob],
       matchingJobCount: 1,
+      matchingJobIds: [keptJob.backendId || keptJob.id],
       nextMemberOffset: null,
       memberOrder: { [keptJob.id]: 0 },
     };
@@ -93,10 +94,15 @@ export function removeCompanyJobs(
     }
     if (!jobs.length) needsDirectoryRefresh = true;
 
+    const removedIds = new Set(
+      group.jobs.filter(shouldRemove).map((job) => job.backendId || job.id),
+    );
+
     return [{
       ...group,
       jobs,
       matchingJobCount,
+      matchingJobIds: group.matchingJobIds?.filter((id) => !removedIds.has(id)),
       memberOrder: group.memberOrder
         ? Object.fromEntries(jobs.map((job) => [job.id, group.memberOrder?.[job.id] ?? 0]))
         : undefined,

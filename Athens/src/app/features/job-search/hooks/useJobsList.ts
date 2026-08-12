@@ -24,6 +24,7 @@ type ListResponse = {
     company?: { name?: string; logo?: string; url?: string };
     jobs?: Record<string, unknown>[];
     matchingJobCount?: number;
+    matchingJobIds?: unknown[];
     companyMatchingCount?: number;
     nextMemberOffset?: number | null;
   }>;
@@ -169,6 +170,12 @@ function applyRecommendCache(
   }));
 }
 
+function asIdList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids = value.map((id) => normalizeId(id).trim()).filter(Boolean);
+  return ids.length ? ids : undefined;
+}
+
 function mapResponseGroups(
   rows: NonNullable<ListResponse["data"]>,
   applier: ReturnType<typeof useApplier>["applier"],
@@ -188,6 +195,7 @@ function mapResponseGroups(
         },
         jobs,
         matchingJobCount: typeof row.matchingJobCount === "number" ? row.matchingJobCount : undefined,
+        matchingJobIds: asIdList(row.matchingJobIds),
         nextMemberOffset: row.nextMemberOffset ?? undefined,
         memberOrder: Object.fromEntries(jobs.map((job, index) => [job.id, index])),
       });

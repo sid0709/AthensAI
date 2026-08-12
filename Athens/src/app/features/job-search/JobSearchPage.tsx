@@ -24,8 +24,14 @@ import {
 } from "./hooks/useRecommendResumes";
 import { useJobsList } from "./hooks/useJobsList";
 import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
+import { isBetaTier } from "../../lib/beta";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
 import { JOB_SEARCH_PAGE_SIZES } from "./lib/jobSearchUrlState";
+import {
+  companyApplyTargets,
+  readApplyAllCompanyRoles,
+  writeApplyAllCompanyRoles,
+} from "./lib/companyApplyTargets";
 
 const PAGE_SIZE_OPTIONS = [...JOB_SEARCH_PAGE_SIZES];
 
@@ -35,6 +41,7 @@ export function JobSearchPage() {
 
 function JobSearchPageContent() {
   const { applier } = useApplier();
+  const isBeta = isBetaTier(applier?.tier);
   const profileId = applier?._id != null ? String(applier._id) : "";
   const { adoptTask, waitForTask } = useBackgroundTasks();
   const {
@@ -94,6 +101,7 @@ function JobSearchPageContent() {
   const { selectedIds, selectedJobs, selectJob, deselectJob, selectAllOnPage, clearSelection } = useJobSelection(visibleJobs);
   const {
     applyToJob,
+    applyById,
     updateJobStatus,
     cancelJobStatus,
     markBidReady,
@@ -117,6 +125,7 @@ function JobSearchPageContent() {
   const { recommendBulk, recommendRunning, recommendProgress } = useRecommendResumes(patchJob);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
+  const [applyAllCompanyRoles, setApplyAllCompanyRoles] = useState(readApplyAllCompanyRoles);
 
   useEffect(() => {
     clearSelection();
@@ -222,6 +231,38 @@ function JobSearchPageContent() {
       return;
     }
     await runWithConcurrency(marketJobs, (job) => applyToJob(job, { openUrl: false }));
+  };
+
+  const handleApply = async (job: Job) => {
+    if (!isBeta || !applyAllCompanyRoles) {
+      await applyToJob(job);
+      return;
+    }
+
+    const group = groups.find((candidate) => candidate.companyId === job.companyId);
+    const { siblings, unloadedIds } = companyApplyTargets(job, group);
+    if (!siblings.length && !unloadedIds.length) {
+      await applyToJob(job);
+      return;
+    }
+
+    const catalog = job.catalog || "market";
+    const [primaryOk, siblingResults, unloadedResults] = await Promise.all([
+      applyToJob(job, { notify: false }),
+      runWithConcurrency(siblings, (sibling) =>
+        applyToJob(sibling, { openUrl: false, notify: false }),
+      ),
+      runWithConcurrency(unloadedIds, (id) =>
+        applyById(id, { catalog, notify: false }),
+      ),
+    ]);
+    const ok = [primaryOk, ...siblingResults, ...unloadedResults].filter(Boolean).length;
+    const companyName = group?.company.name || job.company;
+    if (ok) {
+      toast.success(`Marked ${ok} job${ok === 1 ? "" : "s"} at ${companyName} as applied`);
+    } else {
+      toast.error("Failed to mark jobs as applied");
+    }
   };
 
   const downloadSelected = () => {
@@ -366,6 +407,11 @@ function JobSearchPageContent() {
           }
           void recommendBulk(selectedJobs, { replaceExisting: true });
         }}
+        applyAllCompanyRoles={applyAllCompanyRoles}
+        onApplyAllCompanyRolesChange={isBeta ? (enabled) => {
+          setApplyAllCompanyRoles(enabled);
+          writeApplyAllCompanyRoles(enabled);
+        } : undefined}
         resumeGenerating={bulkRunning}
         resumeStopping={bulkStopping}
         resumeRemoving={bulkRemoving}
@@ -437,7 +483,7 @@ function JobSearchPageContent() {
             bookmarkedIds={bookmarkedIds}
             onToggleBookmark={toggleBookmark}
             isJobPending={isPending}
-            onApply={(job) => void applyToJob(job)}
+            onApply={(job) => void handleApply(job)}
             onMarkBidReady={(job) => void markBidReady(job)}
             onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
             onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
