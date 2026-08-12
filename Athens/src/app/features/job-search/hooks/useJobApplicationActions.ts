@@ -98,11 +98,11 @@ export function useJobApplicationActions(
   }, [applier?.name, get]);
 
   const applyToJob = useCallback(
-    async (job: Job, { openUrl = true }: { openUrl?: boolean } = {}) => {
+    async (job: Job, { openUrl = true, notify = true }: { openUrl?: boolean; notify?: boolean } = {}) => {
       const jobId = job.backendId || job.id;
       if (!applier?.name) {
-        toast.error("Select a profile before applying");
-        return;
+        if (notify) toast.error("Select a profile before applying");
+        return false;
       }
 
       setPending(jobId, true);
@@ -123,26 +123,70 @@ export function useJobApplicationActions(
         if (res?.success && res.data) {
           onJobUpdated(mapDocToJob(res.data, applier));
           void refreshStatusCounts();
-          if (res.message !== "User has already applied") {
+          if (notify && res.message !== "User has already applied") {
             toast.success("Marked as applied");
           }
+          return true;
         }
+        return Boolean(res?.success);
       } catch (error) {
         if (await reconcileStatus(job, "applied")) {
           onJobUpdated(optimistic);
           void refreshStatusCounts();
-          toast.success("Marked as applied");
-          return;
+          if (notify) toast.success("Marked as applied");
+          return true;
         }
         onJobUpdated(job);
-        toast.error("Failed to mark job as applied", {
-          description: requestErrorMessage(error, "The server rejected the update."),
-        });
+        if (notify) {
+          toast.error("Failed to mark job as applied", {
+            description: requestErrorMessage(error, "The server rejected the update."),
+          });
+        }
+        return false;
       } finally {
         setPending(jobId, false);
       }
     },
     [applier, onJobUpdated, postMutation, reconcileStatus, refreshStatusCounts, setPending],
+  );
+
+  const applyById = useCallback(
+    async (
+      jobId: string,
+      { catalog = "market", notify = true }: { catalog?: string; notify?: boolean } = {},
+    ) => {
+      if (!applier?.name) {
+        if (notify) toast.error("Select a profile before applying");
+        return false;
+      }
+
+      setPending(jobId, true);
+      try {
+        const res = await postMutation(`/jobs/${jobId}/apply`, {
+          applierName: applier.name,
+          catalog,
+          mutationId: newMutationId(),
+        });
+        if (res?.success) {
+          void refreshStatusCounts();
+          if (notify && res.message !== "User has already applied") {
+            toast.success("Marked as applied");
+          }
+          return true;
+        }
+        return false;
+      } catch (error) {
+        if (notify) {
+          toast.error("Failed to mark job as applied", {
+            description: requestErrorMessage(error, "The server rejected the update."),
+          });
+        }
+        return false;
+      } finally {
+        setPending(jobId, false);
+      }
+    },
+    [applier, postMutation, refreshStatusCounts, setPending],
   );
 
   const updateJobStatus = useCallback(
@@ -392,6 +436,7 @@ export function useJobApplicationActions(
 
   return {
     applyToJob,
+    applyById,
     updateJobStatus,
     cancelJobStatus,
     markBidReady,

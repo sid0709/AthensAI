@@ -88,5 +88,6 @@ test("keeping one role removes loaded and unloaded company siblings", () => {
   assert.equal(result.groups[0].matchingJobCount, 1);
   assert.equal(result.groups[0].nextMemberOffset, null);
   assert.deepEqual(result.groups[0].memberOrder, { active: 0 });
+  assert.deepEqual(result.groups[0].matchingJobIds, ["active"]);
   assert.equal(result.removedJobs, 7);
 });

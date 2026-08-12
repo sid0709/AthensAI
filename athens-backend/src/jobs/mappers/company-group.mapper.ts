@@ -53,6 +53,7 @@ export function mapCompanyGroupRow(
       mapJobToListDoc(job, stateByJobId.get(job.id) || 'posted'),
     ),
     matchingJobCount: group.matchingJobCount,
+    matchingJobIds: group.matchingJobIds,
     nextMemberOffset:
       group.matchingJobCount > ordered.length ? ordered.length : null,
   };
