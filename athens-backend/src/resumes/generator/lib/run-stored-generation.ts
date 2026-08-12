@@ -188,7 +188,7 @@ async function patchInput(
     () =>
       prisma.backgroundTaskInput.update({
         where: { id },
-        data: data as Prisma.BackgroundTaskInputUpdateInput,
+        data: data,
       }),
     async () => {
       await rawUpdateMany(

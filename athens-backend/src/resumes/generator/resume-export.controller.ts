@@ -29,10 +29,7 @@ export class ResumeExportController {
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     );
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${fileName}"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Length', buffer.length);
     return res.end(buffer);
   }

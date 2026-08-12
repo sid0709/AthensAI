@@ -347,22 +347,65 @@ export async function changePassword(
   return { success: Boolean(data?.success), message: data?.message };
 }
 
+export type DeleteAccountProgress = {
+  phase: "verifying" | "preparing" | "firebase" | "database" | "account" | "done" | string;
+  message: string;
+  removed: number;
+  total: number;
+  percent: number;
+};
+
 export async function deleteAccount(
   name: string,
   password: string,
   confirmName: string,
+  onProgress?: (progress: DeleteAccountProgress) => void,
 ): Promise<{ success: boolean; message?: string }> {
-  const url = `${API_BASE.replace(/\/$/, "")}/auth/delete-account`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, password, confirmName }),
-  });
-  const data = (await parseJson(res)) as { success?: boolean; message?: string } | null;
-  return {
-    success: Boolean(data?.success),
-    message: data?.message || (res.ok ? undefined : "Could not delete account"),
-  };
+  const url = `${API_BASE.replace(/\/$/, "")}/auth/delete-account/stream`;
+  let doneMessage: string | undefined;
+  let streamError: string | null = null;
+
+  await streamSSE(
+    url,
+    { name, password, confirmName },
+    (event, data) => {
+      if (event === "progress") {
+        onProgress?.({
+          phase: String(data.phase ?? "preparing"),
+          message: String(data.message ?? "Deleting…"),
+          removed: Number(data.removed ?? 0),
+          total: Number(data.total ?? 0),
+          percent: Number(data.percent ?? 0),
+        });
+        return;
+      }
+      if (event === "done") {
+        doneMessage =
+          typeof data.message === "string" ? data.message : "Account deleted";
+        onProgress?.({
+          phase: "done",
+          message: doneMessage,
+          removed: Number(data.removed ?? 0),
+          total: Number(data.total ?? 0),
+          percent: 100,
+        });
+        return;
+      }
+      if (event === "error") {
+        streamError = String(
+          data.message ?? data.error ?? "Could not delete account",
+        );
+      }
+    },
+  );
+
+  if (streamError) {
+    return { success: false, message: streamError };
+  }
+  if (!doneMessage) {
+    return { success: false, message: "Could not delete account" };
+  }
+  return { success: true, message: doneMessage };
 }
 
 export { emptyProfile };

@@ -122,7 +122,7 @@ export class OakAnalyzeService {
 
     const model = completion.model || auth.model;
     return {
-      plan: plan as Record<string, unknown>,
+      plan: plan,
       model,
       responseId: null as string | null,
       usage: summarizeUsage(

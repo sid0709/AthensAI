@@ -21,6 +21,10 @@ export const AuthMessages = {
     'Provide vendorPassword (min 8 characters) or clear: true',
   vendorPasswordUpdated: 'Vendor access password updated',
   vendorPasswordCleared: 'Vendor access password cleared',
+  deleteAccountRequired: 'Name, password, and confirmName are required',
+  confirmNameMismatch: 'confirmName must match the account name exactly',
+  passwordIncorrect: 'Password is incorrect',
+  accountDeleted: 'Account deleted successfully',
 } as const;
 
 export const MIN_NEW_PASSWORD_LENGTH = 8;

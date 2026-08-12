@@ -1,13 +1,21 @@
 export const DEFAULT_PROMETHEUS_URL = 'http://prometheus:9090';
 export const PROMETHEUS_REQUEST_TIMEOUT_MS = 5000;
 
+/**
+ * Available-aware host memory used ratio from node-exporter.
+ * Computed inline (not via recording rule) so /status cannot invert
+ * MemAvailable/MemTotal as "used" if recorded series drift.
+ */
+export const NODE_MEMORY_USED_RATIO =
+  'max(1 - (node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"}))';
+
 export const VPS_QUERIES = {
   cpuUtilization: 'max(athens:node_cpu_utilization:ratio)',
-  memoryUtilization: 'max(athens:node_memory_utilization:ratio)',
+  memoryUtilization: NODE_MEMORY_USED_RATIO,
   diskUtilization: 'max(athens:root_filesystem_utilization:ratio)',
   loadRatio: 'max(athens:node_load_utilization:ratio)',
   uptimeSeconds: 'max(athens:node_uptime_seconds)',
-  scrapeAgeSeconds: 'time() - max(timestamp(node_uname_info))',
+  scrapeAgeSeconds: 'time() - max(timestamp(node_uname_info{job="node"}))',
 } as const;
 
 export const LIVE_VPS_QUERIES = Object.fromEntries(

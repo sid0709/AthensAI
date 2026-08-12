@@ -55,8 +55,7 @@ export class JobsDetailService {
         ? await this.recommendFields.loadForApplier(applierName.trim(), [jobId])
         : new Map();
     const recommend =
-      recommendByJobId.get(jobId) ||
-      recommendByJobId.get(jobId.toLowerCase());
+      recommendByJobId.get(jobId) || recommendByJobId.get(jobId.toLowerCase());
 
     return {
       success: true as const,

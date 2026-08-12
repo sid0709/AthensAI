@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { AccountInfoRepository } from '../../auth/account-info.repository';
 import {
   isInconsistentDateTime,
   repairNullDateFields,
@@ -86,7 +87,10 @@ function remember(
  */
 @Injectable()
 export class JobRecommendFieldsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly accounts: AccountInfoRepository,
+  ) {}
 
   async loadForProfile(
     profileId: string,
@@ -103,10 +107,9 @@ export class JobRecommendFieldsService {
     ];
     if (!id || !ids.length) return out;
 
-    const account = await this.prisma.accountInfo.findUnique({
-      where: { id },
-      select: { name: true },
-    });
+    // Legacy account_info rows store `_id` as a plain string; Prisma ObjectId
+    // findUnique misses them — use the shared resolver that falls back.
+    const account = await this.accounts.findById(id);
     if (!account?.name) return out;
     return this.loadForApplier(account.name, ids);
   }
@@ -152,19 +155,19 @@ export class JobRecommendFieldsService {
 
     try {
       absorb(
-        (await this.prisma.vendorTask.findMany({
+        await this.prisma.vendorTask.findMany({
           where: { applierName, jobId: { in: jobIds } },
           select: RECOMMEND_SELECT,
-        })) as RecommendRow[],
+        }),
       );
     } catch (error) {
       if (!isInconsistentDateTime(error)) throw error;
       await this.repairVendorTaskDates();
       absorb(
-        (await this.prisma.vendorTask.findMany({
+        await this.prisma.vendorTask.findMany({
           where: { applierName, jobId: { in: jobIds } },
           select: RECOMMEND_SELECT,
-        })) as RecommendRow[],
+        }),
       );
     }
 
@@ -173,7 +176,12 @@ export class JobRecommendFieldsService {
     );
     // Legacy rows may store jobId as ObjectId; Prisma String `in` misses those.
     if (missing.length > 0 || byJobId.size === 0) {
-      absorb(await this.findRecommendRowsRaw(applierName, missing.length ? missing : jobIds));
+      absorb(
+        await this.findRecommendRowsRaw(
+          applierName,
+          missing.length ? missing : jobIds,
+        ),
+      );
     }
 
     return [...byJobId.values()];
@@ -183,18 +191,17 @@ export class JobRecommendFieldsService {
     applierName: string,
     jobIds: string[],
   ): Promise<RecommendRow[]> {
-    const stringIds = [...new Set(jobIds.flatMap((id) => [id, id.toLowerCase()]))];
+    const stringIds = [
+      ...new Set(jobIds.flatMap((id) => [id, id.toLowerCase()])),
+    ];
     const objectIds = stringIds.map((id) => ({ $oid: id }));
 
     const raw = await this.prisma.$runCommandRaw({
       find: VENDOR_TASKS_COLLECTION,
       filter: {
         applierName,
-        $or: [
-          { jobId: { $in: stringIds } },
-          { jobId: { $in: objectIds } },
-        ],
-      } as Prisma.InputJsonValue,
+        $or: [{ jobId: { $in: stringIds } }, { jobId: { $in: objectIds } }],
+      },
       projection: {
         jobId: 1,
         recommendedResumeStack: 1,
@@ -217,7 +224,7 @@ export class JobRecommendFieldsService {
       } else if (
         recommendedAtRaw &&
         typeof recommendedAtRaw === 'object' &&
-        '$date' in (recommendedAtRaw as object)
+        '$date' in recommendedAtRaw
       ) {
         recommendedAt = String(
           (recommendedAtRaw as { $date: string }).$date || '',
@@ -241,7 +248,9 @@ export class JobRecommendFieldsService {
             : null,
         useCustomizedResume: Boolean(row.useCustomizedResume),
         recommendWarning:
-          typeof row.recommendWarning === 'string' ? row.recommendWarning : null,
+          typeof row.recommendWarning === 'string'
+            ? row.recommendWarning
+            : null,
         recommendedAt,
         recommendMode:
           typeof row.recommendMode === 'string' ? row.recommendMode : null,
