@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { deleteManyWithFallback } from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import { isoOrNull } from './lib/iso';
+
+/** Must match `@@map("bid_review_events")` on BidReviewEvent. */
+const BID_REVIEW_EVENTS_COLLECTION = 'bid_review_events';
 
 @Injectable()
 export class BidReviewEventsService {
@@ -41,6 +45,18 @@ export class BidReviewEventsService {
         },
       });
     }
+  }
+
+  async deleteForJob(applierName: string, jobId: string): Promise<number> {
+    return deleteManyWithFallback(
+      this.prisma,
+      BID_REVIEW_EVENTS_COLLECTION,
+      { applierName, jobId },
+      () =>
+        this.prisma.bidReviewEvent.deleteMany({
+          where: { applierName, jobId },
+        }),
+    );
   }
 
   async listForJob(applierName: string, jobId: string, limit = 100) {
