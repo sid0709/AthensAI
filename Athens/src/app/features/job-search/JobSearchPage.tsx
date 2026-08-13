@@ -49,6 +49,7 @@ function JobSearchPageContent() {
   const {
     state: urlState,
     setFilters,
+    replaceFilters,
     setPage,
     clampPage,
     setPageSize,
@@ -131,6 +132,11 @@ function JobSearchPageContent() {
   const [workerPoolBulkPending, setWorkerPoolBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
   const [applyAllCompanyRoles, setApplyAllCompanyRoles] = useState(readApplyAllCompanyRoles);
+
+  useEffect(() => {
+    if (isBeta || filters.statusTab !== "worker-pool") return;
+    replaceFilters({ ...filters, statusTab: "all" });
+  }, [filters, isBeta, replaceFilters]);
 
   useEffect(() => {
     clearSelection();
@@ -394,6 +400,7 @@ function JobSearchPageContent() {
         onChange={setFilters}
         statusCounts={statusCounts}
         countsLoading={countsLoading}
+        showWorkerPoolTab={isBeta}
       />
 
       <JobListStickyBar
@@ -416,20 +423,24 @@ function JobSearchPageContent() {
           })();
         }}
         bidReadyPending={bidReadyBulkPending}
-        onMarkWorkerPool={() => {
-          void (async () => {
-            setWorkerPoolBulkPending(true);
-            try {
-              const primaries = selectedJobs.filter((job) => job.status === "posted");
-              const moved = await markWorkerPoolBulk(selectedJobs);
-              if (!moved) return;
-              clearSelection();
-              finishWorkerPoolSiblings(primaries);
-            } finally {
-              setWorkerPoolBulkPending(false);
-            }
-          })();
-        }}
+        onMarkWorkerPool={
+          isBeta
+            ? () => {
+                void (async () => {
+                  setWorkerPoolBulkPending(true);
+                  try {
+                    const primaries = selectedJobs.filter((job) => job.status === "posted");
+                    const moved = await markWorkerPoolBulk(selectedJobs);
+                    if (!moved) return;
+                    clearSelection();
+                    finishWorkerPoolSiblings(primaries);
+                  } finally {
+                    setWorkerPoolBulkPending(false);
+                  }
+                })();
+              }
+            : undefined
+        }
         workerPoolPending={workerPoolBulkPending}
         onMoveToNew={() => {
           void (async () => {
@@ -553,13 +564,17 @@ function JobSearchPageContent() {
             isJobPending={isPending}
             onApply={(job) => void handleApply(job)}
             onMarkBidReady={(job) => void markBidReady(job)}
-            onMarkWorkerPool={(job) => {
-              void (async () => {
-                const moved = await markWorkerPool(job);
-                if (!moved) return;
-                finishWorkerPoolSiblings([job]);
-              })();
-            }}
+            onMarkWorkerPool={
+              isBeta
+                ? (job) => {
+                    void (async () => {
+                      const moved = await markWorkerPool(job);
+                      if (!moved) return;
+                      finishWorkerPoolSiblings([job]);
+                    })();
+                  }
+                : undefined
+            }
             onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
             onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
             onCancel={(job) => void cancelJobStatus(job)}
