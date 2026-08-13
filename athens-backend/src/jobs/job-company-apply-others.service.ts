@@ -4,34 +4,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  objectIdIn,
-  rawInsertMany,
-  rawUpdateMany,
-  withReplicaSetFallback,
-} from '../prisma/mongo-standalone';
-import {
-  JOB_STATUS_STATES,
-  type JobStatusState,
-} from './constants/job-status-states.constants';
+import { JobStatusApplyBulkService } from './job-status-apply-bulk.service';
 
 const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
 const MAX_APPLY = 500;
-const JOB_STATUSES_COLLECTION = 'job_statuses';
-const SKIP_ALWAYS = new Set<JobStatusState>([
-  'applied',
-  'scheduled',
-  'declined',
-]);
-const SKIP_QUEUED = new Set<JobStatusState>([
-  'bid-ready',
-  'worker-pool',
-  'bid-completed',
-]);
 
 @Injectable()
 export class JobCompanyApplyOthersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly applyBulk: JobStatusApplyBulkService,
+  ) {}
 
   async applyOthers(input: {
     applierName: string;
@@ -65,62 +48,9 @@ export class JobCompanyApplyOthersService {
     );
     const companyId = await this.resolveCompanyId(input.companyId, keep);
     const targets = await this.siblingJobIds(companyId, keep);
-    if (!targets.length) {
-      return { success: true as const, appliedCount: 0, appliedIds: [] as string[] };
-    }
-
-    const statuses = await this.prisma.jobStatus.findMany({
-      where: { profileId: account.id, jobId: { in: targets } },
-      select: { jobId: true, state: true },
+    const appliedIds = await this.applyBulk.setApplied(account.id, targets, {
+      skipQueued: input.includeQueued !== true,
     });
-    const includeQueued = input.includeQueued === true;
-    const existing = new Map(statuses.map((row) => [row.jobId, row.state]));
-    const toUpdate: string[] = [];
-    const toInsert: string[] = [];
-    for (const jobId of targets) {
-      const state = existing.get(jobId);
-      if (state != null && isSkipState(state, includeQueued)) continue;
-      if (state == null) toInsert.push(jobId);
-      else toUpdate.push(jobId);
-    }
-
-    const now = new Date();
-    if (toUpdate.length) {
-      await withReplicaSetFallback(
-        async () => {
-          await this.prisma.jobStatus.updateMany({
-            where: { profileId: account.id, jobId: { in: toUpdate } },
-            data: { state: 'applied' },
-          });
-        },
-        async () => {
-          await rawUpdateMany(
-            this.prisma,
-            JOB_STATUSES_COLLECTION,
-            {
-              profileId: { $oid: account.id },
-              jobId: objectIdIn(toUpdate),
-            },
-            { state: 'applied', updatedAt: now },
-          );
-        },
-      );
-    }
-    if (toInsert.length) {
-      await rawInsertMany(
-        this.prisma,
-        JOB_STATUSES_COLLECTION,
-        toInsert.map((jobId) => ({
-          profileId: { $oid: account.id },
-          jobId: { $oid: jobId },
-          state: 'applied',
-          createdAt: now,
-          updatedAt: now,
-        })),
-      );
-    }
-
-    const appliedIds = [...toUpdate, ...toInsert];
     return {
       success: true as const,
       appliedCount: appliedIds.length,
@@ -175,15 +105,4 @@ export class JobCompanyApplyOthersService {
     });
     return rows.map((row) => row.id);
   }
-}
-
-function isSkipState(
-  raw: string | null | undefined,
-  includeQueued: boolean,
-): boolean {
-  const state = String(raw || '').trim();
-  if (!(JOB_STATUS_STATES as readonly string[]).includes(state)) return false;
-  const typed = state as JobStatusState;
-  if (SKIP_ALWAYS.has(typed)) return true;
-  return !includeQueued && SKIP_QUEUED.has(typed);
 }

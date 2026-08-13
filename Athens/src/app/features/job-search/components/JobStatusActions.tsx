@@ -103,7 +103,10 @@ function MarkAppliedButton({
       size={size}
       variant="outline"
       disabled={pending}
-      onClick={onMarkApplied}
+      onClick={(event) => {
+        event.stopPropagation();
+        onMarkApplied();
+      }}
       title="Mark as applied without opening the apply page"
     >
       {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}

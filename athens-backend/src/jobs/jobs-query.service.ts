@@ -30,7 +30,10 @@ export class JobsQueryService {
       PAGE_SIZE_MAX,
       Math.max(1, query.pageSize ?? PAGE_SIZE_DEFAULT),
     );
-    const profileId = String(query.profileId ?? '').trim();
+    const profileId = await this.jobStatuses.resolveProfileId(
+      query.profileId || '',
+      query.applierName || '',
+    );
 
     const where = buildJobsPrismaWhere(query);
     const unfiltered = isEmptyWhere(where);
