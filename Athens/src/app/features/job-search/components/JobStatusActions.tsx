@@ -1,6 +1,5 @@
 import React from "react";
 import { CalendarCheck, ExternalLink, Loader2, X, XCircle } from "lucide-react";
-import { Button } from "../../../components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip";
 import type { Job } from "../../../types";
 
@@ -49,17 +48,15 @@ function StatusCancelButton({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button
+        <button
           type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+          className="athens-icon-btn"
           disabled={pending}
           aria-label={cancelTooltip(job)}
           onClick={onCancel}
         >
-          {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
-        </Button>
+          {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <X size={16} aria-hidden="true" />}
+        </button>
       </TooltipTrigger>
       <TooltipContent sideOffset={6}>{cancelTooltip(job)}</TooltipContent>
     </Tooltip>
@@ -69,7 +66,6 @@ function StatusCancelButton({
 function ApplyButton({
   pending,
   onApply,
-  size,
   showExternalLinkOnApply,
   label = "Apply",
 }: {
@@ -80,28 +76,26 @@ function ApplyButton({
   label?: string;
 }) {
   return (
-    <Button size={size} disabled={pending} onClick={onApply}>
-      {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+    <button type="button" className="athens-btn-primary" disabled={pending} onClick={onApply}>
+      {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
       {label}
-      {showExternalLinkOnApply ? <ExternalLink className="w-4 h-4" /> : null}
-    </Button>
+      {showExternalLinkOnApply ? <ExternalLink size={16} aria-hidden="true" /> : null}
+    </button>
   );
 }
 
 function MarkAppliedButton({
   pending,
   onMarkApplied,
-  size,
 }: {
   pending: boolean;
   onMarkApplied: () => void;
   size: "sm" | "default";
 }) {
   return (
-    <Button
+    <button
       type="button"
-      size={size}
-      variant="outline"
+      className="athens-btn"
       disabled={pending}
       onClick={(event) => {
         event.stopPropagation();
@@ -109,9 +103,9 @@ function MarkAppliedButton({
       }}
       title="Mark as applied without opening the apply page"
     >
-      {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+      {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
       Mark applied
-    </Button>
+    </button>
   );
 }
 
@@ -132,16 +126,16 @@ export function JobStatusActions({
     return (
       <>
         {onMarkBidReady ? (
-          <Button size={size} variant="outline" disabled={pending} onClick={onMarkBidReady}>
-            {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          <button type="button" className="athens-btn" disabled={pending} onClick={onMarkBidReady}>
+            {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
             Bid ready
-          </Button>
+          </button>
         ) : null}
         {onMarkWorkerPool ? (
-          <Button size={size} variant="outline" disabled={pending} onClick={onMarkWorkerPool}>
-            {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          <button type="button" className="athens-btn" disabled={pending} onClick={onMarkWorkerPool}>
+            {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
             Worker pool
-          </Button>
+          </button>
         ) : null}
         {onMarkApplied ? (
           <MarkAppliedButton pending={pending} onMarkApplied={onMarkApplied} size={size} />
@@ -176,20 +170,19 @@ export function JobStatusActions({
   if (job.status === "applied") {
     return (
       <>
-        <Button size={size} variant="outline" disabled={pending} onClick={onMarkScheduled}>
-          {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
+        <button type="button" className="athens-btn" disabled={pending} onClick={onMarkScheduled}>
+          {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <CalendarCheck size={16} aria-hidden="true" />}
           Scheduled
-        </Button>
-        <Button
-          size={size}
-          variant="outline"
-          className="text-rose-600 hover:text-rose-700"
+        </button>
+        <button
+          type="button"
+          className="athens-btn-danger"
           disabled={pending}
           onClick={onMarkDeclined}
         >
-          {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+          {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <XCircle size={16} aria-hidden="true" />}
           Declined
-        </Button>
+        </button>
         <StatusCancelButton job={job} pending={pending} onCancel={onCancel} />
       </>
     );

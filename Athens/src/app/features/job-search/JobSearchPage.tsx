@@ -658,7 +658,8 @@ function JobSearchPageContent() {
         secondaryTotal={totalJobs}
         secondaryLabel="matching jobs"
         loading={loading}
-        className="mt-2"
+        className="mt-2 athens-ui"
+        tone="lens"
       />
     </PageShell>
   );

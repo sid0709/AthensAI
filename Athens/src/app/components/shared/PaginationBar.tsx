@@ -28,6 +28,7 @@ type PaginationBarProps = {
   unitLabel?: string;
   secondaryTotal?: number | null;
   secondaryLabel?: string;
+  tone?: "default" | "lens";
 };
 
 function pageNumbers(current: number, total: number): (number | "ellipsis")[] {
@@ -58,6 +59,7 @@ export function PaginationBar({
   unitLabel = "results",
   secondaryTotal,
   secondaryLabel = "matching jobs",
+  tone = "default",
 }: PaginationBarProps) {
   const totalPages = total === null ? null : Math.max(1, Math.ceil(total / pageSize));
   const showingCount =
@@ -95,7 +97,7 @@ export function PaginationBar({
         </p>
         {onPageSizeChange && (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Per page</span>
+            <span className={tone === "lens" ? "athens-eyebrow" : "text-xs font-bold text-muted-foreground uppercase tracking-wide"}>Per page</span>
             <AthensSelect
               value={String(pageSize)}
               onChange={(v) => onPageSizeChange(Number(v))}
@@ -103,6 +105,7 @@ export function PaginationBar({
               size="sm"
               className="w-20"
               disabled={loading}
+              tone={tone}
             />
           </div>
         )}

@@ -19,6 +19,7 @@ type DatePickerProps = {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  tone?: "default" | "lens";
 };
 
 export function DatePicker({
@@ -30,26 +31,39 @@ export function DatePicker({
   placeholder = "Pick a date",
   className,
   disabled,
+  tone = "default",
 }: DatePickerProps) {
+  const lens = tone === "lens";
   return (
     <FormField label={label} hint={hint} error={error} className={className}>
       <Popover>
         <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={disabled}
-            className={cn(
-              athensInputClass,
-              "justify-start text-left font-normal h-auto",
-              !value && "text-muted-foreground",
-            )}
-          >
-            <CalendarIcon className="mr-2 h-4 w-4 shrink-0 opacity-60" />
-            {value ? format(value, "MMM d, yyyy") : placeholder}
-          </Button>
+          {lens ? (
+            <button
+              type="button"
+              disabled={disabled}
+              className={cn("athens-btn is-start", !value && "text-[var(--athens-text-muted)]")}
+            >
+              <CalendarIcon size={16} aria-hidden="true" />
+              {value ? format(value, "MMM d, yyyy") : placeholder}
+            </button>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={disabled}
+              className={cn(
+                athensInputClass,
+                "justify-start text-left font-normal h-auto",
+                !value && "text-muted-foreground",
+              )}
+            >
+              <CalendarIcon className="mr-2 h-4 w-4 shrink-0 opacity-60" />
+              {value ? format(value, "MMM d, yyyy") : placeholder}
+            </Button>
+          )}
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0 rounded-xl" align="start">
+        <PopoverContent className={cn("w-auto p-0", lens ? "athens-ui rounded-[var(--athens-radius-sm)]" : "rounded-xl")} align="start">
           <Calendar
             mode="single"
             selected={value}

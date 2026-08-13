@@ -10,13 +10,11 @@ import {
   Users,
   Wifi,
 } from "lucide-react";
-import { Av, Badge } from "../../../components/ui";
-import { Button } from "../../../components/ui/button";
+import { Av } from "../../../components/ui";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogTitle,
 } from "../../../components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
@@ -59,7 +57,7 @@ function CompanyLogo({ job }: { job: Job }) {
   }
 
   return (
-    <Avatar className="size-12 ring-2 ring-border/60 shadow-sm">
+    <Avatar className="size-12">
       <AvatarImage src={job.logoUrl} alt={`${job.company} logo`} onError={() => setFailed(true)} />
       <AvatarFallback className="p-0">
         <Av name={job.company} size="md" />
@@ -76,8 +74,8 @@ function MetaChip({
   children: React.ReactNode;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-secondary/40 px-2.5 py-1 text-xs font-medium text-foreground">
-      {Icon ? <Icon className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+    <span className="athens-chip">
+      {Icon ? <Icon className="size-3.5 shrink-0" /> : null}
       {children}
     </span>
   );
@@ -143,15 +141,15 @@ export function JobDescriptionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+      <DialogContent className="athens-ui athens-dialog flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="border-b border-border bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-5 pr-12">
+        <div className="athens-dialog-header">
           <div className="flex items-start gap-4">
             <CompanyLogo job={j} />
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 pr-2">
-                  <DialogTitle className="text-lg font-bold leading-snug text-foreground">
+                  <DialogTitle className="athens-card-title text-lg">
                     {j.title}
                   </DialogTitle>
                   <DialogDescription className="sr-only">
@@ -161,7 +159,7 @@ export function JobDescriptionDialog({
                     href={j.companyUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline"
+                    className="athens-link mt-1 inline-flex items-center gap-1"
                   >
                     <Building2 className="size-3.5 shrink-0" />
                     {j.company}
@@ -193,10 +191,10 @@ export function JobDescriptionDialog({
           </div>
 
           {j.recommendedResumeStack || j.useCustomizedResume ? (
-            <div className="mt-4 rounded-xl border border-primary/25 bg-primary/[0.07] px-4 py-3.5 shadow-sm">
+            <div className="mt-4 athens-callout">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-primary">
+                  <p className="athens-eyebrow">
                     Recommended resume
                     {j.recommendMode === "manual" ? " · manual" : null}
                   </p>
@@ -207,15 +205,13 @@ export function JobDescriptionDialog({
                   </p>
                 </div>
                 {onChangeRecommendedResume ? (
-                  <Button
+                  <button
                     type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
+                    className="athens-btn shrink-0"
                     onClick={onChangeRecommendedResume}
                   >
                     Change
-                  </Button>
+                  </button>
                 ) : null}
               </div>
               {j.recommendedResumeReason ? (
@@ -230,18 +226,17 @@ export function JobDescriptionDialog({
               ) : null}
             </div>
           ) : onChangeRecommendedResume && canAssignLibraryResume(j.status) ? (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border px-4 py-3">
-              <p className="text-sm text-muted-foreground">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 athens-callout" style={{ borderStyle: "dashed" }}>
+              <p className="text-sm text-[var(--athens-text-secondary)]">
                 No Library resume assigned yet.
               </p>
-              <Button
+              <button
                 type="button"
-                variant="outline"
-                size="sm"
+                className="athens-btn"
                 onClick={onChangeRecommendedResume}
               >
                 Choose Library resume
-              </Button>
+              </button>
             </div>
           ) : resumeRank?.recommendedResumeTechStack ? (
             <p className="mt-3 text-xs text-muted-foreground">
@@ -261,7 +256,7 @@ export function JobDescriptionDialog({
           ) : null}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 subtle-scroll space-y-6">
+        <div className="athens-dialog-body subtle-scroll space-y-6">
           <DetectedSkillsPanel
             aiSkills={displayJob.aiSkills}
           />
@@ -271,9 +266,9 @@ export function JobDescriptionDialog({
               <h3 className="mb-3 text-sm font-bold text-foreground">Company focus</h3>
               <div className="flex flex-wrap gap-1.5">
                 {displayJob.industries.map((tag) => (
-                  <Badge key={tag} v="subtle">
+                  <span key={tag} className="athens-chip">
                     {tag}
-                  </Badge>
+                  </span>
                 ))}
               </div>
             </section>
@@ -282,22 +277,22 @@ export function JobDescriptionDialog({
           {(displayJob.skills.length > 0 || displayJob.industries.length > 0) && <Separator />}
 
           {skillMatchOpen ? (
-            <section className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4">
+            <section className="athens-callout">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex size-8 items-center justify-center rounded-lg bg-primary/10">
-                    <Sparkles className="size-4 text-primary" />
+                  <span className="athens-icon-btn" aria-hidden="true">
+                    <Sparkles size={16} />
                   </span>
                   <div>
-                    <h3 className="text-sm font-bold text-foreground">AI skill match</h3>
-                    <p className="text-xs text-muted-foreground">
+                    <h3 className="text-sm font-semibold">AI skill match</h3>
+                    <p className="text-xs text-[var(--athens-text-muted)]">
                       Required skills vs your resume — graph bridges related skills
                     </p>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => setSkillMatchOpen(false)}>
+                <button type="button" className="athens-text-btn" onClick={() => setSkillMatchOpen(false)}>
                   Hide
-                </Button>
+                </button>
               </div>
               <JobSkillMatchPanel
                 data={radarData}
@@ -322,18 +317,18 @@ export function JobDescriptionDialog({
           </section>
         </div>
 
-        <DialogFooter className="border-t border-border bg-card px-6 py-4 sm:justify-between">
-          <div className="flex w-full sm:w-auto items-center justify-end gap-2">
-            <Button
-              variant={skillMatchOpen ? "secondary" : "outline"}
+        <div className="athens-dialog-footer">
+            <button
+              type="button"
+              className="athens-btn"
               onClick={() => setSkillMatchOpen((v) => !v)}
             >
-              <Sparkles className="size-4 text-primary" />
+              <Sparkles size={16} aria-hidden="true" />
               Skill match
-            </Button>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
+            </button>
+            <button type="button" className="athens-btn" onClick={() => onOpenChange(false)}>
               Close
-            </Button>
+            </button>
             {onApply ? (
               <JobStatusActions
                 job={displayJob}
@@ -349,15 +344,12 @@ export function JobDescriptionDialog({
                 showExternalLinkOnApply={false}
               />
             ) : (
-              <Button asChild>
-                <a href={j.applyUrl} target="_blank" rel="noopener noreferrer">
-                  Apply on company site
-                  <ExternalLink className="size-4" />
-                </a>
-              </Button>
+              <a href={j.applyUrl} target="_blank" rel="noopener noreferrer" className="athens-btn-primary">
+                Apply on company site
+                <ExternalLink size={16} aria-hidden="true" />
+              </a>
             )}
-          </div>
-        </DialogFooter>
+        </div>
         </div>
       </DialogContent>
     </Dialog>

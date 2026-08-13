@@ -96,8 +96,8 @@ export function JobListStickyBar({
   className,
 }: JobListStickyBarProps) {
   return (
-    <div className={cn("sticky top-0 z-20 -mx-1 px-1 mb-3", className)}>
-      <div className="rounded-xl border border-border bg-card/95 backdrop-blur-xl shadow-sm overflow-x-clip">
+    <div className={cn("athens-toolbar sticky top-0 z-20 mb-3", className)}>
+      <div className="athens-surface">
         <JobBulkActionsBar
           selectedOnPage={selectedOnPage}
           pageCount={pageCount}
@@ -133,7 +133,7 @@ export function JobListStickyBar({
           embedded
         />
 
-        <div className="border-t border-border/60 flex items-center justify-between gap-3 px-3 py-1 flex-wrap">
+        <div className="athens-pager-row">
           <PaginationBar
             page={page}
             pageSize={pageSize}
@@ -147,18 +147,18 @@ export function JobListStickyBar({
             secondaryTotal={totalJobs}
             secondaryLabel="matching jobs"
             loading={loading}
-            className="py-2 px-0 flex-1 min-w-0"
+            className="py-1 px-0 flex-1 min-w-0"
+            tone="lens"
           />
           <button
             type="button"
             onClick={onToggleGrid}
-            className={cn(
-              "icon-btn border border-border shrink-0 mb-1 sm:mb-0",
-              showGrid ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary",
-            )}
+            className={cn("athens-icon-btn", showGrid && "is-active")}
             title="Toggle grid view"
+            aria-pressed={showGrid}
+            aria-label="Toggle grid view"
           >
-            <LayoutGrid className="w-5 h-5" />
+            <LayoutGrid size={18} aria-hidden="true" />
           </button>
         </div>
       </div>

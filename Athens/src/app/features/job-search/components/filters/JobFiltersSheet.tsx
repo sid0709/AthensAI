@@ -1,11 +1,9 @@
 import React from "react";
 import { format, parseISO, isValid } from "date-fns";
-import { Button } from "../../../../components/ui/button";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "../../../../components/ui/sheet";
@@ -20,15 +18,6 @@ type JobFiltersSheetProps = {
   filters: JobSearchFilterState;
   onChange: (filters: JobSearchFilterState) => void;
 };
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{title}</h3>
-      {children}
-    </section>
-  );
-}
 
 function parseDateStr(s: string): Date | undefined {
   if (!s) return undefined;
@@ -46,50 +35,58 @@ export function JobFiltersSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
-        <SheetHeader>
+      <SheetContent side="right" className="athens-ui athens-sheet w-full sm:max-w-md overflow-y-auto p-0 gap-0">
+        <SheetHeader className="athens-sheet-header space-y-0 p-0 text-left">
           <SheetTitle>Attribute filters</SheetTitle>
           <SheetDescription>Source and posted date.</SheetDescription>
         </SheetHeader>
 
-        <div className="px-4 space-y-6 pb-4">
-          <Section title="Source">
+        <div className="athens-sheet-body">
+          <section className="space-y-3">
+            <h3 className="athens-eyebrow">Source</h3>
             <AthensMultiSelect
               label="Job source"
               values={filters.source}
               onChange={(source) => patch({ source })}
               placeholder="All sources"
               options={JobSourceTitles.map((s) => ({ value: s, label: s }))}
-              maxHeightClassName="max-h-56"
+              tone="lens"
             />
-          </Section>
+          </section>
 
-          <Section title="Posted date">
+          <section className="space-y-3">
+            <h3 className="athens-eyebrow">Posted date</h3>
             <div className="grid grid-cols-1 gap-3">
               <DatePicker
                 label="From"
                 value={parseDateStr(filters.postedFrom)}
                 onChange={(d) => patch({ postedFrom: d ? format(d, "yyyy-MM-dd") : "" })}
                 placeholder="Start date"
+                tone="lens"
               />
               <DatePicker
                 label="To"
                 value={parseDateStr(filters.postedTo)}
                 onChange={(d) => patch({ postedTo: d ? format(d, "yyyy-MM-dd") : "" })}
                 placeholder="End date"
+                tone="lens"
               />
             </div>
-          </Section>
+          </section>
         </div>
 
-        <SheetFooter className="flex-row gap-2 border-t border-border">
-          <Button variant="outline" className="flex-1" onClick={() => onChange(clearAttributeFilters(filters))}>
+        <div className="athens-sheet-footer">
+          <button
+            type="button"
+            className="athens-btn"
+            onClick={() => onChange(clearAttributeFilters(filters))}
+          >
             Reset section
-          </Button>
-          <Button className="flex-1" onClick={() => onOpenChange(false)}>
+          </button>
+          <button type="button" className="athens-btn-primary" onClick={() => onOpenChange(false)}>
             Done
-          </Button>
-        </SheetFooter>
+          </button>
+        </div>
       </SheetContent>
     </Sheet>
   );

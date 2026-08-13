@@ -1,6 +1,6 @@
 import React from "react";
 import { ExternalLink } from "lucide-react";
-import { Button } from "../../../components/ui/button";
+import { cn } from "../../../lib/utils";
 import type { Job } from "../../../types";
 
 type JobUrlLinkProps = {
@@ -19,7 +19,6 @@ export function hasJobUrl(applyUrl: string | undefined | null): applyUrl is stri
 /** Opens the job posting URL without marking the job as applied. */
 export function JobUrlLink({
   job,
-  size = "sm",
   className,
   iconOnly = false,
   label = "Job URL",
@@ -27,24 +26,18 @@ export function JobUrlLink({
   if (!hasJobUrl(job.applyUrl)) return null;
 
   return (
-    <Button
-      variant="outline"
-      size={iconOnly ? "icon" : size}
-      className={className}
-      asChild
+    <a
+      href={job.applyUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`Open job posting for ${job.title}`}
+      aria-label={`Open job posting for ${job.title}`}
+      data-no-select
+      className={cn(iconOnly ? "athens-icon-btn" : "athens-btn", className)}
+      onClick={(e) => e.stopPropagation()}
     >
-      <a
-        href={job.applyUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={`Open job posting for ${job.title}`}
-        aria-label={`Open job posting for ${job.title}`}
-        data-no-select
-        onClick={(e) => e.stopPropagation()}
-      >
-        <ExternalLink className="w-4 h-4" />
-        {iconOnly ? null : label}
-      </a>
-    </Button>
+      <ExternalLink size={16} aria-hidden="true" />
+      {iconOnly ? null : label}
+    </a>
   );
 }
