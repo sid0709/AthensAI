@@ -1,6 +1,5 @@
 import React from "react";
-import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { Button } from "../../../../components/ui/button";
+import { ChevronUp, X } from "lucide-react";
 import type { ActiveFilterChip } from "../../../../hooks/useJobSearchFilters";
 import { clearAllFilters } from "../../../../hooks/useJobSearchFilters";
 import type { JobSearchFilterState } from "../../../../hooks/useJobSearchFilters";
@@ -20,45 +19,44 @@ export function ActiveFilterChips({ filters, chips, onChange }: ActiveFilterChip
   const hidden = chips.length - visible.length;
 
   return (
-    <div className="flex items-center gap-2 flex-wrap px-1 pb-2">
+    <div className="athens-chip-row">
       {visible.map((chip) => (
         <button
           key={chip.id}
           type="button"
           onClick={() => onChange(chip.apply(filters))}
-          className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-xs font-medium bg-secondary border border-border text-foreground hover:bg-secondary/80 transition-colors"
+          className="athens-chip"
         >
           {chip.label}
-          <X className="w-3 h-3 text-muted-foreground" />
+          <X size={12} aria-hidden="true" />
         </button>
       ))}
-      {hidden > 0 && !expanded && (
+      {hidden > 0 && !expanded ? (
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="text-xs font-semibold text-primary hover:underline px-1"
+          className="athens-text-btn"
         >
           +{hidden} more
         </button>
-      )}
-      {expanded && chips.length > 4 && (
+      ) : null}
+      {expanded && chips.length > 4 ? (
         <button
           type="button"
           onClick={() => setExpanded(false)}
-          className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground px-1"
+          className="athens-text-btn"
         >
-          <ChevronUp className="w-3.5 h-3.5" />
+          <ChevronUp size={14} aria-hidden="true" />
           Less
         </button>
-      )}
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 text-xs text-muted-foreground ml-auto"
+      ) : null}
+      <button
+        type="button"
+        className="athens-text-btn athens-chip-row__clear"
         onClick={() => onChange(clearAllFilters(filters))}
       >
         Clear all
-      </Button>
+      </button>
     </div>
   );
 }

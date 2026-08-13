@@ -8,9 +8,9 @@
   --fx-ember-soft: rgba(232, 93, 4, 0.12);
   --fx-teal: #0f766e;
   --fx-teal-glow: rgba(15, 118, 110, 0.14);
-  --fx-mono: "JetBrains Mono", ui-monospace, monospace;
-  --fx-display: "Bricolage Grotesque", Georgia, serif;
-  --fx-body: "Figtree", system-ui, sans-serif;
+  --fx-mono: var(--font-athens-mono);
+  --fx-display: var(--font-athens);
+  --fx-body: var(--font-athens);
   background:
     radial-gradient(1200px 500px at 10% -10%, rgba(232, 93, 4, 0.12), transparent 55%),
     radial-gradient(900px 420px at 90% 0%, rgba(15, 118, 110, 0.12), transparent 50%),

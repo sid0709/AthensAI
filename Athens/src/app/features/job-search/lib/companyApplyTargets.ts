@@ -1,4 +1,4 @@
-import { isExternalJob, type CompanyJobGroup, type Job, type JobStatus } from "../../../types/job";
+import type { CompanyJobGroup, Job, JobStatus } from "../../../types/job";
 
 const APPLYABLE_STATUSES = new Set<JobStatus>(["posted", "bid-ready", "worker-pool", "bid-completed"]);
 
@@ -42,7 +42,7 @@ export function companyGroupForJob(
 }
 
 export function canMarkJobApplied(job: Job): boolean {
-  return APPLYABLE_STATUSES.has(job.status) && !isExternalJob(job);
+  return APPLYABLE_STATUSES.has(job.status);
 }
 
 export function companyApplyTargets(job: Job, group: CompanyJobGroup | undefined): {

@@ -11,15 +11,15 @@ import {
   Sparkles,
   Wifi,
 } from "lucide-react";
-import { Av, Badge } from "../../../components/ui";
-import { Button } from "../../../components/ui/button";
+import { Av } from "../../../components/ui";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { cn } from "../../../lib/utils";
-import type { BadgeVariant, Job } from "../../../types";
+import type { Job } from "../../../types";
 import { useApplier } from "@/context/applier-context";
 import { JobDescriptionDialog } from "./JobDescriptionDialog";
 import { JobResumePreviewDialog } from "./JobResumePreviewDialog";
 import { JobStatusActions } from "./JobStatusActions";
+import { JobStatusIcon } from "./JobStatusIcon";
 import { JobUrlLink } from "./JobUrlLink";
 import { SwapLibraryResumeDialog } from "./SwapLibraryResumeDialog";
 import { canAssignLibraryResume } from "../lib/jobRecommendSnapshot";
@@ -35,16 +35,6 @@ const STATUS_LABELS: Record<Job["status"], string> = {
   declined: "Declined",
 };
 
-const STATUS_VARIANTS: Record<Job["status"], BadgeVariant> = {
-  posted: "blue",
-  "bid-ready": "blue",
-  "worker-pool": "blue",
-  "bid-completed": "violet",
-  applied: "success",
-  scheduled: "amber",
-  declined: "err",
-};
-
 const WORK_MODE_LABELS: Record<Job["workMode"], string> = {
   remote: "Remote",
   hybrid: "Hybrid",
@@ -56,6 +46,7 @@ const INTERACTIVE = "a, button, input, textarea, select, [data-no-select]";
 type JobCardProps = {
   job: Job;
   className?: string;
+  layout?: "list" | "grid";
   selected?: boolean;
   onSelect?: (shiftKey: boolean) => void;
   bookmarked?: boolean;
@@ -90,12 +81,6 @@ function CompanyLogo({ job }: { job: Job }) {
   );
 }
 
-function InfoChip({ children }: { children: React.ReactNode }) {
-  return <Badge v="subtle">{children}</Badge>;
-}
-
-const MAX_SKILL_CHIPS = 8;
-
 function analyzedSkillLabels(job: Job): string[] {
   if (job.aiSkills?.length) {
     return [...job.aiSkills]
@@ -105,9 +90,44 @@ function analyzedSkillLabels(job: Job): string[] {
   return job.skills;
 }
 
+function ResumeChip({
+  children,
+  title,
+  onClick,
+}: {
+  children: React.ReactNode;
+  title: string;
+  onClick?: () => void;
+}) {
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        data-no-select
+        className="athens-chip"
+        title={title}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+      >
+        <BookMarked size={12} aria-hidden="true" />
+        {children}
+      </button>
+    );
+  }
+  return (
+    <span className="athens-chip" title={title}>
+      <BookMarked size={12} aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
 export function JobCard({
   job,
   className,
+  layout = "list",
   selected,
   onSelect,
   bookmarked = false,
@@ -130,9 +150,11 @@ export function JobCard({
   const { applier } = useApplier();
   const resumeReady = resumeState?.status === "done";
   const skillLabels = analyzedSkillLabels(job);
-  const visibleSkills = skillLabels.slice(0, MAX_SKILL_CHIPS);
+  const maxSkills = layout === "grid" ? 4 : 6;
+  const visibleSkills = skillLabels.slice(0, maxSkills);
   const hiddenSkillCount = Math.max(0, (job.skillCount ?? skillLabels.length) - visibleSkills.length);
   const canSwapLibrary = canAssignLibraryResume(job.status) && Boolean(onPatchJob);
+  const isGrid = layout === "grid";
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;
@@ -158,11 +180,10 @@ export function JobCard({
         }
         aria-pressed={onSelect ? selected : undefined}
         className={cn(
-          "group bg-card border-2 rounded-xl p-5 shadow-sm flex flex-col gap-4 transition-all duration-150",
+          "athens-card",
+          isGrid && "athens-card--grid",
           onSelect && "cursor-pointer select-none",
-          selected
-            ? "border-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.25)] bg-primary/[0.03]"
-            : "border-transparent ring-1 ring-border hover:shadow-md hover:ring-primary/20",
+          selected && "is-selected",
           className,
         )}
       >
@@ -171,98 +192,55 @@ export function JobCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="text-base font-bold text-foreground leading-tight truncate">{job.title}</h3>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5">
+                <h3 className={cn("athens-card-title", isGrid ? "line-clamp-2" : "truncate")}>{job.title}</h3>
+                <div className="athens-card-meta mt-1.5">
                   <a
                     href={job.companyUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline truncate select-text"
+                    className="athens-link inline-flex items-center gap-1 truncate select-text"
                     data-no-select
                   >
-                    <Building2 className="w-3.5 h-3.5 shrink-0" />
+                    <Building2 size={14} aria-hidden="true" />
                     {job.company}
-                    <ExternalLink className="w-3 h-3 shrink-0 opacity-60" />
+                    <ExternalLink size={12} aria-hidden="true" />
                   </a>
-                  <span className="text-xs text-muted-foreground">· {job.posted}</span>
+                  <span>· {job.posted}</span>
                 </div>
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
-                <Badge v={STATUS_VARIANTS[job.status]}>{STATUS_LABELS[job.status]}</Badge>
+                <span className="athens-status">
+                  <JobStatusIcon status={job.status} />
+                  {STATUS_LABELS[job.status]}
+                </span>
                 {job.recommendedResumeStack ? (
-                  canSwapLibrary ? (
-                    <button
-                      type="button"
-                      data-no-select
-                      className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-primary/25 bg-primary/[0.08] px-2 py-0.5 text-[11px] font-semibold text-primary hover:bg-primary/[0.14] transition-colors"
-                      title={
-                        job.recommendedResumeReason
-                          ? `${job.recommendedResumeStack} — ${job.recommendedResumeReason} (click to change)`
-                          : `Recommended Library resume: ${job.recommendedResumeStack} (click to change)`
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSwapOpen(true);
-                      }}
-                    >
-                      <BookMarked className="size-3 shrink-0" />
-                      <span className="truncate">{job.recommendedResumeStack}</span>
-                    </button>
-                  ) : (
-                    <span
-                      className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-primary/25 bg-primary/[0.08] px-2 py-0.5 text-[11px] font-semibold text-primary"
-                      title={
-                        job.recommendedResumeReason
-                          ? `${job.recommendedResumeStack} — ${job.recommendedResumeReason}`
-                          : `Recommended Library resume: ${job.recommendedResumeStack}`
-                      }
-                    >
-                      <BookMarked className="size-3 shrink-0" />
-                      <span className="truncate">{job.recommendedResumeStack}</span>
-                    </span>
-                  )
-                ) : job.useCustomizedResume ? (
-                  canSwapLibrary ? (
-                    <button
-                      type="button"
-                      data-no-select
-                      className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200 hover:bg-amber-500/15 transition-colors"
-                      title={
-                        (job.recommendWarning ||
-                          "No Library stack matched — use a customized résumé") +
-                        " (click to pick a Library resume)"
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSwapOpen(true);
-                      }}
-                    >
-                      <BookMarked className="size-3 shrink-0" />
-                      <span className="truncate">Customized</span>
-                    </button>
-                  ) : (
-                    <span
-                      className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
-                      title={job.recommendWarning || "No Library stack matched — use a customized résumé"}
-                    >
-                      <BookMarked className="size-3 shrink-0" />
-                      <span className="truncate">Customized</span>
-                    </span>
-                  )
-                ) : canSwapLibrary ? (
-                  <button
-                    type="button"
-                    data-no-select
-                    className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-dashed border-primary/35 bg-transparent px-2 py-0.5 text-[11px] font-semibold text-primary hover:bg-primary/[0.08] transition-colors"
-                    title="Assign a Library resume for this job"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSwapOpen(true);
-                    }}
+                  <ResumeChip
+                    title={
+                      job.recommendedResumeReason
+                        ? `${job.recommendedResumeStack} — ${job.recommendedResumeReason}${canSwapLibrary ? " (click to change)" : ""}`
+                        : `Recommended Library resume: ${job.recommendedResumeStack}${canSwapLibrary ? " (click to change)" : ""}`
+                    }
+                    onClick={canSwapLibrary ? () => setSwapOpen(true) : undefined}
                   >
-                    <BookMarked className="size-3 shrink-0" />
-                    <span className="truncate">Assign resume</span>
-                  </button>
+                    <span className="truncate max-w-[9rem]">{job.recommendedResumeStack}</span>
+                  </ResumeChip>
+                ) : job.useCustomizedResume ? (
+                  <ResumeChip
+                    title={
+                      (job.recommendWarning || "No Library stack matched — use a customized résumé") +
+                      (canSwapLibrary ? " (click to pick a Library resume)" : "")
+                    }
+                    onClick={canSwapLibrary ? () => setSwapOpen(true) : undefined}
+                  >
+                    Customized
+                  </ResumeChip>
+                ) : canSwapLibrary ? (
+                  <ResumeChip
+                    title="Assign a Library resume for this job"
+                    onClick={() => setSwapOpen(true)}
+                  >
+                    Assign resume
+                  </ResumeChip>
                 ) : null}
               </div>
             </div>
@@ -270,106 +248,116 @@ export function JobCard({
         </div>
 
         {visibleSkills.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {visibleSkills.map((skill) => (
-              <Badge key={skill} v="blue">
-                {skill}
-              </Badge>
-            ))}
+          <div className="athens-card-chips">
+            <div className="athens-card-chips__list">
+              {visibleSkills.map((skill) => (
+                <span key={skill} className="athens-chip" title={skill}>
+                  {skill}
+                </span>
+              ))}
+            </div>
             {hiddenSkillCount > 0 ? (
-              <Badge v="subtle">+{hiddenSkillCount} more</Badge>
+              <span
+                className="athens-chip athens-chip--more"
+                title={skillLabels.slice(visibleSkills.length).join(", ")}
+              >
+                +{hiddenSkillCount}
+              </span>
             ) : null}
           </div>
-        ) : null}
+        ) : (
+          <div className="athens-card-chips" aria-hidden="true" />
+        )}
 
-        <div className="flex flex-wrap gap-1.5">
-          <InfoChip>
-            <span className="inline-flex items-center gap-1">
-              <MapPin className="w-3 h-3" />
+        <div className="athens-card-chips athens-card-chips--meta">
+          <div className="athens-card-chips__list">
+            <span className="athens-chip">
+              <MapPin size={12} aria-hidden="true" />
               {job.location}
             </span>
-          </InfoChip>
-          <InfoChip>
-            <span className="inline-flex items-center gap-1">
-              <Wifi className="w-3 h-3" />
+            <span className="athens-chip">
+              <Wifi size={12} aria-hidden="true" />
               {WORK_MODE_LABELS[job.workMode]}
             </span>
-          </InfoChip>
-          <InfoChip>{job.type}</InfoChip>
-          <InfoChip>{job.seniority}</InfoChip>
-          <InfoChip>{job.salary}</InfoChip>
+            {isGrid ? null : <span className="athens-chip">{job.type}</span>}
+            {isGrid ? null : <span className="athens-chip">{job.seniority}</span>}
+            <span className="athens-chip">{job.salary}</span>
+          </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3 pt-1 border-t border-border/60">
-          <span className="text-xs text-muted-foreground truncate">
+        <div className="athens-card-footer">
+          <span className="athens-card-source">
             {job.catalog === "external" ? `External · ${job.source}` : job.source}
           </span>
-          <div className="flex items-center gap-2 shrink-0" data-no-select>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                setJdOpen(true);
-              }}
-            >
-              <FileText className="w-4 h-4" />
-              View JD
-            </Button>
-            <JobUrlLink job={job} />
-            {onGenerateResume ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={resumeState?.status === "generating"}
-                title={
-                  resumeState?.status === "generating"
-                    ? resumeState.step ?? "Generating résumé…"
-                    : resumeState?.status === "error"
-                      ? `${resumeState.error ?? "Résumé generation failed"} — click to retry`
-                      : resumeReady
-                        ? "Résumé already generated — click to preview the PDF"
-                        : "Generate a tailored résumé for this job"
-                }
-                className={cn(
-                  resumeReady &&
-                    "text-emerald-600 border-emerald-500/40 hover:text-emerald-700",
-                  resumeState?.status === "error" &&
-                    "text-rose-600 border-rose-500/40 hover:text-rose-700",
-                )}
+          <div className="athens-card-actions" data-no-select>
+            <div className="athens-card-tools">
+              <button
+                type="button"
+                className="athens-icon-btn"
+                title="View job description"
+                aria-label="View job description"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (resumeReady) setResumeOpen(true);
-                  else onGenerateResume();
+                  setJdOpen(true);
                 }}
               >
-                {resumeState?.status === "generating" ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : resumeReady ? (
-                  <CheckCircle2 className="w-4 h-4" />
-                ) : (
-                  <Sparkles className="w-4 h-4" />
-                )}
-                {resumeState?.status === "generating"
-                  ? "Generating…"
-                  : resumeReady
-                    ? "View résumé"
-                    : "Generate résumé"}
-              </Button>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              title={bookmarked ? "Unsave" : "Save job"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleBookmark?.();
-              }}
-            >
-              <Bookmark className={cn("w-4 h-4", bookmarked && "fill-current text-primary")} />
-            </Button>
+                <FileText size={16} aria-hidden="true" />
+              </button>
+              <JobUrlLink job={job} iconOnly />
+              {onGenerateResume ? (
+                <button
+                  type="button"
+                  className={cn(
+                    "athens-icon-btn",
+                    resumeState?.status === "error" && "athens-btn-danger",
+                  )}
+                  disabled={resumeState?.status === "generating"}
+                  title={
+                    resumeState?.status === "generating"
+                      ? resumeState.step ?? "Generating résumé…"
+                      : resumeState?.status === "error"
+                        ? `${resumeState.error ?? "Résumé generation failed"} — click to retry`
+                        : resumeReady
+                          ? "Résumé already generated — click to preview the PDF"
+                          : "Generate a tailored résumé for this job"
+                  }
+                  aria-label={
+                    resumeState?.status === "generating"
+                      ? "Generating résumé"
+                      : resumeReady
+                        ? "View résumé"
+                        : "Generate résumé"
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (resumeReady) setResumeOpen(true);
+                    else onGenerateResume();
+                  }}
+                >
+                  {resumeState?.status === "generating" ? (
+                    <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                  ) : resumeReady ? (
+                    <CheckCircle2 size={16} aria-hidden="true" />
+                  ) : (
+                    <Sparkles size={16} aria-hidden="true" />
+                  )}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="athens-icon-btn"
+                title={bookmarked ? "Unsave" : "Save job"}
+                aria-label={bookmarked ? "Unsave" : "Save job"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleBookmark?.();
+                }}
+              >
+                <Bookmark size={16} className={cn(bookmarked && "fill-current")} aria-hidden="true" />
+              </button>
+            </div>
             <JobStatusActions
+              compact
               job={job}
               pending={statusPending}
               onApply={() => onApply?.()}

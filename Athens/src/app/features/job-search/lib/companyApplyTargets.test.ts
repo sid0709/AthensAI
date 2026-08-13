@@ -37,13 +37,13 @@ test("includes matching ids that are not hydrated yet", () => {
   assert.deepEqual(result.unloadedIds, ["c", "d"]);
 });
 
-test("skips external scraped siblings", () => {
+test("includes external scraped siblings for status updates", () => {
   const primary = job("a");
   const result = companyApplyTargets(
     primary,
     group([primary, job("b", "posted", "external")]),
   );
-  assert.deepEqual(result.siblings, []);
+  assert.deepEqual(result.siblings.map(({ id }) => id), ["b"]);
 });
 
 test("finds the company group even when job.companyId does not match", () => {

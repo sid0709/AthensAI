@@ -1,6 +1,5 @@
 import React from "react";
 import { AlertCircle, Loader2, Sparkles, Square } from "lucide-react";
-import { Button } from "../../../components/ui/button";
 import { useJobSkillExtraction } from "../hooks/useJobSkillExtraction";
 
 /**
@@ -28,16 +27,16 @@ export function SkillExtractionButton() {
           ? "Loading next batch…"
           : "Analyzing…";
     return (
-      <div className="flex items-center gap-2 shrink-0" aria-live="polite">
-        <div className="flex flex-col gap-0.5 min-w-[190px]">
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+      <div className="athens-toolbar-actions" aria-live="polite">
+        <div className="athens-progress">
+          <div className="athens-progress__meta">
             <span>{progressLabel}</span>
-            <span className="font-mono tabular-nums">
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>
               {total != null ? `${processed}/${total}` : `${processed} done`}
             </span>
           </div>
           <div
-            className="h-1.5 w-full rounded-full bg-secondary overflow-hidden"
+            className="athens-progress__track"
             role="progressbar"
             aria-label={progressLabel}
             aria-valuemin={0}
@@ -45,11 +44,11 @@ export function SkillExtractionButton() {
             aria-valuenow={pct == null ? undefined : processed}
           >
             <div
-              className={`h-full bg-violet-600 transition-all ${pct == null ? "w-1/3 animate-pulse" : ""}`}
+              className={`athens-progress__bar${pct == null ? " is-indeterminate" : ""}`}
               style={pct == null ? undefined : { width: `${pct}%` }}
             />
           </div>
-          <span className="text-[10px] text-muted-foreground tabular-nums">
+          <span className="athens-progress__meta">
             {queued
               ? "Waiting for an AI analyze worker"
               : inflight > 0
@@ -60,16 +59,15 @@ export function SkillExtractionButton() {
             {" · survives navigation"}
           </span>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 gap-1.5"
+        <button
+          type="button"
+          className="athens-btn"
           disabled={loading || session.status === "stopping"}
           onClick={() => void stop()}
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+          {loading ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Square size={14} aria-hidden="true" />}
           Stop
-        </Button>
+        </button>
       </div>
     );
   }
@@ -77,10 +75,9 @@ export function SkillExtractionButton() {
   const failed = session.status === "failed";
 
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      className={`h-9 gap-1.5 shrink-0 ${failed ? "border-destructive/50 text-destructive" : ""}`}
+    <button
+      type="button"
+      className="athens-btn"
       disabled={loading || pending === 0}
       onClick={() => void start()}
       title={failed
@@ -92,23 +89,19 @@ export function SkillExtractionButton() {
             : `${pending} APPROVED job(s) pending or failed — AI analyze is shared globally`}
     >
       {loading
-        ? <Loader2 className="w-4 h-4 animate-spin" />
+        ? <Loader2 size={16} className="animate-spin" aria-hidden="true" />
         : failed
-          ? <AlertCircle className="w-4 h-4" />
-          : <Sparkles className="w-4 h-4" />}
+          ? <AlertCircle size={16} aria-hidden="true" />
+          : <Sparkles size={16} aria-hidden="true" />}
       {failed ? "Retry AI analyze" : "AI analyze"}
-      {pending != null && (
+      {pending != null ? (
         <span
-          className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold tabular-nums ${
-            pending === 0
-              ? "bg-muted text-muted-foreground"
-              : "bg-violet-600 text-white"
-          }`}
+          className={pending === 0 ? "athens-badge is-muted" : "athens-badge"}
           aria-label={`${pending} jobs pending AI analyze`}
         >
           {pending.toLocaleString()}
         </span>
-      )}
-    </Button>
+      ) : null}
+    </button>
   );
 }

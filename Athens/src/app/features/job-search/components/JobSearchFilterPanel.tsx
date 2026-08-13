@@ -6,7 +6,6 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
 import {
   countAttributeFilters,
@@ -16,21 +15,21 @@ import {
 } from "../../../hooks/useJobSearchFilters";
 import { ActiveFilterChips } from "./filters/ActiveFilterChips";
 import { JobFiltersSheet } from "./filters/JobFiltersSheet";
+import { JobStatusIcon } from "./JobStatusIcon";
 import { SkillExtractionButton } from "./SkillExtractionButton";
 
 const STATUS_TABS: {
   id: JobStatusTab;
   label: string;
-  dot: string;
 }[] = [
-  { id: "all", label: "All", dot: "bg-foreground" },
-  { id: "posted", label: "New", dot: "bg-emerald-500" },
-  { id: "bid-ready", label: "Bid ready", dot: "bg-sky-500" },
-  { id: "worker-pool", label: "Worker pool", dot: "bg-teal-500" },
-  { id: "bid-completed", label: "Bid completed", dot: "bg-violet-500" },
-  { id: "applied", label: "Applied", dot: "bg-blue-500" },
-  { id: "scheduled", label: "Scheduled", dot: "bg-amber-500" },
-  { id: "declined", label: "Declined", dot: "bg-rose-500" },
+  { id: "all", label: "All" },
+  { id: "posted", label: "New" },
+  { id: "bid-ready", label: "Bid ready" },
+  { id: "worker-pool", label: "Worker pool" },
+  { id: "bid-completed", label: "Bid completed" },
+  { id: "applied", label: "Applied" },
+  { id: "scheduled", label: "Scheduled" },
+  { id: "declined", label: "Declined" },
 ];
 
 type JobSearchFilterPanelProps = {
@@ -46,47 +45,38 @@ type JobSearchFilterPanelProps = {
   showSkillsTools?: boolean;
 };
 
-function ToolbarDivider() {
-  return <div className="hidden sm:block w-px h-6 bg-border/80 shrink-0" aria-hidden />;
-}
-
 function CompactInput({
   icon: Icon,
   value,
   onChange,
   placeholder,
   className,
-  nested = false,
 }: {
   icon: React.ElementType;
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
   className?: string;
-  nested?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 h-9 min-w-0 transition-all",
-        nested
-          ? "bg-transparent border-0 rounded-md px-2 focus-within:bg-background/60"
-          : "bg-secondary/60 border border-border rounded-lg px-2.5 focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/10",
-        className,
-      )}
-    >
-      <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+    <div className={cn("athens-field", className)}>
+      <Icon className="athens-field__icon" aria-hidden="true" />
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="bg-transparent text-sm text-foreground placeholder:text-muted-foreground/70 outline-none flex-1 min-w-0"
+        className="athens-field__input"
       />
-      {value && (
-        <button type="button" onClick={() => onChange("")} className="text-muted-foreground hover:text-foreground">
-          <X className="w-3 h-3" />
+      {value ? (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          className="athens-field__clear"
+          aria-label={`Clear ${placeholder}`}
+        >
+          <X size={12} aria-hidden="true" />
         </button>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -112,33 +102,27 @@ export function JobSearchFilterPanel({
   const hasChips = chips.length > 0;
 
   return (
-    <div className="-mx-1 px-1 mb-2 overflow-y-visible">
-      <div className="rounded-xl border border-border bg-card/95 backdrop-blur-xl shadow-sm overflow-x-clip">
-        {/* Layer 1: status tabs */}
+    <div className="athens-toolbar mb-2">
+      <div className="athens-surface">
         {showStatusTabs ? (
-          <div className="flex items-end gap-0.5 px-3 pt-1 scroll-x-only border-b border-border/60">
+          <div className="athens-tabs scroll-x-only" role="tablist" aria-label="Job status">
             {statusTabs.map((tab) => {
               const active = filters.statusTab === tab.id;
               return (
                 <button
                   key={tab.id}
                   type="button"
+                  role="tab"
+                  aria-selected={active}
+                  aria-current={active ? "true" : undefined}
                   onClick={() => patch({ statusTab: tab.id })}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors shrink-0 border-b-2",
-                    active
-                      ? "text-foreground border-primary"
-                      : "text-muted-foreground border-transparent hover:text-foreground hover:border-border",
-                  )}
+                  className={cn("athens-tab", active && "is-active")}
                 >
-                  <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", tab.dot)} />
+                  <span className="athens-tab-icon">
+                    <JobStatusIcon status={tab.id} size={16} />
+                  </span>
                   {tab.label}
-                  <span
-                    className={cn(
-                      "px-1.5 py-0.5 rounded-md text-[11px] tabular-nums font-medium",
-                      active ? "bg-muted text-foreground" : "bg-muted/60 text-muted-foreground",
-                    )}
-                  >
+                  <span className="athens-count">
                     {countsLoading ? (
                       <span className="inline-block h-2.5 w-5 animate-pulse rounded bg-current/20" aria-label="Updating count" />
                     ) : statusCounts[tab.id].toLocaleString()}
@@ -149,81 +133,69 @@ export function JobSearchFilterPanel({
           </div>
         ) : null}
 
-        {/* Layer 2: primary controls */}
-        <div className="flex items-center gap-2 px-3 py-2.5 flex-wrap overflow-y-hidden">
-          <div className="flex items-center gap-1.5 flex-1 min-w-0 bg-muted/50 rounded-lg p-1 border border-border/40">
+        <div className="athens-toolbar-row">
+          <div className="athens-field-group">
             <CompactInput
               icon={Search}
               value={filters.jobQuery}
               onChange={(jobQuery) => patch({ jobQuery })}
               placeholder="Search roles…"
-              nested
-              className="flex-1 min-w-[120px] sm:max-w-[200px]"
             />
-            <div className="w-px h-5 bg-border/60 shrink-0 hidden sm:block" aria-hidden />
+            <div className="athens-field-divider" aria-hidden />
             <CompactInput
               icon={Building2}
               value={filters.companyQuery}
               onChange={(companyQuery) => patch({ companyQuery })}
               placeholder="Company…"
-              nested
-              className="w-[96px] sm:w-[112px] shrink-0"
+              className="athens-field--company"
             />
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 gap-1.5 shrink-0"
+          <div className="athens-toolbar-actions">
+            <button
+              type="button"
+              className="athens-btn"
               onClick={() => setSheetOpen(true)}
             >
-              <SlidersHorizontal className="w-4 h-4" />
+              <SlidersHorizontal size={16} aria-hidden="true" />
               Filters
-              {attributeCount > 0 && (
-                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">
-                  {attributeCount}
-                </span>
-              )}
-            </Button>
+              {attributeCount > 0 ? (
+                <span className="athens-badge">{attributeCount}</span>
+              ) : null}
+            </button>
+            {showSkillsTools ? <SkillExtractionButton /> : null}
           </div>
-
-          {showSkillsTools ? (
-            <>
-              <ToolbarDivider />
-              <div className="flex items-center gap-1.5 sm:ml-auto shrink-0">
-                <SkillExtractionButton />
-              </div>
-            </>
-          ) : null}
         </div>
 
-        {/* Layer 3: active filter chips (collapsible) */}
-        {hasChips && (
-          <div className="border-t border-border/60">
+        {hasChips ? (
+          <div>
             <button
               type="button"
               onClick={() => setChipsOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors"
+              className="athens-chips-toggle"
             >
               <span>
                 {chips.length} active filter{chips.length !== 1 ? "s" : ""}
               </span>
-              <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", chipsOpen && "rotate-180")} />
+              <ChevronDown
+                size={14}
+                aria-hidden="true"
+                className={cn("transition-transform", chipsOpen && "rotate-180")}
+              />
             </button>
-            {chipsOpen && (
+            {chipsOpen ? (
               <ActiveFilterChips filters={filters} chips={chips} onChange={onChange} />
-            )}
+            ) : null}
           </div>
-        )}
+        ) : null}
       </div>
 
-        <JobFiltersSheet
-          open={sheetOpen}
-          onOpenChange={setSheetOpen}
-          filters={filters}
-          onChange={onChange}
-        />
+      <JobFiltersSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        filters={filters}
+        onChange={onChange}
+      />
     </div>
   );
 }

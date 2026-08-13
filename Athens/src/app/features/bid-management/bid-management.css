@@ -7,9 +7,9 @@
   --bm-ember-soft: rgba(232, 93, 4, 0.12);
   --bm-teal: #0f766e;
   --bm-teal-glow: rgba(15, 118, 110, 0.14);
-  --bm-mono: "JetBrains Mono", ui-monospace, monospace;
-  --bm-display: "Bricolage Grotesque", Georgia, serif;
-  --bm-body: "Figtree", system-ui, sans-serif;
+  --bm-mono: var(--font-athens-mono);
+  --bm-display: var(--font-athens);
+  --bm-body: var(--font-athens);
   background:
     radial-gradient(1100px 480px at 8% -10%, rgba(232, 93, 4, 0.11), transparent 55%),
     radial-gradient(900px 400px at 92% 0%, rgba(15, 118, 110, 0.11), transparent 50%),

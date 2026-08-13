@@ -18,6 +18,7 @@ type AthensMultiSelectProps = {
   className?: string;
   disabled?: boolean;
   maxHeightClassName?: string;
+  tone?: "default" | "lens";
 };
 
 export function toggleMultiSelectValue(values: string[], value: string): string[] {
@@ -35,16 +36,19 @@ export function AthensMultiSelect({
   className,
   disabled,
   maxHeightClassName = "max-h-48",
+  tone = "default",
 }: AthensMultiSelectProps) {
   const selectedLabels = options
     .filter((opt) => values.includes(opt.value))
     .map((opt) => opt.label);
 
+  const lens = tone === "lens";
+
   return (
     <FormField label={label} hint={hint} error={error} className={className}>
-      <div className="rounded-lg border border-border bg-secondary/40 overflow-hidden">
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
-          <span className="text-xs text-muted-foreground truncate">
+      <div className={lens ? "athens-multiselect" : "rounded-lg border border-border bg-secondary/40 overflow-hidden"}>
+        <div className={lens ? "athens-multiselect__head" : "flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2"}>
+          <span className={lens ? undefined : "text-xs text-muted-foreground truncate"}>
             {selectedLabels.length
               ? `${selectedLabels.length} selected`
               : placeholder}
@@ -54,20 +58,22 @@ export function AthensMultiSelect({
               type="button"
               disabled={disabled}
               onClick={() => onChange([])}
-              className="text-[11px] font-semibold text-primary hover:underline disabled:opacity-50"
+              className={lens ? "athens-text-btn" : "text-[11px] font-semibold text-primary hover:underline disabled:opacity-50"}
             >
               Clear
             </button>
           ) : null}
         </div>
-        <div className={cn("overflow-y-auto subtle-scroll p-2 space-y-0.5", maxHeightClassName)}>
+        <div className={cn(lens ? "athens-multiselect__list subtle-scroll" : cn("overflow-y-auto subtle-scroll p-2 space-y-0.5", maxHeightClassName), !lens && maxHeightClassName)}>
           {options.map((opt) => {
             const checked = values.includes(opt.value);
             return (
               <label
                 key={opt.value}
                 className={cn(
-                  "flex items-center gap-2.5 rounded-md px-2 py-1.5 cursor-pointer hover:bg-secondary/80 transition-colors",
+                  lens
+                    ? "athens-multiselect__row"
+                    : "flex items-center gap-2.5 rounded-md px-2 py-1.5 cursor-pointer hover:bg-secondary/80 transition-colors",
                   disabled && "opacity-50 cursor-not-allowed",
                 )}
               >
@@ -76,7 +82,7 @@ export function AthensMultiSelect({
                   disabled={disabled}
                   onCheckedChange={() => onChange(toggleMultiSelectValue(values, opt.value))}
                 />
-                <span className="text-sm text-foreground">{opt.label}</span>
+                <span className={lens ? undefined : "text-sm text-foreground"}>{opt.label}</span>
               </label>
             );
           })}

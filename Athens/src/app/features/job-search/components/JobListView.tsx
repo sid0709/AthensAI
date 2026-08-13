@@ -1,6 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { cn } from "../../../lib/utils";
 import type { CompanyJobGroup, Job } from "../../../types";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 import { CompanyJobGroupCard } from "./CompanyJobGroupCard";
@@ -112,6 +111,7 @@ export function JobListView({
           : undefined}
         loadingMore={memberLoadingIds?.has(group.companyId)}
         memberError={memberErrors?.[group.companyId]}
+        layout={layout}
       />
     );
   };
@@ -126,7 +126,7 @@ export function JobListView({
 
   if (layout === "grid") {
     return (
-      <div className={cn("grid grid-cols-1 items-start gap-4 py-2 md:grid-cols-2 xl:grid-cols-3")}>
+      <div className="athens-card-grid">
         {displayGroups.map(renderGroup)}
       </div>
     );

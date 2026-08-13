@@ -1,5 +1,8 @@
-import { MAIL_AI_LABEL_MAX_IDS } from './constants/task-types';
-import { BACKGROUND_TASK_TYPES } from './constants/task-types';
+import {
+  BACKGROUND_TASK_TYPES,
+  JOB_WORKER_POOL_MAX_IDS,
+  MAIL_AI_LABEL_MAX_IDS,
+} from './constants/task-types';
 
 export function normalizeTaskPayload(
   type: string,
@@ -29,7 +32,38 @@ export function normalizeTaskPayload(
       forceRegenerate: raw.forceRegenerate === true,
     };
   }
+  if (type === BACKGROUND_TASK_TYPES.JOB_WORKER_POOL) {
+    const jobIds = Array.isArray(raw.jobIds)
+      ? [...new Set(raw.jobIds.map((id) => String(id || '').trim()).filter(Boolean))]
+      : [];
+    if (!jobIds.length) {
+      throw new Error('payload.jobIds is required for job_worker_pool');
+    }
+    return {
+      jobIds: jobIds.slice(0, JOB_WORKER_POOL_MAX_IDS),
+      applyAllCompanyRoles: raw.applyAllCompanyRoles === true,
+    };
+  }
   return { ...raw };
+}
+
+export function initialTaskProgress(
+  type: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (type !== BACKGROUND_TASK_TYPES.JOB_WORKER_POOL) return undefined;
+  const jobIds = Array.isArray(payload.jobIds) ? payload.jobIds : [];
+  const total = jobIds.length;
+  return {
+    total,
+    completed: 0,
+    failed: 0,
+    remaining: total,
+    active: 0,
+    phase: 'queued',
+    appliedIds: [],
+    items: {},
+  };
 }
 
 export function publicTaskSnapshot(task: {
