@@ -16,6 +16,7 @@ import { OakResponsesService } from './ai/oak-responses.service';
 import { OakGatewayBootstrap } from './gateway/oak-gateway.bootstrap';
 import { OakController } from './http/oak.controller';
 import { OakJobsService } from './http/oak-jobs.service';
+import { OakRecommendedResumeLookup } from './http/oak-recommended-resume.lookup';
 import { OakRecommendedResumeService } from './http/oak-recommended-resume.service';
 import { OakRuntimeFileService } from './http/oak-runtime-file.service';
 
@@ -31,6 +32,7 @@ import { OakRuntimeFileService } from './http/oak-runtime-file.service';
     OakAnalyzeService,
     OakMatchOptionService,
     OakJobsService,
+    OakRecommendedResumeLookup,
     OakRecommendedResumeService,
     OakRuntimeFileService,
     OakGatewayBootstrap,
