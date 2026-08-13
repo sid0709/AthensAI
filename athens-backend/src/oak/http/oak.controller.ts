@@ -16,6 +16,7 @@ import { OakMatchOptionService } from '../ai/oak-match-option.service';
 import { OakGatewayBootstrap } from '../gateway/oak-gateway.bootstrap';
 import { OakAiAnalyzeDto } from './dto/ai-analyze.dto';
 import { OakMatchOptionDto } from './dto/match-option.dto';
+import { OakJobsMarkAppliedService } from './oak-jobs-mark-applied.service';
 import { OakJobsService } from './oak-jobs.service';
 import { OakRecommendedResumeService } from './oak-recommended-resume.service';
 import { OakRuntimeFileService } from './oak-runtime-file.service';
@@ -30,6 +31,7 @@ export class OakController {
     private readonly matchOption: OakMatchOptionService,
     private readonly runtimeFiles: OakRuntimeFileService,
     private readonly jobs: OakJobsService,
+    private readonly markApplied: OakJobsMarkAppliedService,
     private readonly recommendedResume: OakRecommendedResumeService,
     private readonly gateway: OakGatewayBootstrap,
   ) {}
@@ -88,6 +90,16 @@ export class OakController {
   @UseGuards(OakAuthGuard)
   listJobs(@Req() req: OakAuthedRequest) {
     return this.jobs.list(req.oakSession!.applierName);
+  }
+
+  /** Clear Worker pool, then mark applied (same Job Search apply path). */
+  @Post('jobs/:jobId/mark-applied')
+  @UseGuards(OakAuthGuard)
+  markJobApplied(
+    @Req() req: OakAuthedRequest,
+    @Param('jobId') jobId: string,
+  ) {
+    return this.markApplied.markApplied(req.oakSession!.applierName, jobId);
   }
 
   /** Library resume assigned by Job Search Recommend for a Worker pool job. */

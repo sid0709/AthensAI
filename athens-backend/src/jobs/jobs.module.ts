@@ -95,6 +95,10 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     SetRecommendedResumeService,
     JobRecommendFieldsService,
   ],
-  exports: [JobRecommendFieldsService],
+  exports: [
+    JobRecommendFieldsService,
+    JobStatusMutateService,
+    JobWorkerPoolService,
+  ],
 })
 export class JobsModule {}
