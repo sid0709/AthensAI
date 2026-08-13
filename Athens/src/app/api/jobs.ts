@@ -34,6 +34,19 @@ export async function applyToJob(jobId: string, applierName: string): Promise<Jo
   return parseJson(res);
 }
 
+/** Mark many jobs applied in `job_statuses` for the signed-in profile. */
+export async function applyJobsBulk(
+  jobIds: string[],
+  applierName: string,
+): Promise<{ success?: boolean; appliedCount?: number; appliedIds?: string[]; error?: string }> {
+  const res = await fetch(`${API_BASE}/jobs/apply/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobIds, applierName }),
+  });
+  return parseJson(res);
+}
+
 export async function updateJobStatus(
   jobId: string,
   applierName: string,

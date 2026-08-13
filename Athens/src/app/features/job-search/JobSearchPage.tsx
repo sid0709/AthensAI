@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import { applyOtherCompanyJobs, removeJobs, removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
+import { applyJobsBulk, applyOtherCompanyJobs, removeJobs, removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
 import { useBackgroundTasks } from "../../context/BackgroundTaskContext";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
@@ -29,7 +29,6 @@ import { isBetaTier } from "../../lib/beta";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
 import { JOB_SEARCH_PAGE_SIZES } from "./lib/jobSearchUrlState";
 import {
-  canMarkJobApplied,
   companyGroupForJob,
   readApplyAllCompanyRoles,
   writeApplyAllCompanyRoles,
@@ -322,26 +321,35 @@ function JobSearchPageContent() {
     jobs: Job[],
     { bulk = false, clear = false }: { bulk?: boolean; clear?: boolean } = {},
   ) => {
-    const marketJobs = jobs.filter(canMarkJobApplied);
-    if (!marketJobs.length) {
-      toast.message("Nothing to mark as applied");
+    if (!applier?.name) {
+      toast.error("Select a profile before applying");
+      return;
+    }
+    const jobIds = [
+      ...new Set(
+        jobs.map((job) => String(job.backendId || job.id || "").trim()).filter(Boolean),
+      ),
+    ];
+    if (!jobIds.length) {
+      toast.message("Select jobs to mark as applied");
       return;
     }
     if (bulk) setMarkAppliedBulkPending(true);
     try {
-      const results = await runWithConcurrency(marketJobs, (job) =>
-        applyToJob(job, { openUrl: false, notify: false, refreshCounts: false }),
-      );
-      const ok = results.filter(Boolean).length;
-      const others = await markCompanySiblingsApplied(marketJobs);
+      const res = await applyJobsBulk(jobIds, applier.name);
+      const appliedIds = res.appliedIds || jobIds;
+      if (appliedIds.length) markJobsApplied(appliedIds);
+      const others = await markCompanySiblingsApplied(jobs);
       if (!isBeta || !applyAllCompanyRoles) void refreshStatusCounts();
-      const total = ok + others;
+      const total = appliedIds.length + others;
       if (total) {
         toast.success(`Marked ${total} job${total === 1 ? "" : "s"} as applied`);
       } else {
         toast.error("Failed to mark jobs as applied");
       }
       if (clear) clearSelection();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to mark jobs as applied");
     } finally {
       if (bulk) setMarkAppliedBulkPending(false);
     }

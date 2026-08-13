@@ -141,4 +141,20 @@ export class JobStatusService {
     });
     return rows.map((row) => row.jobId);
   }
+
+  /**
+   * Apply mutations key `job_statuses` by AccountInfo.name. Prefer that id
+   * over a client-supplied profileId so New-tab excludes match writes.
+   */
+  async resolveProfileId(profileId: string, applierName: string): Promise<string> {
+    const name = String(applierName || '').trim();
+    if (name) {
+      const account = await this.prisma.accountInfo.findUnique({
+        where: { name },
+        select: { id: true },
+      });
+      if (account?.id) return account.id;
+    }
+    return String(profileId || '').trim();
+  }
 }

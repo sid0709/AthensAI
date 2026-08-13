@@ -67,6 +67,7 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | GET | `/api/jobs` | Query: `status`, `q`, `company`, `source`, `postedFrom`, `postedTo`, `sort`, `aiExtracted`, `page`, `pageSize`, `profileId` |
 | GET | `/api/jobs/:id` | Full job (incl. `description`) for View JD. Query: `applierName`, `profileId` |
 | GET | `/api/jobs/:id/viewer-status` | Reconcile profile status. Query: `applierName` |
+| POST | `/api/jobs/apply/bulk` | Mark jobs applied in `job_statuses` — `{ applierName, jobIds }` |
 | POST | `/api/jobs/:id/apply` | Mark applied → upsert `job_statuses.state=applied` |
 | POST | `/api/jobs/:id/status` | Body `{ applierName, status: Applied\|Scheduled\|Declined }` |
 | POST | `/api/jobs/:id/unapply` | Clear applied → delete `job_statuses` row (back to New) |
