@@ -12,11 +12,14 @@ import {
 
 const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
 const MAX_APPLY = 500;
-/** Leave queue / terminal states alone; only New (posted) siblings are marked. */
-const SKIP_STATES = new Set<JobStatusState>([
+/** Never overwrite these; they are already past apply. */
+const SKIP_ALWAYS = new Set<JobStatusState>([
   'applied',
   'scheduled',
   'declined',
+]);
+/** Leave queue states alone unless includeQueued (Worker pool sibling path). */
+const SKIP_QUEUED = new Set<JobStatusState>([
   'bid-ready',
   'worker-pool',
   'bid-completed',
@@ -33,6 +36,7 @@ export class JobCompanyApplyOthersService {
     applierName: string;
     companyId: string;
     keepJobIds: string[];
+    includeQueued?: boolean;
     mutationId?: string;
   }) {
     const applierName = String(input.applierName || '').trim();
@@ -85,9 +89,10 @@ export class JobCompanyApplyOthersService {
       where: { profileId: account.id, jobId: { in: targets } },
       select: { jobId: true, state: true },
     });
+    const includeQueued = input.includeQueued === true;
     const skip = new Set(
       statuses
-        .filter((row) => isSkipState(row.state))
+        .filter((row) => isSkipState(row.state, includeQueued))
         .map((row) => row.jobId),
     );
 
@@ -110,8 +115,13 @@ export class JobCompanyApplyOthersService {
   }
 }
 
-function isSkipState(raw: string | null | undefined): boolean {
+function isSkipState(
+  raw: string | null | undefined,
+  includeQueued: boolean,
+): boolean {
   const state = String(raw || '').trim();
   if (!(JOB_STATUS_STATES as readonly string[]).includes(state)) return false;
-  return SKIP_STATES.has(state as JobStatusState);
+  const typed = state as JobStatusState;
+  if (SKIP_ALWAYS.has(typed)) return true;
+  return !includeQueued && SKIP_QUEUED.has(typed);
 }
