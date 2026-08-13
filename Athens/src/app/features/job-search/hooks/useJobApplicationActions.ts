@@ -98,7 +98,7 @@ export function useJobApplicationActions(
   }, [applier?.name, get]);
 
   const applyToJob = useCallback(
-    async (job: Job, { openUrl = true, notify = true }: { openUrl?: boolean; notify?: boolean } = {}) => {
+    async (job: Job, { openUrl = true, notify = true, refreshCounts = true }: { openUrl?: boolean; notify?: boolean; refreshCounts?: boolean } = {}) => {
       const jobId = job.backendId || job.id;
       if (!applier?.name) {
         if (notify) toast.error("Select a profile before applying");
@@ -122,7 +122,7 @@ export function useJobApplicationActions(
 
         if (res?.success && res.data) {
           onJobUpdated(mapDocToJob(res.data, applier));
-          void refreshStatusCounts();
+          if (refreshCounts) void refreshStatusCounts();
           if (notify && res.message !== "User has already applied") {
             toast.success("Marked as applied");
           }
@@ -132,7 +132,7 @@ export function useJobApplicationActions(
       } catch (error) {
         if (await reconcileStatus(job, "applied")) {
           onJobUpdated(optimistic);
-          void refreshStatusCounts();
+          if (refreshCounts) void refreshStatusCounts();
           if (notify) toast.success("Marked as applied");
           return true;
         }
@@ -153,7 +153,7 @@ export function useJobApplicationActions(
   const applyById = useCallback(
     async (
       jobId: string,
-      { catalog = "market", notify = true }: { catalog?: string; notify?: boolean } = {},
+      { catalog = "market", notify = true, refreshCounts = true }: { catalog?: string; notify?: boolean; refreshCounts?: boolean } = {},
     ) => {
       if (!applier?.name) {
         if (notify) toast.error("Select a profile before applying");
@@ -168,7 +168,7 @@ export function useJobApplicationActions(
           mutationId: newMutationId(),
         });
         if (res?.success) {
-          void refreshStatusCounts();
+          if (refreshCounts) void refreshStatusCounts();
           if (notify && res.message !== "User has already applied") {
             toast.success("Marked as applied");
           }
@@ -449,7 +449,7 @@ export function useJobApplicationActions(
       const jobId = job.backendId || job.id;
       if (!applier?.name) {
         toast.error("Select a profile before updating status");
-        return;
+        return false;
       }
 
       setPending(jobId, true);
@@ -466,18 +466,21 @@ export function useJobApplicationActions(
           onJobUpdated(mapDocToJob(res.data, applier));
           toast.success("Moved to Worker pool");
           void refreshStatusCounts();
+          return true;
         }
+        return false;
       } catch (error) {
         if (await reconcileStatus(job, "worker-pool")) {
           onJobUpdated({ ...job, status: "worker-pool" });
           void refreshStatusCounts();
           toast.success("Moved to Worker pool");
-          return;
+          return true;
         }
         onJobUpdated(job);
         toast.error("Failed to move job to Worker pool", {
           description: requestErrorMessage(error, "The server rejected the update."),
         });
+        return false;
       } finally {
         setPending(jobId, false);
       }
@@ -489,14 +492,14 @@ export function useJobApplicationActions(
     async (jobs: Job[]) => {
       if (!applier?.name) {
         toast.error("Select a profile before updating status");
-        return;
+        return 0;
       }
       const eligible = jobs.filter((job) => job.status === "posted");
       if (!eligible.length) {
         toast.message("Nothing to move to Worker pool", {
           description: "Select New (posted) jobs only.",
         });
-        return;
+        return 0;
       }
 
       const jobIds = eligible.map((job) => job.backendId || job.id);
@@ -516,15 +519,17 @@ export function useJobApplicationActions(
         const ok = res.updatedCount ?? Math.max(0, eligible.length - failedIds.size);
         if (ok) toast.success(`Moved ${ok} job${ok === 1 ? "" : "s"} to Worker pool`);
         if (failedIds.size) toast.error(`Failed on ${failedIds.size} job${failedIds.size === 1 ? "" : "s"}`);
+        return ok;
       } catch (error) {
         eligible.forEach(onJobUpdated);
         toast.error("Failed to move jobs to Worker pool", {
           description: requestErrorMessage(error, "The server rejected the bulk update."),
         });
+        return 0;
       } finally {
         setManyPending(jobIds, false);
+        void refreshStatusCounts();
       }
-      void refreshStatusCounts();
     },
     [applier, onJobUpdated, postMutation, refreshStatusCounts, setManyPending],
   );

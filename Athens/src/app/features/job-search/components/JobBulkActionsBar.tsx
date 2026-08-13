@@ -185,7 +185,11 @@ export function JobBulkActionsBar({
               className="h-8 gap-1.5"
               onClick={onMarkWorkerPool}
               disabled={loading || totalSelected === 0 || workerPoolPending || bidReadyPending || moveToNewPending}
-              title="Move selected New jobs to Worker pool for Oak"
+              title={
+                applyAllCompanyRoles
+                  ? "Move selected jobs to Worker pool and mark other roles at those companies as applied"
+                  : "Move selected New jobs to Worker pool for Oak"
+              }
             >
               {workerPoolPending ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />

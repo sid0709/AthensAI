@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { CompanyJobGroup, Job, JobStatus } from "../../../types";
-import { companyApplyTargets } from "./companyApplyTargets";
+import { companyApplyTargets, companyApplyTargetsForPrimaries } from "./companyApplyTargets";
 
 function job(id: string, status: JobStatus = "posted", catalog: Job["catalog"] = "market"): Job {
   return { id, backendId: id, companyId: "acme", status, catalog } as Job;
@@ -44,4 +44,16 @@ test("skips external scraped siblings", () => {
     group([primary, job("b", "posted", "external")]),
   );
   assert.deepEqual(result.siblings, []);
+});
+
+test("multiple selected roles at the same company stay out of the sibling set", () => {
+  const a = job("a");
+  const b = job("b");
+  const c = job("c");
+  const result = companyApplyTargetsForPrimaries(
+    [a, b],
+    [group([a, b, c], ["a", "b", "c", "d"])],
+  );
+  assert.deepEqual(result.siblings.map(({ id }) => id), ["c"]);
+  assert.deepEqual(result.unloadedIds, ["d"]);
 });
