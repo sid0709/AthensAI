@@ -150,7 +150,7 @@ export function JobCard({
   const { applier } = useApplier();
   const resumeReady = resumeState?.status === "done";
   const skillLabels = analyzedSkillLabels(job);
-  const maxSkills = layout === "grid" ? 5 : 8;
+  const maxSkills = layout === "grid" ? 4 : 6;
   const visibleSkills = skillLabels.slice(0, maxSkills);
   const hiddenSkillCount = Math.max(0, (job.skillCount ?? skillLabels.length) - visibleSkills.length);
   const canSwapLibrary = canAssignLibraryResume(job.status) && Boolean(onPatchJob);
@@ -255,12 +255,19 @@ export function JobCard({
               </span>
             ))}
             {hiddenSkillCount > 0 ? (
-              <span className="athens-chip">+{hiddenSkillCount} more</span>
+              <span
+                className="athens-chip athens-chip--more"
+                title={skillLabels.slice(visibleSkills.length).join(", ")}
+              >
+                +{hiddenSkillCount}
+              </span>
             ) : null}
           </div>
-        ) : null}
+        ) : (
+          <div className="athens-card-chips" aria-hidden="true" />
+        )}
 
-        <div className="athens-card-chips">
+        <div className="athens-card-chips athens-card-chips--meta">
           <span className="athens-chip">
             <MapPin size={12} aria-hidden="true" />
             {job.location}
@@ -269,77 +276,84 @@ export function JobCard({
             <Wifi size={12} aria-hidden="true" />
             {WORK_MODE_LABELS[job.workMode]}
           </span>
-          <span className="athens-chip">{job.type}</span>
+          {isGrid ? null : <span className="athens-chip">{job.type}</span>}
           {isGrid ? null : <span className="athens-chip">{job.seniority}</span>}
           <span className="athens-chip">{job.salary}</span>
         </div>
 
         <div className="athens-card-footer">
-          <span className="text-xs text-[var(--athens-text-muted)] truncate">
+          <span className="athens-card-source">
             {job.catalog === "external" ? `External · ${job.source}` : job.source}
           </span>
           <div className="athens-card-actions" data-no-select>
-            <button
-              type="button"
-              className="athens-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                setJdOpen(true);
-              }}
-            >
-              <FileText size={16} aria-hidden="true" />
-              View JD
-            </button>
-            <JobUrlLink job={job} />
-            {onGenerateResume ? (
+            <div className="athens-card-tools">
               <button
                 type="button"
-                className={cn(
-                  "athens-btn",
-                  resumeState?.status === "error" && "athens-btn-danger",
-                )}
-                disabled={resumeState?.status === "generating"}
-                title={
-                  resumeState?.status === "generating"
-                    ? resumeState.step ?? "Generating résumé…"
-                    : resumeState?.status === "error"
-                      ? `${resumeState.error ?? "Résumé generation failed"} — click to retry`
-                      : resumeReady
-                        ? "Résumé already generated — click to preview the PDF"
-                        : "Generate a tailored résumé for this job"
-                }
+                className="athens-icon-btn"
+                title="View job description"
+                aria-label="View job description"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (resumeReady) setResumeOpen(true);
-                  else onGenerateResume();
+                  setJdOpen(true);
                 }}
               >
-                {resumeState?.status === "generating" ? (
-                  <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-                ) : resumeReady ? (
-                  <CheckCircle2 size={16} aria-hidden="true" />
-                ) : (
-                  <Sparkles size={16} aria-hidden="true" />
-                )}
-                {resumeState?.status === "generating"
-                  ? "Generating…"
-                  : resumeReady
-                    ? "View résumé"
-                    : "Generate"}
+                <FileText size={16} aria-hidden="true" />
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="athens-icon-btn"
-              title={bookmarked ? "Unsave" : "Save job"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleBookmark?.();
-              }}
-            >
-              <Bookmark size={16} className={cn(bookmarked && "fill-current")} aria-hidden="true" />
-            </button>
+              <JobUrlLink job={job} iconOnly />
+              {onGenerateResume ? (
+                <button
+                  type="button"
+                  className={cn(
+                    "athens-icon-btn",
+                    resumeState?.status === "error" && "athens-btn-danger",
+                  )}
+                  disabled={resumeState?.status === "generating"}
+                  title={
+                    resumeState?.status === "generating"
+                      ? resumeState.step ?? "Generating résumé…"
+                      : resumeState?.status === "error"
+                        ? `${resumeState.error ?? "Résumé generation failed"} — click to retry`
+                        : resumeReady
+                          ? "Résumé already generated — click to preview the PDF"
+                          : "Generate a tailored résumé for this job"
+                  }
+                  aria-label={
+                    resumeState?.status === "generating"
+                      ? "Generating résumé"
+                      : resumeReady
+                        ? "View résumé"
+                        : "Generate résumé"
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (resumeReady) setResumeOpen(true);
+                    else onGenerateResume();
+                  }}
+                >
+                  {resumeState?.status === "generating" ? (
+                    <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                  ) : resumeReady ? (
+                    <CheckCircle2 size={16} aria-hidden="true" />
+                  ) : (
+                    <Sparkles size={16} aria-hidden="true" />
+                  )}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="athens-icon-btn"
+                title={bookmarked ? "Unsave" : "Save job"}
+                aria-label={bookmarked ? "Unsave" : "Save job"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleBookmark?.();
+                }}
+              >
+                <Bookmark size={16} className={cn(bookmarked && "fill-current")} aria-hidden="true" />
+              </button>
+            </div>
             <JobStatusActions
+              compact
               job={job}
               pending={statusPending}
               onApply={() => onApply?.()}

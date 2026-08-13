@@ -39,6 +39,9 @@ Dark mode maps the same roles onto the existing Athens dark neutrals. One-off la
 - Secondary and icon controls are at least 36–40px high. Do not use 32px compact buttons in opted-in chrome.
 - Dense action rows group by intent (destinations, résumés, trailing) and collapse secondary groups before they overflow.
 - Selection-only command strips stay hidden until a selection (or an in-flight bulk job) exists.
+- Job card skill and meta chips stay on one line. Extra chips clip; a `+N` count remains visible.
+- Card actions are an icon cluster, an overflow menu, and Apply — not a wrapping wall of labeled buttons.
+- Extra company roles sit in a reserved gap below the card so single-role and multi-role cards share the same card height.
 
 ## Components and states
 

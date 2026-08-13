@@ -1,4 +1,5 @@
 import React from "react";
+import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import {
   Pagination,
   PaginationContent,
@@ -10,7 +11,6 @@ import {
 } from "../ui/pagination";
 import { cn } from "../../lib/utils";
 import { AthensSelect } from "../forms";
-import { Loader2 } from "lucide-react";
 
 type PaginationBarProps = {
   page: number;
@@ -131,7 +131,50 @@ export function PaginationBar({
           </div>
         )}
       </div>
-      <Pagination className="mx-0 w-auto">
+      <Pagination className={cn("mx-0 w-auto", tone === "lens" && "athens-pager")}>
+        {tone === "lens" ? (
+            <div className="athens-pager-nav">
+            <button
+              type="button"
+              className="athens-page-btn is-nav"
+              aria-label="Go to previous page"
+              disabled={loading || page <= 1}
+              onClick={() => onPageChange(page - 1)}
+            >
+              <ChevronLeft size={16} aria-hidden="true" />
+              Previous
+            </button>
+            {pages.map((p, i) =>
+              p === "ellipsis" ? (
+                <span key={`e-${i}`} className="athens-page-ellipsis" aria-hidden>
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  type="button"
+                  className={cn("athens-page-btn", p === page && "is-active")}
+                  aria-label={`Page ${p}`}
+                  aria-current={p === page ? "page" : undefined}
+                  disabled={loading}
+                  onClick={() => onPageChange(p)}
+                >
+                  {p}
+                </button>
+              ),
+            )}
+            <button
+              type="button"
+              className="athens-page-btn is-nav"
+              aria-label="Go to next page"
+              disabled={!canGoNext}
+              onClick={() => onPageChange(page + 1)}
+            >
+              Next
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </div>
+        ) : (
         <PaginationContent>
           <PaginationItem>
             <PaginationPrevious
@@ -178,6 +221,7 @@ export function PaginationBar({
             />
           </PaginationItem>
         </PaginationContent>
+        )}
       </Pagination>
     </div>
   );

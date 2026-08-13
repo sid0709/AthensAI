@@ -1,5 +1,21 @@
 import React from "react";
-import { CalendarCheck, ExternalLink, Loader2, X, XCircle } from "lucide-react";
+import {
+  CalendarCheck,
+  CheckCircle2,
+  ClipboardList,
+  ExternalLink,
+  Layers,
+  Loader2,
+  MoreHorizontal,
+  X,
+  XCircle,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip";
 import type { Job } from "../../../types";
 
@@ -15,6 +31,15 @@ type JobStatusActionsProps = {
   onCancel: () => void;
   size?: "sm" | "default";
   showExternalLinkOnApply?: boolean;
+  compact?: boolean;
+};
+
+type StatusMenuItem = {
+  key: string;
+  label: string;
+  onClick: () => void;
+  icon: React.ElementType;
+  danger?: boolean;
 };
 
 function cancelTooltip(job: Job): string {
@@ -109,6 +134,47 @@ function MarkAppliedButton({
   );
 }
 
+function StatusOverflowMenu({
+  items,
+  pending,
+}: {
+  items: StatusMenuItem[];
+  pending: boolean;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="athens-icon-btn"
+          disabled={pending}
+          aria-label="More job actions"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <MoreHorizontal size={16} aria-hidden="true" />}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <DropdownMenuItem
+              key={item.key}
+              disabled={pending}
+              className={item.danger ? "text-destructive" : undefined}
+              onSelect={item.onClick}
+            >
+              <Icon size={16} aria-hidden="true" />
+              {item.label}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function JobStatusActions({
   job,
   pending = false,
@@ -121,7 +187,56 @@ export function JobStatusActions({
   onCancel,
   size = "sm",
   showExternalLinkOnApply = true,
+  compact = false,
 }: JobStatusActionsProps) {
+  const menuItems: StatusMenuItem[] = [];
+  let showApply = false;
+  let showCancel = false;
+
+  if (job.status === "posted") {
+    if (onMarkBidReady) {
+      menuItems.push({ key: "bid-ready", label: "Bid ready", onClick: onMarkBidReady, icon: ClipboardList });
+    }
+    if (onMarkWorkerPool) {
+      menuItems.push({ key: "worker-pool", label: "Worker pool", onClick: onMarkWorkerPool, icon: Layers });
+    }
+    if (onMarkApplied) {
+      menuItems.push({ key: "mark-applied", label: "Mark applied", onClick: onMarkApplied, icon: CheckCircle2 });
+    }
+    showApply = true;
+  } else if (job.status === "bid-ready" || job.status === "worker-pool" || job.status === "bid-completed") {
+    if (onMarkApplied) {
+      menuItems.push({ key: "mark-applied", label: "Mark applied", onClick: onMarkApplied, icon: CheckCircle2 });
+    }
+    menuItems.push({ key: "cancel", label: "Cancel", onClick: onCancel, icon: X });
+    showApply = true;
+    showCancel = true;
+  } else if (job.status === "applied") {
+    menuItems.push({ key: "scheduled", label: "Scheduled", onClick: onMarkScheduled, icon: CalendarCheck });
+    menuItems.push({ key: "declined", label: "Declined", onClick: onMarkDeclined, icon: XCircle, danger: true });
+    menuItems.push({ key: "cancel", label: "Cancel", onClick: onCancel, icon: X });
+    showCancel = true;
+  } else if (job.status === "scheduled" || job.status === "declined") {
+    menuItems.push({ key: "cancel", label: "Cancel", onClick: onCancel, icon: X });
+    showCancel = true;
+  }
+
+  if (compact) {
+    return (
+      <>
+        <StatusOverflowMenu items={menuItems} pending={pending} />
+        {showApply ? (
+          <ApplyButton
+            pending={pending}
+            onApply={onApply}
+            size={size}
+            showExternalLinkOnApply={showExternalLinkOnApply}
+          />
+        ) : null}
+      </>
+    );
+  }
+
   if (job.status === "posted") {
     return (
       <>
@@ -188,7 +303,7 @@ export function JobStatusActions({
     );
   }
 
-  if (job.status === "scheduled" || job.status === "declined") {
+  if (showCancel) {
     return <StatusCancelButton job={job} pending={pending} onCancel={onCancel} />;
   }
 

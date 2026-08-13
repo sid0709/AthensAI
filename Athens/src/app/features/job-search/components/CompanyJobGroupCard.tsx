@@ -137,7 +137,7 @@ export function CompanyJobGroupCard({
   const roleLabel = additionalRoleCount === 1 ? "role" : "roles";
 
   return (
-    <section className={cn("athens-ui min-w-0", layout === "grid" && "h-full")} aria-label={`${group.company.name} matching roles`}>
+    <section className={cn("athens-ui athens-job-group", layout === "grid" && "athens-job-group--grid")} aria-label={`${group.company.name} matching roles`}>
       <JobCard
         job={activeJob}
         layout={layout}
@@ -158,21 +158,23 @@ export function CompanyJobGroupCard({
         onPatchJob={onPatchJob}
       />
 
-      {additionalRoleCount > 0 ? (
-        <div className="px-3 sm:px-4">
-          <button
-            type="button"
-            className={cn("athens-more-roles", expanded && "is-open")}
-            aria-expanded={expanded}
-            aria-controls={trayId}
-            onClick={() => onExpandedChange?.(!expanded)}
-          >
-            <Building2 className="size-3.5 shrink-0" />
-            <span className="truncate">
-              +{additionalRoleCount.toLocaleString()} more {roleLabel} at {group.company.name}
-            </span>
-            {expanded ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
-          </button>
+      {layout === "grid" || additionalRoleCount > 0 ? (
+        <div className="athens-job-group__more">
+          {additionalRoleCount > 0 ? (
+            <button
+              type="button"
+              className={cn("athens-more-roles", expanded && "is-open")}
+              aria-expanded={expanded}
+              aria-controls={trayId}
+              onClick={() => onExpandedChange?.(!expanded)}
+            >
+              <Building2 className="size-3.5 shrink-0" />
+              <span className="truncate">
+                +{additionalRoleCount.toLocaleString()} more {roleLabel} at {group.company.name}
+              </span>
+              {expanded ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
+            </button>
+          ) : null}
         </div>
       ) : null}
 

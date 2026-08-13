@@ -30,8 +30,8 @@ function JobCardSkeleton() {
       <div className="athens-card-footer">
         <Skeleton className="h-3 w-24" />
         <div className="athens-card-actions">
-          <Skeleton className="h-10 w-20 rounded-lg" />
-          <Skeleton className="h-10 w-24 rounded-lg" />
+          <Skeleton className="h-9 w-36 rounded-lg" />
+          <Skeleton className="h-9 w-16 rounded-lg" />
         </div>
       </div>
     </div>
