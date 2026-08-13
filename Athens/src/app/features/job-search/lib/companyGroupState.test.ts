@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { CompanyJobGroup, Job } from "../../../types";
-import { keepOnlyCompanyJob, mergeCompanyMembers, removeCompanyJobs } from "./companyGroupState";
+import {
+  dropMatchingJobsById,
+  keepOnlyCompanyJob,
+  mergeCompanyMembers,
+  removeCompanyJobs,
+} from "./companyGroupState";
 
 function job(id: string): Job {
   return { id, backendId: id, companyId: "acme" } as Job;
@@ -90,4 +95,21 @@ test("keeping one role removes loaded and unloaded company siblings", () => {
   assert.deepEqual(result.groups[0].memberOrder, { active: 0 });
   assert.deepEqual(result.groups[0].matchingJobIds, ["active"]);
   assert.equal(result.removedJobs, 7);
+});
+
+test("drops unloaded matching ids when marking siblings applied", () => {
+  const groups: CompanyJobGroup[] = [{
+    companyId: "acme",
+    company: { name: "Acme" },
+    jobs: [job("primary")],
+    matchingJobCount: 4,
+    matchingJobIds: ["primary", "b", "c", "d"],
+    nextMemberOffset: 1,
+  }];
+  const result = dropMatchingJobsById(groups, ["b", "c", "d"]);
+  assert.equal(result.groups.length, 1);
+  assert.deepEqual(result.groups[0].jobs.map(({ id }) => id), ["primary"]);
+  assert.equal(result.groups[0].matchingJobCount, 1);
+  assert.deepEqual(result.groups[0].matchingJobIds, ["primary"]);
+  assert.equal(result.removedJobs, 3);
 });

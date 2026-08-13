@@ -16,7 +16,7 @@ export class ApplyOtherCompanyJobsDto {
   companyId!: string;
 
   @IsArray()
-  @ArrayMaxSize(50)
+  @ArrayMaxSize(200)
   @IsString({ each: true })
   keepJobIds!: string[];
 

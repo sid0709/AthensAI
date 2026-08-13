@@ -235,57 +235,57 @@ function JobSearchPageContent() {
     setOpenJob(companyId, activeJobId);
   };
 
-  const markCompanySiblingsApplied = async (
-    primaries: Job[],
-    { includeQueued = false }: { includeQueued?: boolean } = {},
-  ) => {
+  const markCompanySiblingsApplied = async (primaries: Job[]) => {
     if (!isBeta || !applyAllCompanyRoles || !primaries.length || !applier?.name) return 0;
-    const keepByCompany = new Map<string, string[]>();
+    const keepByCompany = new Map<string, { companyId: string; keepJobIds: string[] }>();
+    const optimisticIds: string[] = [];
     for (const job of primaries) {
       const group = companyGroupForJob(job, groups);
       const companyId = String(group?.companyId || job.companyId || "").trim();
       const keepId = String(job.backendId || job.id || "").trim();
-      if (!/^[a-fA-F0-9]{24}$/.test(companyId) || !keepId) continue;
-      const keep = keepByCompany.get(companyId) ?? [];
-      if (!keep.includes(keepId)) keep.push(keepId);
-      keepByCompany.set(companyId, keep);
-    }
-    if (!keepByCompany.size) return 0;
-
-    const appliedIds: string[] = [];
-    for (const [companyId, keepJobIds] of keepByCompany) {
-      try {
-        const res = await applyOtherCompanyJobs(
-          companyId,
-          keepJobIds,
-          applier.name,
-          includeQueued ? { includeQueued: true } : undefined,
-        );
-        appliedIds.push(...(res.appliedIds || []));
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to mark other company roles as applied",
-        );
+      if (!keepId) continue;
+      const key = /^[a-fA-F0-9]{24}$/.test(companyId) ? companyId : `keep:${keepId}`;
+      const entry = keepByCompany.get(key) ?? { companyId, keepJobIds: [] };
+      if (!entry.keepJobIds.includes(keepId)) entry.keepJobIds.push(keepId);
+      keepByCompany.set(key, entry);
+      for (const id of group?.matchingJobIds ?? []) {
+        if (id && id !== keepId) optimisticIds.push(id);
       }
     }
+    if (!keepByCompany.size) return 0;
+    if (optimisticIds.length) markJobsApplied(optimisticIds);
+
+    const appliedIds: string[] = [];
+    const results = await Promise.all(
+      [...keepByCompany.values()].map(async ({ companyId, keepJobIds }) => {
+        try {
+          return await applyOtherCompanyJobs(companyId, keepJobIds, applier.name);
+        } catch (error) {
+          toast.error(
+            error instanceof Error ? error.message : "Failed to mark other company roles as applied",
+          );
+          retry();
+          return { appliedIds: [] as string[] };
+        }
+      }),
+    );
+    for (const res of results) appliedIds.push(...(res.appliedIds || []));
     if (appliedIds.length) markJobsApplied(appliedIds);
     void refreshStatusCounts();
-    return appliedIds.length;
+    return appliedIds.length || optimisticIds.length;
   };
 
-  const finishWorkerPoolSiblings = (primaries: Job[]) => {
+  const finishPostedSiblings = async (primaries: Job[]) => {
     if (!isBeta || !applyAllCompanyRoles || !primaries.length) return;
-    toast.message("Marking other company roles as applied…");
-    void markCompanySiblingsApplied(primaries).then((applied) => {
-      if (!applied) return;
-      const companyLabel =
-        primaries.length === 1
-          ? primaries[0].company
-          : `${new Set(primaries.map((job) => job.companyId)).size} companies`;
-      toast.success(
-        `Marked ${applied} other role${applied === 1 ? "" : "s"} at ${companyLabel} as applied`,
-      );
-    });
+    const applied = await markCompanySiblingsApplied(primaries);
+    if (!applied) return;
+    const companyLabel =
+      primaries.length === 1
+        ? primaries[0].company
+        : `${new Set(primaries.map((job) => job.companyId)).size} companies`;
+    toast.success(
+      `Marked ${applied} other role${applied === 1 ? "" : "s"} at ${companyLabel} as applied`,
+    );
   };
 
   const handleApplyAll = async (jobs = selectedJobs) => {
@@ -295,7 +295,7 @@ function JobSearchPageContent() {
       return;
     }
     await runWithConcurrency(marketJobs, (job) => applyToJob(job, { openUrl: false }));
-    await markCompanySiblingsApplied(marketJobs, { includeQueued: true });
+    await markCompanySiblingsApplied(marketJobs);
   };
 
   const handleApply = async (job: Job) => {
@@ -308,7 +308,7 @@ function JobSearchPageContent() {
     const companyName = group?.company.name || job.company;
     const [primaryOk, othersCount] = await Promise.all([
       applyToJob(job, { notify: false, refreshCounts: false }),
-      markCompanySiblingsApplied([job], { includeQueued: true }),
+      markCompanySiblingsApplied([job]),
     ]);
     const ok = Number(Boolean(primaryOk)) + othersCount;
     if (ok) {
@@ -333,7 +333,7 @@ function JobSearchPageContent() {
         applyToJob(job, { openUrl: false, notify: false, refreshCounts: false }),
       );
       const ok = results.filter(Boolean).length;
-      const others = await markCompanySiblingsApplied(marketJobs, { includeQueued: true });
+      const others = await markCompanySiblingsApplied(marketJobs);
       if (!isBeta || !applyAllCompanyRoles) void refreshStatusCounts();
       const total = ok + others;
       if (total) {
@@ -454,6 +454,8 @@ function JobSearchPageContent() {
           void (async () => {
             setBidReadyBulkPending(true);
             try {
+              const primaries = selectedJobs.filter((job) => job.status === "posted");
+              await finishPostedSiblings(primaries);
               await markBidReadyBulk(selectedJobs);
               clearSelection();
             } finally {
@@ -473,10 +475,10 @@ function JobSearchPageContent() {
                   setWorkerPoolBulkPending(true);
                   try {
                     const primaries = selectedJobs.filter((job) => job.status === "posted");
+                    await finishPostedSiblings(primaries);
                     const moved = await markWorkerPoolBulk(selectedJobs);
                     if (!moved) return;
                     clearSelection();
-                    finishWorkerPoolSiblings(primaries);
                   } finally {
                     setWorkerPoolBulkPending(false);
                   }
@@ -607,14 +609,18 @@ function JobSearchPageContent() {
             isJobPending={isPending}
             onApply={(job) => void handleApply(job)}
             onMarkApplied={(job) => void handleMarkApplied([job])}
-            onMarkBidReady={(job) => void markBidReady(job)}
+            onMarkBidReady={(job) => {
+              void (async () => {
+                await finishPostedSiblings([job]);
+                await markBidReady(job);
+              })();
+            }}
             onMarkWorkerPool={
               isBeta
                 ? (job) => {
                     void (async () => {
-                      const moved = await markWorkerPool(job);
-                      if (!moved) return;
-                      finishWorkerPoolSiblings([job]);
+                      await finishPostedSiblings([job]);
+                      await markWorkerPool(job);
                     })();
                   }
                 : undefined
