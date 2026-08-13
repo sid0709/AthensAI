@@ -22,6 +22,7 @@ import {
   jobHasResumeRecommendation,
   useRecommendResumes,
 } from "./hooks/useRecommendResumes";
+import { canAssignLibraryResume } from "./lib/jobRecommendSnapshot";
 import { useJobsList } from "./hooks/useJobsList";
 import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
 import { isBetaTier } from "../../lib/beta";
@@ -414,14 +415,23 @@ function JobSearchPageContent() {
         onRemoveResumes={() => {
           void removeBulkResumes(selectedJobs);
         }}
-        onRecommendResumes={() => {
-          const already = selectedJobs.filter(jobHasResumeRecommendation).length;
-          if (already > 0) {
-            setRecommendConflictOpen(true);
-            return;
-          }
-          void recommendBulk(selectedJobs, { replaceExisting: true });
-        }}
+        onRecommendResumes={
+          filters.statusTab === "all" ||
+          filters.statusTab === "bid-ready" ||
+          filters.statusTab === "worker-pool"
+            ? () => {
+                const eligible = selectedJobs.filter((job) =>
+                  canAssignLibraryResume(job.status),
+                );
+                const already = eligible.filter(jobHasResumeRecommendation).length;
+                if (already > 0) {
+                  setRecommendConflictOpen(true);
+                  return;
+                }
+                void recommendBulk(eligible, { replaceExisting: true });
+              }
+            : undefined
+        }
         applyAllCompanyRoles={applyAllCompanyRoles}
         onApplyAllCompanyRolesChange={isBeta ? (enabled) => {
           setApplyAllCompanyRoles(enabled);
@@ -460,16 +470,25 @@ function JobSearchPageContent() {
       <RecommendResumeConflictDialog
         open={recommendConflictOpen}
         onOpenChange={setRecommendConflictOpen}
-        alreadyCount={selectedJobs.filter(jobHasResumeRecommendation).length}
-        totalCount={selectedJobs.length}
+        alreadyCount={selectedJobs.filter(
+          (job) =>
+            canAssignLibraryResume(job.status) && jobHasResumeRecommendation(job),
+        ).length}
+        totalCount={selectedJobs.filter((job) => canAssignLibraryResume(job.status)).length}
         busy={recommendRunning}
         onReplace={() => {
           setRecommendConflictOpen(false);
-          void recommendBulk(selectedJobs, { replaceExisting: true });
+          void recommendBulk(
+            selectedJobs.filter((job) => canAssignLibraryResume(job.status)),
+            { replaceExisting: true },
+          );
         }}
         onSkip={() => {
           setRecommendConflictOpen(false);
-          void recommendBulk(selectedJobs, { replaceExisting: false });
+          void recommendBulk(
+            selectedJobs.filter((job) => canAssignLibraryResume(job.status)),
+            { replaceExisting: false },
+          );
         }}
       />
 

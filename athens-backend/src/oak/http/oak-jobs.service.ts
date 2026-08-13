@@ -1,12 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { JobRecommendFieldsService } from '../../jobs/recommend/job-recommend-fields.service';
 import { mapOakWorkerJob } from './mappers/oak-job.mapper';
 
 const LIST_LIMIT_MAX = 200;
 
 @Injectable()
 export class OakJobsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly recommendFields: JobRecommendFieldsService,
+  ) {}
 
   async list(applierName: string, limit = 100) {
     const account = await this.prisma.accountInfo.findUnique({
@@ -42,26 +46,19 @@ export class OakJobsService {
     });
     const jobById = new Map(jobs.map((job) => [job.id, job]));
 
-    const tasks = await this.prisma.vendorTask.findMany({
-      where: { applierName: account.name, jobId: { in: jobIds } },
-      select: {
-        jobId: true,
-        recommendedResumeStack: true,
-        recommendedResumeId: true,
-        recommendedResumeReason: true,
-        recommendWarning: true,
-        recommendedAt: true,
-      },
-    });
-    const recommendByJob = new Map(tasks.map((task) => [task.jobId, task]));
+    const recommendByJob = await this.recommendFields.loadForApplier(
+      account.name,
+      jobIds,
+    );
 
     const mapped = [];
     for (const status of statuses) {
       const job = jobById.get(status.jobId);
       if (!job) continue;
-      mapped.push(
-        mapOakWorkerJob(job, status, recommendByJob.get(status.jobId) ?? null),
-      );
+      const recommend =
+        recommendByJob.get(status.jobId) ||
+        recommendByJob.get(status.jobId.toLowerCase());
+      mapped.push(mapOakWorkerJob(job, status, recommend ?? null));
     }
 
     return {

@@ -57,7 +57,12 @@ export class JobsQueryService {
       const [companyTotal, jobTotal, data, tabCounts] = await Promise.all([
         this.companyCatalogTotal.getUnfiltered(),
         this.catalogTotal.getUnfiltered(),
-        this.companyList.listUnfiltered(page, pageSize, profileId),
+        this.companyList.listUnfiltered(
+          page,
+          pageSize,
+          profileId,
+          query.applierName || '',
+        ),
         this.jobStatuses.tabCounts(profileId, peekJobs),
       ]);
 
@@ -95,6 +100,7 @@ export class JobsQueryService {
         pageSize,
         profileId,
         idConstraint,
+        query.applierName || '',
       ),
       unfiltered
         ? this.jobStatuses.tabCounts(profileId, catalogForCounts)

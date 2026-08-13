@@ -17,13 +17,14 @@ export class RecommendResumesController {
     private readonly setRecommended: SetRecommendedResumeService,
   ) {}
 
+  /** Recommend Library resume stacks for Bid Ready or Worker pool jobs. */
   @Post('recommend-resumes')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   recommendResumes(@Body() body: RecommendResumesDto) {
     return this.recommend.recommendBulk(body);
   }
 
-  /** Manually assign a Library resume stack to a New or Bid Ready job. */
+  /** Manually assign a Library resume stack to a Bid Ready or Worker pool job. */
   @Post('set-recommended-resume')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   setRecommendedResume(@Body() body: SetRecommendedResumeDto) {

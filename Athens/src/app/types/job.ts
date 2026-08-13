@@ -75,7 +75,7 @@ export interface Job {
   version?: string | null;
   /** Data catalog: job_market (default) or external_scraped_jobs. */
   catalog?: "market" | "external";
-  /** Library stack recommended for New, Bid Ready, or Worker pool (vendor_tasks). */
+  /** Library stack recommended for Bid ready or Worker pool (vendor_tasks). */
   recommendedResumeStack?: string | null;
   /** Library Resume.id when a specific file was chosen. */
   recommendedResumeId?: string | null;

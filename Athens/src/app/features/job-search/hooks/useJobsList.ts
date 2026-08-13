@@ -134,7 +134,13 @@ function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
 /** Build GET /jobs query string from Job Search URL-style filters. */
 export function buildJobsListQuery(
   filters: JobSearchFilterState,
-  opts: { page: number; pageSize: number; statusTab?: JobStatusTab; profileId?: string },
+  opts: {
+    page: number;
+    pageSize: number;
+    statusTab?: JobStatusTab;
+    profileId?: string;
+    applierName?: string;
+  },
 ): string {
   const statusTab = opts.statusTab ?? filters.statusTab;
   const params = new URLSearchParams();
@@ -152,6 +158,8 @@ export function buildJobsListQuery(
   params.set("page", String(opts.page));
   params.set("pageSize", String(opts.pageSize));
   if (opts.profileId) params.set("profileId", opts.profileId);
+  const applierName = String(opts.applierName || "").trim();
+  if (applierName) params.set("applierName", applierName);
   return `${JOB_LIST_ENDPOINT}?${params.toString()}`;
 }
 
@@ -278,8 +286,9 @@ export function useJobsList(
         page,
         pageSize,
         profileId: applier?._id != null ? normalizeId(applier._id) : undefined,
+        applierName: applier?.name,
       }),
-    [debouncedFilters, page, pageSize, applier?._id],
+    [debouncedFilters, page, pageSize, applier?._id, applier?.name],
   );
 
   const currentQueryKey = listQueryPath;

@@ -8,6 +8,7 @@ import { matchUploadToRecommended } from '../../bids/lib/resume-catalog';
 import { VendorTaskService } from '../../bids/vendor-task.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ResumeService } from '../../resumes/resume.service';
+import { RecommendEligibilityService } from './recommend-eligibility.service';
 
 @Injectable()
 export class SetRecommendedResumeService {
@@ -16,6 +17,7 @@ export class SetRecommendedResumeService {
     private readonly resumes: ResumeService,
     private readonly vendorTasks: VendorTaskService,
     private readonly events: BidReviewEventsService,
+    private readonly eligibility: RecommendEligibilityService,
   ) {}
 
   async setManual(input: {
@@ -52,6 +54,13 @@ export class SetRecommendedResumeService {
       throw new NotFoundException({
         success: false,
         message: 'Job not found',
+      });
+    }
+
+    if (!(await this.eligibility.isEligible(account.id, jobId))) {
+      throw new BadRequestException({
+        success: false,
+        message: this.eligibility.ineligibleMessage(),
       });
     }
 

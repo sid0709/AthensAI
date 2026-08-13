@@ -27,6 +27,7 @@ import {
   normalizeRecommendJobIds,
 } from './recommend-resumes.helpers';
 import { RecommendPersistService } from './recommend-persist.service';
+import { RecommendEligibilityService } from './recommend-eligibility.service';
 
 @Injectable()
 export class RecommendResumesService {
@@ -36,6 +37,7 @@ export class RecommendResumesService {
     private readonly chat: AiChatWithUsageService,
     private readonly admission: LlmAdmissionService,
     private readonly persist: RecommendPersistService,
+    private readonly eligibility: RecommendEligibilityService,
     private readonly libraryCatalog: ResumeLibraryCatalogService,
     private readonly vendorTasks: VendorTaskService,
   ) {}
@@ -72,6 +74,10 @@ export class RecommendResumesService {
     }
 
     const replaceExisting = input.replaceExisting !== false;
+    const eligibleIds = await this.eligibility.eligibleJobIds(
+      account.id,
+      jobIds,
+    );
     const existingByJobId = new Map<
       string,
       Awaited<ReturnType<VendorTaskService['findByApplierJob']>>
@@ -86,12 +92,14 @@ export class RecommendResumesService {
         }),
       );
     }
-    const needsLlm = replaceExisting
-      ? jobIds
-      : jobIds.filter((jobId) => {
-          const existing = existingByJobId.get(jobId) ?? null;
-          return !(existing && hasStoredRecommendation(existing));
-        });
+    const needsLlm = (
+      replaceExisting
+        ? jobIds
+        : jobIds.filter((jobId) => {
+            const existing = existingByJobId.get(jobId) ?? null;
+            return !(existing && hasStoredRecommendation(existing));
+          })
+    ).filter((jobId) => eligibleIds.has(jobId));
     const catalog =
       needsLlm.length > 0
         ? await this.libraryCatalog.compressForProfile(account.id)
@@ -101,6 +109,14 @@ export class RecommendResumesService {
       RECOMMEND_RESUME_CONCURRENCY,
       async (jobId) => {
         try {
+          if (!eligibleIds.has(jobId)) {
+            return {
+              jobId,
+              ok: false as const,
+              skipped: false as const,
+              error: this.eligibility.ineligibleMessage(),
+            };
+          }
           if (!replaceExisting) {
             const existing = existingByJobId.get(jobId) ?? null;
             if (existing && hasStoredRecommendation(existing)) {
@@ -110,6 +126,8 @@ export class RecommendResumesService {
                 skipped: true as const,
                 recommendedResumeStack:
                   existing?.recommendedResumeStack ?? null,
+                recommendedResumeId:
+                  existing?.recommendedResumeId ?? null,
                 recommendedResumeReason:
                   existing?.recommendedResumeReason ?? null,
                 warning: existing?.recommendWarning ?? null,
@@ -122,8 +140,9 @@ export class RecommendResumesService {
           const outcome = await this.admission.run(account.id, () =>
             this.recommendOne(account.name, jobId, catalog),
           );
-          await this.persist.persist({
+          const persisted = await this.persist.persist({
             applierName: account.name,
+            profileId: account.id,
             jobId,
             ...outcome.result,
             mode: outcome.mode,
@@ -137,6 +156,7 @@ export class RecommendResumesService {
             recommendedResumeStack:
               outcome.result.matchedCatalogKey ||
               outcome.result.recommendedResume,
+            recommendedResumeId: persisted.recommendedResumeId ?? null,
             recommendedResumeReason: outcome.result.reason,
             warning: outcome.result.warning,
             mode: outcome.mode,

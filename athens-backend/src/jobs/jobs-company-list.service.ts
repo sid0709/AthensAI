@@ -64,7 +64,12 @@ export class JobsCompanyListService {
   ) {}
 
   /** Unfiltered: page companies by lastPostedAt, hydrate first N jobIds. */
-  async listUnfiltered(page: number, pageSize: number, profileId: string) {
+  async listUnfiltered(
+    page: number,
+    pageSize: number,
+    profileId: string,
+    applierName = '',
+  ) {
     const companies = await this.prisma.company.findMany({
       orderBy: { lastPostedAt: 'desc' },
       skip: (page - 1) * pageSize,
@@ -80,7 +85,7 @@ export class JobsCompanyListService {
       matchingJobIds: row.jobIds,
     }));
 
-    return this.hydrateGroups(groups, profileId);
+    return this.hydrateGroups(groups, profileId, applierName);
   }
 
   /**
@@ -93,6 +98,7 @@ export class JobsCompanyListService {
     pageSize: number,
     profileId: string,
     idConstraint: JobsIdConstraint = null,
+    applierName = '',
   ) {
     if (
       idConstraint &&
@@ -181,18 +187,22 @@ export class JobsCompanyListService {
       });
     }
 
-    const data = await this.hydrateGroups(groups, profileId);
+    const data = await this.hydrateGroups(groups, profileId, applierName);
     return { data, companyTotal, jobTotal };
   }
 
   private async hydrateGroups(
     groups: CompanyGroupSource[],
     profileId: string,
+    applierName = '',
   ): Promise<Record<string, unknown>[]> {
     const memberIds = [
       ...new Set(
         groups.flatMap((group) =>
-          group.matchingJobIds.slice(0, COMPANY_MEMBERS_PAGE_SIZE),
+          group.matchingJobIds
+            .slice(0, COMPANY_MEMBERS_PAGE_SIZE)
+            .map((id) => asObjectIdHex(id))
+            .filter((id): id is string => Boolean(id)),
         ),
       ),
     ];
@@ -210,16 +220,17 @@ export class JobsCompanyListService {
       memberIds,
     );
 
-    const recommendByJobId = await this.recommendFields.loadForProfile(
-      profileId,
-      memberIds,
-    );
+    const recommendByJobId = String(applierName || '').trim()
+      ? await this.recommendFields.loadForApplier(applierName, memberIds)
+      : await this.recommendFields.loadForProfile(profileId, memberIds);
 
     return groups.map((group) => {
       const row = mapCompanyGroupRow(group, jobs, stateByJobId);
       const jobsOut = Array.isArray(row.jobs) ? row.jobs : [];
       row.jobs = jobsOut.map((job) => {
-        const id = String((job as { _id?: string })._id || '');
+        const id =
+          asObjectIdHex((job as { _id?: unknown })._id) ||
+          String((job as { _id?: string })._id || '');
         const recommend =
           recommendByJobId.get(id) || recommendByJobId.get(id.toLowerCase());
         if (!recommend) return job;

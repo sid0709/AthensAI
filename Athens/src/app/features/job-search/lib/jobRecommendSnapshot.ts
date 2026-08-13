@@ -1,4 +1,11 @@
-import type { Job } from "../../../types";
+import type { Job, JobStatus } from "../../../types";
+
+const LIBRARY_RECOMMEND_STATUSES = new Set<JobStatus>(["bid-ready", "worker-pool"]);
+
+/** Library recommend / assign is only for Bid ready and Worker pool. */
+export function canAssignLibraryResume(status: JobStatus | undefined): boolean {
+  return Boolean(status && LIBRARY_RECOMMEND_STATUSES.has(status));
+}
 
 /** Durable recommend fields copied from vendor_tasks onto Job Search rows. */
 export type JobRecommendSnapshot = Pick<

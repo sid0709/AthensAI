@@ -135,10 +135,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       typeof doc.recommendedResumeStack === "string" && doc.recommendedResumeStack.trim()
         ? doc.recommendedResumeStack.trim()
         : null,
-    recommendedResumeId:
-      typeof doc.recommendedResumeId === "string" && doc.recommendedResumeId.trim()
-        ? doc.recommendedResumeId.trim()
-        : null,
+    recommendedResumeId: normalizeId(doc.recommendedResumeId) || null,
     recommendedResumeReason:
       typeof doc.recommendedResumeReason === "string" && doc.recommendedResumeReason.trim()
         ? doc.recommendedResumeReason.trim()

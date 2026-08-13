@@ -25,6 +25,7 @@ import { Skeleton } from "../../../components/ui/skeleton";
 import type { Job, WorkMode } from "../../../types";
 import { useJobDetail } from "../hooks/useJobDetail";
 import { useJobResumeRank, useJobSkillRadar } from "../hooks/useJobSkillRadar";
+import { canAssignLibraryResume } from "../lib/jobRecommendSnapshot";
 import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
 import { DetectedSkillsPanel } from "./DetectedSkillsPanel";
 import { JobStatusActions } from "./JobStatusActions";
@@ -226,8 +227,7 @@ export function JobDescriptionDialog({
                 </p>
               ) : null}
             </div>
-          ) : onChangeRecommendedResume &&
-            (j.status === "posted" || j.status === "bid-ready" || j.status === "worker-pool") ? (
+          ) : onChangeRecommendedResume && canAssignLibraryResume(j.status) ? (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border px-4 py-3">
               <p className="text-sm text-muted-foreground">
                 No Library resume assigned yet.
@@ -251,12 +251,12 @@ export function JobDescriptionDialog({
             </p>
           ) : resumeRankLoading ? (
             <p className="mt-3 text-xs text-muted-foreground">Finding best resume match…</p>
-          ) : (
+          ) : canAssignLibraryResume(j.status) ? (
             <p className="mt-3 text-xs text-muted-foreground">
               Select jobs and click <span className="font-semibold">Recommend resumes</span>{" "}
               to choose a Library stack.
             </p>
-          )}
+          ) : null}
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 subtle-scroll space-y-6">

@@ -34,6 +34,21 @@ function isoDate(value: Date | string | null | undefined): string | null {
   return null;
 }
 
+function workMode(value: unknown): string {
+  const displayed = displayText(value);
+  const normalized = displayed.toLowerCase();
+  if (normalized.includes('remote')) return 'Remote';
+  if (normalized.includes('hybrid')) return 'Hybrid';
+  if (
+    normalized.includes('on-site') ||
+    normalized.includes('onsite') ||
+    normalized.includes('office')
+  ) {
+    return 'On-site';
+  }
+  return displayed || 'Not specified';
+}
+
 /** Compact Worker Pool row for the Oak extension sidebar. */
 export function mapOakWorkerJob(
   job: {
@@ -49,7 +64,7 @@ export function mapOakWorkerJob(
     recommendedResumeId: string | null;
     recommendedResumeReason: string | null;
     recommendWarning: string | null;
-    recommendedAt: Date | null;
+    recommendedAt: Date | string | null;
   } | null,
 ) {
   const meta = normalizeJobMetadata(job.metadata);
@@ -59,7 +74,9 @@ export function mapOakWorkerJob(
     id: job.id,
     title: text(job.title) || 'Untitled role',
     company: text(job.companyName) || 'Unknown company',
+    companyLogoUrl: httpUrl(meta?.companyLogo),
     location: displayText(details.location, 'Not specified'),
+    workMode: workMode(details.remote),
     applyUrl: httpUrl(job.applyLink),
     workerPoolAt: isoDate(status.workerPoolAt),
     recommendedResumeStack: text(recommend?.recommendedResumeStack) || null,

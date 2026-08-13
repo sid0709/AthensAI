@@ -22,6 +22,7 @@ import { JobResumePreviewDialog } from "./JobResumePreviewDialog";
 import { JobStatusActions } from "./JobStatusActions";
 import { JobUrlLink } from "./JobUrlLink";
 import { SwapLibraryResumeDialog } from "./SwapLibraryResumeDialog";
+import { canAssignLibraryResume } from "../lib/jobRecommendSnapshot";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
@@ -129,9 +130,7 @@ export function JobCard({
   const skillLabels = analyzedSkillLabels(job);
   const visibleSkills = skillLabels.slice(0, MAX_SKILL_CHIPS);
   const hiddenSkillCount = Math.max(0, (job.skillCount ?? skillLabels.length) - visibleSkills.length);
-  const canSwapLibrary =
-    (job.status === "posted" || job.status === "bid-ready" || job.status === "worker-pool") &&
-    Boolean(onPatchJob);
+  const canSwapLibrary = canAssignLibraryResume(job.status) && Boolean(onPatchJob);
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;

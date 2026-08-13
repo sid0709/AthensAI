@@ -28,6 +28,7 @@ import { JobsRemoveController } from './jobs-remove.controller';
 import { JobsStatusController } from './jobs-status.controller';
 import { JobsService } from './jobs.service';
 import { JobRecommendFieldsService } from './recommend/job-recommend-fields.service';
+import { RecommendEligibilityService } from './recommend/recommend-eligibility.service';
 import { RecommendPersistService } from './recommend/recommend-persist.service';
 import { RecommendResumesController } from './recommend/recommend-resumes.controller';
 import { RecommendResumesService } from './recommend/recommend-resumes.service';
@@ -90,8 +91,10 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     TempJobPromotionService,
     RecommendResumesService,
     RecommendPersistService,
+    RecommendEligibilityService,
     SetRecommendedResumeService,
     JobRecommendFieldsService,
   ],
+  exports: [JobRecommendFieldsService],
 })
 export class JobsModule {}

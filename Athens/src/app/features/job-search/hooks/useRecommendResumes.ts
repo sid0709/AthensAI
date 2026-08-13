@@ -5,7 +5,7 @@ import {
   recommendResumesFromLibrary,
   type RecommendResumeResultRow,
 } from "../../../api/jobs";
-import { jobHasRecommendSnapshot } from "../lib/jobRecommendSnapshot";
+import { canAssignLibraryResume, jobHasRecommendSnapshot } from "../lib/jobRecommendSnapshot";
 import type { Job } from "../../../types";
 
 export type RecommendResumeBulkProgress = {
@@ -57,15 +57,16 @@ export function useRecommendResumes(onPatchJob?: (job: Job) => void) {
       const jobs = selected.filter((job) =>
         Boolean(String(job.backendId || job.id || "").trim()),
       );
-      if (!jobs.length) {
-        toast.error("Select at least one job.");
+      const eligible = jobs.filter((job) => canAssignLibraryResume(job.status));
+      if (!eligible.length) {
+        toast.message("Recommend is only available for Bid ready or Worker pool jobs.");
         return;
       }
 
       const toRun = replaceExisting
-        ? jobs
-        : jobs.filter((job) => !jobHasResumeRecommendation(job));
-      const skippedExisting = jobs.length - toRun.length;
+        ? eligible
+        : eligible.filter((job) => !jobHasResumeRecommendation(job));
+      const skippedExisting = eligible.length - toRun.length;
       if (!toRun.length) {
         toast.message("All selected jobs already have recommendations — nothing to run.");
         return;
@@ -100,6 +101,7 @@ export function useRecommendResumes(onPatchJob?: (job: Job) => void) {
             onPatchJob?.({
               ...job,
               recommendedResumeStack: row.recommendedResumeStack || null,
+              recommendedResumeId: row.recommendedResumeId || null,
               recommendedResumeReason: row.recommendedResumeReason || null,
               useCustomizedResume: Boolean(row.useCustomizedResume),
               recommendWarning: row.warning || null,

@@ -35,12 +35,14 @@ Rules:
     - Different groups can differ: an export-control / restricted-country group may correctly be None while a citizenship / residency group must use the matching status option from the same profile.
 12. Reserve pause_for_review only for true blockers (missing element, upload file required with no file available, or verification failure). Do not pause for optional/ambiguous questions.
 13. Put every answered field index into validation.required_element_indexes so the run validates completeness (not only starred/required fields).
-14. Return only valid JSON. Do not include Markdown or explanatory text.
+14. Resume / CV file inputs: emit action "resume_upload" (not "upload"). Set file to "recommended_resume". The runtime attaches the Library resume recommended for this job in Job Search. Never use resume_upload for cover letters, transcripts, or other documents — those stay "upload" or pause_for_review.
+15. Return only valid JSON. Do not include Markdown or explanatory text.
 
 Supported actions:
 
 - fill
 - upload
+- resume_upload
 - select_radio
 - wait
 - validate
@@ -93,7 +95,7 @@ ${input.pureTree}
 Meta Tree:
 ${input.metaTree}
 
-Generate the action plan JSON now. Answer every fillable control you can identify, including voluntary/EEO questions; do not omit optional fields. Prefer applicant profile facts over none/not-applicable/decline options when the profile answers the question. For unrelated/ambiguous questions, choose the most plausible concrete answer — never use {{...}} placeholders.`.trim();
+Generate the action plan JSON now. Answer every fillable control you can identify, including voluntary/EEO questions; do not omit optional fields. Prefer applicant profile facts over none/not-applicable/decline options when the profile answers the question. For unrelated/ambiguous questions, choose the most plausible concrete answer — never use {{...}} placeholders. For resume/CV file inputs use resume_upload with file "recommended_resume".`.trim();
 
   return {
     systemPrompt: SYSTEM_PROMPT,
