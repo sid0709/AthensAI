@@ -132,8 +132,6 @@
   html {
     font-size: var(--font-size);
     font-family: var(--font-athens);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
     @apply h-full overflow-hidden;
   }
 

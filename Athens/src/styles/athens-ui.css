@@ -4,9 +4,9 @@
 .athens-ui {
   font-family: var(--font-athens);
   font-size: var(--athens-font-size-sm);
+  font-weight: 400;
   color: var(--athens-text);
   line-height: var(--athens-line-height-normal);
-  -webkit-font-smoothing: antialiased;
 }
 
 .athens-toolbar,
@@ -16,15 +16,30 @@
   font-family: var(--font-athens);
 }
 
+.athens-toolbar button,
+.athens-toolbar input,
+.athens-toolbar select,
+.athens-toolbar textarea,
+.athens-toolbar label,
+.athens-toolbar a,
+.athens-ui button,
+.athens-ui input,
+.athens-ui select,
+.athens-ui textarea,
+.athens-ui label,
+.athens-ui a {
+  font-family: var(--font-athens);
+  font-size: var(--athens-font-size-sm);
+  line-height: var(--athens-line-height-normal);
+}
+
 .athens-toolbar button:focus-visible,
-.athens-toolbar input:focus-visible,
 .athens-toolbar a:focus-visible,
 .athens-toolbar [data-slot="checkbox"]:focus-visible,
 .athens-ui button:focus-visible,
-.athens-ui input:focus-visible,
 .athens-ui a:focus-visible,
 .athens-ui [data-slot="checkbox"]:focus-visible {
-  outline: 2px solid var(--athens-focus);
+  outline: 2px solid var(--athens-text);
   outline-offset: 2px;
 }
 
@@ -68,7 +83,7 @@
   color: var(--athens-text-secondary);
   font-family: var(--font-athens);
   font-size: var(--athens-font-size-sm);
-  font-weight: 550;
+  font-weight: 500;
   line-height: 1;
   cursor: pointer;
 }
@@ -85,8 +100,6 @@
 }
 
 .athens-page-btn.is-nav {
-  border-color: var(--athens-border);
-  background: var(--athens-canvas);
   color: var(--athens-text);
 }
 
@@ -128,7 +141,8 @@
   border-radius: var(--athens-radius-sm) var(--athens-radius-sm) 0 0;
   background: transparent;
   color: var(--athens-text-secondary);
-  font-size: var(--athens-font-size-xs);
+  font-family: var(--font-athens);
+  font-size: var(--athens-font-size-sm);
   font-weight: 600;
   line-height: var(--athens-line-height-tight);
   white-space: nowrap;
@@ -221,6 +235,11 @@
   border: 1px solid var(--athens-border);
   border-radius: var(--athens-radius-sm);
   background: var(--athens-surface-subtle);
+  transition: border-color var(--athens-transition-fast);
+}
+
+.athens-field-group:focus-within {
+  border-color: var(--athens-border-strong);
 }
 
 .athens-field {
@@ -265,16 +284,27 @@
   border: 0;
   background: transparent;
   color: var(--athens-text);
+  font-family: var(--font-athens);
+  font-size: var(--athens-font-size-sm);
+  font-weight: 400;
+  line-height: var(--athens-line-height-normal);
   outline: none;
+  box-shadow: none;
+}
+
+.athens-field__input:focus,
+.athens-field__input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .athens-field__input::placeholder {
   color: var(--athens-text-muted);
+  font-weight: 400;
 }
 
 .athens-field:focus-within {
-  border-radius: var(--athens-radius-sm);
-  box-shadow: inset 0 0 0 1px var(--athens-focus);
+  box-shadow: none;
 }
 
 .athens-field__clear {
@@ -319,7 +349,7 @@
   background: var(--athens-surface-subtle);
   color: var(--athens-text-secondary);
   font-size: var(--athens-font-size-xs);
-  font-weight: 550;
+  font-weight: 500;
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
@@ -364,7 +394,7 @@ span.athens-chip:hover {
   background: var(--athens-canvas);
   color: var(--athens-text);
   font-size: var(--athens-font-size-sm);
-  font-weight: 550;
+  font-weight: 500;
   box-shadow: var(--athens-shadow-control);
   white-space: nowrap;
 }
@@ -442,7 +472,7 @@ span.athens-chip:hover {
   background: transparent;
   color: var(--athens-text-secondary);
   font-size: var(--athens-font-size-xs);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .athens-text-btn:hover {
@@ -491,6 +521,9 @@ span.athens-chip:hover {
   gap: 10px;
   min-height: 40px;
   color: var(--athens-text-secondary);
+  font-family: var(--font-athens);
+  font-size: var(--athens-font-size-sm);
+  font-weight: 400;
   white-space: nowrap;
   user-select: none;
   flex-shrink: 0;
@@ -530,7 +563,7 @@ span.athens-chip:hover {
   color: var(--athens-text);
   cursor: pointer;
   font-size: var(--athens-font-size-xs);
-  font-weight: 550;
+  font-weight: 500;
   line-height: 1.2;
   overflow: visible;
 }
@@ -1011,7 +1044,7 @@ span.athens-chip:hover {
   background: var(--athens-surface-subtle);
   color: var(--athens-text-secondary);
   font-size: var(--athens-font-size-xs);
-  font-weight: 550;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -1065,7 +1098,7 @@ span.athens-chip:hover {
   background: var(--athens-canvas);
   color: var(--athens-text-secondary);
   font-size: var(--athens-font-size-xs);
-  font-weight: 550;
+  font-weight: 500;
   cursor: pointer;
 }
 
