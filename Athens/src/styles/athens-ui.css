@@ -9,15 +9,11 @@
   -webkit-font-smoothing: antialiased;
 }
 
-.athens-toolbar button,
-.athens-toolbar input,
-.athens-toolbar select,
-.athens-toolbar a,
-.athens-ui button,
-.athens-ui input,
-.athens-ui select,
-.athens-ui a {
-  font: inherit;
+.athens-toolbar,
+.athens-toolbar *,
+.athens-ui,
+.athens-ui * {
+  font-family: var(--font-athens);
 }
 
 .athens-toolbar button:focus-visible,
@@ -70,7 +66,7 @@
   border-radius: var(--athens-radius-sm);
   background: transparent;
   color: var(--athens-text-secondary);
-  font: inherit;
+  font-family: var(--font-athens);
   font-size: var(--athens-font-size-sm);
   font-weight: 550;
   line-height: 1;
@@ -317,7 +313,7 @@
   min-height: 24px;
   align-items: center;
   gap: var(--athens-space-1);
-  padding: 2px var(--athens-space-2) 2px var(--athens-space-3);
+  padding: 2px var(--athens-space-3);
   border: 1px solid var(--athens-border);
   border-radius: var(--athens-radius-pill);
   background: var(--athens-surface-subtle);
@@ -325,6 +321,7 @@
   font-size: var(--athens-font-size-xs);
   font-weight: 550;
   line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
   transition: background var(--athens-transition-fast), color var(--athens-transition-fast);
 }
@@ -848,15 +845,22 @@ span.athens-chip:hover {
   gap: 6px;
   min-width: 0;
   min-height: 24px;
+}
+
+.athens-card-chips__list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
 }
 
 .athens-card-chips .athens-chip {
-  flex: 0 1 auto;
-  max-width: 11rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 0 0 auto;
+  max-width: none;
+  overflow: visible;
 }
 
 .athens-card-chips .athens-chip--more {

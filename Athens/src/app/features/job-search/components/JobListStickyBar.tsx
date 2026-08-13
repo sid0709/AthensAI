@@ -4,6 +4,7 @@ import { PaginationBar } from "../../../components/shared/PaginationBar";
 import { cn } from "../../../lib/utils";
 import { JobBulkActionsBar, JobPageSelectionControls } from "./JobBulkActionsBar";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
+import type { JobWorkerPoolProgress } from "../hooks/useJobWorkerPoolTask";
 import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
 
 type JobListStickyBarProps = {
@@ -20,6 +21,9 @@ type JobListStickyBarProps = {
   markAppliedPending?: boolean;
   onMarkWorkerPool?: () => void;
   workerPoolPending?: boolean;
+  workerPoolStopping?: boolean;
+  workerPoolProgress?: JobWorkerPoolProgress | null;
+  onStopWorkerPool?: () => void;
   onMoveToNew?: () => void;
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
@@ -65,6 +69,9 @@ export function JobListStickyBar({
   markAppliedPending,
   onMarkWorkerPool,
   workerPoolPending,
+  workerPoolStopping,
+  workerPoolProgress,
+  onStopWorkerPool,
   onMoveToNew,
   moveToNewPending,
   onGenerateResumes,
@@ -108,6 +115,9 @@ export function JobListStickyBar({
           markAppliedPending={markAppliedPending}
           onMarkWorkerPool={onMarkWorkerPool}
           workerPoolPending={workerPoolPending}
+          workerPoolStopping={workerPoolStopping}
+          workerPoolProgress={workerPoolProgress}
+          onStopWorkerPool={onStopWorkerPool}
           onMoveToNew={onMoveToNew}
           moveToNewPending={moveToNewPending}
           onGenerateResumes={onGenerateResumes}

@@ -6,7 +6,7 @@ Follow [`UI_GUIDE.md`](UI_GUIDE.md) for visual language. Athens-lens is the role
 
 - Tokens: `src/styles/tokens.css` (`--athens-*`)
 - Primitives: `src/styles/athens-ui.css` (`.athens-toolbar`, `.athens-surface`, `.athens-tab`, `.athens-btn`, `.athens-segment`, `.athens-dock`, …)
-- First consumer: Job Search filter + sticky toolbars. Do not remap global `--primary` or drop Figtree app-wide until a surface opts in.
+- First consumer of lens chrome: Job Search filter + sticky toolbars. Do not remap global `--primary` until a later migration. Site typeface is San Francisco everywhere.
 
 ## Layout
 

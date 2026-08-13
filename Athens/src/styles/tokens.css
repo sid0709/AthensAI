@@ -34,6 +34,7 @@
   --athens-radius-pill: 999px;
 
   --font-athens: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-athens-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace;
   --athens-font-size-xs: 12px;
   --athens-font-size-sm: 14px;
   --athens-font-size-md: 16px;

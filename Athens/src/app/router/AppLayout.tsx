@@ -96,7 +96,6 @@ export function AppLayout() {
       <div
         ref={appShellRef}
         className="flex h-full min-h-0 w-full overflow-hidden bg-background text-foreground"
-        style={{ fontFamily: "'Figtree',system-ui,sans-serif" }}
         aria-hidden={transitionActive || undefined}
       >
         <Sidebar />

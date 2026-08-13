@@ -249,11 +249,13 @@ export function JobCard({
 
         {visibleSkills.length > 0 ? (
           <div className="athens-card-chips">
-            {visibleSkills.map((skill) => (
-              <span key={skill} className="athens-chip">
-                {skill}
-              </span>
-            ))}
+            <div className="athens-card-chips__list">
+              {visibleSkills.map((skill) => (
+                <span key={skill} className="athens-chip" title={skill}>
+                  {skill}
+                </span>
+              ))}
+            </div>
             {hiddenSkillCount > 0 ? (
               <span
                 className="athens-chip athens-chip--more"
@@ -268,17 +270,19 @@ export function JobCard({
         )}
 
         <div className="athens-card-chips athens-card-chips--meta">
-          <span className="athens-chip">
-            <MapPin size={12} aria-hidden="true" />
-            {job.location}
-          </span>
-          <span className="athens-chip">
-            <Wifi size={12} aria-hidden="true" />
-            {WORK_MODE_LABELS[job.workMode]}
-          </span>
-          {isGrid ? null : <span className="athens-chip">{job.type}</span>}
-          {isGrid ? null : <span className="athens-chip">{job.seniority}</span>}
-          <span className="athens-chip">{job.salary}</span>
+          <div className="athens-card-chips__list">
+            <span className="athens-chip">
+              <MapPin size={12} aria-hidden="true" />
+              {job.location}
+            </span>
+            <span className="athens-chip">
+              <Wifi size={12} aria-hidden="true" />
+              {WORK_MODE_LABELS[job.workMode]}
+            </span>
+            {isGrid ? null : <span className="athens-chip">{job.type}</span>}
+            {isGrid ? null : <span className="athens-chip">{job.seniority}</span>}
+            <span className="athens-chip">{job.salary}</span>
+          </div>
         </div>
 
         <div className="athens-card-footer">

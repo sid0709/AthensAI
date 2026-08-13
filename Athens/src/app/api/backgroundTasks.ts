@@ -11,6 +11,7 @@ export type BackgroundTaskType =
   | 'skill_enrichment'
   | 'job_removal'
   | 'resume_removal'
+  | 'job_worker_pool'
   | 'resume_identity_refresh';
 
 export type BackgroundTaskStatus =

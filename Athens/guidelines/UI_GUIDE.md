@@ -1,6 +1,6 @@
 # Athens UI Guide
 
-Athens uses the quiet, neutral visual language of Athens Lens, adapted for the web app. Lens is the role model: system sans, black primary actions, blue only as a signal, and a 1px border before shadow. This guide is the product design language. Job Search toolbars are the first consumer; other surfaces keep the existing shadcn theme until they opt in.
+Athens uses the quiet, neutral visual language of Athens Lens, adapted for the web app. Lens is the role model: San Francisco via the system stack, black primary actions, blue only as a signal, and a 1px border before shadow. This guide is the product design language. Job Search toolbars are the first consumer of the full lens chrome; the site typeface is SF Pro everywhere.
 
 Do not copy ChatGPT branding, text, or proprietary assets.
 
@@ -11,7 +11,7 @@ Do not copy ChatGPT branding, text, or proprietary assets.
 3. **Content stays readable.** Body copy uses 14px with a comfortable line height. Headings use 600 weight and slightly negative letter spacing.
 4. **Brand is a signal, not a surface.** Athens blue is reserved for keyboard focus and sparse highlights. Primary actions remain neutral black.
 5. **Behavior comes from contracts.** UI never branches on employers, titles, locations, or description keywords.
-6. **One language, scoped adoption.** Surfaces that opt in use `--athens-*` tokens and `.athens-*` primitives. Do not remap the global shadcn `--primary` or drop Figtree app-wide until a later migration.
+6. **One language, scoped chrome.** Surfaces that opt in use `--athens-*` tokens and `.athens-*` primitives. Do not remap the global shadcn `--primary` until a later migration. The site typeface is San Francisco everywhere.
 
 ## Tokens
 
@@ -27,7 +27,7 @@ All reusable visual values live in `src/styles/tokens.css` as `--athens-*` custo
 - Danger: `#c0362c`
 - Spacing: 4px base scale from 4px through 48px
 - Radii: 8px, 12px, 16px, 24px, and pill
-- Type: San Francisco via the system stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`) — not Figtree
+- Type: San Francisco via the system stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`) on every surface, including toolbars, sidebar, and auth. Resume preview documents keep the template font the user selected.
 - Motion: 150ms ease; remove meaningful transitions for reduced-motion users
 
 Dark mode maps the same roles onto the existing Athens dark neutrals. One-off layout geometry may be local when it has no reusable semantic meaning. New repeated values must become tokens.

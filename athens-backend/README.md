@@ -216,7 +216,7 @@ Uses profile `email` + decrypted `gmailAppPassword`. List responses omit full bo
 
 ## Background tasks
 
-Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default) claims `mail_ai_label` and `resume_generation` tasks.
+Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default) claims `mail_ai_label`, `resume_generation`, and `job_worker_pool` tasks.
 
 | Method | Path | Notes |
 |--------|------|-------|

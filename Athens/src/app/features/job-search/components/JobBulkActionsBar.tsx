@@ -22,6 +22,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip";
 import { cn } from "../../../lib/utils";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
+import type { JobWorkerPoolProgress } from "../hooks/useJobWorkerPoolTask";
 import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
 
 type JobBulkActionsBarProps = {
@@ -34,6 +35,9 @@ type JobBulkActionsBarProps = {
   markAppliedPending?: boolean;
   onMarkWorkerPool?: () => void;
   workerPoolPending?: boolean;
+  workerPoolStopping?: boolean;
+  workerPoolProgress?: JobWorkerPoolProgress | null;
+  onStopWorkerPool?: () => void;
   onMoveToNew?: () => void;
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
@@ -148,6 +152,9 @@ export function JobBulkActionsBar({
   markAppliedPending = false,
   onMarkWorkerPool,
   workerPoolPending = false,
+  workerPoolStopping = false,
+  workerPoolProgress,
+  onStopWorkerPool,
   onMoveToNew,
   moveToNewPending = false,
   onGenerateResumes,
@@ -169,18 +176,27 @@ export function JobBulkActionsBar({
   className,
 }: JobBulkActionsBarProps) {
   const hasSelection = totalSelected > 0;
-  const busy = resumeGenerating || resumeRemoving || recommendRunning;
+  const busy = resumeGenerating || resumeRemoving || recommendRunning || workerPoolPending;
   const showDock = hasSelection || busy;
+  const activeProgress = workerPoolPending && workerPoolProgress
+    ? workerPoolProgress
+    : (resumeGenerating || resumeRemoving) && resumeProgress
+      ? resumeProgress
+      : recommendRunning && recommendProgress
+        ? recommendProgress
+        : null;
   const progressPct =
-    resumeProgress && resumeProgress.total > 0
-      ? Math.round(
-          ((resumeProgress.done + (resumeProgress.partial ?? 0)) / resumeProgress.total) * 100,
-        )
-      : recommendProgress && recommendProgress.total > 0
-        ? Math.round((recommendProgress.done / recommendProgress.total) * 100)
-        : 0;
+    workerPoolPending && workerPoolProgress && workerPoolProgress.total > 0
+      ? Math.round((workerPoolProgress.done / workerPoolProgress.total) * 100)
+      : resumeProgress && (resumeGenerating || resumeRemoving) && resumeProgress.total > 0
+        ? Math.round(
+            ((resumeProgress.done + (resumeProgress.partial ?? 0)) / resumeProgress.total) * 100,
+          )
+        : recommendProgress && recommendProgress.total > 0
+          ? Math.round((recommendProgress.done / recommendProgress.total) * 100)
+          : 0;
   const destinationLocked =
-    loading || markAppliedPending || bidReadyPending || workerPoolPending || moveToNewPending;
+    loading || markAppliedPending || bidReadyPending || moveToNewPending;
   const resumeLocked = loading || recommendRunning || resumeGenerating || resumeRemoving;
 
   const destinations = [
@@ -209,13 +225,21 @@ export function JobBulkActionsBar({
     onMarkWorkerPool
       ? {
           key: "worker-pool",
-          label: "Worker pool",
+          label: workerPoolPending
+            ? workerPoolStopping
+              ? "Stopping…"
+              : workerPoolProgress
+                ? `${workerPoolProgress.done}/${workerPoolProgress.total}`
+                : "Queuing…"
+            : "Worker pool",
           icon: Layers,
-          onClick: onMarkWorkerPool,
+          onClick: workerPoolPending ? () => onStopWorkerPool?.() : onMarkWorkerPool,
           pending: workerPoolPending,
-          title: applyAllCompanyRoles
-            ? "Move selected jobs to Worker pool and mark other roles at those companies as applied"
-            : "Move selected New jobs to Worker pool for Oak",
+          title: workerPoolPending
+            ? "Stop moving jobs to Worker pool"
+            : applyAllCompanyRoles
+              ? "Move selected jobs to Worker pool and mark other roles at those companies as applied"
+              : "Move selected New jobs to Worker pool for Oak",
         }
       : null,
     onMoveToNew
@@ -298,6 +322,12 @@ export function JobBulkActionsBar({
   ].filter((item): item is ResumeItem => item != null);
 
   const showResumeProgress = (resumeGenerating || resumeRemoving) && resumeProgress;
+  const showWorkerPoolProgress = workerPoolPending && workerPoolProgress;
+  const progressLabel = showWorkerPoolProgress && workerPoolProgress
+    ? `Worker pool ${workerPoolProgress.done}/${workerPoolProgress.total}`
+    : showResumeProgress && resumeProgress
+      ? `${resumeRemoving ? "Removing" : "Résumés"} ${resumeProgress.done}/${resumeProgress.total}${resumeProgress.active > 0 ? ` · ${resumeProgress.active} active` : ""}`
+      : null;
 
   if (!showDock) return null;
 
@@ -320,7 +350,13 @@ export function JobBulkActionsBar({
                           type="button"
                           className={item.pending ? "is-busy" : undefined}
                           onClick={item.onClick}
-                          disabled={destinationLocked}
+                          disabled={
+                            item.key === "worker-pool"
+                              ? loading
+                                || workerPoolStopping
+                                || (workerPoolPending ? !onStopWorkerPool : !hasSelection)
+                              : destinationLocked || !hasSelection
+                          }
                           aria-label={item.label}
                           title={item.title}
                         >
@@ -339,13 +375,10 @@ export function JobBulkActionsBar({
               </div>
             ) : null}
 
-            {showResumeProgress && resumeProgress ? (
+            {progressLabel && activeProgress ? (
               <div className="athens-progress">
                 <div className="athens-progress__meta">
-                  <span>
-                    {resumeRemoving ? "Removing" : "Résumés"} {resumeProgress.done}/{resumeProgress.total}
-                    {resumeProgress.active > 0 ? ` · ${resumeProgress.active} active` : ""}
-                  </span>
+                  <span>{progressLabel}</span>
                   <span>{progressPct}%</span>
                 </div>
                 <div className="athens-progress__track">
