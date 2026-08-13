@@ -44,6 +44,7 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   all: 0,
   posted: 0,
   "bid-ready": 0,
+  "worker-pool": 0,
   "bid-completed": 0,
   applied: 0,
   scheduled: 0,

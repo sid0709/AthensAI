@@ -13,6 +13,7 @@ import { OakProfilePromptService } from './ai/oak-profile-prompt.service';
 import { OakResponsesService } from './ai/oak-responses.service';
 import { OakGatewayBootstrap } from './gateway/oak-gateway.bootstrap';
 import { OakController } from './http/oak.controller';
+import { OakJobsService } from './http/oak-jobs.service';
 import { OakRuntimeFileService } from './http/oak-runtime-file.service';
 
 @Module({
@@ -26,6 +27,7 @@ import { OakRuntimeFileService } from './http/oak-runtime-file.service';
     OakResponsesService,
     OakAnalyzeService,
     OakMatchOptionService,
+    OakJobsService,
     OakRuntimeFileService,
     OakGatewayBootstrap,
   ],

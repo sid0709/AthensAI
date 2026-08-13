@@ -18,6 +18,7 @@ import { JobDedupeService } from './job-dedupe.service';
 import { JobHardDeleteService } from './job-hard-delete.service';
 import { JobStatusMutateService } from './job-status-mutate.service';
 import { JobStatusService } from './job-status.service';
+import { JobWorkerPoolService } from './job-worker-pool.service';
 import { JobsBulkController } from './jobs-bulk.controller';
 import { JobsCompanyListService } from './jobs-company-list.service';
 import { JobsController } from './jobs.controller';
@@ -72,6 +73,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     CompanyMembershipService,
     JobStatusService,
     JobStatusMutateService,
+    JobWorkerPoolService,
     JobHardDeleteService,
     JobDedupeService,
     TempJobQueueService,

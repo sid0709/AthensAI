@@ -42,6 +42,7 @@ type JobDescriptionDialogProps = {
   statusPending?: boolean;
   onApply?: () => void;
   onMarkBidReady?: () => void;
+  onMarkWorkerPool?: () => void;
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
@@ -107,6 +108,7 @@ export function JobDescriptionDialog({
   statusPending = false,
   onApply,
   onMarkBidReady,
+  onMarkWorkerPool,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -225,7 +227,7 @@ export function JobDescriptionDialog({
               ) : null}
             </div>
           ) : onChangeRecommendedResume &&
-            (j.status === "posted" || j.status === "bid-ready") ? (
+            (j.status === "posted" || j.status === "bid-ready" || j.status === "worker-pool") ? (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border px-4 py-3">
               <p className="text-sm text-muted-foreground">
                 No Library resume assigned yet.
@@ -336,6 +338,7 @@ export function JobDescriptionDialog({
                 pending={statusPending}
                 onApply={onApply}
                 onMarkBidReady={onMarkBidReady}
+                onMarkWorkerPool={onMarkWorkerPool}
                 onMarkScheduled={() => onMarkScheduled?.()}
                 onMarkDeclined={() => onMarkDeclined?.()}
                 onCancel={() => onCancel?.()}

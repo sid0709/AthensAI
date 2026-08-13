@@ -101,6 +101,7 @@ Oak Chrome extension + UI board authenticate with the same Athens account passwo
 | POST | `/api/oak/ai-analyze` | Bearer — `{ pureTree, metaTree, page? }` → action plan |
 | POST | `/api/oak/match-option` | Bearer — dropdown option match |
 | GET | `/api/oak/runtime-file` | Bearer — optional file from `OAK_RUNTIME_FILE_PATH` |
+| GET | `/api/oak/jobs` | Bearer — Worker Pool jobs for the signed-in profile |
 
 Socket.io: path `/oak`, handshake `auth.token` = Oak access token. Query: `type` (`extension` \| `ui-board`), `name`.
 

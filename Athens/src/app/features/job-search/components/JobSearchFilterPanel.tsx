@@ -26,6 +26,7 @@ const STATUS_TABS: {
   { id: "all", label: "All", dot: "bg-foreground" },
   { id: "posted", label: "New", dot: "bg-emerald-500" },
   { id: "bid-ready", label: "Bid ready", dot: "bg-sky-500" },
+  { id: "worker-pool", label: "Worker pool", dot: "bg-teal-500" },
   { id: "bid-completed", label: "Bid completed", dot: "bg-violet-500" },
   { id: "applied", label: "Applied", dot: "bg-blue-500" },
   { id: "scheduled", label: "Scheduled", dot: "bg-amber-500" },

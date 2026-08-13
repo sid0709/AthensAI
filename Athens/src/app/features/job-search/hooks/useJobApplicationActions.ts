@@ -12,7 +12,7 @@ type JobMutationResponse = {
   success?: boolean;
   data?: Record<string, unknown>;
   message?: string;
-  viewerStatus?: PipelineStatus | "posted" | "bid-ready" | "bid-completed";
+  viewerStatus?: PipelineStatus | "posted" | "bid-ready" | "worker-pool" | "bid-completed";
   mutationId?: string;
   statusVersion?: string;
   cacheSync?: "queued";
@@ -249,10 +249,18 @@ export function useJobApplicationActions(
         if (
           job.status === "applied" ||
           job.status === "bid-ready" ||
+          job.status === "worker-pool" ||
           job.status === "bid-completed"
         ) {
           if (job.status === "bid-ready" || job.status === "bid-completed") {
             res = await postMutation(`/jobs/${jobId}/bid-status`, {
+              applierName: applier.name,
+              status: "clear",
+              catalog: job.catalog || "market",
+              mutationId: newMutationId(),
+            });
+          } else if (job.status === "worker-pool") {
+            res = await postMutation(`/jobs/${jobId}/worker-pool`, {
               applierName: applier.name,
               status: "clear",
               catalog: job.catalog || "market",
@@ -282,9 +290,11 @@ export function useJobApplicationActions(
           const message =
             job.status === "bid-ready" || job.status === "bid-completed"
               ? "Bid status cleared — back to New"
-              : job.status === "applied"
-                ? "Application removed"
-                : "Moved back to Applied";
+              : job.status === "worker-pool"
+                ? "Moved back to New"
+                : job.status === "applied"
+                  ? "Application removed"
+                  : "Moved back to Applied";
           toast.success(message);
         }
       } catch (error) {
@@ -434,6 +444,146 @@ export function useJobApplicationActions(
     [applier, onJobUpdated, postMutation, refreshStatusCounts, setManyPending],
   );
 
+  const markWorkerPool = useCallback(
+    async (job: Job) => {
+      const jobId = job.backendId || job.id;
+      if (!applier?.name) {
+        toast.error("Select a profile before updating status");
+        return;
+      }
+
+      setPending(jobId, true);
+      onJobUpdated({ ...job, status: "worker-pool" });
+      try {
+        const res = await postMutation(`/jobs/${jobId}/worker-pool`, {
+          applierName: applier.name,
+          status: "WorkerPool",
+          catalog: job.catalog || "market",
+          mutationId: newMutationId(),
+        });
+
+        if (res?.success && res.data) {
+          onJobUpdated(mapDocToJob(res.data, applier));
+          toast.success("Moved to Worker pool");
+          void refreshStatusCounts();
+        }
+      } catch (error) {
+        if (await reconcileStatus(job, "worker-pool")) {
+          onJobUpdated({ ...job, status: "worker-pool" });
+          void refreshStatusCounts();
+          toast.success("Moved to Worker pool");
+          return;
+        }
+        onJobUpdated(job);
+        toast.error("Failed to move job to Worker pool", {
+          description: requestErrorMessage(error, "The server rejected the update."),
+        });
+      } finally {
+        setPending(jobId, false);
+      }
+    },
+    [applier, onJobUpdated, postMutation, reconcileStatus, refreshStatusCounts, setPending],
+  );
+
+  const markWorkerPoolBulk = useCallback(
+    async (jobs: Job[]) => {
+      if (!applier?.name) {
+        toast.error("Select a profile before updating status");
+        return;
+      }
+      const eligible = jobs.filter((job) => job.status === "posted");
+      if (!eligible.length) {
+        toast.message("Nothing to move to Worker pool", {
+          description: "Select New (posted) jobs only.",
+        });
+        return;
+      }
+
+      const jobIds = eligible.map((job) => job.backendId || job.id);
+      eligible.forEach((job) => onJobUpdated({ ...job, status: "worker-pool" }));
+      setManyPending(jobIds, true);
+      try {
+        const res = await postMutation("/jobs/worker-pool/bulk", {
+          applierName: applier.name,
+          status: "WorkerPool",
+          mutationId: newMutationId(),
+          jobs: eligible.map((job) => ({ id: job.backendId || job.id, catalog: job.catalog || "market" })),
+        }) as BulkJobMutationResponse;
+        const failedIds = new Set((res.failed || []).map((row) => row.jobId));
+        for (const job of eligible) {
+          if (failedIds.has(job.backendId || job.id)) onJobUpdated(job);
+        }
+        const ok = res.updatedCount ?? Math.max(0, eligible.length - failedIds.size);
+        if (ok) toast.success(`Moved ${ok} job${ok === 1 ? "" : "s"} to Worker pool`);
+        if (failedIds.size) toast.error(`Failed on ${failedIds.size} job${failedIds.size === 1 ? "" : "s"}`);
+      } catch (error) {
+        eligible.forEach(onJobUpdated);
+        toast.error("Failed to move jobs to Worker pool", {
+          description: requestErrorMessage(error, "The server rejected the bulk update."),
+        });
+      } finally {
+        setManyPending(jobIds, false);
+      }
+      void refreshStatusCounts();
+    },
+    [applier, onJobUpdated, postMutation, refreshStatusCounts, setManyPending],
+  );
+
+  const clearWorkerPoolBulk = useCallback(
+    async (jobs: Job[]) => {
+      if (!applier?.name) {
+        toast.error("Select a profile before updating status");
+        return;
+      }
+      const eligible = jobs.filter((job) => job.status === "worker-pool");
+      if (!eligible.length) return;
+
+      const jobIds = eligible.map((job) => job.backendId || job.id);
+      eligible.forEach((job) => onJobUpdated({ ...job, status: "posted" }));
+      setManyPending(jobIds, true);
+      try {
+        const res = await postMutation("/jobs/worker-pool/bulk", {
+          applierName: applier.name,
+          status: "clear",
+          mutationId: newMutationId(),
+          jobs: eligible.map((job) => ({ id: job.backendId || job.id, catalog: job.catalog || "market" })),
+        }) as BulkJobMutationResponse;
+        const failedIds = new Set((res.failed || []).map((row) => row.jobId));
+        for (const job of eligible) {
+          if (failedIds.has(job.backendId || job.id)) onJobUpdated(job);
+        }
+        const ok = res.updatedCount ?? Math.max(0, eligible.length - failedIds.size);
+        if (ok) toast.success(`Moved ${ok} job${ok === 1 ? "" : "s"} back to New`);
+        if (failedIds.size) toast.error(`Failed on ${failedIds.size} job${failedIds.size === 1 ? "" : "s"}`);
+      } catch (error) {
+        eligible.forEach(onJobUpdated);
+        toast.error("Failed to move jobs back to New", {
+          description: requestErrorMessage(error, "The server rejected the bulk update."),
+        });
+      } finally {
+        setManyPending(jobIds, false);
+      }
+      void refreshStatusCounts();
+    },
+    [applier, onJobUpdated, postMutation, refreshStatusCounts, setManyPending],
+  );
+
+  const moveToNewBulk = useCallback(
+    async (jobs: Job[]) => {
+      const bidReady = jobs.filter((job) => job.status === "bid-ready");
+      const workerPool = jobs.filter((job) => job.status === "worker-pool");
+      if (!bidReady.length && !workerPool.length) {
+        toast.message("Nothing to move to New", {
+          description: "Select Bid ready or Worker pool jobs.",
+        });
+        return;
+      }
+      if (bidReady.length) await clearBidReadyBulk(bidReady);
+      if (workerPool.length) await clearWorkerPoolBulk(workerPool);
+    },
+    [clearBidReadyBulk, clearWorkerPoolBulk],
+  );
+
   return {
     applyToJob,
     applyById,
@@ -442,6 +592,9 @@ export function useJobApplicationActions(
     markBidReady,
     markBidReadyBulk,
     clearBidReadyBulk,
+    markWorkerPool,
+    markWorkerPoolBulk,
+    moveToNewBulk,
     isPending,
   };
 }

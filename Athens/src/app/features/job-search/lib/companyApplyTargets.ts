@@ -1,6 +1,6 @@
 import { isExternalJob, type CompanyJobGroup, type Job, type JobStatus } from "../../../types/job";
 
-const APPLYABLE_STATUSES = new Set<JobStatus>(["posted", "bid-ready", "bid-completed"]);
+const APPLYABLE_STATUSES = new Set<JobStatus>(["posted", "bid-ready", "worker-pool", "bid-completed"]);
 
 export const APPLY_ALL_COMPANY_ROLES_KEY = "athens-apply-all-company-roles";
 

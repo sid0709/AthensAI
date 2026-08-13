@@ -83,6 +83,7 @@ export function countJobsByStatus(
     all: base.length,
     posted: base.filter((j) => j.status === "posted").length,
     "bid-ready": base.filter((j) => j.status === "bid-ready").length,
+    "worker-pool": base.filter((j) => j.status === "worker-pool").length,
     "bid-completed": base.filter((j) => j.status === "bid-completed").length,
     applied: base.filter((j) => j.status === "applied").length,
     scheduled: base.filter((j) => j.status === "scheduled").length,

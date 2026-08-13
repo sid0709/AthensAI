@@ -27,6 +27,7 @@ import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
   "bid-ready": "Bid ready",
+  "worker-pool": "Worker pool",
   "bid-completed": "Bid completed",
   applied: "Applied",
   scheduled: "Scheduled",
@@ -36,6 +37,7 @@ const STATUS_LABELS: Record<Job["status"], string> = {
 const STATUS_VARIANTS: Record<Job["status"], BadgeVariant> = {
   posted: "blue",
   "bid-ready": "blue",
+  "worker-pool": "blue",
   "bid-completed": "violet",
   applied: "success",
   scheduled: "amber",
@@ -60,6 +62,7 @@ type JobCardProps = {
   statusPending?: boolean;
   onApply?: () => void;
   onMarkBidReady?: () => void;
+  onMarkWorkerPool?: () => void;
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
@@ -110,6 +113,7 @@ export function JobCard({
   statusPending = false,
   onApply,
   onMarkBidReady,
+  onMarkWorkerPool,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -126,7 +130,8 @@ export function JobCard({
   const visibleSkills = skillLabels.slice(0, MAX_SKILL_CHIPS);
   const hiddenSkillCount = Math.max(0, (job.skillCount ?? skillLabels.length) - visibleSkills.length);
   const canSwapLibrary =
-    (job.status === "posted" || job.status === "bid-ready") && Boolean(onPatchJob);
+    (job.status === "posted" || job.status === "bid-ready" || job.status === "worker-pool") &&
+    Boolean(onPatchJob);
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;
@@ -368,6 +373,7 @@ export function JobCard({
               pending={statusPending}
               onApply={() => onApply?.()}
               onMarkBidReady={onMarkBidReady ? () => onMarkBidReady() : undefined}
+              onMarkWorkerPool={onMarkWorkerPool ? () => onMarkWorkerPool() : undefined}
               onMarkScheduled={() => onMarkScheduled?.()}
               onMarkDeclined={() => onMarkDeclined?.()}
               onCancel={() => onCancel?.()}
@@ -384,6 +390,7 @@ export function JobCard({
         statusPending={statusPending}
         onApply={() => onApply?.()}
         onMarkBidReady={onMarkBidReady ? () => onMarkBidReady() : undefined}
+        onMarkWorkerPool={onMarkWorkerPool ? () => onMarkWorkerPool() : undefined}
         onMarkScheduled={() => onMarkScheduled?.()}
         onMarkDeclined={() => onMarkDeclined?.()}
         onCancel={() => onCancel?.()}

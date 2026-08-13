@@ -2,6 +2,7 @@
 export const JOB_STATUS_STATES = [
   'posted',
   'bid-ready',
+  'worker-pool',
   'bid-completed',
   'applied',
   'scheduled',

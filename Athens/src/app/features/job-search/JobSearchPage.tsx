@@ -106,7 +106,9 @@ function JobSearchPageContent() {
     cancelJobStatus,
     markBidReady,
     markBidReadyBulk,
-    clearBidReadyBulk,
+    markWorkerPool,
+    markWorkerPoolBulk,
+    moveToNewBulk,
     isPending,
   } = useJobApplicationActions(patchJob, refreshStatusCounts);
   const {
@@ -124,6 +126,7 @@ function JobSearchPageContent() {
   } = useJobResumeGeneration(jobs);
   const { recommendBulk, recommendRunning, recommendProgress } = useRecommendResumes(patchJob);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
+  const [workerPoolBulkPending, setWorkerPoolBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
   const [applyAllCompanyRoles, setApplyAllCompanyRoles] = useState(readApplyAllCompanyRoles);
 
@@ -379,11 +382,23 @@ function JobSearchPageContent() {
           })();
         }}
         bidReadyPending={bidReadyBulkPending}
+        onMarkWorkerPool={() => {
+          void (async () => {
+            setWorkerPoolBulkPending(true);
+            try {
+              await markWorkerPoolBulk(selectedJobs);
+              clearSelection();
+            } finally {
+              setWorkerPoolBulkPending(false);
+            }
+          })();
+        }}
+        workerPoolPending={workerPoolBulkPending}
         onMoveToNew={() => {
           void (async () => {
             setMoveToNewBulkPending(true);
             try {
-              await clearBidReadyBulk(selectedJobs);
+              await moveToNewBulk(selectedJobs);
               clearSelection();
             } finally {
               setMoveToNewBulkPending(false);
@@ -485,6 +500,7 @@ function JobSearchPageContent() {
             isJobPending={isPending}
             onApply={(job) => void handleApply(job)}
             onMarkBidReady={(job) => void markBidReady(job)}
+            onMarkWorkerPool={(job) => void markWorkerPool(job)}
             onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
             onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
             onCancel={(job) => void cancelJobStatus(job)}

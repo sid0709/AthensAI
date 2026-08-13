@@ -42,7 +42,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
   const industries = Array.isArray(company.tags) ? company.tags.map(String) : isExternal ? [] : ["General"];
   const applierId = applier?._id != null ? normalizeId(applier._id) : null;
   const viewerStatus = typeof doc.viewerStatus === "string" ? doc.viewerStatus : null;
-  const status = ((viewerStatus && ["posted", "bid-ready", "bid-completed", "applied", "scheduled", "declined"].includes(viewerStatus)
+  const status = ((viewerStatus && ["posted", "bid-ready", "worker-pool", "bid-completed", "applied", "scheduled", "declined"].includes(viewerStatus)
     ? viewerStatus
     : !applierId
       ? "posted"

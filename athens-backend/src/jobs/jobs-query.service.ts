@@ -6,6 +6,7 @@ import {
   PAGE_SIZE_MAX,
   type JobStatusTab,
 } from './constants/job-list.constants';
+import { JOB_STATUS_STATES } from './constants/job-status-states.constants';
 import { CompanyCatalogTotalService } from './company-catalog-total.service';
 import { JobCatalogTotalService } from './job-catalog-total.service';
 import { JobStatusService } from './job-status.service';
@@ -106,12 +107,10 @@ export class JobsQueryService {
       // Align All/New with the attribute-filtered list total only when the
       // active tab is All. Status-scoped jobTotal must not rewrite badges —
       // e.g. New would become max(0, newTotal - tracked) → 0.
-      const tracked =
-        tabCounts['bid-ready'] +
-        tabCounts['bid-completed'] +
-        tabCounts.applied +
-        tabCounts.scheduled +
-        tabCounts.declined;
+      const tracked = JOB_STATUS_STATES.filter((state) => state !== 'posted').reduce(
+        (sum, state) => sum + (tabCounts[state] ?? 0),
+        0,
+      );
       tabCounts.all = filtered.jobTotal;
       tabCounts.posted = Math.max(0, filtered.jobTotal - tracked);
     }
