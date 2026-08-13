@@ -40,6 +40,8 @@ type JobSearchFilterPanelProps = {
   countsLoading?: boolean;
   /** Hide All/New/Applied status tabs (e.g. task pool always uses New/posted). */
   showStatusTabs?: boolean;
+  /** Worker pool tab is beta-only. */
+  showWorkerPoolTab?: boolean;
   /** Hide My Skills / Skill Extraction tools used only on Job Search. */
   showSkillsTools?: boolean;
 };
@@ -95,10 +97,14 @@ export function JobSearchFilterPanel({
   statusCounts,
   countsLoading = false,
   showStatusTabs = true,
+  showWorkerPoolTab = false,
   showSkillsTools = true,
 }: JobSearchFilterPanelProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [chipsOpen, setChipsOpen] = useState(true);
+  const statusTabs = showWorkerPoolTab
+    ? STATUS_TABS
+    : STATUS_TABS.filter((tab) => tab.id !== "worker-pool");
 
   const patch = (partial: Partial<JobSearchFilterState>) => onChange({ ...filters, ...partial });
   const attributeCount = countAttributeFilters(filters);
@@ -111,7 +117,7 @@ export function JobSearchFilterPanel({
         {/* Layer 1: status tabs */}
         {showStatusTabs ? (
           <div className="flex items-end gap-0.5 px-3 pt-1 scroll-x-only border-b border-border/60">
-            {STATUS_TABS.map((tab) => {
+            {statusTabs.map((tab) => {
               const active = filters.statusTab === tab.id;
               return (
                 <button
