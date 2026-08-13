@@ -6,7 +6,7 @@ import { API_BASE } from "@/lib/api-base";
 import { retryTransient } from "@/lib/transient-retry";
 import { mapDocToJob, normalizeId } from "../../../lib/job-adapters";
 import type { CompanyJobGroup, Job } from "../../../types";
-import { keepOnlyCompanyJob, removeCompanyJobs } from "../lib/companyGroupState";
+import { dropMatchingJobsById, keepOnlyCompanyJob, removeCompanyJobs } from "../lib/companyGroupState";
 import {
   extractRecommendSnapshot,
   mergeRecommendSnapshot,
@@ -454,12 +454,10 @@ export function useJobsList(
     const statusTab = debouncedFilters.statusTab;
     setRawGroups((previous) => {
       if (statusTab !== "all") {
-        const result = removeCompanyJobs(
-          previous,
-          (job) => idSet.has(job.id) || idSet.has(job.backendId || ""),
-        );
+        const result = dropMatchingJobsById(previous, ids);
         if (result.removedGroups) setTotal((value) => Math.max(0, value - result.removedGroups));
         if (result.removedJobs) setTotalJobs((value) => Math.max(0, value - result.removedJobs));
+        if (result.needsDirectoryRefresh) queueMicrotask(() => setRetryRevision((revision) => revision + 1));
         return result.groups;
       }
       return previous.map((group) => ({
@@ -469,7 +467,6 @@ export function useJobsList(
             ? { ...job, status: "applied" as const }
             : job,
         ),
-        matchingJobIds: group.matchingJobIds?.filter((id) => !idSet.has(id)),
       }));
     });
   }, [debouncedFilters.statusTab]);

@@ -76,16 +76,22 @@ export async function removeJobs(
   return parseJson(res);
 }
 
-/** Mark every other New role at a company as applied, keeping the given job ids. */
+/** Mark every other role at a company as applied, keeping the given job ids. */
 export async function applyOtherCompanyJobs(
   companyId: string,
   keepJobIds: string[],
   applierName: string,
+  options?: { includeQueued?: boolean },
 ): Promise<{ success?: boolean; appliedCount?: number; appliedIds?: string[]; error?: string }> {
   const res = await fetch(`${API_BASE}/jobs/company/apply-others`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ companyId, keepJobIds, applierName }),
+    body: JSON.stringify({
+      companyId,
+      keepJobIds,
+      applierName,
+      ...(options?.includeQueued ? { includeQueued: true } : {}),
+    }),
   });
   return parseJson(res);
 }

@@ -66,11 +66,22 @@ export async function rawInsertOne(
   collection: string,
   document: Prisma.InputJsonValue,
 ): Promise<void> {
-  await prisma.$runCommandRaw({
+  await rawInsertMany(prisma, collection, [document]);
+}
+
+/** Insert many documents via the Mongo wire protocol. */
+export async function rawInsertMany(
+  prisma: PrismaClient,
+  collection: string,
+  documents: Prisma.InputJsonValue[],
+): Promise<number> {
+  if (!documents.length) return 0;
+  const result = await prisma.$runCommandRaw({
     insert: collection,
-    documents: [toMongoJson(document)],
-    ordered: true,
+    documents: documents.map((document) => toMongoJson(document)),
+    ordered: false,
   });
+  return Number((result as { n?: number }).n ?? documents.length);
 }
 
 /** Update matching docs via the Mongo wire protocol. */

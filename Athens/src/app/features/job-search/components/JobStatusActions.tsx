@@ -8,6 +8,7 @@ type JobStatusActionsProps = {
   job: Job;
   pending?: boolean;
   onApply: () => void;
+  onMarkApplied?: () => void;
   onMarkBidReady?: () => void;
   onMarkWorkerPool?: () => void;
   onMarkScheduled: () => void;
@@ -87,10 +88,35 @@ function ApplyButton({
   );
 }
 
+function MarkAppliedButton({
+  pending,
+  onMarkApplied,
+  size,
+}: {
+  pending: boolean;
+  onMarkApplied: () => void;
+  size: "sm" | "default";
+}) {
+  return (
+    <Button
+      type="button"
+      size={size}
+      variant="outline"
+      disabled={pending}
+      onClick={onMarkApplied}
+      title="Mark as applied without opening the apply page"
+    >
+      {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+      Mark applied
+    </Button>
+  );
+}
+
 export function JobStatusActions({
   job,
   pending = false,
   onApply,
+  onMarkApplied,
   onMarkBidReady,
   onMarkWorkerPool,
   onMarkScheduled,
@@ -114,6 +140,9 @@ export function JobStatusActions({
             Worker pool
           </Button>
         ) : null}
+        {onMarkApplied ? (
+          <MarkAppliedButton pending={pending} onMarkApplied={onMarkApplied} size={size} />
+        ) : null}
         <ApplyButton
           pending={pending}
           onApply={onApply}
@@ -127,6 +156,9 @@ export function JobStatusActions({
   if (job.status === "bid-ready" || job.status === "worker-pool" || job.status === "bid-completed") {
     return (
       <>
+        {onMarkApplied ? (
+          <MarkAppliedButton pending={pending} onMarkApplied={onMarkApplied} size={size} />
+        ) : null}
         <ApplyButton
           pending={pending}
           onApply={onApply}

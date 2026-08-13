@@ -63,6 +63,7 @@ type CompanyJobGroupCardProps = {
   onToggleBookmark?: (id: string) => void;
   isJobPending?: (jobId: string) => boolean;
   onApply?: (job: Job) => void;
+  onMarkApplied?: (job: Job) => void;
   onMarkBidReady?: (job: Job) => void;
   onMarkWorkerPool?: (job: Job) => void;
   onMarkScheduled?: (job: Job) => void;
@@ -117,6 +118,7 @@ export function CompanyJobGroupCard({
   onToggleBookmark,
   isJobPending,
   onApply,
+  onMarkApplied,
   onMarkBidReady,
   onMarkWorkerPool,
   onMarkScheduled,
@@ -151,6 +153,7 @@ export function CompanyJobGroupCard({
         onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(activeJob.id) : undefined}
         statusPending={isJobPending?.(activeJob.id)}
         onApply={onApply ? () => onApply(activeJob) : undefined}
+        onMarkApplied={onMarkApplied ? () => onMarkApplied(activeJob) : undefined}
         onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(activeJob) : undefined}
         onMarkWorkerPool={onMarkWorkerPool ? () => onMarkWorkerPool(activeJob) : undefined}
         onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(activeJob) : undefined}

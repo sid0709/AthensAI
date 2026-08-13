@@ -1,5 +1,5 @@
 import React from "react";
-import { BookMarked, ClipboardList, Download, FileX, Layers, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
+import { BookMarked, CheckCircle2, ClipboardList, Download, FileX, Layers, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { Progress } from "../../../components/ui/progress";
@@ -18,6 +18,8 @@ type JobBulkActionsBarProps = {
   onRemove: () => void;
   onMarkBidReady?: () => void;
   bidReadyPending?: boolean;
+  onMarkApplied?: () => void;
+  markAppliedPending?: boolean;
   onMarkWorkerPool?: () => void;
   workerPoolPending?: boolean;
   onMoveToNew?: () => void;
@@ -52,6 +54,8 @@ export function JobBulkActionsBar({
   onRemove,
   onMarkBidReady,
   bidReadyPending = false,
+  onMarkApplied,
+  markAppliedPending = false,
   onMarkWorkerPool,
   workerPoolPending = false,
   onMoveToNew,
@@ -145,7 +149,7 @@ export function JobBulkActionsBar({
                 </label>
               </TooltipTrigger>
               <TooltipContent sideOffset={6}>
-                When you Apply a job, mark every other role at that company as applied
+                When you Apply or Mark applied, also mark every other role at that company as applied
               </TooltipContent>
             </Tooltip>
           </>
@@ -161,13 +165,42 @@ export function JobBulkActionsBar({
         ) : null}
 
         <div className="flex items-center gap-1.5 ml-auto">
+          {onMarkApplied ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onMarkApplied}
+              disabled={
+                loading
+                || totalSelected === 0
+                || markAppliedPending
+                || bidReadyPending
+                || workerPoolPending
+                || moveToNewPending
+              }
+              title={
+                applyAllCompanyRoles
+                  ? "Mark selected jobs as applied and mark other roles at those companies as applied"
+                  : "Mark selected jobs as applied without opening the apply page"
+              }
+            >
+              {markAppliedPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">Mark applied</span>
+              <span className="sm:hidden">Applied</span>
+            </Button>
+          ) : null}
           {onMarkBidReady ? (
             <Button
               variant="outline"
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMarkBidReady}
-              disabled={loading || totalSelected === 0 || bidReadyPending || workerPoolPending || moveToNewPending}
+              disabled={loading || totalSelected === 0 || bidReadyPending || workerPoolPending || moveToNewPending || markAppliedPending}
               title="Mark selected New jobs as Bid ready for Vendor Monitor"
             >
               {bidReadyPending ? (
@@ -184,7 +217,7 @@ export function JobBulkActionsBar({
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMarkWorkerPool}
-              disabled={loading || totalSelected === 0 || workerPoolPending || bidReadyPending || moveToNewPending}
+              disabled={loading || totalSelected === 0 || workerPoolPending || bidReadyPending || moveToNewPending || markAppliedPending}
               title={
                 applyAllCompanyRoles
                   ? "Move selected jobs to Worker pool and mark other roles at those companies as applied"
@@ -205,7 +238,7 @@ export function JobBulkActionsBar({
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMoveToNew}
-              disabled={loading || totalSelected === 0 || moveToNewPending || bidReadyPending || workerPoolPending}
+              disabled={loading || totalSelected === 0 || moveToNewPending || bidReadyPending || workerPoolPending || markAppliedPending}
               title="Move selected Bid ready or Worker pool jobs back to New"
             >
               {moveToNewPending ? (

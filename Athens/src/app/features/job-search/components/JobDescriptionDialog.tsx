@@ -42,6 +42,7 @@ type JobDescriptionDialogProps = {
   onOpenChange: (open: boolean) => void;
   statusPending?: boolean;
   onApply?: () => void;
+  onMarkApplied?: () => void;
   onMarkBidReady?: () => void;
   onMarkWorkerPool?: () => void;
   onMarkScheduled?: () => void;
@@ -108,6 +109,7 @@ export function JobDescriptionDialog({
   onOpenChange,
   statusPending = false,
   onApply,
+  onMarkApplied,
   onMarkBidReady,
   onMarkWorkerPool,
   onMarkScheduled,
@@ -337,6 +339,7 @@ export function JobDescriptionDialog({
                 job={displayJob}
                 pending={statusPending}
                 onApply={onApply}
+                onMarkApplied={onMarkApplied}
                 onMarkBidReady={onMarkBidReady}
                 onMarkWorkerPool={onMarkWorkerPool}
                 onMarkScheduled={() => onMarkScheduled?.()}

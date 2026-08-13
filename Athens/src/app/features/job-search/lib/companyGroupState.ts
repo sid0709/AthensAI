@@ -73,6 +73,59 @@ export function keepOnlyCompanyJob(
   return { groups: nextGroups, removedJobs };
 }
 
+/** Drop matching roles by id, including ids that are not hydrated on the card. */
+export function dropMatchingJobsById(
+  groups: CompanyJobGroup[],
+  appliedIds: string[],
+): CompanyGroupRemoval {
+  const idSet = new Set(appliedIds.map((id) => String(id || "").trim()).filter(Boolean));
+  if (!idSet.size) {
+    return { groups, removedGroups: 0, removedJobs: 0, needsDirectoryRefresh: false };
+  }
+
+  let removedGroups = 0;
+  let removedJobs = 0;
+  let needsDirectoryRefresh = false;
+
+  const nextGroups = groups.flatMap((group) => {
+    const matchingJobIds = group.matchingJobIds ?? [];
+    const nextMatchingIds = matchingJobIds.filter((id) => !idSet.has(id));
+    const droppedMatch = matchingJobIds.length
+      ? matchingJobIds.length - nextMatchingIds.length
+      : 0;
+    const jobs = group.jobs.filter(
+      (job) => !idSet.has(job.id) && !idSet.has(job.backendId || ""),
+    );
+    const droppedLoaded = group.jobs.length - jobs.length;
+    if (!droppedMatch && !droppedLoaded) return [group];
+
+    const dropped = Math.max(droppedMatch, droppedLoaded);
+    removedJobs += dropped;
+    const matchingJobCount = Math.max(
+      0,
+      (group.matchingJobCount ?? group.jobs.length) - dropped,
+    );
+    if (!jobs.length && matchingJobCount === 0) {
+      removedGroups += 1;
+      return [];
+    }
+    if (!jobs.length) needsDirectoryRefresh = true;
+
+    return [{
+      ...group,
+      jobs,
+      matchingJobCount,
+      matchingJobIds: group.matchingJobIds ? nextMatchingIds : group.matchingJobIds,
+      memberOrder: group.memberOrder
+        ? Object.fromEntries(jobs.map((job) => [job.id, group.memberOrder?.[job.id] ?? 0]))
+        : undefined,
+      nextMemberOffset: matchingJobCount > jobs.length ? jobs.length : null,
+    }];
+  });
+
+  return { groups: nextGroups, removedGroups, removedJobs, needsDirectoryRefresh };
+}
+
 export function removeCompanyJobs(
   groups: CompanyJobGroup[],
   shouldRemove: (job: Job) => boolean,

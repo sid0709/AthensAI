@@ -62,6 +62,7 @@ type JobCardProps = {
   onToggleBookmark?: () => void;
   statusPending?: boolean;
   onApply?: () => void;
+  onMarkApplied?: () => void;
   onMarkBidReady?: () => void;
   onMarkWorkerPool?: () => void;
   onMarkScheduled?: () => void;
@@ -113,6 +114,7 @@ export function JobCard({
   onToggleBookmark,
   statusPending = false,
   onApply,
+  onMarkApplied,
   onMarkBidReady,
   onMarkWorkerPool,
   onMarkScheduled,
@@ -371,6 +373,7 @@ export function JobCard({
               job={job}
               pending={statusPending}
               onApply={() => onApply?.()}
+              onMarkApplied={onMarkApplied ? () => onMarkApplied() : undefined}
               onMarkBidReady={onMarkBidReady ? () => onMarkBidReady() : undefined}
               onMarkWorkerPool={onMarkWorkerPool ? () => onMarkWorkerPool() : undefined}
               onMarkScheduled={() => onMarkScheduled?.()}
@@ -388,6 +391,7 @@ export function JobCard({
         onOpenChange={setJdOpen}
         statusPending={statusPending}
         onApply={() => onApply?.()}
+        onMarkApplied={onMarkApplied ? () => onMarkApplied() : undefined}
         onMarkBidReady={onMarkBidReady ? () => onMarkBidReady() : undefined}
         onMarkWorkerPool={onMarkWorkerPool ? () => onMarkWorkerPool() : undefined}
         onMarkScheduled={() => onMarkScheduled?.()}

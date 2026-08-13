@@ -22,6 +22,7 @@ type JobListViewProps = {
   onToggleBookmark?: (id: string) => void;
   isJobPending?: (jobId: string) => boolean;
   onApply?: (job: Job) => void;
+  onMarkApplied?: (job: Job) => void;
   onMarkBidReady?: (job: Job) => void;
   onMarkWorkerPool?: (job: Job) => void;
   onMarkScheduled?: (job: Job) => void;
@@ -49,6 +50,7 @@ export function JobListView({
   onToggleBookmark,
   isJobPending,
   onApply,
+  onMarkApplied,
   onMarkBidReady,
   onMarkWorkerPool,
   onMarkScheduled,
@@ -95,6 +97,7 @@ export function JobListView({
         onToggleBookmark={onToggleBookmark}
         isJobPending={isJobPending}
         onApply={onApply}
+        onMarkApplied={onMarkApplied}
         onMarkBidReady={onMarkBidReady}
         onMarkWorkerPool={onMarkWorkerPool}
         onMarkScheduled={onMarkScheduled}
