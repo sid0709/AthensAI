@@ -36,6 +36,7 @@ type AthensSelectProps = {
   size?: "sm" | "default";
   className?: string;
   disabled?: boolean;
+  tone?: "default" | "lens";
 };
 
 export function AthensSelect({
@@ -49,7 +50,9 @@ export function AthensSelect({
   size = "default",
   className,
   disabled,
+  tone = "default",
 }: AthensSelectProps) {
+  const lens = tone === "lens";
   return (
     <FormField label={label} hint={hint} error={error} className={className}>
       <Select
@@ -59,19 +62,23 @@ export function AthensSelect({
       >
         <SelectTrigger
           size={size}
-          className={cn(
-            athensSelectTriggerClass,
-            "border-border bg-secondary shadow-none focus-visible:ring-0 focus-visible:border-primary/40",
-            size === "sm" && "min-h-9 h-9 text-xs",
-          )}
+          className={
+            lens
+              ? "athens-select-trigger"
+              : cn(
+                  athensSelectTriggerClass,
+                  "border-border bg-secondary shadow-none focus-visible:ring-0 focus-visible:border-primary/40",
+                  size === "sm" && "min-h-9 h-9 text-xs",
+                )
+          }
         >
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
-        <SelectContent className="rounded-xl border-border">
+        <SelectContent className={lens ? "athens-select-content" : "rounded-xl border-border"}>
           {options.map((opt) => {
             const itemValue = toSelectValue(opt.value);
             return (
-              <SelectItem key={itemValue} value={itemValue} className="rounded-lg">
+              <SelectItem key={itemValue} value={itemValue} className={lens ? undefined : "rounded-lg"}>
                 {opt.label}
               </SelectItem>
             );

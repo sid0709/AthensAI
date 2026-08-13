@@ -1,19 +1,32 @@
 import React from "react";
-import { BookMarked, CheckCircle2, ClipboardList, Download, FileX, Layers, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
-import { Button } from "../../../components/ui/button";
+import {
+  BookMarked,
+  CheckCircle2,
+  ChevronDown,
+  ClipboardList,
+  Download,
+  FileX,
+  Layers,
+  Loader2,
+  Sparkles,
+  Trash2,
+  Undo2,
+} from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
-import { Progress } from "../../../components/ui/progress";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip";
 import { cn } from "../../../lib/utils";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
+import type { JobWorkerPoolProgress } from "../hooks/useJobWorkerPoolTask";
 import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
 
 type JobBulkActionsBarProps = {
-  selectedOnPage: number;
-  pageCount: number;
   totalSelected: number;
-  allOnPageSelected: boolean;
-  onToggleSelectAll: () => void;
   onExport: () => void;
   onRemove: () => void;
   onMarkBidReady?: () => void;
@@ -22,6 +35,9 @@ type JobBulkActionsBarProps = {
   markAppliedPending?: boolean;
   onMarkWorkerPool?: () => void;
   workerPoolPending?: boolean;
+  workerPoolStopping?: boolean;
+  workerPoolProgress?: JobWorkerPoolProgress | null;
+  onStopWorkerPool?: () => void;
   onMoveToNew?: () => void;
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
@@ -30,7 +46,6 @@ type JobBulkActionsBarProps = {
   onStopRemoveResumes?: () => void;
   onRecommendResumes?: () => void;
   applyAllCompanyRoles?: boolean;
-  onApplyAllCompanyRolesChange?: (enabled: boolean) => void;
   resumeGenerating?: boolean;
   resumeStopping?: boolean;
   resumeRemoving?: boolean;
@@ -44,12 +59,91 @@ type JobBulkActionsBarProps = {
   className?: string;
 };
 
-export function JobBulkActionsBar({
+type JobPageSelectionControlsProps = {
+  selectedOnPage: number;
+  pageCount: number;
+  allOnPageSelected: boolean;
+  onToggleSelectAll: () => void;
+  applyAllCompanyRoles?: boolean;
+  onApplyAllCompanyRolesChange?: (enabled: boolean) => void;
+  loading?: boolean;
+};
+
+export function JobPageSelectionControls({
   selectedOnPage,
   pageCount,
-  totalSelected,
   allOnPageSelected,
   onToggleSelectAll,
+  applyAllCompanyRoles = false,
+  onApplyAllCompanyRolesChange,
+  loading = false,
+}: JobPageSelectionControlsProps) {
+  const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
+  return (
+    <div className="athens-pager-select">
+      <label className={cn("athens-select-label", loading ? "cursor-wait" : "cursor-pointer")}>
+        <Checkbox
+          checked={
+            allOnPageSelected && pageCount > 0
+              ? true
+              : indeterminate
+                ? "indeterminate"
+                : false
+          }
+          onCheckedChange={onToggleSelectAll}
+          disabled={loading}
+          aria-label="Select all jobs on this page"
+        />
+        <span>
+          Select page <strong>{loading ? "—/—" : `${selectedOnPage}/${pageCount}`}</strong>
+        </span>
+      </label>
+      {onApplyAllCompanyRolesChange ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <label className={cn("athens-select-label", loading ? "cursor-wait" : "cursor-pointer")}>
+              <Checkbox
+                checked={applyAllCompanyRoles}
+                onCheckedChange={(checked) => onApplyAllCompanyRolesChange(checked === true)}
+                disabled={loading}
+                aria-label="Apply all company roles"
+              />
+              <span>
+                <span className="hidden sm:inline">Apply all company roles</span>
+                <span className="sm:hidden">Company apply</span>
+              </span>
+            </label>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={6}>
+            When you Apply or Mark applied, also mark every other role at that company as applied
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+    </div>
+  );
+}
+
+type DestinationItem = {
+  key: string;
+  label: string;
+  icon: React.ElementType;
+  onClick: () => void;
+  pending: boolean;
+  title: string;
+};
+
+type ResumeItem = {
+  key: string;
+  label: string;
+  icon: React.ElementType;
+  onClick: () => void;
+  disabled: boolean;
+  title: string;
+  busy: boolean;
+};
+
+export function JobBulkActionsBar({
+  totalSelected,
   onExport,
   onRemove,
   onMarkBidReady,
@@ -58,6 +152,9 @@ export function JobBulkActionsBar({
   markAppliedPending = false,
   onMarkWorkerPool,
   workerPoolPending = false,
+  workerPoolStopping = false,
+  workerPoolProgress,
+  onStopWorkerPool,
   onMoveToNew,
   moveToNewPending = false,
   onGenerateResumes,
@@ -66,7 +163,6 @@ export function JobBulkActionsBar({
   onStopRemoveResumes,
   onRecommendResumes,
   applyAllCompanyRoles = false,
-  onApplyAllCompanyRolesChange,
   resumeGenerating = false,
   resumeStopping = false,
   resumeRemoving = false,
@@ -79,322 +175,289 @@ export function JobBulkActionsBar({
   embedded = false,
   className,
 }: JobBulkActionsBarProps) {
-  const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
-  const progressPct =
-    resumeProgress && resumeProgress.total > 0
-      ? Math.round(
-          ((resumeProgress.done + (resumeProgress.partial ?? 0)) / resumeProgress.total) * 100,
-        )
-      : recommendProgress && recommendProgress.total > 0
-        ? Math.round((recommendProgress.done / recommendProgress.total) * 100)
-        : 0;
   const hasSelection = totalSelected > 0;
+  const busy = resumeGenerating || resumeRemoving || recommendRunning || workerPoolPending;
+  const showDock = hasSelection || busy;
+  const activeProgress = workerPoolPending && workerPoolProgress
+    ? workerPoolProgress
+    : (resumeGenerating || resumeRemoving) && resumeProgress
+      ? resumeProgress
+      : recommendRunning && recommendProgress
+        ? recommendProgress
+        : null;
+  const progressPct =
+    workerPoolPending && workerPoolProgress && workerPoolProgress.total > 0
+      ? Math.round((workerPoolProgress.done / workerPoolProgress.total) * 100)
+      : resumeProgress && (resumeGenerating || resumeRemoving) && resumeProgress.total > 0
+        ? Math.round(
+            ((resumeProgress.done + (resumeProgress.partial ?? 0)) / resumeProgress.total) * 100,
+          )
+        : recommendProgress && recommendProgress.total > 0
+          ? Math.round((recommendProgress.done / recommendProgress.total) * 100)
+          : 0;
+  const destinationLocked =
+    loading || markAppliedPending || bidReadyPending || moveToNewPending;
+  const resumeLocked = loading || recommendRunning || resumeGenerating || resumeRemoving;
+
+  const destinations = [
+    onMarkApplied
+      ? {
+          key: "applied",
+          label: "Applied",
+          icon: CheckCircle2,
+          onClick: onMarkApplied,
+          pending: markAppliedPending,
+          title: applyAllCompanyRoles
+            ? "Mark selected jobs as applied and mark other roles at those companies as applied"
+            : "Mark selected jobs as applied without opening the apply page",
+        }
+      : null,
+    onMarkBidReady
+      ? {
+          key: "bid-ready",
+          label: "Bid ready",
+          icon: ClipboardList,
+          onClick: onMarkBidReady,
+          pending: bidReadyPending,
+          title: "Mark selected New jobs as Bid ready for Vendor Monitor",
+        }
+      : null,
+    onMarkWorkerPool
+      ? {
+          key: "worker-pool",
+          label: workerPoolPending
+            ? workerPoolStopping
+              ? "Stopping…"
+              : workerPoolProgress
+                ? `${workerPoolProgress.done}/${workerPoolProgress.total}`
+                : "Queuing…"
+            : "Worker pool",
+          icon: Layers,
+          onClick: workerPoolPending ? () => onStopWorkerPool?.() : onMarkWorkerPool,
+          pending: workerPoolPending,
+          title: workerPoolPending
+            ? "Stop moving jobs to Worker pool"
+            : applyAllCompanyRoles
+              ? "Move selected jobs to Worker pool and mark other roles at those companies as applied"
+              : "Move selected New jobs to Worker pool for Oak",
+        }
+      : null,
+    onMoveToNew
+      ? {
+          key: "new",
+          label: "New",
+          icon: Undo2,
+          onClick: onMoveToNew,
+          pending: moveToNewPending,
+          title: "Move selected Bid ready or Worker pool jobs back to New",
+        }
+      : null,
+  ].filter((item): item is DestinationItem => item != null);
+
+  const generateLabel = resumeGenerating
+    ? resumeStopping
+      ? "Stopping…"
+      : resumeProgress
+        ? `${resumeProgress.done}/${resumeProgress.total}${resumeProgress.active > 0 ? ` · ${resumeProgress.active} active` : ""} · Stop`
+        : "Stop"
+    : "Generate";
+
+  const removeResumeLabel = resumeRemoving
+    ? resumeRemovalStopping
+      ? "Stopping…"
+      : resumeProgress?.phase === "finalizing"
+        ? "Finalizing…"
+        : resumeProgress
+          ? `${resumeProgress.done}/${resumeProgress.total} · Stop`
+          : "Stop"
+    : "Remove résumés";
+
+  const recommendLabel =
+    recommendRunning && recommendProgress
+      ? `${recommendProgress.done}/${recommendProgress.total}`
+      : "Recommend";
+
+  const resumeItems = [
+    onRecommendResumes
+      ? {
+          key: "recommend",
+          label: recommendLabel,
+          icon: recommendRunning ? Loader2 : BookMarked,
+          onClick: onRecommendResumes,
+          disabled: resumeLocked || !hasSelection,
+          title: "Recommend Library resumes for selected Bid ready or Worker pool jobs using each job description",
+          busy: recommendRunning,
+        }
+      : null,
+    onGenerateResumes
+      ? {
+          key: "generate",
+          label: generateLabel,
+          icon: resumeGenerating ? Loader2 : Sparkles,
+          onClick: resumeGenerating ? () => onStopGenerateResumes?.() : () => onGenerateResumes(),
+          disabled: resumeGenerating
+            ? resumeStopping || !onStopGenerateResumes
+            : loading || !hasSelection || resumeRemoving,
+          title: resumeGenerating
+            ? "Stop résumé generation immediately"
+            : "Generate tailored résumés for the selected jobs (max 12 at a time)",
+          busy: resumeGenerating,
+        }
+      : null,
+    onRemoveResumes
+      ? {
+          key: "remove-resumes",
+          label: removeResumeLabel,
+          icon: resumeRemoving ? Loader2 : FileX,
+          onClick: resumeRemoving ? () => onStopRemoveResumes?.() : () => onRemoveResumes(),
+          disabled: resumeRemoving
+            ? resumeRemovalStopping || !onStopRemoveResumes
+            : !hasSelection || loading || !hasSelectedResumes || resumeGenerating,
+          title: resumeRemoving
+            ? "Stop résumé removal immediately"
+            : "Remove generated résumés for the selected jobs (jobs stay in your list)",
+          busy: resumeRemoving,
+        }
+      : null,
+  ].filter((item): item is ResumeItem => item != null);
+
+  const showResumeProgress = (resumeGenerating || resumeRemoving) && resumeProgress;
+  const showWorkerPoolProgress = workerPoolPending && workerPoolProgress;
+  const progressLabel = showWorkerPoolProgress && workerPoolProgress
+    ? `Worker pool ${workerPoolProgress.done}/${workerPoolProgress.total}`
+    : showResumeProgress && resumeProgress
+      ? `${resumeRemoving ? "Removing" : "Résumés"} ${resumeProgress.done}/${resumeProgress.total}${resumeProgress.active > 0 ? ` · ${resumeProgress.active} active` : ""}`
+      : null;
+
+  if (!showDock) return null;
 
   return (
-    <div className={cn("space-y-0", className)}>
-      <div
-        aria-busy={loading || resumeGenerating || resumeRemoving || recommendRunning}
-        className={cn(
-          "flex items-center gap-3 px-3 py-2.5",
-          !embedded && "rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-sm",
-          embedded && "border-b border-border/40",
-          hasSelection && "bg-primary/[0.02]",
-        )}
-      >
-        <label className={cn("inline-flex items-center gap-2.5 select-none shrink-0", loading ? "cursor-wait" : "cursor-pointer")}>
-          <Checkbox
-            checked={
-              allOnPageSelected && pageCount > 0
-                ? true
-                : indeterminate
-                  ? "indeterminate"
-                  : false
-            }
-            onCheckedChange={onToggleSelectAll}
-            disabled={loading}
-            aria-label="Select all jobs on this page"
-          />
-          <span className="text-sm whitespace-nowrap">
-            <span className="text-muted-foreground">Select page</span>
-            <span className="mx-1.5 text-border">·</span>
-            <span className="font-semibold text-foreground tabular-nums">
-              {loading ? "—/—" : `${selectedOnPage}/${pageCount}`}
+    <div className={cn(!embedded && "athens-surface", className)}>
+      <div aria-busy={loading || busy} className="athens-dock-row">
+        <div className="athens-dock">
+            <span className="athens-count">
+              {totalSelected} selected
             </span>
-            {totalSelected > selectedOnPage && (
-              <span className="ml-1.5 text-xs font-medium text-primary">
-                ({totalSelected} total)
-              </span>
-            )}
-          </span>
-        </label>
 
-        {onApplyAllCompanyRolesChange ? (
-          <>
-            <span className="h-4 w-px bg-border/80 shrink-0" aria-hidden />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <label className={cn("inline-flex items-center gap-2 select-none shrink-0", loading ? "cursor-wait" : "cursor-pointer")}>
-                  <Checkbox
-                    checked={applyAllCompanyRoles}
-                    onCheckedChange={(checked) => onApplyAllCompanyRolesChange(checked === true)}
-                    disabled={loading}
-                    aria-label="Apply all company roles"
-                  />
-                  <span className="text-sm whitespace-nowrap">
-                    <span className={applyAllCompanyRoles ? "font-medium text-foreground" : "text-muted-foreground"}>
-                      <span className="hidden sm:inline">Apply all company roles</span>
-                      <span className="sm:hidden">Company apply</span>
-                    </span>
-                  </span>
-                </label>
-              </TooltipTrigger>
-              <TooltipContent sideOffset={6}>
-                When you Apply or Mark applied, also mark every other role at that company as applied
-              </TooltipContent>
-            </Tooltip>
-          </>
-        ) : null}
+            {destinations.length > 0 ? (
+              <div className="athens-segment" role="group" aria-label="Move selected jobs">
+                {destinations.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <Tooltip key={item.key}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className={item.pending ? "is-busy" : undefined}
+                          onClick={item.onClick}
+                          disabled={
+                            item.key === "worker-pool"
+                              ? loading
+                                || workerPoolStopping
+                                || (workerPoolPending ? !onStopWorkerPool : !hasSelection)
+                              : destinationLocked || !hasSelection
+                          }
+                          aria-label={item.label}
+                          title={item.title}
+                        >
+                          {item.pending ? (
+                            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Icon size={16} aria-hidden="true" />
+                          )}
+                          <span className="athens-segment__label">{item.label}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent sideOffset={6}>{item.title}</TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </div>
+            ) : null}
 
-        {(resumeGenerating || resumeRemoving) && resumeProgress ? (
-          <div className="hidden sm:flex flex-1 min-w-[6rem] max-w-xs items-center gap-2">
-            <Progress value={progressPct} className="h-1.5 flex-1" />
-            <span className="text-[11px] tabular-nums text-muted-foreground whitespace-nowrap">
-              {progressPct}%
-            </span>
-          </div>
-        ) : null}
+            {progressLabel && activeProgress ? (
+              <div className="athens-progress">
+                <div className="athens-progress__meta">
+                  <span>{progressLabel}</span>
+                  <span>{progressPct}%</span>
+                </div>
+                <div className="athens-progress__track">
+                  <div className="athens-progress__bar" style={{ width: `${progressPct}%` }} />
+                </div>
+              </div>
+            ) : null}
 
-        <div className="flex items-center gap-1.5 ml-auto">
-          {onMarkApplied ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5"
-              onClick={onMarkApplied}
-              disabled={
-                loading
-                || totalSelected === 0
-                || markAppliedPending
-                || bidReadyPending
-                || workerPoolPending
-                || moveToNewPending
-              }
-              title={
-                applyAllCompanyRoles
-                  ? "Mark selected jobs as applied and mark other roles at those companies as applied"
-                  : "Mark selected jobs as applied without opening the apply page"
-              }
-            >
-              {markAppliedPending ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              ) : (
-                <CheckCircle2 className="w-3.5 h-3.5" />
-              )}
-              <span className="hidden sm:inline">Mark applied</span>
-              <span className="sm:hidden">Applied</span>
-            </Button>
-          ) : null}
-          {onMarkBidReady ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5"
-              onClick={onMarkBidReady}
-              disabled={loading || totalSelected === 0 || bidReadyPending || workerPoolPending || moveToNewPending || markAppliedPending}
-              title="Mark selected New jobs as Bid ready for Vendor Monitor"
-            >
-              {bidReadyPending ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              ) : (
-                <ClipboardList className="w-3.5 h-3.5" />
-              )}
-              <span className="hidden sm:inline">Bid ready</span>
-            </Button>
-          ) : null}
-          {onMarkWorkerPool ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5"
-              onClick={onMarkWorkerPool}
-              disabled={loading || totalSelected === 0 || workerPoolPending || bidReadyPending || moveToNewPending || markAppliedPending}
-              title={
-                applyAllCompanyRoles
-                  ? "Move selected jobs to Worker pool and mark other roles at those companies as applied"
-                  : "Move selected New jobs to Worker pool for Oak"
-              }
-            >
-              {workerPoolPending ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              ) : (
-                <Layers className="w-3.5 h-3.5" />
-              )}
-              <span className="hidden sm:inline">Worker pool</span>
-            </Button>
-          ) : null}
-          {onMoveToNew ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5"
-              onClick={onMoveToNew}
-              disabled={loading || totalSelected === 0 || moveToNewPending || bidReadyPending || workerPoolPending || markAppliedPending}
-              title="Move selected Bid ready or Worker pool jobs back to New"
-            >
-              {moveToNewPending ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              ) : (
-                <Undo2 className="w-3.5 h-3.5" />
-              )}
-              <span className="hidden sm:inline">Move to New</span>
-            </Button>
-          ) : null}
-          {onRecommendResumes ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5"
-              onClick={onRecommendResumes}
-              disabled={
-                loading
-                || totalSelected === 0
-                || recommendRunning
-                || resumeGenerating
-                || resumeRemoving
-              }
-              title="Recommend Library resumes for selected Bid ready or Worker pool jobs using each job description"
-            >
-              {recommendRunning ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              ) : (
-                <BookMarked className="w-3.5 h-3.5" />
-              )}
-              <span className="hidden sm:inline">
-                {recommendRunning && recommendProgress
-                  ? `${recommendProgress.done}/${recommendProgress.total}`
-                  : "Recommend resumes"}
-              </span>
-              <span className="sm:hidden">Recommend</span>
-            </Button>
-          ) : null}
-          {onGenerateResumes ? (
-            resumeGenerating ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 text-amber-700 border-amber-200 hover:bg-amber-50 hover:text-amber-800"
-                onClick={onStopGenerateResumes}
-                disabled={resumeStopping}
-                title="Stop résumé generation immediately"
+            {resumeItems.length > 0 ? (
+              <>
+                <div className="athens-cluster">
+                  {resumeItems.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className="athens-btn"
+                        onClick={item.onClick}
+                        disabled={item.disabled}
+                        title={item.title}
+                      >
+                        <Icon size={16} className={item.busy ? "animate-spin" : undefined} aria-hidden="true" />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="athens-cluster-menu">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button type="button" className="athens-btn" disabled={loading && !busy}>
+                        {busy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+                        Résumés
+                        <ChevronDown size={14} aria-hidden="true" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {resumeItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <DropdownMenuItem
+                            key={item.key}
+                            disabled={item.disabled}
+                            onSelect={item.onClick}
+                          >
+                            <Icon size={16} className={item.busy ? "animate-spin" : undefined} aria-hidden="true" />
+                            {item.label}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </>
+            ) : null}
+
+            <div className="athens-dock-trailing">
+              <button
+                type="button"
+                className="athens-btn"
+                onClick={onExport}
+                disabled={loading || !hasSelection}
               >
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                <span className="tabular-nums whitespace-nowrap text-xs sm:text-sm">
-                  {resumeStopping ? (
-                    "Stopping…"
-                  ) : resumeProgress ? (
-                    <>
-                      <span className="sm:hidden">
-                        {resumeProgress.done}/{resumeProgress.total}
-                      </span>
-                      <span className="hidden sm:inline">
-                        {resumeProgress.done}/{resumeProgress.total}
-                        {resumeProgress.active > 0 ? ` · ${resumeProgress.active} active` : ""}
-                        {" · Stop"}
-                      </span>
-                    </>
-                  ) : (
-                    "Stop"
-                  )}
-                </span>
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5"
-                onClick={onGenerateResumes}
-                disabled={loading || totalSelected === 0 || resumeRemoving}
-                title="Generate tailored résumés for the selected jobs (max 12 at a time)"
+                <Download size={16} aria-hidden="true" />
+                Export
+              </button>
+              <button
+                type="button"
+                className="athens-btn-danger"
+                onClick={onRemove}
+                disabled={loading || !hasSelection}
               >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Generate résumés</span>
-                <span className="sm:hidden">Generate</span>
-              </Button>
-            )
-          ) : null}
-          {onRemoveResumes ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className={cn(
-                "h-8 gap-1.5",
-                resumeRemoving && "text-amber-700 border-amber-200 hover:bg-amber-50 hover:text-amber-800",
-              )}
-              onClick={resumeRemoving ? onStopRemoveResumes : onRemoveResumes}
-              disabled={resumeRemoving
-                ? resumeRemovalStopping || !onStopRemoveResumes
-                : totalSelected === 0 || loading || !hasSelectedResumes || resumeGenerating}
-              title={resumeRemoving
-                ? "Stop résumé removal immediately"
-                : "Remove generated résumés for the selected jobs (jobs stay in your list)"}
-            >
-              {resumeRemoving ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                  <span className="tabular-nums whitespace-nowrap text-xs sm:text-sm">
-                    {resumeRemovalStopping
-                      ? "Stopping…"
-                      : resumeProgress?.phase === "finalizing"
-                      ? "Finalizing…"
-                      : resumeProgress
-                        ? `${resumeProgress.done}/${resumeProgress.total} · Stop`
-                        : "Stop"}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <FileX className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Remove résumés</span>
-                  <span className="sm:hidden">Résumés</span>
-                </>
-              )}
-            </Button>
-          ) : null}
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5"
-            onClick={onExport}
-            disabled={loading || totalSelected === 0}
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Export</span>
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700"
-            onClick={onRemove}
-            disabled={loading || totalSelected === 0}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Remove</span>
-          </Button>
+                <Trash2 size={16} aria-hidden="true" />
+                Remove
+              </button>
+            </div>
         </div>
       </div>
-
-      {resumeGenerating && resumeProgress ? (
-        <div className="sm:hidden px-3 pb-2">
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
-            <span>
-              Résumés {resumeProgress.done}/{resumeProgress.total}
-              {resumeProgress.active > 0 ? ` · ${resumeProgress.active} active` : ""}
-            </span>
-            <span className="tabular-nums">{progressPct}%</span>
-          </div>
-          <Progress value={progressPct} className="h-1" />
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -271,7 +271,7 @@ export function SkillGraphCanvas({
         a > 0.08;
       if (showLabel && globalScale > 0.32) {
         const fontSize = Math.max(9, (10 + (isHighlyActivated ? 4 : 0) + a * 3) / globalScale);
-        ctx.font = `${isHighlyActivated || isSeed ? "600 " : ""}${fontSize}px Figtree, system-ui, sans-serif`;
+        ctx.font = `${isHighlyActivated || isSeed ? "600 " : ""}${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.fillStyle = isHighlyActivated ? palette.text : palette.text;

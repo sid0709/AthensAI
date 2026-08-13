@@ -1,6 +1,7 @@
 export const BACKGROUND_TASK_TYPES = {
   MAIL_AI_LABEL: 'mail_ai_label',
   RESUME_GENERATION: 'resume_generation',
+  JOB_WORKER_POOL: 'job_worker_pool',
 } as const;
 
 export type BackgroundTaskType =
@@ -20,6 +21,7 @@ export type BackgroundTaskStatus =
   (typeof BACKGROUND_TASK_STATUSES)[keyof typeof BACKGROUND_TASK_STATUSES];
 
 export const MAIL_AI_LABEL_MAX_IDS = 50;
+export const JOB_WORKER_POOL_MAX_IDS = 150;
 
 export const WORKER_HEARTBEAT_MS = 5_000;
 export const WORKER_LEASE_MS = 60_000;

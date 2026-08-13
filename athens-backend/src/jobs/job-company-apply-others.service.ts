@@ -93,14 +93,14 @@ export class JobCompanyApplyOthersService {
       .slice(0, MAX_APPLY);
     if (!ids.length) {
       const rows = await this.prisma.job.findMany({
-        where: { companyId, NOT: { sourceCatalog: 'external' } },
+        where: { companyId },
         select: { id: true },
         take: MAX_APPLY,
       });
       return rows.map((row) => row.id).filter((id) => !keep.has(id));
     }
     const rows = await this.prisma.job.findMany({
-      where: { id: { in: ids }, NOT: { sourceCatalog: 'external' } },
+      where: { id: { in: ids } },
       select: { id: true },
     });
     return rows.map((row) => row.id);

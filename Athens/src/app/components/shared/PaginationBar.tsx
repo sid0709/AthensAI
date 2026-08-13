@@ -1,4 +1,5 @@
 import React from "react";
+import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import {
   Pagination,
   PaginationContent,
@@ -10,7 +11,6 @@ import {
 } from "../ui/pagination";
 import { cn } from "../../lib/utils";
 import { AthensSelect } from "../forms";
-import { Loader2 } from "lucide-react";
 
 type PaginationBarProps = {
   page: number;
@@ -28,6 +28,7 @@ type PaginationBarProps = {
   unitLabel?: string;
   secondaryTotal?: number | null;
   secondaryLabel?: string;
+  tone?: "default" | "lens";
 };
 
 function pageNumbers(current: number, total: number): (number | "ellipsis")[] {
@@ -58,6 +59,7 @@ export function PaginationBar({
   unitLabel = "results",
   secondaryTotal,
   secondaryLabel = "matching jobs",
+  tone = "default",
 }: PaginationBarProps) {
   const totalPages = total === null ? null : Math.max(1, Math.ceil(total / pageSize));
   const showingCount =
@@ -66,6 +68,22 @@ export function PaginationBar({
   const end = showingCount === 0 ? 0 : start + showingCount - 1;
   const pages = loading || totalPages === null ? [] : pageNumbers(page, totalPages);
   const canGoNext = !loading && (totalPages === null ? hasMore : page < totalPages);
+  const fullSummary =
+    total === null
+      ? `${showingCount} loaded · Page ${page}`
+      : total === 0 && showingCount === 0
+        ? "No results"
+        : `Showing ${showingCount} of ${total.toLocaleString()} ${unitLabel}${
+            secondaryTotal == null ? "" : ` · ${Number(secondaryTotal).toLocaleString()} ${secondaryLabel}`
+          } · Page ${page} / ${Math.max(1, totalPages ?? 1)}`;
+  const lensSummary =
+    total === null
+      ? `${showingCount} loaded`
+      : total === 0 && showingCount === 0
+        ? "No results"
+        : `${showingCount.toLocaleString()} / ${total.toLocaleString()}${
+            secondaryTotal == null ? "" : ` · ${Number(secondaryTotal).toLocaleString()} jobs`
+          }`;
 
   return (
     <div
@@ -79,23 +97,28 @@ export function PaginationBar({
       )}
     >
       <div className="flex items-center gap-4 flex-wrap">
-        <p className="text-sm text-muted-foreground whitespace-nowrap">
+        <p
+          className="text-sm text-muted-foreground whitespace-nowrap"
+          title={!loading && tone === "lens" && detailed ? fullSummary : undefined}
+        >
           {loading ? (
             <span className="inline-flex items-center gap-2" role="status" aria-live="polite">
               <Loader2 className="size-3.5 animate-spin" aria-hidden />
               Loading results…
             </span>
-          ) : total === null
-            ? `${showingCount} loaded · Page ${page}`
-            : total === 0 && showingCount === 0
-              ? "No results"
-            : detailed
-              ? `Showing ${showingCount} of ${total.toLocaleString()} ${unitLabel}${secondaryTotal == null ? "" : ` · ${Number(secondaryTotal).toLocaleString()} ${secondaryLabel}`} · Page ${page} / ${Math.max(1, totalPages ?? 1)}`
-              : `${start}–${end} of ${total}`}
+          ) : tone === "lens" && detailed
+            ? lensSummary
+            : total === null
+              ? `${showingCount} loaded · Page ${page}`
+              : total === 0 && showingCount === 0
+                ? "No results"
+              : detailed
+                ? fullSummary
+                : `${start}–${end} of ${total}`}
         </p>
         {onPageSizeChange && (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Per page</span>
+            <span className={tone === "lens" ? "athens-eyebrow" : "text-xs font-bold text-muted-foreground uppercase tracking-wide"}>Per page</span>
             <AthensSelect
               value={String(pageSize)}
               onChange={(v) => onPageSizeChange(Number(v))}
@@ -103,11 +126,55 @@ export function PaginationBar({
               size="sm"
               className="w-20"
               disabled={loading}
+              tone={tone}
             />
           </div>
         )}
       </div>
-      <Pagination className="mx-0 w-auto">
+      <Pagination className={cn("mx-0 w-auto", tone === "lens" && "athens-pager")}>
+        {tone === "lens" ? (
+            <div className="athens-pager-nav">
+            <button
+              type="button"
+              className="athens-page-btn is-nav"
+              aria-label="Go to previous page"
+              disabled={loading || page <= 1}
+              onClick={() => onPageChange(page - 1)}
+            >
+              <ChevronLeft size={16} aria-hidden="true" />
+              Previous
+            </button>
+            {pages.map((p, i) =>
+              p === "ellipsis" ? (
+                <span key={`e-${i}`} className="athens-page-ellipsis" aria-hidden>
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  type="button"
+                  className={cn("athens-page-btn", p === page && "is-active")}
+                  aria-label={`Page ${p}`}
+                  aria-current={p === page ? "page" : undefined}
+                  disabled={loading}
+                  onClick={() => onPageChange(p)}
+                >
+                  {p}
+                </button>
+              ),
+            )}
+            <button
+              type="button"
+              className="athens-page-btn is-nav"
+              aria-label="Go to next page"
+              disabled={!canGoNext}
+              onClick={() => onPageChange(page + 1)}
+            >
+              Next
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </div>
+        ) : (
         <PaginationContent>
           <PaginationItem>
             <PaginationPrevious
@@ -154,6 +221,7 @@ export function PaginationBar({
             />
           </PaginationItem>
         </PaginationContent>
+        )}
       </Pagination>
     </div>
   );

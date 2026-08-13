@@ -18,6 +18,7 @@ import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { runWithConcurrency } from "./lib/run-with-concurrency";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
+import { useJobWorkerPoolTask } from "./hooks/useJobWorkerPoolTask";
 import {
   jobHasResumeRecommendation,
   useRecommendResumes,
@@ -108,7 +109,6 @@ function JobSearchPageContent() {
     markBidReady,
     markBidReadyBulk,
     markWorkerPool,
-    markWorkerPoolBulk,
     moveToNewBulk,
     isPending,
   } = useJobApplicationActions(patchJob, refreshStatusCounts);
@@ -125,9 +125,15 @@ function JobSearchPageContent() {
     removalStopping,
     bulkProgress,
   } = useJobResumeGeneration(jobs);
+  const {
+    enqueue: enqueueWorkerPool,
+    cancel: cancelWorkerPool,
+    running: workerPoolRunning,
+    stopping: workerPoolStopping,
+    progress: workerPoolProgress,
+  } = useJobWorkerPoolTask(patchJob, markJobsApplied, refreshStatusCounts);
   const { recommendBulk, recommendRunning, recommendProgress } = useRecommendResumes(patchJob);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
-  const [workerPoolBulkPending, setWorkerPoolBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
   const [markAppliedBulkPending, setMarkAppliedBulkPending] = useState(false);
   const [applyAllCompanyRoles, setApplyAllCompanyRoles] = useState(readApplyAllCompanyRoles);
@@ -441,7 +447,7 @@ function JobSearchPageContent() {
   };
 
   return (
-    <PageShell>
+    <PageShell className="athens-ui">
       <JobSearchFilterPanel
         filters={filters}
         onChange={setFilters}
@@ -480,21 +486,16 @@ function JobSearchPageContent() {
           isBeta
             ? () => {
                 void (async () => {
-                  setWorkerPoolBulkPending(true);
-                  try {
-                    const primaries = selectedJobs.filter((job) => job.status === "posted");
-                    await finishPostedSiblings(primaries);
-                    const moved = await markWorkerPoolBulk(selectedJobs);
-                    if (!moved) return;
-                    clearSelection();
-                  } finally {
-                    setWorkerPoolBulkPending(false);
-                  }
+                  const queued = await enqueueWorkerPool(selectedJobs, applyAllCompanyRoles);
+                  if (queued) clearSelection();
                 })();
               }
             : undefined
         }
-        workerPoolPending={workerPoolBulkPending}
+        workerPoolPending={workerPoolRunning}
+        workerPoolStopping={workerPoolStopping}
+        workerPoolProgress={workerPoolProgress}
+        onStopWorkerPool={cancelWorkerPool}
         onMoveToNew={() => {
           void (async () => {
             setMoveToNewBulkPending(true);
@@ -658,7 +659,8 @@ function JobSearchPageContent() {
         secondaryTotal={totalJobs}
         secondaryLabel="matching jobs"
         loading={loading}
-        className="mt-2"
+        className="mt-2 athens-ui"
+        tone="lens"
       />
     </PageShell>
   );

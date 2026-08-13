@@ -10,7 +10,7 @@ import {
   BACKGROUND_TASK_STATUSES,
   BACKGROUND_TASK_TYPES,
 } from './constants/task-types';
-import { normalizeTaskPayload } from './task-payload';
+import { initialTaskProgress, normalizeTaskPayload } from './task-payload';
 import { TaskStoreService } from './task-store.service';
 
 @Injectable()
@@ -39,9 +39,9 @@ export class BackgroundTasksService {
     payload?: Record<string, unknown>;
     progress?: Record<string, unknown>;
   }) {
-    const allowed =
-      input.type === BACKGROUND_TASK_TYPES.MAIL_AI_LABEL ||
-      input.type === BACKGROUND_TASK_TYPES.RESUME_GENERATION;
+    const allowed = (Object.values(BACKGROUND_TASK_TYPES) as string[]).includes(
+      input.type,
+    );
     if (!allowed) {
       throw new BadRequestException(
         `Unsupported background task type: ${input.type}`,
@@ -112,7 +112,7 @@ export class BackgroundTasksService {
       profileId: input.profileId || account.id,
       applierName: account.name,
       payload,
-      progress: input.progress,
+      progress: input.progress || initialTaskProgress(input.type, payload),
     });
 
     if (input.requestId) {

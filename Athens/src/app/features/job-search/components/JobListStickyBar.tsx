@@ -2,8 +2,9 @@ import React from "react";
 import { LayoutGrid } from "lucide-react";
 import { PaginationBar } from "../../../components/shared/PaginationBar";
 import { cn } from "../../../lib/utils";
-import { JobBulkActionsBar } from "./JobBulkActionsBar";
+import { JobBulkActionsBar, JobPageSelectionControls } from "./JobBulkActionsBar";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
+import type { JobWorkerPoolProgress } from "../hooks/useJobWorkerPoolTask";
 import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
 
 type JobListStickyBarProps = {
@@ -20,6 +21,9 @@ type JobListStickyBarProps = {
   markAppliedPending?: boolean;
   onMarkWorkerPool?: () => void;
   workerPoolPending?: boolean;
+  workerPoolStopping?: boolean;
+  workerPoolProgress?: JobWorkerPoolProgress | null;
+  onStopWorkerPool?: () => void;
   onMoveToNew?: () => void;
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
@@ -65,6 +69,9 @@ export function JobListStickyBar({
   markAppliedPending,
   onMarkWorkerPool,
   workerPoolPending,
+  workerPoolStopping,
+  workerPoolProgress,
+  onStopWorkerPool,
   onMoveToNew,
   moveToNewPending,
   onGenerateResumes,
@@ -96,14 +103,10 @@ export function JobListStickyBar({
   className,
 }: JobListStickyBarProps) {
   return (
-    <div className={cn("sticky top-0 z-20 -mx-1 px-1 mb-3", className)}>
-      <div className="rounded-xl border border-border bg-card/95 backdrop-blur-xl shadow-sm overflow-x-clip">
+    <div className={cn("athens-toolbar sticky top-0 z-20 mb-3", className)}>
+      <div className="athens-surface">
         <JobBulkActionsBar
-          selectedOnPage={selectedOnPage}
-          pageCount={pageCount}
           totalSelected={totalSelected}
-          allOnPageSelected={allOnPageSelected}
-          onToggleSelectAll={onToggleSelectAll}
           onExport={onExport}
           onRemove={onRemove}
           onMarkBidReady={onMarkBidReady}
@@ -112,6 +115,9 @@ export function JobListStickyBar({
           markAppliedPending={markAppliedPending}
           onMarkWorkerPool={onMarkWorkerPool}
           workerPoolPending={workerPoolPending}
+          workerPoolStopping={workerPoolStopping}
+          workerPoolProgress={workerPoolProgress}
+          onStopWorkerPool={onStopWorkerPool}
           onMoveToNew={onMoveToNew}
           moveToNewPending={moveToNewPending}
           onGenerateResumes={onGenerateResumes}
@@ -120,7 +126,6 @@ export function JobListStickyBar({
           onStopRemoveResumes={onStopRemoveResumes}
           onRecommendResumes={onRecommendResumes}
           applyAllCompanyRoles={applyAllCompanyRoles}
-          onApplyAllCompanyRolesChange={onApplyAllCompanyRolesChange}
           resumeGenerating={resumeGenerating}
           resumeStopping={resumeStopping}
           resumeRemoving={resumeRemoving}
@@ -133,7 +138,16 @@ export function JobListStickyBar({
           embedded
         />
 
-        <div className="border-t border-border/60 flex items-center justify-between gap-3 px-3 py-1 flex-wrap">
+        <div className="athens-pager-row">
+          <JobPageSelectionControls
+            selectedOnPage={selectedOnPage}
+            pageCount={pageCount}
+            allOnPageSelected={allOnPageSelected}
+            onToggleSelectAll={onToggleSelectAll}
+            applyAllCompanyRoles={applyAllCompanyRoles}
+            onApplyAllCompanyRolesChange={onApplyAllCompanyRolesChange}
+            loading={loading}
+          />
           <PaginationBar
             page={page}
             pageSize={pageSize}
@@ -147,18 +161,18 @@ export function JobListStickyBar({
             secondaryTotal={totalJobs}
             secondaryLabel="matching jobs"
             loading={loading}
-            className="py-2 px-0 flex-1 min-w-0"
+            className="py-1 px-0 flex-1 min-w-0"
+            tone="lens"
           />
           <button
             type="button"
             onClick={onToggleGrid}
-            className={cn(
-              "icon-btn border border-border shrink-0 mb-1 sm:mb-0",
-              showGrid ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary",
-            )}
+            className={cn("athens-icon-btn", showGrid && "is-active")}
             title="Toggle grid view"
+            aria-pressed={showGrid}
+            aria-label="Toggle grid view"
           >
-            <LayoutGrid className="w-5 h-5" />
+            <LayoutGrid size={18} aria-hidden="true" />
           </button>
         </div>
       </div>

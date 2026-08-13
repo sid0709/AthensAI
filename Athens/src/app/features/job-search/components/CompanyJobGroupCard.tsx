@@ -9,7 +9,8 @@ import {
   Trash2,
   Wifi,
 } from "lucide-react";
-import { Badge } from "../../../components/ui";
+import { cn } from "../../../lib/utils";
+import type { CompanyJobGroup, Job } from "../../../types";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -20,10 +21,9 @@ import {
   AlertDialogTitle,
 } from "../../../components/ui/alert-dialog";
 import { Button } from "../../../components/ui/button";
-import { cn } from "../../../lib/utils";
-import type { BadgeVariant, CompanyJobGroup, Job } from "../../../types";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 import { JobCard } from "./JobCard";
+import { JobStatusIcon } from "./JobStatusIcon";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
@@ -33,16 +33,6 @@ const STATUS_LABELS: Record<Job["status"], string> = {
   applied: "Applied",
   scheduled: "Scheduled",
   declined: "Declined",
-};
-
-const STATUS_VARIANTS: Record<Job["status"], BadgeVariant> = {
-  posted: "blue",
-  "bid-ready": "blue",
-  "worker-pool": "blue",
-  "bid-completed": "violet",
-  applied: "success",
-  scheduled: "amber",
-  declined: "err",
 };
 
 const WORK_MODE_LABELS: Record<Job["workMode"], string> = {
@@ -76,18 +66,19 @@ type CompanyJobGroupCardProps = {
   onRemoveOtherJobs?: (activeJob: Job) => Promise<void>;
   loadingMore?: boolean;
   memberError?: string;
+  layout?: "list" | "grid";
 };
 
 function CompactRoleRow({ job, onClick }: { job: Job; onClick: () => void }) {
   return (
     <button
       type="button"
-      className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border/70 bg-background px-3 py-3 text-left transition-colors hover:border-primary/35 hover:bg-primary/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      className="athens-role-row"
       onClick={onClick}
     >
       <span className="min-w-0">
-        <span className="block truncate text-sm font-semibold text-foreground">{job.title}</span>
-        <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span className="block truncate text-sm font-semibold">{job.title}</span>
+        <span className="athens-card-meta mt-1">
           <span className="inline-flex min-w-0 items-center gap-1">
             <MapPin className="size-3 shrink-0" />
             <span className="truncate">{job.location}</span>
@@ -99,8 +90,9 @@ function CompactRoleRow({ job, onClick }: { job: Job; onClick: () => void }) {
           <span>{job.postedAt || job.posted}</span>
         </span>
       </span>
-      <span className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-center">
-        <Badge v={STATUS_VARIANTS[job.status]}>{STATUS_LABELS[job.status]}</Badge>
+      <span className="athens-status">
+        <JobStatusIcon status={job.status} />
+        {STATUS_LABELS[job.status]}
       </span>
     </button>
   );
@@ -131,6 +123,7 @@ export function CompanyJobGroupCard({
   onRemoveOtherJobs,
   loadingMore = false,
   memberError,
+  layout = "list",
 }: CompanyJobGroupCardProps) {
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
   const [removePending, setRemovePending] = useState(false);
@@ -144,9 +137,10 @@ export function CompanyJobGroupCard({
   const roleLabel = additionalRoleCount === 1 ? "role" : "roles";
 
   return (
-    <section className="min-w-0" aria-label={`${group.company.name} matching roles`}>
+    <section className={cn("athens-ui athens-job-group", layout === "grid" && "athens-job-group--grid")} aria-label={`${group.company.name} matching roles`}>
       <JobCard
         job={activeJob}
+        layout={layout}
         selected={selectedIds?.has(activeJob.id)}
         onSelect={onSelectJob ? (shiftKey) => onSelectJob(activeJob.id, shiftKey) : undefined}
         bookmarked={bookmarkedIds?.has(activeJob.id)}
@@ -164,24 +158,23 @@ export function CompanyJobGroupCard({
         onPatchJob={onPatchJob}
       />
 
-      {additionalRoleCount > 0 ? (
-        <div className="px-3 sm:px-4">
-          <button
-            type="button"
-            className={cn(
-              "relative z-10 -mt-px inline-flex max-w-full items-center gap-2 rounded-b-lg border border-t-0 border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 shadow-sm transition-colors hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50 dark:border-sky-700 dark:bg-sky-950/60 dark:text-sky-200 dark:hover:bg-sky-950",
-              expanded && "bg-sky-100 dark:bg-sky-950",
-            )}
-            aria-expanded={expanded}
-            aria-controls={trayId}
-            onClick={() => onExpandedChange?.(!expanded)}
-          >
-            <Building2 className="size-3.5 shrink-0" />
-            <span className="truncate">
-              +{additionalRoleCount.toLocaleString()} more {roleLabel} at {group.company.name}
-            </span>
-            {expanded ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
-          </button>
+      {layout === "grid" || additionalRoleCount > 0 ? (
+        <div className="athens-job-group__more">
+          {additionalRoleCount > 0 ? (
+            <button
+              type="button"
+              className={cn("athens-more-roles", expanded && "is-open")}
+              aria-expanded={expanded}
+              aria-controls={trayId}
+              onClick={() => onExpandedChange?.(!expanded)}
+            >
+              <Building2 className="size-3.5 shrink-0" />
+              <span className="truncate">
+                +{additionalRoleCount.toLocaleString()} more {roleLabel} at {group.company.name}
+              </span>
+              {expanded ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
+            </button>
+          ) : null}
         </div>
       ) : null}
 

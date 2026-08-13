@@ -26,5 +26,5 @@ export const initials = (n: string) =>
 export const cn = (...c: (string | undefined | false | null)[]) =>
   c.filter(Boolean).join(" ");
 
-export const mono = { fontFamily: "'JetBrains Mono',monospace" };
-export const display = { fontFamily: "'Bricolage Grotesque',sans-serif" };
+export const mono = { fontFamily: "var(--font-athens-mono)" };
+export const display = { fontFamily: "var(--font-athens)" };

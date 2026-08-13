@@ -82,7 +82,7 @@
 .auth-world-footer,
 .auth-orbit-metric,
 .auth-console-footnote {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-athens-mono);
 }
 
 .auth-coordinate {
@@ -409,7 +409,7 @@
 .auth-experience-sound {
   position: absolute;
   z-index: 12;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-athens-mono);
 }
 
 .auth-intro-lockup {
@@ -445,7 +445,7 @@
   position: relative;
   display: inline-flex;
   color: #f8f7ff;
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-athens);
   font-size: clamp(42px, 7.4vw, 104px);
   font-weight: 800;
   line-height: 0.9;
@@ -540,7 +540,7 @@
 .auth-transition-identity strong {
   margin-top: 12px;
   color: #faf9ff;
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-athens);
   font-size: clamp(32px, 4vw, 58px);
   font-weight: 560;
   line-height: 1;

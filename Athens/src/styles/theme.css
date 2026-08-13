@@ -120,6 +120,8 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: var(--font-athens);
+  --font-mono: var(--font-athens-mono);
 }
 
 @layer base {
@@ -129,15 +131,28 @@
 
   html {
     font-size: var(--font-size);
+    font-family: var(--font-athens);
     @apply h-full overflow-hidden;
+  }
+
+  body,
+  #root {
+    @apply h-full overflow-hidden;
+    font-family: var(--font-athens);
   }
 
   body {
-    @apply h-full overflow-hidden bg-background text-foreground;
+    @apply bg-background text-foreground;
   }
 
-  #root {
-    @apply h-full overflow-hidden;
+  button,
+  input,
+  select,
+  textarea,
+  optgroup,
+  label,
+  a {
+    font-family: var(--font-athens);
   }
 
   h1 {

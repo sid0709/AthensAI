@@ -1,6 +1,21 @@
 import React from "react";
-import { CalendarCheck, ExternalLink, Loader2, X, XCircle } from "lucide-react";
-import { Button } from "../../../components/ui/button";
+import {
+  CalendarCheck,
+  CheckCircle2,
+  ClipboardList,
+  ExternalLink,
+  Layers,
+  Loader2,
+  MoreHorizontal,
+  X,
+  XCircle,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip";
 import type { Job } from "../../../types";
 
@@ -16,6 +31,15 @@ type JobStatusActionsProps = {
   onCancel: () => void;
   size?: "sm" | "default";
   showExternalLinkOnApply?: boolean;
+  compact?: boolean;
+};
+
+type StatusMenuItem = {
+  key: string;
+  label: string;
+  onClick: () => void;
+  icon: React.ElementType;
+  danger?: boolean;
 };
 
 function cancelTooltip(job: Job): string {
@@ -49,17 +73,15 @@ function StatusCancelButton({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button
+        <button
           type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+          className="athens-icon-btn"
           disabled={pending}
           aria-label={cancelTooltip(job)}
           onClick={onCancel}
         >
-          {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
-        </Button>
+          {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <X size={16} aria-hidden="true" />}
+        </button>
       </TooltipTrigger>
       <TooltipContent sideOffset={6}>{cancelTooltip(job)}</TooltipContent>
     </Tooltip>
@@ -69,7 +91,6 @@ function StatusCancelButton({
 function ApplyButton({
   pending,
   onApply,
-  size,
   showExternalLinkOnApply,
   label = "Apply",
 }: {
@@ -80,28 +101,26 @@ function ApplyButton({
   label?: string;
 }) {
   return (
-    <Button size={size} disabled={pending} onClick={onApply}>
-      {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+    <button type="button" className="athens-btn-primary" disabled={pending} onClick={onApply}>
+      {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
       {label}
-      {showExternalLinkOnApply ? <ExternalLink className="w-4 h-4" /> : null}
-    </Button>
+      {showExternalLinkOnApply ? <ExternalLink size={16} aria-hidden="true" /> : null}
+    </button>
   );
 }
 
 function MarkAppliedButton({
   pending,
   onMarkApplied,
-  size,
 }: {
   pending: boolean;
   onMarkApplied: () => void;
   size: "sm" | "default";
 }) {
   return (
-    <Button
+    <button
       type="button"
-      size={size}
-      variant="outline"
+      className="athens-btn"
       disabled={pending}
       onClick={(event) => {
         event.stopPropagation();
@@ -109,9 +128,50 @@ function MarkAppliedButton({
       }}
       title="Mark as applied without opening the apply page"
     >
-      {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+      {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
       Mark applied
-    </Button>
+    </button>
+  );
+}
+
+function StatusOverflowMenu({
+  items,
+  pending,
+}: {
+  items: StatusMenuItem[];
+  pending: boolean;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="athens-icon-btn"
+          disabled={pending}
+          aria-label="More job actions"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <MoreHorizontal size={16} aria-hidden="true" />}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <DropdownMenuItem
+              key={item.key}
+              disabled={pending}
+              className={item.danger ? "text-destructive" : undefined}
+              onSelect={item.onClick}
+            >
+              <Icon size={16} aria-hidden="true" />
+              {item.label}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -127,21 +187,70 @@ export function JobStatusActions({
   onCancel,
   size = "sm",
   showExternalLinkOnApply = true,
+  compact = false,
 }: JobStatusActionsProps) {
+  const menuItems: StatusMenuItem[] = [];
+  let showApply = false;
+  let showCancel = false;
+
+  if (job.status === "posted") {
+    if (onMarkBidReady) {
+      menuItems.push({ key: "bid-ready", label: "Bid ready", onClick: onMarkBidReady, icon: ClipboardList });
+    }
+    if (onMarkWorkerPool) {
+      menuItems.push({ key: "worker-pool", label: "Worker pool", onClick: onMarkWorkerPool, icon: Layers });
+    }
+    if (onMarkApplied) {
+      menuItems.push({ key: "mark-applied", label: "Mark applied", onClick: onMarkApplied, icon: CheckCircle2 });
+    }
+    showApply = true;
+  } else if (job.status === "bid-ready" || job.status === "worker-pool" || job.status === "bid-completed") {
+    if (onMarkApplied) {
+      menuItems.push({ key: "mark-applied", label: "Mark applied", onClick: onMarkApplied, icon: CheckCircle2 });
+    }
+    menuItems.push({ key: "cancel", label: "Cancel", onClick: onCancel, icon: X });
+    showApply = true;
+    showCancel = true;
+  } else if (job.status === "applied") {
+    menuItems.push({ key: "scheduled", label: "Scheduled", onClick: onMarkScheduled, icon: CalendarCheck });
+    menuItems.push({ key: "declined", label: "Declined", onClick: onMarkDeclined, icon: XCircle, danger: true });
+    menuItems.push({ key: "cancel", label: "Cancel", onClick: onCancel, icon: X });
+    showCancel = true;
+  } else if (job.status === "scheduled" || job.status === "declined") {
+    menuItems.push({ key: "cancel", label: "Cancel", onClick: onCancel, icon: X });
+    showCancel = true;
+  }
+
+  if (compact) {
+    return (
+      <>
+        <StatusOverflowMenu items={menuItems} pending={pending} />
+        {showApply ? (
+          <ApplyButton
+            pending={pending}
+            onApply={onApply}
+            size={size}
+            showExternalLinkOnApply={showExternalLinkOnApply}
+          />
+        ) : null}
+      </>
+    );
+  }
+
   if (job.status === "posted") {
     return (
       <>
         {onMarkBidReady ? (
-          <Button size={size} variant="outline" disabled={pending} onClick={onMarkBidReady}>
-            {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          <button type="button" className="athens-btn" disabled={pending} onClick={onMarkBidReady}>
+            {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
             Bid ready
-          </Button>
+          </button>
         ) : null}
         {onMarkWorkerPool ? (
-          <Button size={size} variant="outline" disabled={pending} onClick={onMarkWorkerPool}>
-            {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          <button type="button" className="athens-btn" disabled={pending} onClick={onMarkWorkerPool}>
+            {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
             Worker pool
-          </Button>
+          </button>
         ) : null}
         {onMarkApplied ? (
           <MarkAppliedButton pending={pending} onMarkApplied={onMarkApplied} size={size} />
@@ -176,26 +285,25 @@ export function JobStatusActions({
   if (job.status === "applied") {
     return (
       <>
-        <Button size={size} variant="outline" disabled={pending} onClick={onMarkScheduled}>
-          {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
+        <button type="button" className="athens-btn" disabled={pending} onClick={onMarkScheduled}>
+          {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <CalendarCheck size={16} aria-hidden="true" />}
           Scheduled
-        </Button>
-        <Button
-          size={size}
-          variant="outline"
-          className="text-rose-600 hover:text-rose-700"
+        </button>
+        <button
+          type="button"
+          className="athens-btn-danger"
           disabled={pending}
           onClick={onMarkDeclined}
         >
-          {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+          {pending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <XCircle size={16} aria-hidden="true" />}
           Declined
-        </Button>
+        </button>
         <StatusCancelButton job={job} pending={pending} onCancel={onCancel} />
       </>
     );
   }
 
-  if (job.status === "scheduled" || job.status === "declined") {
+  if (showCancel) {
     return <StatusCancelButton job={job} pending={pending} onCancel={onCancel} />;
   }
 

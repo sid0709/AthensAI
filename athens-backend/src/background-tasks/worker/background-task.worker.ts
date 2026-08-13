@@ -8,6 +8,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { MailAiLabelService } from '../../mail/mail-ai-label.service';
 import { MailCredentialsService } from '../../mail/mail-credentials.service';
+import { JobWorkerPoolTaskService } from '../../jobs/job-worker-pool-task.service';
 import { ResumeGenerateWorkerService } from '../../resumes/generator/resume-generate-worker.service';
 import { BackgroundTasksService } from '../background-tasks.service';
 import {
@@ -30,6 +31,8 @@ export class BackgroundTaskWorker implements OnModuleInit {
     private readonly aiLabel: MailAiLabelService,
     @Inject(forwardRef(() => ResumeGenerateWorkerService))
     private readonly resumeGen: ResumeGenerateWorkerService,
+    @Inject(forwardRef(() => JobWorkerPoolTaskService))
+    private readonly workerPoolTask: JobWorkerPoolTaskService,
   ) {}
 
   onModuleInit() {
@@ -65,10 +68,16 @@ export class BackgroundTaskWorker implements OnModuleInit {
         (await store.claimNext(
           this.workerId,
           BACKGROUND_TASK_TYPES.RESUME_GENERATION,
+        )) ||
+        (await store.claimNext(
+          this.workerId,
+          BACKGROUND_TASK_TYPES.JOB_WORKER_POOL,
         ));
       if (!task) return;
       if (task.type === BACKGROUND_TASK_TYPES.RESUME_GENERATION) {
         await this.processResumeGeneration(task.id);
+      } else if (task.type === BACKGROUND_TASK_TYPES.JOB_WORKER_POOL) {
+        await this.processJobWorkerPool(task.id);
       } else {
         await this.processMailAiLabel(task.id);
       }
@@ -98,6 +107,38 @@ export class BackgroundTaskWorker implements OnModuleInit {
 
     try {
       await this.resumeGen.processTask(task, store, abort.signal);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await store.complete(
+        taskId,
+        {},
+        abort.signal.aborted
+          ? BACKGROUND_TASK_STATUSES.CANCELLED
+          : BACKGROUND_TASK_STATUSES.FAILED,
+        message,
+      );
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }
+
+  private async processJobWorkerPool(taskId: string) {
+    const store = this.tasks.getStore();
+    const task = await store.findById(taskId);
+    if (!task) return;
+
+    const abort = new AbortController();
+    const heartbeat = setInterval(() => {
+      void store.heartbeat(taskId, this.workerId);
+      void store.findById(taskId).then((fresh) => {
+        if (fresh?.status === BACKGROUND_TASK_STATUSES.CANCELLING) {
+          abort.abort();
+        }
+      });
+    }, WORKER_HEARTBEAT_MS);
+
+    try {
+      await this.workerPoolTask.processTask(task, store, abort.signal);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await store.complete(
