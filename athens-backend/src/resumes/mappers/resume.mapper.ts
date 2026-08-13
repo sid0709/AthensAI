@@ -29,6 +29,7 @@ export type UserResumeSummary = {
   analyzed?: boolean;
   analyzedAt?: string | null;
   skillCount?: number;
+  skillProfile?: ResumeSkillEntry[];
   uploadedAt: string;
   updatedAt?: string;
 };
@@ -71,6 +72,7 @@ export function toResumeSummary(row: Resume): UserResumeSummary {
     analyzed: Boolean(row.analyzed),
     analyzedAt: iso(row.analyzedAt),
     skillCount: skills.length,
+    skillProfile: skills,
     uploadedAt: iso(row.uploadedAt) || new Date().toISOString(),
     updatedAt: iso(row.updatedAt) || undefined,
   };

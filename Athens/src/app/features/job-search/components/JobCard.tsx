@@ -126,7 +126,7 @@ export function JobCard({
   const visibleSkills = skillLabels.slice(0, MAX_SKILL_CHIPS);
   const hiddenSkillCount = Math.max(0, (job.skillCount ?? skillLabels.length) - visibleSkills.length);
   const canSwapLibrary =
-    job.status === "bid-ready" && Boolean(onPatchJob);
+    (job.status === "posted" || job.status === "bid-ready") && Boolean(onPatchJob);
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;
@@ -248,7 +248,7 @@ export function JobCard({
                     type="button"
                     data-no-select
                     className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-dashed border-primary/35 bg-transparent px-2 py-0.5 text-[11px] font-semibold text-primary hover:bg-primary/[0.08] transition-colors"
-                    title="Assign a Library resume for this Bid Ready job"
+                    title="Assign a Library resume for this job"
                     onClick={(e) => {
                       e.stopPropagation();
                       setSwapOpen(true);

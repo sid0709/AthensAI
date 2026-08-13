@@ -204,7 +204,7 @@ export function JobBulkActionsBar({
                 || resumeGenerating
                 || resumeRemoving
               }
-              title="Recommend Library resumes for selected Bid Ready jobs using each job description"
+              title="Recommend Library resumes for selected New or Bid Ready jobs using each job description"
             >
               {recommendRunning ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />

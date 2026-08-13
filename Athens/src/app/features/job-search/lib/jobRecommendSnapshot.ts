@@ -15,6 +15,7 @@ export type JobRecommendSnapshot = Pick<
 export function jobHasRecommendSnapshot(job: Partial<JobRecommendSnapshot>): boolean {
   if (job.recommendedAt) return true;
   if (String(job.recommendedResumeStack || "").trim()) return true;
+  if (String(job.recommendedResumeId || "").trim()) return true;
   if (job.useCustomizedResume) return true;
   if (String(job.recommendedResumeReason || "").trim()) return true;
   if (String(job.recommendWarning || "").trim()) return true;

@@ -38,6 +38,20 @@ export type CategorizedSkill = {
   level: number;
 };
 
+export function toCategorizedSkills(
+  entries: Array<{ name?: string; category?: string; level?: number; strength?: number }> | null | undefined,
+): CategorizedSkill[] {
+  if (!Array.isArray(entries) || !entries.length) return [];
+  return entries
+    .map((s) => ({
+      name: String(s?.name ?? "").trim(),
+      category: normalizeSkillCategory(s?.category),
+      level: resolveSkillLevel(s ?? {}),
+    }))
+    .filter((s) => s.name)
+    .sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
+}
+
 export function groupSkillsByCategory(skills: CategorizedSkill[]) {
   const byCategory = new Map<UserSkillCategory, CategorizedSkill[]>();
   for (const skill of skills) {

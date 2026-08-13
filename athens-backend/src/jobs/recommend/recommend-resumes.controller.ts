@@ -23,7 +23,7 @@ export class RecommendResumesController {
     return this.recommend.recommendBulk(body);
   }
 
-  /** Manually assign a Library resume stack to a Bid Ready job. */
+  /** Manually assign a Library resume stack to a New or Bid Ready job. */
   @Post('set-recommended-resume')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   setRecommendedResume(@Body() body: SetRecommendedResumeDto) {

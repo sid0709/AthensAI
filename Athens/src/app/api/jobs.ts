@@ -473,7 +473,7 @@ export type RecommendResumesResponse = {
   results?: RecommendResumeResultRow[];
 };
 
-/** Recommend Library resume stacks for Bid Ready jobs from stored JDs. */
+/** Recommend Library resume stacks for New or Bid Ready jobs from stored JDs. */
 export async function recommendResumesFromLibrary(params: {
   applierName: string;
   jobIds: string[];
@@ -505,7 +505,7 @@ export type SetRecommendedResumeResponse = {
   recommendMode?: "manual" | string | null;
 };
 
-/** Manually assign a Library resume stack to a Bid Ready job. */
+/** Manually assign a Library resume stack to a New or Bid Ready job. */
 export async function setRecommendedResumeFromLibrary(params: {
   applierName: string;
   jobId: string;

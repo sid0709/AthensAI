@@ -224,7 +224,8 @@ export function JobDescriptionDialog({
                 </p>
               ) : null}
             </div>
-          ) : onChangeRecommendedResume && j.status === "bid-ready" ? (
+          ) : onChangeRecommendedResume &&
+            (j.status === "posted" || j.status === "bid-ready") ? (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border px-4 py-3">
               <p className="text-sm text-muted-foreground">
                 No Library resume assigned yet.
@@ -250,7 +251,7 @@ export function JobDescriptionDialog({
             <p className="mt-3 text-xs text-muted-foreground">Finding best resume match…</p>
           ) : (
             <p className="mt-3 text-xs text-muted-foreground">
-              Select jobs on Bid ready and click <span className="font-semibold">Recommend resumes</span>{" "}
+              Select jobs and click <span className="font-semibold">Recommend resumes</span>{" "}
               to choose a Library stack.
             </p>
           )}
