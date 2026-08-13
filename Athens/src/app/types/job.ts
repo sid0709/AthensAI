@@ -4,6 +4,7 @@ export type WorkMode = "remote" | "hybrid" | "onsite";
 export type JobStatus =
   | "posted"
   | "bid-ready"
+  | "worker-pool"
   | "bid-completed"
   | "applied"
   | "scheduled"
@@ -74,7 +75,7 @@ export interface Job {
   version?: string | null;
   /** Data catalog: job_market (default) or external_scraped_jobs. */
   catalog?: "market" | "external";
-  /** Library stack recommended for Bid Ready (vendor_tasks). */
+  /** Library stack recommended for Bid ready or Worker pool (vendor_tasks). */
   recommendedResumeStack?: string | null;
   /** Library Resume.id when a specific file was chosen. */
   recommendedResumeId?: string | null;
@@ -96,6 +97,8 @@ export interface CompanyJobGroup {
 	jobs: Job[];
 	/** Total roles matching the current grouped Job Search request. */
 	matchingJobCount?: number;
+	/** Matching job ids for this company (may be longer than hydrated `jobs`). */
+	matchingJobIds?: string[];
 	nextMemberOffset?: number | null;
 	/** Client-side ordering for partially loaded member batches and deep-linked roles. */
 	memberOrder?: Record<string, number>;

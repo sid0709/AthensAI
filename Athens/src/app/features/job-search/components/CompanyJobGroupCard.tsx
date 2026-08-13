@@ -28,6 +28,7 @@ import { JobCard } from "./JobCard";
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
   "bid-ready": "Bid ready",
+  "worker-pool": "Worker pool",
   "bid-completed": "Bid completed",
   applied: "Applied",
   scheduled: "Scheduled",
@@ -37,6 +38,7 @@ const STATUS_LABELS: Record<Job["status"], string> = {
 const STATUS_VARIANTS: Record<Job["status"], BadgeVariant> = {
   posted: "blue",
   "bid-ready": "blue",
+  "worker-pool": "blue",
   "bid-completed": "violet",
   applied: "success",
   scheduled: "amber",
@@ -62,6 +64,7 @@ type CompanyJobGroupCardProps = {
   isJobPending?: (jobId: string) => boolean;
   onApply?: (job: Job) => void;
   onMarkBidReady?: (job: Job) => void;
+  onMarkWorkerPool?: (job: Job) => void;
   onMarkScheduled?: (job: Job) => void;
   onMarkDeclined?: (job: Job) => void;
   onCancel?: (job: Job) => void;
@@ -115,6 +118,7 @@ export function CompanyJobGroupCard({
   isJobPending,
   onApply,
   onMarkBidReady,
+  onMarkWorkerPool,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -148,6 +152,7 @@ export function CompanyJobGroupCard({
         statusPending={isJobPending?.(activeJob.id)}
         onApply={onApply ? () => onApply(activeJob) : undefined}
         onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(activeJob) : undefined}
+        onMarkWorkerPool={onMarkWorkerPool ? () => onMarkWorkerPool(activeJob) : undefined}
         onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(activeJob) : undefined}
         onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(activeJob) : undefined}
         onCancel={onCancel ? () => onCancel(activeJob) : undefined}

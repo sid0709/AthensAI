@@ -22,11 +22,13 @@ import { JobResumePreviewDialog } from "./JobResumePreviewDialog";
 import { JobStatusActions } from "./JobStatusActions";
 import { JobUrlLink } from "./JobUrlLink";
 import { SwapLibraryResumeDialog } from "./SwapLibraryResumeDialog";
+import { canAssignLibraryResume } from "../lib/jobRecommendSnapshot";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
   "bid-ready": "Bid ready",
+  "worker-pool": "Worker pool",
   "bid-completed": "Bid completed",
   applied: "Applied",
   scheduled: "Scheduled",
@@ -36,6 +38,7 @@ const STATUS_LABELS: Record<Job["status"], string> = {
 const STATUS_VARIANTS: Record<Job["status"], BadgeVariant> = {
   posted: "blue",
   "bid-ready": "blue",
+  "worker-pool": "blue",
   "bid-completed": "violet",
   applied: "success",
   scheduled: "amber",
@@ -60,6 +63,7 @@ type JobCardProps = {
   statusPending?: boolean;
   onApply?: () => void;
   onMarkBidReady?: () => void;
+  onMarkWorkerPool?: () => void;
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
@@ -110,6 +114,7 @@ export function JobCard({
   statusPending = false,
   onApply,
   onMarkBidReady,
+  onMarkWorkerPool,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -125,8 +130,7 @@ export function JobCard({
   const skillLabels = analyzedSkillLabels(job);
   const visibleSkills = skillLabels.slice(0, MAX_SKILL_CHIPS);
   const hiddenSkillCount = Math.max(0, (job.skillCount ?? skillLabels.length) - visibleSkills.length);
-  const canSwapLibrary =
-    job.status === "bid-ready" && Boolean(onPatchJob);
+  const canSwapLibrary = canAssignLibraryResume(job.status) && Boolean(onPatchJob);
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;
@@ -248,7 +252,7 @@ export function JobCard({
                     type="button"
                     data-no-select
                     className="inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-dashed border-primary/35 bg-transparent px-2 py-0.5 text-[11px] font-semibold text-primary hover:bg-primary/[0.08] transition-colors"
-                    title="Assign a Library resume for this Bid Ready job"
+                    title="Assign a Library resume for this job"
                     onClick={(e) => {
                       e.stopPropagation();
                       setSwapOpen(true);
@@ -368,6 +372,7 @@ export function JobCard({
               pending={statusPending}
               onApply={() => onApply?.()}
               onMarkBidReady={onMarkBidReady ? () => onMarkBidReady() : undefined}
+              onMarkWorkerPool={onMarkWorkerPool ? () => onMarkWorkerPool() : undefined}
               onMarkScheduled={() => onMarkScheduled?.()}
               onMarkDeclined={() => onMarkDeclined?.()}
               onCancel={() => onCancel?.()}
@@ -384,6 +389,7 @@ export function JobCard({
         statusPending={statusPending}
         onApply={() => onApply?.()}
         onMarkBidReady={onMarkBidReady ? () => onMarkBidReady() : undefined}
+        onMarkWorkerPool={onMarkWorkerPool ? () => onMarkWorkerPool() : undefined}
         onMarkScheduled={() => onMarkScheduled?.()}
         onMarkDeclined={() => onMarkDeclined?.()}
         onCancel={() => onCancel?.()}

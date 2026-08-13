@@ -1,3 +1,5 @@
+import { costFromUsage } from '../../ai-usage/lib/pricing';
+
 export const LONG_CONTEXT_INPUT_TOKENS = 272_000;
 
 type Rate = {
@@ -68,7 +70,9 @@ export function summarizeUsage(usage: unknown, model: string): OakUsageSummary {
     {}) as Record<string, unknown>;
   const inputTokens = num(u.input_tokens ?? u.prompt_tokens);
   const outputTokens = num(u.output_tokens ?? u.completion_tokens);
-  const cachedInputTokens = num(details.cached_tokens);
+  const cachedInputTokens = num(
+    u.prompt_cache_hit_tokens ?? details.cached_tokens,
+  );
   const totalTokens = num(u.total_tokens) || inputTokens + outputTokens;
   const cost = estimateCostUsd({
     model,
@@ -97,12 +101,7 @@ function estimateCostUsd(input: {
 }) {
   const { canonical, fastMultiplier } = normalizeModelId(input.model);
   if (!canonical) {
-    return {
-      model: input.model,
-      costUsd: null as number | null,
-      priced: false,
-      pricingNote: `No list price configured for model "${input.model}"`,
-    };
+    return estimateFromStandardPricing(input);
   }
 
   const table = MODEL_RATES[canonical];
@@ -130,6 +129,33 @@ function estimateCostUsd(input: {
       : fastMultiplier > 1
         ? 'Fast mode (2× standard rates)'
         : undefined,
+  };
+}
+
+function estimateFromStandardPricing(input: {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+}) {
+  const cost = costFromUsage(input.model, {
+    prompt_tokens: input.inputTokens,
+    completion_tokens: input.outputTokens,
+    prompt_cache_hit_tokens: input.cachedInputTokens ?? 0,
+  });
+  if (!cost.priced) {
+    return {
+      model: input.model,
+      costUsd: null as number | null,
+      priced: false,
+      pricingNote: `No list price configured for model "${input.model}"`,
+    };
+  }
+  return {
+    model: input.model,
+    costUsd: Math.round(cost.costUsd * 1e6) / 1e6,
+    priced: true,
+    pricingNote: undefined as string | undefined,
   };
 }
 

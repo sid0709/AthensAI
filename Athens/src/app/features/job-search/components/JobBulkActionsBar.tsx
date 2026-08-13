@@ -1,8 +1,9 @@
 import React from "react";
-import { BookMarked, ClipboardList, Download, FileX, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
+import { BookMarked, ClipboardList, Download, FileX, Layers, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { Progress } from "../../../components/ui/progress";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip";
 import { cn } from "../../../lib/utils";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
 import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
@@ -17,6 +18,8 @@ type JobBulkActionsBarProps = {
   onRemove: () => void;
   onMarkBidReady?: () => void;
   bidReadyPending?: boolean;
+  onMarkWorkerPool?: () => void;
+  workerPoolPending?: boolean;
   onMoveToNew?: () => void;
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
@@ -24,6 +27,8 @@ type JobBulkActionsBarProps = {
   onRemoveResumes?: () => void;
   onStopRemoveResumes?: () => void;
   onRecommendResumes?: () => void;
+  applyAllCompanyRoles?: boolean;
+  onApplyAllCompanyRolesChange?: (enabled: boolean) => void;
   resumeGenerating?: boolean;
   resumeStopping?: boolean;
   resumeRemoving?: boolean;
@@ -47,6 +52,8 @@ export function JobBulkActionsBar({
   onRemove,
   onMarkBidReady,
   bidReadyPending = false,
+  onMarkWorkerPool,
+  workerPoolPending = false,
   onMoveToNew,
   moveToNewPending = false,
   onGenerateResumes,
@@ -54,6 +61,8 @@ export function JobBulkActionsBar({
   onRemoveResumes,
   onStopRemoveResumes,
   onRecommendResumes,
+  applyAllCompanyRoles = false,
+  onApplyAllCompanyRolesChange,
   resumeGenerating = false,
   resumeStopping = false,
   resumeRemoving = false,
@@ -115,6 +124,33 @@ export function JobBulkActionsBar({
           </span>
         </label>
 
+        {onApplyAllCompanyRolesChange ? (
+          <>
+            <span className="h-4 w-px bg-border/80 shrink-0" aria-hidden />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <label className={cn("inline-flex items-center gap-2 select-none shrink-0", loading ? "cursor-wait" : "cursor-pointer")}>
+                  <Checkbox
+                    checked={applyAllCompanyRoles}
+                    onCheckedChange={(checked) => onApplyAllCompanyRolesChange(checked === true)}
+                    disabled={loading}
+                    aria-label="Apply all company roles"
+                  />
+                  <span className="text-sm whitespace-nowrap">
+                    <span className={applyAllCompanyRoles ? "font-medium text-foreground" : "text-muted-foreground"}>
+                      <span className="hidden sm:inline">Apply all company roles</span>
+                      <span className="sm:hidden">Company apply</span>
+                    </span>
+                  </span>
+                </label>
+              </TooltipTrigger>
+              <TooltipContent sideOffset={6}>
+                When you Apply a job, mark every other role at that company as applied
+              </TooltipContent>
+            </Tooltip>
+          </>
+        ) : null}
+
         {(resumeGenerating || resumeRemoving) && resumeProgress ? (
           <div className="hidden sm:flex flex-1 min-w-[6rem] max-w-xs items-center gap-2">
             <Progress value={progressPct} className="h-1.5 flex-1" />
@@ -131,7 +167,7 @@ export function JobBulkActionsBar({
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMarkBidReady}
-              disabled={loading || totalSelected === 0 || bidReadyPending || moveToNewPending}
+              disabled={loading || totalSelected === 0 || bidReadyPending || workerPoolPending || moveToNewPending}
               title="Mark selected New jobs as Bid ready for Vendor Monitor"
             >
               {bidReadyPending ? (
@@ -142,14 +178,35 @@ export function JobBulkActionsBar({
               <span className="hidden sm:inline">Bid ready</span>
             </Button>
           ) : null}
+          {onMarkWorkerPool ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onMarkWorkerPool}
+              disabled={loading || totalSelected === 0 || workerPoolPending || bidReadyPending || moveToNewPending}
+              title={
+                applyAllCompanyRoles
+                  ? "Move selected jobs to Worker pool and mark other roles at those companies as applied"
+                  : "Move selected New jobs to Worker pool for Oak"
+              }
+            >
+              {workerPoolPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              ) : (
+                <Layers className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">Worker pool</span>
+            </Button>
+          ) : null}
           {onMoveToNew ? (
             <Button
               variant="outline"
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMoveToNew}
-              disabled={loading || totalSelected === 0 || moveToNewPending || bidReadyPending}
-              title="Move selected Bid ready jobs back to New"
+              disabled={loading || totalSelected === 0 || moveToNewPending || bidReadyPending || workerPoolPending}
+              title="Move selected Bid ready or Worker pool jobs back to New"
             >
               {moveToNewPending ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
@@ -172,7 +229,7 @@ export function JobBulkActionsBar({
                 || resumeGenerating
                 || resumeRemoving
               }
-              title="Recommend Library resumes for selected Bid Ready jobs using each job description"
+              title="Recommend Library resumes for selected Bid ready or Worker pool jobs using each job description"
             >
               {recommendRunning ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />

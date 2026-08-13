@@ -70,8 +70,8 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/jobs/:id/apply` | Mark applied → upsert `job_statuses.state=applied` |
 | POST | `/api/jobs/:id/status` | Body `{ applierName, status: Applied\|Scheduled\|Declined }` |
 | POST | `/api/jobs/:id/unapply` | Clear applied → delete `job_statuses` row (back to New) |
-| POST | `/api/jobs/:id/bid-status` | Body `{ applierName, status: BidReady\|BidCompleted\|clear }` — `clear` deletes row |
-| POST | `/api/jobs/bid-status/bulk` | Body `{ applierName, status: BidReady\|clear, jobs: [{ id }] }` |
+| POST | `/api/jobs/:id/bid-status` | Body `{ applierName, status: BidReady\|BidCompleted\|clear }` — `clear` deletes `job_statuses`, `vendor_tasks`, and `bid_review_events` (back to New) |
+| POST | `/api/jobs/bid-status/bulk` | Body `{ applierName, status: BidReady\|clear, jobs: [{ id }] }` — `clear` is the same as single-job Move to New |
 | POST | `/api/jobs/bulk` | Extension scrape ingest — `{ jobs: [...] }` → prenorm → dedupe → `temp_jobs` |
 | POST | `/api/expose/jobs` | LI-scrapper ingest — single job or `{ jobs: [...] }` → prenorm → dedupe → `temp_jobs` |
 | POST | `/api/expose/jobs/check` | LI-scrapper — `{ jobID }` exists in `temp_jobs` or `jobs` via `metadata.legacyId` |
@@ -101,6 +101,8 @@ Oak Chrome extension + UI board authenticate with the same Athens account passwo
 | POST | `/api/oak/ai-analyze` | Bearer — `{ pureTree, metaTree, page? }` → action plan |
 | POST | `/api/oak/match-option` | Bearer — dropdown option match |
 | GET | `/api/oak/runtime-file` | Bearer — optional file from `OAK_RUNTIME_FILE_PATH` |
+| GET | `/api/oak/jobs` | Bearer — Worker Pool jobs for the signed-in profile |
+| GET | `/api/oak/jobs/:jobId/recommended-resume` | Bearer — Library file assigned by Job Search Recommend |
 
 Socket.io: path `/oak`, handshake `auth.token` = Oak access token. Query: `type` (`extension` \| `ui-board`), `name`.
 

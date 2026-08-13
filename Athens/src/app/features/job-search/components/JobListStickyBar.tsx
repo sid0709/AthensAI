@@ -16,6 +16,8 @@ type JobListStickyBarProps = {
   onRemove: () => void;
   onMarkBidReady?: () => void;
   bidReadyPending?: boolean;
+  onMarkWorkerPool?: () => void;
+  workerPoolPending?: boolean;
   onMoveToNew?: () => void;
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
@@ -23,6 +25,8 @@ type JobListStickyBarProps = {
   onRemoveResumes?: () => void;
   onStopRemoveResumes?: () => void;
   onRecommendResumes?: () => void;
+  applyAllCompanyRoles?: boolean;
+  onApplyAllCompanyRolesChange?: (enabled: boolean) => void;
   resumeGenerating?: boolean;
   resumeStopping?: boolean;
   resumeRemoving?: boolean;
@@ -55,6 +59,8 @@ export function JobListStickyBar({
   onRemove,
   onMarkBidReady,
   bidReadyPending,
+  onMarkWorkerPool,
+  workerPoolPending,
   onMoveToNew,
   moveToNewPending,
   onGenerateResumes,
@@ -62,6 +68,8 @@ export function JobListStickyBar({
   onRemoveResumes,
   onStopRemoveResumes,
   onRecommendResumes,
+  applyAllCompanyRoles,
+  onApplyAllCompanyRolesChange,
   resumeGenerating,
   resumeStopping,
   resumeRemoving,
@@ -96,6 +104,8 @@ export function JobListStickyBar({
           onRemove={onRemove}
           onMarkBidReady={onMarkBidReady}
           bidReadyPending={bidReadyPending}
+          onMarkWorkerPool={onMarkWorkerPool}
+          workerPoolPending={workerPoolPending}
           onMoveToNew={onMoveToNew}
           moveToNewPending={moveToNewPending}
           onGenerateResumes={onGenerateResumes}
@@ -103,6 +113,8 @@ export function JobListStickyBar({
           onRemoveResumes={onRemoveResumes}
           onStopRemoveResumes={onStopRemoveResumes}
           onRecommendResumes={onRecommendResumes}
+          applyAllCompanyRoles={applyAllCompanyRoles}
+          onApplyAllCompanyRolesChange={onApplyAllCompanyRolesChange}
           resumeGenerating={resumeGenerating}
           resumeStopping={resumeStopping}
           resumeRemoving={resumeRemoving}

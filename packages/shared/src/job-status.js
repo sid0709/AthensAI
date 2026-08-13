@@ -1,6 +1,7 @@
 export const JOB_STATUS_STATES = Object.freeze([
   'posted',
   'bid-ready',
+  'worker-pool',
   'bid-completed',
   'applied',
   'scheduled',
@@ -94,6 +95,7 @@ export function jobStatusContribution(statusOrRows, profileId = null) {
     scheduled: Number(state === 'scheduled'),
     declined: Number(state === 'declined'),
     'bid-ready': Number(state === 'bid-ready'),
+    'worker-pool': Number(state === 'worker-pool'),
     'bid-completed': Number(state === 'bid-completed'),
   };
 }

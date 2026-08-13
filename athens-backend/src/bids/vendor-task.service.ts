@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Job, Prisma, VendorTask } from '@prisma/client';
 import {
+  deleteManyWithFallback,
   isInconsistentDateTime,
   isReplicaSetRequired,
   rawInsertOne,
@@ -178,6 +179,21 @@ export class VendorTaskService {
         take: limit,
       });
     }
+  }
+
+  async deleteByApplierJob(
+    applierName: string,
+    jobId: string,
+  ): Promise<number> {
+    return deleteManyWithFallback(
+      this.prisma,
+      VENDOR_TASKS_COLLECTION,
+      { applierName, jobId },
+      () =>
+        this.prisma.vendorTask.deleteMany({
+          where: { applierName, jobId },
+        }),
+    );
   }
 
   /** Upsert stub when Job Search marks Bid Ready. Does not restamp bidReadyDate. */

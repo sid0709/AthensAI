@@ -93,7 +93,9 @@ export class JobStatusMutateService {
       });
     }
     const next = API_BID_STATUS[key];
-    if (next == null) return this.clearState(jobId, applierName, mutationId);
+    if (next == null) {
+      return this.clearBidReady(jobId, applierName, mutationId);
+    }
     return this.setBidPipeline(
       jobId,
       applierName,
@@ -133,7 +135,7 @@ export class JobStatusMutateService {
       try {
         const result =
           key === 'clear'
-            ? await this.clearState(jobId, applierName, mutationId)
+            ? await this.clearBidReady(jobId, applierName, mutationId)
             : await this.setBidPipeline(
                 jobId,
                 applierName,
@@ -285,6 +287,29 @@ export class JobStatusMutateService {
       ...(!changed && opts?.alreadyMessage
         ? { message: opts.alreadyMessage }
         : {}),
+    };
+  }
+
+  private async clearBidReady(
+    jobIdRaw: string,
+    applierName: string,
+    mutationId?: string,
+  ): Promise<MutateResult> {
+    const { profileId, job } = await this.requireJobAndProfile(
+      jobIdRaw,
+      applierName,
+    );
+    const { changed } = await this.bidQueue.clearBidReady({
+      profileId,
+      applierName: String(applierName).trim(),
+      jobId: job.id,
+    });
+    return {
+      success: true,
+      data: await this.jobDocWithRecommend(job, profileId, 'posted'),
+      changed,
+      viewerStatus: 'posted',
+      mutationId: mutationId?.trim() || null,
     };
   }
 

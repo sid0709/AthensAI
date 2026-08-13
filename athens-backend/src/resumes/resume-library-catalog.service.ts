@@ -34,6 +34,23 @@ export class ResumeLibraryCatalogService {
 
     return compressResumeCatalog(catalog);
   }
+
+  /** Newest analyzed Library file whose stack label (title) matches. */
+  async findIdByStack(
+    profileId: string,
+    stack: string,
+  ): Promise<string | null> {
+    const id = String(profileId || '').trim();
+    const title = String(stack || '').trim();
+    if (!id || !title) return null;
+
+    const row = await this.prisma.resume.findFirst({
+      where: { profileId: id, title, analyzed: true },
+      orderBy: [{ analyzedAt: 'desc' }, { uploadedAt: 'desc' }],
+      select: { id: true },
+    });
+    return row?.id ?? null;
+  }
 }
 
 function skillEntriesFromAnalysis(analysis: unknown): Array<{ name: string }> {

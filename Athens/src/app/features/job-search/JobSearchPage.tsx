@@ -22,10 +22,18 @@ import {
   jobHasResumeRecommendation,
   useRecommendResumes,
 } from "./hooks/useRecommendResumes";
+import { canAssignLibraryResume } from "./lib/jobRecommendSnapshot";
 import { useJobsList } from "./hooks/useJobsList";
 import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
+import { isBetaTier } from "../../lib/beta";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
 import { JOB_SEARCH_PAGE_SIZES } from "./lib/jobSearchUrlState";
+import {
+  companyApplyTargets,
+  companyApplyTargetsForPrimaries,
+  readApplyAllCompanyRoles,
+  writeApplyAllCompanyRoles,
+} from "./lib/companyApplyTargets";
 
 const PAGE_SIZE_OPTIONS = [...JOB_SEARCH_PAGE_SIZES];
 
@@ -35,11 +43,13 @@ export function JobSearchPage() {
 
 function JobSearchPageContent() {
   const { applier } = useApplier();
+  const isBeta = isBetaTier(applier?.tier);
   const profileId = applier?._id != null ? String(applier._id) : "";
   const { adoptTask, waitForTask } = useBackgroundTasks();
   const {
     state: urlState,
     setFilters,
+    replaceFilters,
     setPage,
     clampPage,
     setPageSize,
@@ -94,11 +104,14 @@ function JobSearchPageContent() {
   const { selectedIds, selectedJobs, selectJob, deselectJob, selectAllOnPage, clearSelection } = useJobSelection(visibleJobs);
   const {
     applyToJob,
+    applyById,
     updateJobStatus,
     cancelJobStatus,
     markBidReady,
     markBidReadyBulk,
-    clearBidReadyBulk,
+    markWorkerPool,
+    markWorkerPoolBulk,
+    moveToNewBulk,
     isPending,
   } = useJobApplicationActions(patchJob, refreshStatusCounts);
   const {
@@ -116,7 +129,14 @@ function JobSearchPageContent() {
   } = useJobResumeGeneration(jobs);
   const { recommendBulk, recommendRunning, recommendProgress } = useRecommendResumes(patchJob);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
+  const [workerPoolBulkPending, setWorkerPoolBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
+  const [applyAllCompanyRoles, setApplyAllCompanyRoles] = useState(readApplyAllCompanyRoles);
+
+  useEffect(() => {
+    if (isBeta || filters.statusTab !== "worker-pool") return;
+    replaceFilters({ ...filters, statusTab: "all" });
+  }, [filters, isBeta, replaceFilters]);
 
   useEffect(() => {
     clearSelection();
@@ -215,6 +235,38 @@ function JobSearchPageContent() {
     setOpenJob(companyId, activeJobId);
   };
 
+  const markCompanySiblingsApplied = async (primaries: Job[]) => {
+    if (!isBeta || !applyAllCompanyRoles || !primaries.length) return 0;
+    const { siblings, unloadedIds } = companyApplyTargetsForPrimaries(primaries, groups);
+    if (!siblings.length && !unloadedIds.length) return 0;
+    const catalog = primaries[0].catalog || "market";
+    const [siblingResults, unloadedResults] = await Promise.all([
+      runWithConcurrency(siblings, (sibling) =>
+        applyToJob(sibling, { openUrl: false, notify: false, refreshCounts: false }),
+      ),
+      runWithConcurrency(unloadedIds, (id) =>
+        applyById(id, { catalog, notify: false, refreshCounts: false }),
+      ),
+    ]);
+    void refreshStatusCounts();
+    return [...siblingResults, ...unloadedResults].filter(Boolean).length;
+  };
+
+  const finishWorkerPoolSiblings = (primaries: Job[]) => {
+    if (!isBeta || !applyAllCompanyRoles || !primaries.length) return;
+    toast.message("Marking other company roles as applied…");
+    void markCompanySiblingsApplied(primaries).then((applied) => {
+      if (!applied) return;
+      const companyLabel =
+        primaries.length === 1
+          ? primaries[0].company
+          : `${new Set(primaries.map((job) => job.companyId)).size} companies`;
+      toast.success(
+        `Marked ${applied} other role${applied === 1 ? "" : "s"} at ${companyLabel} as applied`,
+      );
+    });
+  };
+
   const handleApplyAll = async (jobs = selectedJobs) => {
     const marketJobs = jobs.filter((job) => !isExternalJob(job));
     if (!marketJobs.length) {
@@ -222,6 +274,38 @@ function JobSearchPageContent() {
       return;
     }
     await runWithConcurrency(marketJobs, (job) => applyToJob(job, { openUrl: false }));
+  };
+
+  const handleApply = async (job: Job) => {
+    if (!isBeta || !applyAllCompanyRoles) {
+      await applyToJob(job);
+      return;
+    }
+
+    const group = groups.find((candidate) => candidate.companyId === job.companyId);
+    const { siblings, unloadedIds } = companyApplyTargets(job, group);
+    if (!siblings.length && !unloadedIds.length) {
+      await applyToJob(job);
+      return;
+    }
+
+    const catalog = job.catalog || "market";
+    const [primaryOk, siblingResults, unloadedResults] = await Promise.all([
+      applyToJob(job, { notify: false }),
+      runWithConcurrency(siblings, (sibling) =>
+        applyToJob(sibling, { openUrl: false, notify: false }),
+      ),
+      runWithConcurrency(unloadedIds, (id) =>
+        applyById(id, { catalog, notify: false }),
+      ),
+    ]);
+    const ok = [primaryOk, ...siblingResults, ...unloadedResults].filter(Boolean).length;
+    const companyName = group?.company.name || job.company;
+    if (ok) {
+      toast.success(`Marked ${ok} job${ok === 1 ? "" : "s"} at ${companyName} as applied`);
+    } else {
+      toast.error("Failed to mark jobs as applied");
+    }
   };
 
   const downloadSelected = () => {
@@ -316,6 +400,7 @@ function JobSearchPageContent() {
         onChange={setFilters}
         statusCounts={statusCounts}
         countsLoading={countsLoading}
+        showWorkerPoolTab={isBeta}
       />
 
       <JobListStickyBar
@@ -338,11 +423,30 @@ function JobSearchPageContent() {
           })();
         }}
         bidReadyPending={bidReadyBulkPending}
+        onMarkWorkerPool={
+          isBeta
+            ? () => {
+                void (async () => {
+                  setWorkerPoolBulkPending(true);
+                  try {
+                    const primaries = selectedJobs.filter((job) => job.status === "posted");
+                    const moved = await markWorkerPoolBulk(selectedJobs);
+                    if (!moved) return;
+                    clearSelection();
+                    finishWorkerPoolSiblings(primaries);
+                  } finally {
+                    setWorkerPoolBulkPending(false);
+                  }
+                })();
+              }
+            : undefined
+        }
+        workerPoolPending={workerPoolBulkPending}
         onMoveToNew={() => {
           void (async () => {
             setMoveToNewBulkPending(true);
             try {
-              await clearBidReadyBulk(selectedJobs);
+              await moveToNewBulk(selectedJobs);
               clearSelection();
             } finally {
               setMoveToNewBulkPending(false);
@@ -358,14 +462,26 @@ function JobSearchPageContent() {
         onRemoveResumes={() => {
           void removeBulkResumes(selectedJobs);
         }}
-        onRecommendResumes={() => {
-          const already = selectedJobs.filter(jobHasResumeRecommendation).length;
-          if (already > 0) {
-            setRecommendConflictOpen(true);
-            return;
-          }
-          void recommendBulk(selectedJobs, { replaceExisting: true });
-        }}
+        onRecommendResumes={
+          filters.statusTab === "bid-ready" || filters.statusTab === "worker-pool"
+            ? () => {
+                const eligible = selectedJobs.filter((job) =>
+                  canAssignLibraryResume(job.status),
+                );
+                const already = eligible.filter(jobHasResumeRecommendation).length;
+                if (already > 0) {
+                  setRecommendConflictOpen(true);
+                  return;
+                }
+                void recommendBulk(eligible, { replaceExisting: true });
+              }
+            : undefined
+        }
+        applyAllCompanyRoles={applyAllCompanyRoles}
+        onApplyAllCompanyRolesChange={isBeta ? (enabled) => {
+          setApplyAllCompanyRoles(enabled);
+          writeApplyAllCompanyRoles(enabled);
+        } : undefined}
         resumeGenerating={bulkRunning}
         resumeStopping={bulkStopping}
         resumeRemoving={bulkRemoving}
@@ -399,16 +515,25 @@ function JobSearchPageContent() {
       <RecommendResumeConflictDialog
         open={recommendConflictOpen}
         onOpenChange={setRecommendConflictOpen}
-        alreadyCount={selectedJobs.filter(jobHasResumeRecommendation).length}
-        totalCount={selectedJobs.length}
+        alreadyCount={selectedJobs.filter(
+          (job) =>
+            canAssignLibraryResume(job.status) && jobHasResumeRecommendation(job),
+        ).length}
+        totalCount={selectedJobs.filter((job) => canAssignLibraryResume(job.status)).length}
         busy={recommendRunning}
         onReplace={() => {
           setRecommendConflictOpen(false);
-          void recommendBulk(selectedJobs, { replaceExisting: true });
+          void recommendBulk(
+            selectedJobs.filter((job) => canAssignLibraryResume(job.status)),
+            { replaceExisting: true },
+          );
         }}
         onSkip={() => {
           setRecommendConflictOpen(false);
-          void recommendBulk(selectedJobs, { replaceExisting: false });
+          void recommendBulk(
+            selectedJobs.filter((job) => canAssignLibraryResume(job.status)),
+            { replaceExisting: false },
+          );
         }}
       />
 
@@ -437,8 +562,19 @@ function JobSearchPageContent() {
             bookmarkedIds={bookmarkedIds}
             onToggleBookmark={toggleBookmark}
             isJobPending={isPending}
-            onApply={(job) => void applyToJob(job)}
+            onApply={(job) => void handleApply(job)}
             onMarkBidReady={(job) => void markBidReady(job)}
+            onMarkWorkerPool={
+              isBeta
+                ? (job) => {
+                    void (async () => {
+                      const moved = await markWorkerPool(job);
+                      if (!moved) return;
+                      finishWorkerPoolSiblings([job]);
+                    })();
+                  }
+                : undefined
+            }
             onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
             onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
             onCancel={(job) => void cancelJobStatus(job)}

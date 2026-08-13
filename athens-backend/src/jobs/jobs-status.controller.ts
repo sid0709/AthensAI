@@ -15,16 +15,35 @@ import {
   UpdateJobBidStatusDto,
   UpdateJobPipelineStatusDto,
 } from './dto/job-status-mutate.dto';
+import {
+  BulkWorkerPoolDto,
+  UpdateJobWorkerPoolDto,
+} from './dto/job-worker-pool.dto';
 import { JobStatusMutateService } from './job-status-mutate.service';
+import { JobWorkerPoolService } from './job-worker-pool.service';
 
 @Controller('jobs')
 export class JobsStatusController {
-  constructor(private readonly mutate: JobStatusMutateService) {}
+  constructor(
+    private readonly mutate: JobStatusMutateService,
+    private readonly workerPool: JobWorkerPoolService,
+  ) {}
 
   @Post('bid-status/bulk')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   bulkBid(@Body() body: BulkBidStatusDto) {
     return this.mutate.setBidStatusBulk(
+      body.applierName,
+      body.status,
+      body.jobs,
+      body.mutationId,
+    );
+  }
+
+  @Post('worker-pool/bulk')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  bulkWorkerPool(@Body() body: BulkWorkerPoolDto) {
+    return this.workerPool.setStatusBulk(
       body.applierName,
       body.status,
       body.jobs,
@@ -65,6 +84,20 @@ export class JobsStatusController {
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   bidStatus(@Param('id') id: string, @Body() body: UpdateJobBidStatusDto) {
     return this.mutate.setBidStatus(
+      id,
+      body.applierName,
+      body.status,
+      body.mutationId,
+    );
+  }
+
+  @Post(':id/worker-pool')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  workerPoolStatus(
+    @Param('id') id: string,
+    @Body() body: UpdateJobWorkerPoolDto,
+  ) {
+    return this.workerPool.setStatus(
       id,
       body.applierName,
       body.status,

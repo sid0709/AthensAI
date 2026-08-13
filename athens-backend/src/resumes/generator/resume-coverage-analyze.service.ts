@@ -100,7 +100,7 @@ export class ResumeCoverageAnalyzeService {
       provider: auth.provider,
       model: auth.model,
       analysis,
-      usage: usageWithCost(result.usage),
+      usage: usageWithCost(result.usage, result.model || auth.model),
     };
   }
 }

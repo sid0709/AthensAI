@@ -5,6 +5,9 @@ export const OAK_SOCKET_PATH = '/oak';
 export const OAK_RUNTIME_FILE_KEY =
   process.env.OAK_RUNTIME_FILE_KEY?.trim() || 'runtime_file';
 
+/** Library resume assigned by Job Search Recommend — attached on resume_upload. */
+export const OAK_RECOMMENDED_RESUME_KEY = 'recommended_resume';
+
 export const OPENAI_RESPONSES_URL =
   process.env.OAK_OPENAI_API_URL?.trim() ||
   'https://api.openai.com/v1/responses';

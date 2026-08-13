@@ -3,16 +3,19 @@ import type { Prisma } from '@prisma/client';
 import { BidReviewEventsService } from '../../bids/bid-review-events.service';
 import { matchUploadToRecommended } from '../../bids/lib/resume-catalog';
 import { VendorTaskService } from '../../bids/vendor-task.service';
+import { ResumeLibraryCatalogService } from '../../resumes/resume-library-catalog.service';
 
 @Injectable()
 export class RecommendPersistService {
   constructor(
     private readonly vendorTasks: VendorTaskService,
     private readonly events: BidReviewEventsService,
+    private readonly libraryCatalog: ResumeLibraryCatalogService,
   ) {}
 
   async persist(input: {
     applierName: string;
+    profileId: string;
     jobId: string;
     recommendedResume: string | null;
     matchedCatalogKey: string | null;
@@ -32,13 +35,16 @@ export class RecommendPersistService {
       existing?.resumeOriginalName,
       stack,
     );
+    const recommendedResumeId = stack
+      ? await this.libraryCatalog.findIdByStack(input.profileId, stack)
+      : null;
 
     const doc = await this.vendorTasks.upsertFields(
       input.applierName,
       input.jobId,
       {
         recommendedResumeStack: stack,
-        recommendedResumeId: null,
+        recommendedResumeId,
         recommendedResumeReason: input.reason,
         useCustomizedResume: input.useCustomizedResume,
         recommendWarning: input.warning,
@@ -60,6 +66,7 @@ export class RecommendPersistService {
       feature: 'bid-recommend-resume',
       meta: {
         recommendedResumeStack: stack,
+        recommendedResumeId,
         useCustomizedResume: input.useCustomizedResume,
         mode: input.mode,
       },

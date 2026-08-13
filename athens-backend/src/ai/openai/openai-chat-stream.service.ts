@@ -6,6 +6,7 @@ import {
   isRetryableStatus,
   PROVIDER_BASE,
 } from './openai-provider';
+import { parseChatUsage } from './parse-chat-usage';
 import type {
   ChatCompletionInput,
   ChatCompletionResult,
@@ -126,11 +127,7 @@ async function* readProviderSse(
       if (!payload || payload === '[DONE]') continue;
       let parsed: {
         model?: string;
-        usage?: {
-          prompt_tokens?: number;
-          completion_tokens?: number;
-          total_tokens?: number;
-        };
+        usage?: Record<string, unknown>;
         error?: { message?: string } | string;
         choices?: Array<{ delta?: { content?: string }; text?: string }>;
       };
@@ -149,11 +146,7 @@ async function* readProviderSse(
       const meta: StreamMeta = {};
       if (parsed.model) meta.model = parsed.model;
       if (parsed.usage) {
-        meta.usage = {
-          promptTokens: Number(parsed.usage.prompt_tokens ?? 0),
-          completionTokens: Number(parsed.usage.completion_tokens ?? 0),
-          totalTokens: Number(parsed.usage.total_tokens ?? 0),
-        };
+        meta.usage = parseChatUsage(parsed.usage) ?? undefined;
       }
       if (meta.model || meta.usage) hooks.onMeta(meta);
       const delta =

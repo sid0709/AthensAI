@@ -49,10 +49,10 @@ export class JobsDetailService {
     }
 
     const doc = mapJobToListDoc(job, viewerStatus);
-    const recommendByJobId = resolvedProfileId
-      ? await this.recommendFields.loadForProfile(resolvedProfileId, [jobId])
-      : applierName.trim()
-        ? await this.recommendFields.loadForApplier(applierName.trim(), [jobId])
+    const recommendByJobId = applierName.trim()
+      ? await this.recommendFields.loadForApplier(applierName.trim(), [jobId])
+      : resolvedProfileId
+        ? await this.recommendFields.loadForProfile(resolvedProfileId, [jobId])
         : new Map();
     const recommend =
       recommendByJobId.get(jobId) || recommendByJobId.get(jobId.toLowerCase());

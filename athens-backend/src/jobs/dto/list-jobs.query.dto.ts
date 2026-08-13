@@ -90,4 +90,10 @@ export class ListJobsQueryDto {
   @IsString()
   @Transform(({ value }) => asString(value).trim())
   profileId?: string = '';
+
+  /** AccountInfo name — hydrates vendor_tasks recommend fields on list rows. */
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => asString(value).trim())
+  applierName?: string = '';
 }

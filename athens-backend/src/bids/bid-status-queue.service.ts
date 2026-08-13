@@ -10,6 +10,7 @@ import {
   withReplicaSetFallback,
 } from '../prisma/mongo-standalone';
 import type { JobStatusState } from '../jobs/constants/job-status-states.constants';
+import { BidReviewEventsService } from './bid-review-events.service';
 import { VendorTaskService } from './vendor-task.service';
 
 const JOB_STATUSES_COLLECTION = 'job_statuses';
@@ -32,6 +33,7 @@ export class BidStatusQueueService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly vendorTasks: VendorTaskService,
+    private readonly events: BidReviewEventsService,
   ) {}
 
   async setBidReady(input: {
@@ -229,6 +231,29 @@ export class BidStatusQueueService {
         take: opts.limit,
       });
     }
+  }
+
+  /**
+   * Move to New: drop job_statuses plus Bid Ready vendor_tasks / review events.
+   * Inverse of setBidReady — Bid Management and Lens must not keep the stub.
+   */
+  async clearBidReady(input: {
+    profileId: string;
+    applierName: string;
+    jobId: string;
+  }): Promise<{ changed: boolean }> {
+    const statusDeleted = await this.clearStatus(input.profileId, input.jobId);
+    const tasksDeleted = await this.vendorTasks.deleteByApplierJob(
+      input.applierName,
+      input.jobId,
+    );
+    const eventsDeleted = await this.events.deleteForJob(
+      input.applierName,
+      input.jobId,
+    );
+    return {
+      changed: statusDeleted + tasksDeleted + eventsDeleted > 0,
+    };
   }
 
   async clearStatus(profileId: string, jobId: string): Promise<number> {

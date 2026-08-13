@@ -3,8 +3,8 @@ import { BarChart3, Loader2 } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { fetchUserResumes } from "../../../services/resumeApi";
 import type { UserResumeSummary } from "../../../types/resume";
-import { useResumeAnalysisGraph } from "../../knowledge-graph/hooks/useResumeAnalysisGraph";
-import { ResumeSkillAnalysisView } from "./analysis/ResumeSkillAnalysisView";
+import { toCategorizedSkills } from "../lib/skillCategories";
+import { ResumeSkillProfilePanel } from "./analysis/ResumeSkillProfilePanel";
 
 type ResumeAnalysisTabProps = {
   onOpenLibrary?: () => void;
@@ -16,11 +16,20 @@ export function ResumeAnalysisTab({ onOpenLibrary }: ResumeAnalysisTabProps) {
   const [resumes, setResumes] = useState<UserResumeSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   const analyzedResumes = useMemo(
     () => resumes.filter((r) => r.analyzed && r.source !== "generated"),
     [resumes],
   );
+
+  const visibleResumes = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return analyzedResumes;
+    return analyzedResumes.filter((r) =>
+      [r.techStack, r.fileName].some((x) => x.toLowerCase().includes(q)),
+    );
+  }, [analyzedResumes, query]);
 
   const refresh = useCallback(async () => {
     if (!ownerName) {
@@ -51,8 +60,8 @@ export function ResumeAnalysisTab({ onOpenLibrary }: ResumeAnalysisTabProps) {
     );
   }, [analyzedResumes]);
 
-  const graph = useResumeAnalysisGraph(selectedResumeId);
   const selectedResume = analyzedResumes.find((r) => r.id === selectedResumeId);
+  const selectedSkills = toCategorizedSkills(selectedResume?.skillProfile);
 
   if (!applierReady || loading) {
     return (
@@ -95,13 +104,25 @@ export function ResumeAnalysisTab({ onOpenLibrary }: ResumeAnalysisTabProps) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5 min-h-[520px]">
       <aside className="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-        <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-bold text-foreground">Analyzed resumes</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">{analyzedResumes.length} available</p>
+        <div className="px-4 py-3 border-b border-border space-y-2">
+          <div>
+            <h3 className="text-sm font-bold text-foreground">Analyzed resumes</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">{analyzedResumes.length} available</p>
+          </div>
+          {analyzedResumes.length > 8 ? (
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search stack or file"
+              className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground"
+            />
+          ) : null}
         </div>
         <ul className="flex-1 overflow-y-auto subtle-scroll p-2 space-y-1">
-          {analyzedResumes.map((r) => {
+          {visibleResumes.map((r) => {
             const active = r.id === selectedResumeId;
+            const skillCount = r.skillCount ?? r.skillProfile?.length;
             return (
               <li key={r.id}>
                 <button
@@ -115,22 +136,25 @@ export function ResumeAnalysisTab({ onOpenLibrary }: ResumeAnalysisTabProps) {
                 >
                   <div className="text-xs font-bold text-foreground truncate">{r.techStack}</div>
                   <div className="text-[11px] text-muted-foreground truncate mt-0.5">{r.fileName}</div>
-                  {r.skillCount != null ? (
-                    <div className="text-[10px] text-primary font-semibold mt-1">{r.skillCount} skills</div>
+                  {skillCount != null ? (
+                    <div className="text-[10px] text-primary font-semibold mt-1">{skillCount} skills</div>
                   ) : null}
                 </button>
               </li>
             );
           })}
+          {!visibleResumes.length ? (
+            <li className="px-3 py-6 text-center text-xs text-muted-foreground">No matches</li>
+          ) : null}
         </ul>
       </aside>
 
       <div className="rounded-xl border border-border bg-card overflow-hidden min-h-[520px]">
-        <ResumeSkillAnalysisView
+        <ResumeSkillProfilePanel
           key={selectedResumeId ?? "none"}
-          graph={graph}
+          skills={selectedSkills}
           title={selectedResume ? `${selectedResume.techStack} — ${selectedResume.fileName}` : "Skill analysis"}
-          description="Skills extracted from this resume with category and proficiency level (1–5), matching My Skills."
+          description="Skills extracted from this resume with category and proficiency level (1–5)."
         />
       </div>
     </div>

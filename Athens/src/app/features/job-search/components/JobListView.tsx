@@ -23,6 +23,7 @@ type JobListViewProps = {
   isJobPending?: (jobId: string) => boolean;
   onApply?: (job: Job) => void;
   onMarkBidReady?: (job: Job) => void;
+  onMarkWorkerPool?: (job: Job) => void;
   onMarkScheduled?: (job: Job) => void;
   onMarkDeclined?: (job: Job) => void;
   onCancel?: (job: Job) => void;
@@ -49,6 +50,7 @@ export function JobListView({
   isJobPending,
   onApply,
   onMarkBidReady,
+  onMarkWorkerPool,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -94,6 +96,7 @@ export function JobListView({
         isJobPending={isJobPending}
         onApply={onApply}
         onMarkBidReady={onMarkBidReady}
+        onMarkWorkerPool={onMarkWorkerPool}
         onMarkScheduled={onMarkScheduled}
         onMarkDeclined={onMarkDeclined}
         onCancel={onCancel}

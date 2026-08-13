@@ -53,7 +53,8 @@ export class AiUsageRecorderService {
         apiKey: input.apiKey,
         rawUsage: tokensToRawUsage({
           promptTokens: input.usage?.promptTokens ?? 0,
-          cachedTokens: input.cachedTokens ?? 0,
+          cachedTokens:
+            input.cachedTokens ?? input.usage?.cachedTokens ?? 0,
           completionTokens: input.usage?.completionTokens ?? 0,
           totalTokens: input.usage?.totalTokens,
         }),

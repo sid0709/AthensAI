@@ -70,6 +70,16 @@ function extractFindBatch(raw: unknown): unknown[] {
   return [];
 }
 
+function uniqueRecommendJobIds(jobIds: unknown[]): string[] {
+  return [
+    ...new Set(
+      jobIds
+        .map((jobId) => asJobIdHex(jobId) || String(jobId || '').trim())
+        .filter((jobId) => JOB_OBJECT_ID_PATTERN.test(jobId)),
+    ),
+  ];
+}
+
 function remember(
   out: Map<string, JobRecommendFields>,
   jobId: string,
@@ -98,13 +108,7 @@ export class JobRecommendFieldsService {
   ): Promise<Map<string, JobRecommendFields>> {
     const out = new Map<string, JobRecommendFields>();
     const id = String(profileId || '').trim();
-    const ids = [
-      ...new Set(
-        jobIds
-          .map((jobId) => String(jobId || '').trim())
-          .filter((jobId) => JOB_OBJECT_ID_PATTERN.test(jobId)),
-      ),
-    ];
+    const ids = uniqueRecommendJobIds(jobIds);
     if (!id || !ids.length) return out;
 
     // Legacy account_info rows store `_id` as a plain string; Prisma ObjectId
@@ -120,13 +124,7 @@ export class JobRecommendFieldsService {
   ): Promise<Map<string, JobRecommendFields>> {
     const out = new Map<string, JobRecommendFields>();
     const name = String(applierName || '').trim();
-    const ids = [
-      ...new Set(
-        jobIds
-          .map((jobId) => String(jobId || '').trim())
-          .filter((jobId) => JOB_OBJECT_ID_PATTERN.test(jobId)),
-      ),
-    ];
+    const ids = uniqueRecommendJobIds(jobIds);
     if (!name || !ids.length) return out;
 
     const rows = await this.findRecommendRows(name, ids);
@@ -149,7 +147,16 @@ export class JobRecommendFieldsService {
       for (const row of rows) {
         const jobId = asJobIdHex(row.jobId) || String(row.jobId || '').trim();
         if (!jobId) continue;
-        byJobId.set(jobId.toLowerCase(), { ...row, jobId });
+        const key = jobId.toLowerCase();
+        const prev = byJobId.get(key);
+        if (
+          prev &&
+          hasStoredRecommendation(prev) &&
+          !hasStoredRecommendation(row)
+        ) {
+          continue;
+        }
+        byJobId.set(key, { ...row, jobId });
       }
     };
 
@@ -161,7 +168,10 @@ export class JobRecommendFieldsService {
         }),
       );
     } catch (error) {
-      if (!isInconsistentDateTime(error)) throw error;
+      if (!isInconsistentDateTime(error)) {
+        absorb(await this.findRecommendRowsRaw(applierName, jobIds));
+        return [...byJobId.values()];
+      }
       await this.repairVendorTaskDates();
       absorb(
         await this.prisma.vendorTask.findMany({
@@ -171,18 +181,8 @@ export class JobRecommendFieldsService {
       );
     }
 
-    const missing = jobIds.filter(
-      (id) => !byJobId.has(String(id).toLowerCase()),
-    );
-    // Legacy rows may store jobId as ObjectId; Prisma String `in` misses those.
-    if (missing.length > 0 || byJobId.size === 0) {
-      absorb(
-        await this.findRecommendRowsRaw(
-          applierName,
-          missing.length ? missing : jobIds,
-        ),
-      );
-    }
+    // Always merge raw: vendor_tasks.jobId may be a BSON string or ObjectId.
+    absorb(await this.findRecommendRowsRaw(applierName, jobIds));
 
     return [...byJobId.values()];
   }

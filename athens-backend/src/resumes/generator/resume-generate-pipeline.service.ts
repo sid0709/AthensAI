@@ -209,7 +209,7 @@ export class ResumeGeneratePipelineService {
 
         priorDraft = output;
 
-        const stepUsage = usageWithCost(stepUsageRaw);
+        const stepUsage = usageWithCost(stepUsageRaw, prep.model);
         usage = addUsage(usage, stepUsage);
         const entry: GenerationStepEvent = {
           phase: 'step-done',
