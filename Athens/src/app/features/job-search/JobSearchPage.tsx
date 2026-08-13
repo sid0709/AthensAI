@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
-import { removeJobs, removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
+import { applyOtherCompanyJobs, removeJobs, removeOtherCompanyJobs as removeCompanySiblingJobs } from "../../api/jobs";
 import { useBackgroundTasks } from "../../context/BackgroundTaskContext";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
@@ -29,8 +29,7 @@ import { isBetaTier } from "../../lib/beta";
 import { useJobSearchUrlState } from "./hooks/useJobSearchUrlState";
 import { JOB_SEARCH_PAGE_SIZES } from "./lib/jobSearchUrlState";
 import {
-  companyApplyTargets,
-  companyApplyTargetsForPrimaries,
+  companyGroupForJob,
   readApplyAllCompanyRoles,
   writeApplyAllCompanyRoles,
 } from "./lib/companyApplyTargets";
@@ -72,7 +71,7 @@ function JobSearchPageContent() {
   const [exportBusy, setExportBusy] = useState(false);
   const [recommendConflictOpen, setRecommendConflictOpen] = useState(false);
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
-  const { jobs, groups, total, totalJobs, loading, error, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
+  const { jobs, groups, total, totalJobs, loading, error, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, markJobsApplied, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
     useJobsList(filters, removedIds, page, pageSize);
 
   useEffect(() => {
@@ -104,7 +103,6 @@ function JobSearchPageContent() {
   const { selectedIds, selectedJobs, selectJob, deselectJob, selectAllOnPage, clearSelection } = useJobSelection(visibleJobs);
   const {
     applyToJob,
-    applyById,
     updateJobStatus,
     cancelJobStatus,
     markBidReady,
@@ -236,20 +234,33 @@ function JobSearchPageContent() {
   };
 
   const markCompanySiblingsApplied = async (primaries: Job[]) => {
-    if (!isBeta || !applyAllCompanyRoles || !primaries.length) return 0;
-    const { siblings, unloadedIds } = companyApplyTargetsForPrimaries(primaries, groups);
-    if (!siblings.length && !unloadedIds.length) return 0;
-    const catalog = primaries[0].catalog || "market";
-    const [siblingResults, unloadedResults] = await Promise.all([
-      runWithConcurrency(siblings, (sibling) =>
-        applyToJob(sibling, { openUrl: false, notify: false, refreshCounts: false }),
-      ),
-      runWithConcurrency(unloadedIds, (id) =>
-        applyById(id, { catalog, notify: false, refreshCounts: false }),
-      ),
-    ]);
+    if (!isBeta || !applyAllCompanyRoles || !primaries.length || !applier?.name) return 0;
+    const keepByCompany = new Map<string, string[]>();
+    for (const job of primaries) {
+      const group = companyGroupForJob(job, groups);
+      const companyId = String(group?.companyId || job.companyId || "").trim();
+      const keepId = String(job.backendId || job.id || "").trim();
+      if (!/^[a-fA-F0-9]{24}$/.test(companyId) || !keepId) continue;
+      const keep = keepByCompany.get(companyId) ?? [];
+      if (!keep.includes(keepId)) keep.push(keepId);
+      keepByCompany.set(companyId, keep);
+    }
+    if (!keepByCompany.size) return 0;
+
+    const appliedIds: string[] = [];
+    for (const [companyId, keepJobIds] of keepByCompany) {
+      try {
+        const res = await applyOtherCompanyJobs(companyId, keepJobIds, applier.name);
+        appliedIds.push(...(res.appliedIds || []));
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to mark other company roles as applied",
+        );
+      }
+    }
+    if (appliedIds.length) markJobsApplied(appliedIds);
     void refreshStatusCounts();
-    return [...siblingResults, ...unloadedResults].filter(Boolean).length;
+    return appliedIds.length;
   };
 
   const finishWorkerPoolSiblings = (primaries: Job[]) => {
@@ -282,24 +293,24 @@ function JobSearchPageContent() {
       return;
     }
 
-    const group = groups.find((candidate) => candidate.companyId === job.companyId);
-    const { siblings, unloadedIds } = companyApplyTargets(job, group);
-    if (!siblings.length && !unloadedIds.length) {
-      await applyToJob(job);
-      return;
-    }
-
-    const catalog = job.catalog || "market";
-    const [primaryOk, siblingResults, unloadedResults] = await Promise.all([
+    const group = companyGroupForJob(job, groups);
+    const companyId = String(group?.companyId || job.companyId || "").trim();
+    const keepId = String(job.backendId || job.id || "").trim();
+    const canApplyOthers = /^[a-fA-F0-9]{24}$/.test(companyId) && Boolean(keepId && applier?.name);
+    const [primaryOk, othersCount] = await Promise.all([
       applyToJob(job, { notify: false }),
-      runWithConcurrency(siblings, (sibling) =>
-        applyToJob(sibling, { openUrl: false, notify: false }),
-      ),
-      runWithConcurrency(unloadedIds, (id) =>
-        applyById(id, { catalog, notify: false }),
-      ),
+      canApplyOthers
+        ? applyOtherCompanyJobs(companyId, [keepId], applier.name)
+            .then((res) => {
+              const ids = res.appliedIds || [];
+              if (ids.length) markJobsApplied(ids);
+              return ids.length;
+            })
+            .catch(() => 0)
+        : Promise.resolve(0),
     ]);
-    const ok = [primaryOk, ...siblingResults, ...unloadedResults].filter(Boolean).length;
+    void refreshStatusCounts();
+    const ok = Number(Boolean(primaryOk)) + othersCount;
     const companyName = group?.company.name || job.company;
     if (ok) {
       toast.success(`Marked ${ok} job${ok === 1 ? "" : "s"} at ${companyName} as applied`);

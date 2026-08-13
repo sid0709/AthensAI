@@ -24,6 +24,23 @@ function jobRecordId(job: Pick<Job, "id" | "backendId">): string {
   return job.backendId || job.id;
 }
 
+export function companyGroupForJob(
+  job: Job,
+  groups: CompanyJobGroup[],
+): CompanyJobGroup | undefined {
+  const companyId = String(job.companyId || "").trim();
+  const keepId = jobRecordId(job);
+  return (
+    groups.find((group) => companyId && group.companyId === companyId) ||
+    groups.find((group) =>
+      group.jobs.some(
+        (candidate) =>
+          candidate.id === job.id || jobRecordId(candidate) === keepId,
+      ),
+    )
+  );
+}
+
 export function canMarkJobApplied(job: Job): boolean {
   return APPLYABLE_STATUSES.has(job.status) && !isExternalJob(job);
 }
@@ -51,11 +68,10 @@ export function companyApplyTargetsForPrimaries(
   const seenCompanies = new Set<string>();
 
   for (const job of primaries) {
-    const companyId = String(job.companyId || "").trim();
+    const group = companyGroupForJob(job, groups);
+    const companyId = String(group?.companyId || job.companyId || "").trim();
     if (!companyId || seenCompanies.has(companyId)) continue;
     seenCompanies.add(companyId);
-
-    const group = groups.find((candidate) => candidate.companyId === companyId);
     const loaded = group?.jobs?.length ? group.jobs : [job];
     for (const candidate of loaded) {
       const id = jobRecordId(candidate);
