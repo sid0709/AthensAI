@@ -34,6 +34,8 @@ export type ChatUsage = {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Context-cache hits (DeepSeek `prompt_cache_hit_tokens`, OpenAI cached_tokens). */
+  cachedTokens?: number;
 };
 
 export type ChatCompletionResult = {
