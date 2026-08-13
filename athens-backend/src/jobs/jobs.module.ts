@@ -15,6 +15,7 @@ import { CompanyMembershipService } from './company-membership.service';
 import { ExposeJobsController } from './expose-jobs.controller';
 import { JobCatalogTotalService } from './job-catalog-total.service';
 import { JobDedupeService } from './job-dedupe.service';
+import { JobCompanyApplyOthersService } from './job-company-apply-others.service';
 import { JobHardDeleteService } from './job-hard-delete.service';
 import { JobStatusMutateService } from './job-status-mutate.service';
 import { JobStatusService } from './job-status.service';
@@ -74,6 +75,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     CompanyMembershipService,
     JobStatusService,
     JobStatusMutateService,
+    JobCompanyApplyOthersService,
     JobWorkerPoolService,
     JobHardDeleteService,
     JobDedupeService,
