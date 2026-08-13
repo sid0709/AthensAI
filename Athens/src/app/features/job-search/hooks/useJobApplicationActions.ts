@@ -319,7 +319,7 @@ export function useJobApplicationActions(
       const jobId = job.backendId || job.id;
       if (!applier?.name) {
         toast.error("Select a profile before updating status");
-        return;
+        return false;
       }
 
       setPending(jobId, true);
@@ -337,18 +337,21 @@ export function useJobApplicationActions(
           toast.success("Marked as Bid ready");
           // Counts hit a heavy $facet aggregation — don't block the button on it.
           void refreshStatusCounts();
+          return true;
         }
+        return false;
       } catch (error) {
         if (await reconcileStatus(job, "bid-ready")) {
           onJobUpdated({ ...job, status: "bid-ready" });
           void refreshStatusCounts();
           toast.success("Marked as Bid ready");
-          return;
+          return true;
         }
         onJobUpdated(job);
         toast.error("Failed to mark job as Bid ready", {
           description: requestErrorMessage(error, "The server rejected the update."),
         });
+        return false;
       } finally {
         setPending(jobId, false);
       }
