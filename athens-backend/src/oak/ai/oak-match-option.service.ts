@@ -160,6 +160,7 @@ export class OakMatchOptionService {
           prompt_tokens: completion.usage?.promptTokens,
           completion_tokens: completion.usage?.completionTokens,
           total_tokens: completion.usage?.totalTokens,
+          prompt_cache_hit_tokens: completion.usage?.cachedTokens,
         },
         model,
       ),

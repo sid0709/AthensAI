@@ -16,6 +16,8 @@ type JobListStickyBarProps = {
   onRemove: () => void;
   onMarkBidReady?: () => void;
   bidReadyPending?: boolean;
+  onMarkWorkerPool?: () => void;
+  workerPoolPending?: boolean;
   onMoveToNew?: () => void;
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
@@ -57,6 +59,8 @@ export function JobListStickyBar({
   onRemove,
   onMarkBidReady,
   bidReadyPending,
+  onMarkWorkerPool,
+  workerPoolPending,
   onMoveToNew,
   moveToNewPending,
   onGenerateResumes,
@@ -100,6 +104,8 @@ export function JobListStickyBar({
           onRemove={onRemove}
           onMarkBidReady={onMarkBidReady}
           bidReadyPending={bidReadyPending}
+          onMarkWorkerPool={onMarkWorkerPool}
+          workerPoolPending={workerPoolPending}
           onMoveToNew={onMoveToNew}
           moveToNewPending={moveToNewPending}
           onGenerateResumes={onGenerateResumes}

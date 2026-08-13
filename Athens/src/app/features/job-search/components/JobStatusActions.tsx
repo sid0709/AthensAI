@@ -9,6 +9,7 @@ type JobStatusActionsProps = {
   pending?: boolean;
   onApply: () => void;
   onMarkBidReady?: () => void;
+  onMarkWorkerPool?: () => void;
   onMarkScheduled: () => void;
   onMarkDeclined: () => void;
   onCancel: () => void;
@@ -22,6 +23,9 @@ function cancelTooltip(job: Job): string {
   }
   if (job.status === "bid-ready") {
     return "Clear bid-ready — moves back to Posted";
+  }
+  if (job.status === "worker-pool") {
+    return "Clear worker pool — moves back to Posted";
   }
   if (job.status === "bid-completed") {
     return "Clear bid-completed — moves back to Posted";
@@ -88,6 +92,7 @@ export function JobStatusActions({
   pending = false,
   onApply,
   onMarkBidReady,
+  onMarkWorkerPool,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -103,6 +108,12 @@ export function JobStatusActions({
             Bid ready
           </Button>
         ) : null}
+        {onMarkWorkerPool ? (
+          <Button size={size} variant="outline" disabled={pending} onClick={onMarkWorkerPool}>
+            {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            Worker pool
+          </Button>
+        ) : null}
         <ApplyButton
           pending={pending}
           onApply={onApply}
@@ -113,7 +124,7 @@ export function JobStatusActions({
     );
   }
 
-  if (job.status === "bid-ready" || job.status === "bid-completed") {
+  if (job.status === "bid-ready" || job.status === "worker-pool" || job.status === "bid-completed") {
     return (
       <>
         <ApplyButton

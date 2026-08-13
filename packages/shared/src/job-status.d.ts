@@ -1,6 +1,7 @@
 export type CanonicalJobStatusState =
   | 'posted'
   | 'bid-ready'
+  | 'worker-pool'
   | 'bid-completed'
   | 'applied'
   | 'scheduled'
@@ -27,7 +28,17 @@ export function resolveJobStatusState(
 export function jobStatusContribution(
   statusOrRows: CanonicalJobStatusRow | unknown[] | null | undefined,
   profileId?: unknown,
-): Record<'any' | 'rawApplied' | 'applied' | 'scheduled' | 'declined' | 'bid-ready' | 'bid-completed', number>;
+): Record<
+  | 'any'
+  | 'rawApplied'
+  | 'applied'
+  | 'scheduled'
+  | 'declined'
+  | 'bid-ready'
+  | 'worker-pool'
+  | 'bid-completed',
+  number
+>;
 export function statusRowForProfile(
   rows: unknown[],
   profileId: unknown,

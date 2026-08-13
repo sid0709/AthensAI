@@ -18,6 +18,7 @@ import { JobDedupeService } from './job-dedupe.service';
 import { JobHardDeleteService } from './job-hard-delete.service';
 import { JobStatusMutateService } from './job-status-mutate.service';
 import { JobStatusService } from './job-status.service';
+import { JobWorkerPoolService } from './job-worker-pool.service';
 import { JobsBulkController } from './jobs-bulk.controller';
 import { JobsCompanyListService } from './jobs-company-list.service';
 import { JobsController } from './jobs.controller';
@@ -27,6 +28,7 @@ import { JobsRemoveController } from './jobs-remove.controller';
 import { JobsStatusController } from './jobs-status.controller';
 import { JobsService } from './jobs.service';
 import { JobRecommendFieldsService } from './recommend/job-recommend-fields.service';
+import { RecommendEligibilityService } from './recommend/recommend-eligibility.service';
 import { RecommendPersistService } from './recommend/recommend-persist.service';
 import { RecommendResumesController } from './recommend/recommend-resumes.controller';
 import { RecommendResumesService } from './recommend/recommend-resumes.service';
@@ -72,6 +74,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     CompanyMembershipService,
     JobStatusService,
     JobStatusMutateService,
+    JobWorkerPoolService,
     JobHardDeleteService,
     JobDedupeService,
     TempJobQueueService,
@@ -88,8 +91,10 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     TempJobPromotionService,
     RecommendResumesService,
     RecommendPersistService,
+    RecommendEligibilityService,
     SetRecommendedResumeService,
     JobRecommendFieldsService,
   ],
+  exports: [JobRecommendFieldsService],
 })
 export class JobsModule {}

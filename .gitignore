@@ -13,6 +13,7 @@ build/
 .env.local
 .env.*.local
 !.env.example
+athens-backend/secrets/
 
 # Local CI bootstrap artifacts (deploy keys — never commit)
 .ci/

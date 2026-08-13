@@ -5,6 +5,7 @@ import {
   recommendResumesFromLibrary,
   type RecommendResumeResultRow,
 } from "../../../api/jobs";
+import { canAssignLibraryResume, jobHasRecommendSnapshot } from "../lib/jobRecommendSnapshot";
 import type { Job } from "../../../types";
 
 export type RecommendResumeBulkProgress = {
@@ -24,10 +25,7 @@ const MAX_BULK = 40;
 
 /** True when the job already has a Library (or customized) recommendation. */
 export function jobHasResumeRecommendation(job: Job): boolean {
-  if (job.recommendedAt) return true;
-  if (String(job.recommendedResumeStack || "").trim()) return true;
-  if (job.useCustomizedResume) return true;
-  return false;
+  return jobHasRecommendSnapshot(job);
 }
 
 function chunkJobs<T>(items: T[], size: number): T[][] {
@@ -40,7 +38,7 @@ function chunkJobs<T>(items: T[], size: number): T[][] {
 }
 
 /**
- * Bid Ready Library resume recommend — calls POST /jobs/recommend-resumes
+ * Library resume recommend — calls POST /jobs/recommend-resumes
  * (chunked to MAX_BULK) and patches local job rows with the returned stacks.
  */
 export function useRecommendResumes(onPatchJob?: (job: Job) => void) {
@@ -59,30 +57,32 @@ export function useRecommendResumes(onPatchJob?: (job: Job) => void) {
       const jobs = selected.filter((job) =>
         Boolean(String(job.backendId || job.id || "").trim()),
       );
-      if (!jobs.length) {
-        toast.error("Select at least one job.");
+      const eligible = jobs.filter((job) => canAssignLibraryResume(job.status));
+      if (!eligible.length) {
+        toast.message("Recommend is only available for Bid ready or Worker pool jobs.");
         return;
       }
 
-      if (!replaceExisting) {
-        const needsAi = jobs.filter((job) => !jobHasResumeRecommendation(job));
-        if (!needsAi.length) {
-          toast.message("All selected jobs already have recommendations — nothing to run.");
-          return;
-        }
+      const toRun = replaceExisting
+        ? eligible
+        : eligible.filter((job) => !jobHasResumeRecommendation(job));
+      const skippedExisting = eligible.length - toRun.length;
+      if (!toRun.length) {
+        toast.message("All selected jobs already have recommendations — nothing to run.");
+        return;
       }
 
-      const total = jobs.length;
+      const total = toRun.length;
       setRunning(true);
       setProgress({ done: 0, total, succeeded: 0, failed: 0 });
 
       let succeeded = 0;
-      let skipped = 0;
+      let skipped = skippedExisting;
       let failed = 0;
       let done = 0;
 
       try {
-        for (const batch of chunkJobs(jobs, MAX_BULK)) {
+        for (const batch of chunkJobs(toRun, MAX_BULK)) {
           const jobIds = batch.map((job) =>
             String(job.backendId || job.id || "").trim(),
           );
@@ -101,10 +101,15 @@ export function useRecommendResumes(onPatchJob?: (job: Job) => void) {
             onPatchJob?.({
               ...job,
               recommendedResumeStack: row.recommendedResumeStack || null,
+              recommendedResumeId: row.recommendedResumeId || null,
               recommendedResumeReason: row.recommendedResumeReason || null,
               useCustomizedResume: Boolean(row.useCustomizedResume),
               recommendWarning: row.warning || null,
               recommendedAt: new Date().toISOString(),
+              recommendMode:
+                row.mode === "llm" || row.mode === "heuristic" || row.mode === "manual"
+                  ? row.mode
+                  : job.recommendMode ?? null,
             });
           }
 

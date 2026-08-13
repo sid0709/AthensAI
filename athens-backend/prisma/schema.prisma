@@ -132,11 +132,13 @@ model JobStatus {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   profileId String   @db.ObjectId
   jobId     String   @db.ObjectId
-  /// posted | bid-ready | bid-completed | applied | scheduled | declined
+  /// posted | bid-ready | worker-pool | bid-completed | applied | scheduled | declined
   state     String
   /// First transition to bid-ready — stable Bid Management folder day (never restamp).
   bidReadyAt     DateTime?
   bidCompletedAt DateTime?
+  /// First transition to worker-pool — Oak queue order (never restamp).
+  workerPoolAt   DateTime?
   /// Denormalized from Job.postedAt for Lens ordering.
   postedAt  DateTime?
   createdAt DateTime @default(now())

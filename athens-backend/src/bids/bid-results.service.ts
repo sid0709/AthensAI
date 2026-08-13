@@ -77,6 +77,9 @@ export class BidResultsService {
 
     for (const task of tasks) {
       if (seen.has(task.jobId)) continue;
+      // Recommend-only New jobs have a vendor_task with no bidReadyDate.
+      // Keep them out of Bid Management until the job is actually Bid Ready.
+      if (!task.bidReadyDate) continue;
       results.push(mapTaskToBidResult(this.vendorTasks.serialize(task)));
     }
 

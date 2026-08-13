@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Logger,
+  Param,
   Post,
   Req,
   UseGuards,
@@ -15,6 +16,8 @@ import { OakMatchOptionService } from '../ai/oak-match-option.service';
 import { OakGatewayBootstrap } from '../gateway/oak-gateway.bootstrap';
 import { OakAiAnalyzeDto } from './dto/ai-analyze.dto';
 import { OakMatchOptionDto } from './dto/match-option.dto';
+import { OakJobsService } from './oak-jobs.service';
+import { OakRecommendedResumeService } from './oak-recommended-resume.service';
 import { OakRuntimeFileService } from './oak-runtime-file.service';
 
 @Controller('oak')
@@ -26,6 +29,8 @@ export class OakController {
     private readonly analyze: OakAnalyzeService,
     private readonly matchOption: OakMatchOptionService,
     private readonly runtimeFiles: OakRuntimeFileService,
+    private readonly jobs: OakJobsService,
+    private readonly recommendedResume: OakRecommendedResumeService,
     private readonly gateway: OakGatewayBootstrap,
   ) {}
 
@@ -77,5 +82,24 @@ export class OakController {
   @UseGuards(OakAuthGuard)
   getRuntimeFile() {
     return this.runtimeFiles.getRuntimeFile();
+  }
+
+  @Get('jobs')
+  @UseGuards(OakAuthGuard)
+  listJobs(@Req() req: OakAuthedRequest) {
+    return this.jobs.list(req.oakSession!.applierName);
+  }
+
+  /** Library resume assigned by Job Search Recommend for a Worker pool job. */
+  @Get('jobs/:jobId/recommended-resume')
+  @UseGuards(OakAuthGuard)
+  getRecommendedResume(
+    @Req() req: OakAuthedRequest,
+    @Param('jobId') jobId: string,
+  ) {
+    return this.recommendedResume.getForJob(
+      req.oakSession!.applierName,
+      jobId,
+    );
   }
 }

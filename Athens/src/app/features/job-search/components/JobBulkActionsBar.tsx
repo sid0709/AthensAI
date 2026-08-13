@@ -1,5 +1,5 @@
 import React from "react";
-import { BookMarked, ClipboardList, Download, FileX, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
+import { BookMarked, ClipboardList, Download, FileX, Layers, Loader2, Sparkles, Trash2, Undo2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { Progress } from "../../../components/ui/progress";
@@ -18,6 +18,8 @@ type JobBulkActionsBarProps = {
   onRemove: () => void;
   onMarkBidReady?: () => void;
   bidReadyPending?: boolean;
+  onMarkWorkerPool?: () => void;
+  workerPoolPending?: boolean;
   onMoveToNew?: () => void;
   moveToNewPending?: boolean;
   onGenerateResumes?: () => void;
@@ -50,6 +52,8 @@ export function JobBulkActionsBar({
   onRemove,
   onMarkBidReady,
   bidReadyPending = false,
+  onMarkWorkerPool,
+  workerPoolPending = false,
   onMoveToNew,
   moveToNewPending = false,
   onGenerateResumes,
@@ -163,7 +167,7 @@ export function JobBulkActionsBar({
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMarkBidReady}
-              disabled={loading || totalSelected === 0 || bidReadyPending || moveToNewPending}
+              disabled={loading || totalSelected === 0 || bidReadyPending || workerPoolPending || moveToNewPending}
               title="Mark selected New jobs as Bid ready for Vendor Monitor"
             >
               {bidReadyPending ? (
@@ -174,14 +178,35 @@ export function JobBulkActionsBar({
               <span className="hidden sm:inline">Bid ready</span>
             </Button>
           ) : null}
+          {onMarkWorkerPool ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onMarkWorkerPool}
+              disabled={loading || totalSelected === 0 || workerPoolPending || bidReadyPending || moveToNewPending}
+              title={
+                applyAllCompanyRoles
+                  ? "Move selected jobs to Worker pool and mark other roles at those companies as applied"
+                  : "Move selected New jobs to Worker pool for Oak"
+              }
+            >
+              {workerPoolPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              ) : (
+                <Layers className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">Worker pool</span>
+            </Button>
+          ) : null}
           {onMoveToNew ? (
             <Button
               variant="outline"
               size="sm"
               className="h-8 gap-1.5"
               onClick={onMoveToNew}
-              disabled={loading || totalSelected === 0 || moveToNewPending || bidReadyPending}
-              title="Move selected Bid ready jobs back to New"
+              disabled={loading || totalSelected === 0 || moveToNewPending || bidReadyPending || workerPoolPending}
+              title="Move selected Bid ready or Worker pool jobs back to New"
             >
               {moveToNewPending ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
@@ -204,7 +229,7 @@ export function JobBulkActionsBar({
                 || resumeGenerating
                 || resumeRemoving
               }
-              title="Recommend Library resumes for selected Bid Ready jobs using each job description"
+              title="Recommend Library resumes for selected Bid ready or Worker pool jobs using each job description"
             >
               {recommendRunning ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />

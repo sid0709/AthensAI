@@ -151,6 +151,7 @@ export interface UserResumeSummary {
   analyzed?: boolean;
   analyzedAt?: string | null;
   skillCount?: number;
+  skillProfile?: ResumeSkillEntry[];
   uploadedAt: string;
   updatedAt?: string;
 }

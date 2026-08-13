@@ -11,6 +11,7 @@ export type JobRecommendFields = {
 
 export function hasStoredRecommendation(row: {
   recommendedResumeStack?: string | null;
+  recommendedResumeId?: string | null;
   useCustomizedResume?: boolean | null;
   recommendedAt?: Date | string | null;
   recommendedResumeReason?: string | null;
@@ -18,6 +19,7 @@ export function hasStoredRecommendation(row: {
 }): boolean {
   if (row.recommendedAt) return true;
   if (String(row.recommendedResumeStack || '').trim()) return true;
+  if (String(row.recommendedResumeId || '').trim()) return true;
   if (row.useCustomizedResume) return true;
   if (String(row.recommendedResumeReason || '').trim()) return true;
   if (String(row.recommendWarning || '').trim()) return true;

@@ -1,6 +1,7 @@
 const ACTION_TYPES = [
   'fill',
   'upload',
+  'resume_upload',
   'select_radio',
   'wait',
   'validate',

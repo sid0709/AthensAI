@@ -34,6 +34,7 @@ const STATUS_VALUES: readonly JobStatusTab[] = [
   "all",
   "posted",
   "bid-ready",
+  "worker-pool",
   "bid-completed",
   "applied",
   "scheduled",

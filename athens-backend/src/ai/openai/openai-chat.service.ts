@@ -10,6 +10,7 @@ import {
   isRetryableStatus,
   PROVIDER_BASE,
 } from './openai-provider';
+import { parseChatUsage } from './parse-chat-usage';
 import type { ChatCompletionInput, ChatCompletionResult } from './openai.types';
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -107,11 +108,7 @@ export class OpenAiChatService {
           };
         }>;
         model?: string;
-        usage?: {
-          prompt_tokens?: number;
-          completion_tokens?: number;
-          total_tokens?: number;
-        };
+        usage?: Record<string, unknown>;
       };
       try {
         data = JSON.parse(text) as typeof data;
@@ -128,13 +125,7 @@ export class OpenAiChatService {
         });
       }
 
-      const usage = data.usage
-        ? {
-            promptTokens: Number(data.usage.prompt_tokens ?? 0),
-            completionTokens: Number(data.usage.completion_tokens ?? 0),
-            totalTokens: Number(data.usage.total_tokens ?? 0),
-          }
-        : null;
+      const usage = parseChatUsage(data.usage);
 
       return {
         content,
