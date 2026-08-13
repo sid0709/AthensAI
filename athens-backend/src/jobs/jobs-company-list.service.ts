@@ -29,6 +29,9 @@ function asObjectIdHex(value: unknown): string | null {
   if (typeof value === 'string' && /^[a-fA-F0-9]{24}$/.test(value)) {
     return value;
   }
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value) && value.length === 12) {
+    return value.toString('hex');
+  }
   if (typeof value !== 'object') return null;
   const raw = value as {
     $oid?: string;
@@ -82,7 +85,9 @@ export class JobsCompanyListService {
       companyLogo: row.companyLogo,
       companyUrl: row.companyUrl,
       matchingJobCount: row.jobCount,
-      matchingJobIds: row.jobIds,
+      matchingJobIds: (row.jobIds || [])
+        .map((id) => asObjectIdHex(id))
+        .filter((id): id is string => Boolean(id)),
     }));
 
     return this.hydrateGroups(groups, profileId, applierName);

@@ -46,6 +46,17 @@ test("skips external scraped siblings", () => {
   assert.deepEqual(result.siblings, []);
 });
 
+test("finds the company group even when job.companyId does not match", () => {
+  const primary = { ...job("a"), companyId: "legacy:a" } as Job;
+  const sibling = job("b");
+  const result = companyApplyTargets(
+    primary,
+    group([job("a"), sibling], ["a", "b", "c"]),
+  );
+  assert.deepEqual(result.siblings.map(({ id }) => id), ["b"]);
+  assert.deepEqual(result.unloadedIds, ["c"]);
+});
+
 test("multiple selected roles at the same company stay out of the sibling set", () => {
   const a = job("a");
   const b = job("b");

@@ -193,10 +193,16 @@ function mapResponseGroups(
   const groupIndexes = new Map<string, number>();
   for (const row of rows) {
     if (Array.isArray(row.jobs)) {
-      const jobs = row.jobs.map((doc) => mapDocToJob(doc, applier));
+      const companyId = normalizeId(row.companyId) || "";
+      const jobs = row.jobs.map((doc) => {
+        const mapped = mapDocToJob(doc, applier);
+        return companyId && mapped.companyId !== companyId
+          ? { ...mapped, companyId }
+          : mapped;
+      });
       const first = jobs[0];
       groups.push({
-        companyId: String(row.companyId || first?.companyId || `legacy:${first?.id || "unknown"}`),
+        companyId: companyId || first?.companyId || `legacy:${first?.id || "unknown"}`,
         company: {
           name: String(row.company?.name || first?.company || "Unknown"),
           logoUrl: String(row.company?.logo || first?.logoUrl || "") || undefined,
@@ -442,6 +448,32 @@ export function useJobsList(
     });
   }, []);
 
+  const markJobsApplied = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    const statusTab = debouncedFilters.statusTab;
+    setRawGroups((previous) => {
+      if (statusTab !== "all") {
+        const result = removeCompanyJobs(
+          previous,
+          (job) => idSet.has(job.id) || idSet.has(job.backendId || ""),
+        );
+        if (result.removedGroups) setTotal((value) => Math.max(0, value - result.removedGroups));
+        if (result.removedJobs) setTotalJobs((value) => Math.max(0, value - result.removedJobs));
+        return result.groups;
+      }
+      return previous.map((group) => ({
+        ...group,
+        jobs: group.jobs.map((job) =>
+          idSet.has(job.id) || idSet.has(job.backendId || "")
+            ? { ...job, status: "applied" as const }
+            : job,
+        ),
+        matchingJobIds: group.matchingJobIds?.filter((id) => !idSet.has(id)),
+      }));
+    });
+  }, [debouncedFilters.statusTab]);
+
   const removeOtherCompanyJobs = useCallback((companyId: string, keepJobId: string) => {
     setRawGroups((previous) => {
       const result = keepOnlyCompanyJob(previous, companyId, keepJobId);
@@ -498,6 +530,7 @@ export function useJobsList(
     statusCounts,
     applierReady,
     patchJob,
+    markJobsApplied,
     removeJobsById,
     removeOtherCompanyJobs,
     loadCompanyMembers,

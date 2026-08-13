@@ -76,6 +76,7 @@ Profile secrets (`openaiApiKey`, `deepseekApiKey`, `gmailAppPassword`, `defaultP
 | POST | `/api/expose/jobs` | LI-scrapper ingest — single job or `{ jobs: [...] }` → prenorm → dedupe → `temp_jobs` |
 | POST | `/api/expose/jobs/check` | LI-scrapper — `{ jobID }` exists in `temp_jobs` or `jobs` via `metadata.legacyId` |
 | POST | `/api/jobs/remove` | Hard-delete catalog `jobs` by `{ ids }` (also clears `job_statuses` + company membership) |
+| POST | `/api/jobs/company/apply-others` | Mark other New roles at a company applied — `{ applierName, companyId, keepJobIds }` |
 | POST | `/api/jobs/company/remove-others` | Hard-delete other roles at a company — `{ companyId, keepJobId }` |
 | POST | `/api/jobs/title-review/remove` | Hard-delete staging `temp_jobs` by `{ ids, applierName? }` |
 
