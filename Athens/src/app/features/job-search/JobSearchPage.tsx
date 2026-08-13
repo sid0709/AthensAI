@@ -441,7 +441,7 @@ function JobSearchPageContent() {
   };
 
   return (
-    <PageShell>
+    <PageShell className="athens-ui">
       <JobSearchFilterPanel
         filters={filters}
         onChange={setFilters}

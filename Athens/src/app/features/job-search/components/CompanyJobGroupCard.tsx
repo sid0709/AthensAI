@@ -23,6 +23,7 @@ import {
 import { Button } from "../../../components/ui/button";
 import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 import { JobCard } from "./JobCard";
+import { JobStatusIcon } from "./JobStatusIcon";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
@@ -32,16 +33,6 @@ const STATUS_LABELS: Record<Job["status"], string> = {
   applied: "Applied",
   scheduled: "Scheduled",
   declined: "Declined",
-};
-
-const STATUS_DOTS: Record<Job["status"], string> = {
-  posted: "bg-emerald-500",
-  "bid-ready": "bg-sky-500",
-  "worker-pool": "bg-teal-500",
-  "bid-completed": "bg-violet-500",
-  applied: "bg-blue-500",
-  scheduled: "bg-amber-500",
-  declined: "bg-rose-500",
 };
 
 const WORK_MODE_LABELS: Record<Job["workMode"], string> = {
@@ -100,7 +91,7 @@ function CompactRoleRow({ job, onClick }: { job: Job; onClick: () => void }) {
         </span>
       </span>
       <span className="athens-status">
-        <span className={cn("athens-tab-dot", STATUS_DOTS[job.status])} />
+        <JobStatusIcon status={job.status} />
         {STATUS_LABELS[job.status]}
       </span>
     </button>

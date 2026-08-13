@@ -2,7 +2,7 @@ import React from "react";
 import { LayoutGrid } from "lucide-react";
 import { PaginationBar } from "../../../components/shared/PaginationBar";
 import { cn } from "../../../lib/utils";
-import { JobBulkActionsBar } from "./JobBulkActionsBar";
+import { JobBulkActionsBar, JobPageSelectionControls } from "./JobBulkActionsBar";
 import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
 import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
 
@@ -99,11 +99,7 @@ export function JobListStickyBar({
     <div className={cn("athens-toolbar sticky top-0 z-20 mb-3", className)}>
       <div className="athens-surface">
         <JobBulkActionsBar
-          selectedOnPage={selectedOnPage}
-          pageCount={pageCount}
           totalSelected={totalSelected}
-          allOnPageSelected={allOnPageSelected}
-          onToggleSelectAll={onToggleSelectAll}
           onExport={onExport}
           onRemove={onRemove}
           onMarkBidReady={onMarkBidReady}
@@ -120,7 +116,6 @@ export function JobListStickyBar({
           onStopRemoveResumes={onStopRemoveResumes}
           onRecommendResumes={onRecommendResumes}
           applyAllCompanyRoles={applyAllCompanyRoles}
-          onApplyAllCompanyRolesChange={onApplyAllCompanyRolesChange}
           resumeGenerating={resumeGenerating}
           resumeStopping={resumeStopping}
           resumeRemoving={resumeRemoving}
@@ -134,6 +129,15 @@ export function JobListStickyBar({
         />
 
         <div className="athens-pager-row">
+          <JobPageSelectionControls
+            selectedOnPage={selectedOnPage}
+            pageCount={pageCount}
+            allOnPageSelected={allOnPageSelected}
+            onToggleSelectAll={onToggleSelectAll}
+            applyAllCompanyRoles={applyAllCompanyRoles}
+            onApplyAllCompanyRolesChange={onApplyAllCompanyRolesChange}
+            loading={loading}
+          />
           <PaginationBar
             page={page}
             pageSize={pageSize}

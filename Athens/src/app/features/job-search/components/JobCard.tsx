@@ -19,6 +19,7 @@ import { useApplier } from "@/context/applier-context";
 import { JobDescriptionDialog } from "./JobDescriptionDialog";
 import { JobResumePreviewDialog } from "./JobResumePreviewDialog";
 import { JobStatusActions } from "./JobStatusActions";
+import { JobStatusIcon } from "./JobStatusIcon";
 import { JobUrlLink } from "./JobUrlLink";
 import { SwapLibraryResumeDialog } from "./SwapLibraryResumeDialog";
 import { canAssignLibraryResume } from "../lib/jobRecommendSnapshot";
@@ -32,16 +33,6 @@ const STATUS_LABELS: Record<Job["status"], string> = {
   applied: "Applied",
   scheduled: "Scheduled",
   declined: "Declined",
-};
-
-const STATUS_DOTS: Record<Job["status"], string> = {
-  posted: "bg-emerald-500",
-  "bid-ready": "bg-sky-500",
-  "worker-pool": "bg-teal-500",
-  "bid-completed": "bg-violet-500",
-  applied: "bg-blue-500",
-  scheduled: "bg-amber-500",
-  declined: "bg-rose-500",
 };
 
 const WORK_MODE_LABELS: Record<Job["workMode"], string> = {
@@ -219,7 +210,7 @@ export function JobCard({
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
                 <span className="athens-status">
-                  <span className={cn("athens-tab-dot", STATUS_DOTS[job.status])} />
+                  <JobStatusIcon status={job.status} />
                   {STATUS_LABELS[job.status]}
                 </span>
                 {job.recommendedResumeStack ? (

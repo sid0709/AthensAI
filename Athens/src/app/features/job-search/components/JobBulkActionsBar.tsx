@@ -25,11 +25,7 @@ import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
 import type { RecommendResumeBulkProgress } from "../hooks/useRecommendResumes";
 
 type JobBulkActionsBarProps = {
-  selectedOnPage: number;
-  pageCount: number;
   totalSelected: number;
-  allOnPageSelected: boolean;
-  onToggleSelectAll: () => void;
   onExport: () => void;
   onRemove: () => void;
   onMarkBidReady?: () => void;
@@ -46,7 +42,6 @@ type JobBulkActionsBarProps = {
   onStopRemoveResumes?: () => void;
   onRecommendResumes?: () => void;
   applyAllCompanyRoles?: boolean;
-  onApplyAllCompanyRolesChange?: (enabled: boolean) => void;
   resumeGenerating?: boolean;
   resumeStopping?: boolean;
   resumeRemoving?: boolean;
@@ -59,6 +54,70 @@ type JobBulkActionsBarProps = {
   embedded?: boolean;
   className?: string;
 };
+
+type JobPageSelectionControlsProps = {
+  selectedOnPage: number;
+  pageCount: number;
+  allOnPageSelected: boolean;
+  onToggleSelectAll: () => void;
+  applyAllCompanyRoles?: boolean;
+  onApplyAllCompanyRolesChange?: (enabled: boolean) => void;
+  loading?: boolean;
+};
+
+export function JobPageSelectionControls({
+  selectedOnPage,
+  pageCount,
+  allOnPageSelected,
+  onToggleSelectAll,
+  applyAllCompanyRoles = false,
+  onApplyAllCompanyRolesChange,
+  loading = false,
+}: JobPageSelectionControlsProps) {
+  const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
+  return (
+    <div className="athens-pager-select">
+      <label className={cn("athens-select-label", loading ? "cursor-wait" : "cursor-pointer")}>
+        <Checkbox
+          checked={
+            allOnPageSelected && pageCount > 0
+              ? true
+              : indeterminate
+                ? "indeterminate"
+                : false
+          }
+          onCheckedChange={onToggleSelectAll}
+          disabled={loading}
+          aria-label="Select all jobs on this page"
+        />
+        <span>
+          Select page <strong>{loading ? "—/—" : `${selectedOnPage}/${pageCount}`}</strong>
+        </span>
+      </label>
+      {onApplyAllCompanyRolesChange ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <label className={cn("athens-select-label", loading ? "cursor-wait" : "cursor-pointer")}>
+              <Checkbox
+                checked={applyAllCompanyRoles}
+                onCheckedChange={(checked) => onApplyAllCompanyRolesChange(checked === true)}
+                disabled={loading}
+                aria-label="Apply all company roles"
+              />
+              <span>
+                <span className="hidden sm:inline">Apply all company roles</span>
+                <span className="sm:hidden">Company apply</span>
+              </span>
+            </label>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={6}>
+            When you Apply or Mark applied, also mark every other role at that company as applied
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+    </div>
+  );
+}
 
 type DestinationItem = {
   key: string;
@@ -80,11 +139,7 @@ type ResumeItem = {
 };
 
 export function JobBulkActionsBar({
-  selectedOnPage,
-  pageCount,
   totalSelected,
-  allOnPageSelected,
-  onToggleSelectAll,
   onExport,
   onRemove,
   onMarkBidReady,
@@ -101,7 +156,6 @@ export function JobBulkActionsBar({
   onStopRemoveResumes,
   onRecommendResumes,
   applyAllCompanyRoles = false,
-  onApplyAllCompanyRolesChange,
   resumeGenerating = false,
   resumeStopping = false,
   resumeRemoving = false,
@@ -114,7 +168,9 @@ export function JobBulkActionsBar({
   embedded = false,
   className,
 }: JobBulkActionsBarProps) {
-  const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
+  const hasSelection = totalSelected > 0;
+  const busy = resumeGenerating || resumeRemoving || recommendRunning;
+  const showDock = hasSelection || busy;
   const progressPct =
     resumeProgress && resumeProgress.total > 0
       ? Math.round(
@@ -123,9 +179,6 @@ export function JobBulkActionsBar({
       : recommendProgress && recommendProgress.total > 0
         ? Math.round((recommendProgress.done / recommendProgress.total) * 100)
         : 0;
-  const hasSelection = totalSelected > 0;
-  const busy = resumeGenerating || resumeRemoving || recommendRunning;
-  const showDock = hasSelection || busy;
   const destinationLocked =
     loading || markAppliedPending || bidReadyPending || workerPoolPending || moveToNewPending;
   const resumeLocked = loading || recommendRunning || resumeGenerating || resumeRemoving;
@@ -246,54 +299,12 @@ export function JobBulkActionsBar({
 
   const showResumeProgress = (resumeGenerating || resumeRemoving) && resumeProgress;
 
+  if (!showDock) return null;
+
   return (
     <div className={cn(!embedded && "athens-surface", className)}>
-      <div
-        aria-busy={loading || busy}
-        className="athens-dock-row"
-      >
-        <label className={cn("athens-select-label", loading ? "cursor-wait" : "cursor-pointer")}>
-          <Checkbox
-            checked={
-              allOnPageSelected && pageCount > 0
-                ? true
-                : indeterminate
-                  ? "indeterminate"
-                  : false
-            }
-            onCheckedChange={onToggleSelectAll}
-            disabled={loading}
-            aria-label="Select all jobs on this page"
-          />
-          <span>
-            Select page <strong>{loading ? "—/—" : `${selectedOnPage}/${pageCount}`}</strong>
-          </span>
-        </label>
-
-        {onApplyAllCompanyRolesChange ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <label className={cn("athens-select-label", loading ? "cursor-wait" : "cursor-pointer")}>
-                <Checkbox
-                  checked={applyAllCompanyRoles}
-                  onCheckedChange={(checked) => onApplyAllCompanyRolesChange(checked === true)}
-                  disabled={loading}
-                  aria-label="Apply all company roles"
-                />
-                <span>
-                  <span className="hidden sm:inline">Apply all company roles</span>
-                  <span className="sm:hidden">Company apply</span>
-                </span>
-              </label>
-            </TooltipTrigger>
-            <TooltipContent sideOffset={6}>
-              When you Apply or Mark applied, also mark every other role at that company as applied
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
-
-        {showDock ? (
-          <div className="athens-dock">
+      <div aria-busy={loading || busy} className="athens-dock-row">
+        <div className="athens-dock">
             <span className="athens-count">
               {totalSelected} selected
             </span>
@@ -412,8 +423,7 @@ export function JobBulkActionsBar({
                 Remove
               </button>
             </div>
-          </div>
-        ) : null}
+        </div>
       </div>
     </div>
   );

@@ -68,6 +68,22 @@ export function PaginationBar({
   const end = showingCount === 0 ? 0 : start + showingCount - 1;
   const pages = loading || totalPages === null ? [] : pageNumbers(page, totalPages);
   const canGoNext = !loading && (totalPages === null ? hasMore : page < totalPages);
+  const fullSummary =
+    total === null
+      ? `${showingCount} loaded · Page ${page}`
+      : total === 0 && showingCount === 0
+        ? "No results"
+        : `Showing ${showingCount} of ${total.toLocaleString()} ${unitLabel}${
+            secondaryTotal == null ? "" : ` · ${Number(secondaryTotal).toLocaleString()} ${secondaryLabel}`
+          } · Page ${page} / ${Math.max(1, totalPages ?? 1)}`;
+  const lensSummary =
+    total === null
+      ? `${showingCount} loaded`
+      : total === 0 && showingCount === 0
+        ? "No results"
+        : `${showingCount.toLocaleString()} / ${total.toLocaleString()}${
+            secondaryTotal == null ? "" : ` · ${Number(secondaryTotal).toLocaleString()} jobs`
+          }`;
 
   return (
     <div
@@ -81,19 +97,24 @@ export function PaginationBar({
       )}
     >
       <div className="flex items-center gap-4 flex-wrap">
-        <p className="text-sm text-muted-foreground whitespace-nowrap">
+        <p
+          className="text-sm text-muted-foreground whitespace-nowrap"
+          title={!loading && tone === "lens" && detailed ? fullSummary : undefined}
+        >
           {loading ? (
             <span className="inline-flex items-center gap-2" role="status" aria-live="polite">
               <Loader2 className="size-3.5 animate-spin" aria-hidden />
               Loading results…
             </span>
-          ) : total === null
-            ? `${showingCount} loaded · Page ${page}`
-            : total === 0 && showingCount === 0
-              ? "No results"
-            : detailed
-              ? `Showing ${showingCount} of ${total.toLocaleString()} ${unitLabel}${secondaryTotal == null ? "" : ` · ${Number(secondaryTotal).toLocaleString()} ${secondaryLabel}`} · Page ${page} / ${Math.max(1, totalPages ?? 1)}`
-              : `${start}–${end} of ${total}`}
+          ) : tone === "lens" && detailed
+            ? lensSummary
+            : total === null
+              ? `${showingCount} loaded · Page ${page}`
+              : total === 0 && showingCount === 0
+                ? "No results"
+              : detailed
+                ? fullSummary
+                : `${start}–${end} of ${total}`}
         </p>
         {onPageSizeChange && (
           <div className="flex items-center gap-2">

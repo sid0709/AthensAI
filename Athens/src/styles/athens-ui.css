@@ -6,6 +6,7 @@
   font-size: var(--athens-font-size-sm);
   color: var(--athens-text);
   line-height: var(--athens-line-height-normal);
+  -webkit-font-smoothing: antialiased;
 }
 
 .athens-toolbar button,
@@ -92,11 +93,12 @@
   color: var(--athens-text);
 }
 
-.athens-tab-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--athens-radius-pill);
+.athens-tab-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
+  color: currentColor;
 }
 
 .athens-count {
@@ -448,7 +450,8 @@ span.athens-chip:hover {
 
 .athens-segment {
   display: flex;
-  flex: 1 1 12rem;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   min-width: 0;
   gap: var(--athens-space-1);
   padding: var(--athens-space-1);
@@ -460,13 +463,13 @@ span.athens-chip:hover {
 .athens-segment button {
   position: relative;
   display: inline-flex;
-  flex: 1 1 0;
+  flex: 0 0 auto;
   min-width: 36px;
   min-height: 36px;
   align-items: center;
   justify-content: center;
   gap: var(--athens-space-2);
-  padding: 0 var(--athens-space-2);
+  padding: 0 var(--athens-space-3);
   border: 0;
   border-radius: var(--athens-radius-sm);
   background: transparent;
@@ -475,6 +478,7 @@ span.athens-chip:hover {
   font-size: var(--athens-font-size-xs);
   font-weight: 550;
   line-height: 1.2;
+  overflow: visible;
 }
 
 .athens-segment button:hover:not(:disabled) {
@@ -486,8 +490,6 @@ span.athens-chip:hover {
 }
 
 .athens-segment__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -511,12 +513,6 @@ span.athens-chip:hover {
   }
 }
 
-@media (max-width: 767px) {
-  .athens-segment__label {
-    display: none;
-  }
-}
-
 .athens-dock-trailing {
   display: flex;
   align-items: center;
@@ -525,14 +521,34 @@ span.athens-chip:hover {
   flex-shrink: 0;
 }
 
+.athens-status svg,
+.athens-tab-icon svg {
+  display: block;
+}
+
 .athens-pager-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: var(--athens-space-3);
   padding: var(--athens-space-2) var(--athens-space-4);
   border-top: 1px solid var(--athens-border);
+}
+
+.athens-surface > .athens-pager-row:first-child {
+  border-top: 0;
+}
+
+.athens-pager-select {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--athens-space-3);
+  flex-shrink: 0;
+}
+
+.athens-pager-select .athens-select-label {
+  min-height: 36px;
 }
 
 .athens-progress {

@@ -15,21 +15,21 @@ import {
 } from "../../../hooks/useJobSearchFilters";
 import { ActiveFilterChips } from "./filters/ActiveFilterChips";
 import { JobFiltersSheet } from "./filters/JobFiltersSheet";
+import { JobStatusIcon } from "./JobStatusIcon";
 import { SkillExtractionButton } from "./SkillExtractionButton";
 
 const STATUS_TABS: {
   id: JobStatusTab;
   label: string;
-  dot: string;
 }[] = [
-  { id: "all", label: "All", dot: "bg-foreground" },
-  { id: "posted", label: "New", dot: "bg-emerald-500" },
-  { id: "bid-ready", label: "Bid ready", dot: "bg-sky-500" },
-  { id: "worker-pool", label: "Worker pool", dot: "bg-teal-500" },
-  { id: "bid-completed", label: "Bid completed", dot: "bg-violet-500" },
-  { id: "applied", label: "Applied", dot: "bg-blue-500" },
-  { id: "scheduled", label: "Scheduled", dot: "bg-amber-500" },
-  { id: "declined", label: "Declined", dot: "bg-rose-500" },
+  { id: "all", label: "All" },
+  { id: "posted", label: "New" },
+  { id: "bid-ready", label: "Bid ready" },
+  { id: "worker-pool", label: "Worker pool" },
+  { id: "bid-completed", label: "Bid completed" },
+  { id: "applied", label: "Applied" },
+  { id: "scheduled", label: "Scheduled" },
+  { id: "declined", label: "Declined" },
 ];
 
 type JobSearchFilterPanelProps = {
@@ -118,7 +118,9 @@ export function JobSearchFilterPanel({
                   onClick={() => patch({ statusTab: tab.id })}
                   className={cn("athens-tab", active && "is-active")}
                 >
-                  <span className={cn("athens-tab-dot", tab.dot)} />
+                  <span className="athens-tab-icon">
+                    <JobStatusIcon status={tab.id} size={16} />
+                  </span>
                   {tab.label}
                   <span className="athens-count">
                     {countsLoading ? (
