@@ -1,21 +1,36 @@
 const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
 
+export type RecommendOneResult = {
+  recommendedResume: string | null;
+  matchedCatalogKey: string | null;
+  useCustomizedResume: boolean;
+  warning: string | null;
+  reason: string | null;
+};
+
+export type RecommendOneOutcome = {
+  result: RecommendOneResult;
+  mode: 'llm' | 'heuristic';
+  usage: Record<string, unknown> | null;
+  requestId: string | null;
+};
+
 export function heuristicRecommend(input: {
   useCustomizedResume: boolean;
   warning: string;
   reason: string;
-}) {
+}): RecommendOneOutcome {
   return {
     result: {
-      recommendedResume: null as string | null,
-      matchedCatalogKey: null as string | null,
+      recommendedResume: null,
+      matchedCatalogKey: null,
       useCustomizedResume: input.useCustomizedResume,
       warning: input.warning,
       reason: input.reason,
     },
-    mode: 'heuristic' as const,
-    usage: null as Record<string, unknown> | null,
-    requestId: null as string | null,
+    mode: 'heuristic',
+    usage: null,
+    requestId: null,
   };
 }
 

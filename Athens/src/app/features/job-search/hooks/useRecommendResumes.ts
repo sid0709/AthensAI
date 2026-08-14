@@ -13,6 +13,7 @@ export type RecommendResumeBulkProgress = {
   total: number;
   succeeded: number;
   failed: number;
+  label?: string;
 };
 
 export type RecommendResumesOptions = {

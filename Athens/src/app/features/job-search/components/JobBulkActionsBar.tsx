@@ -1,4 +1,3 @@
-import React from "react";
 import {
   BookMarked,
   CheckCircle2,
@@ -11,6 +10,7 @@ import {
   Sparkles,
   Trash2,
   Undo2,
+  type LucideIcon,
 } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import {
@@ -126,7 +126,7 @@ export function JobPageSelectionControls({
 type DestinationItem = {
   key: string;
   label: string;
-  icon: React.ElementType;
+  icon: LucideIcon;
   onClick: () => void;
   pending: boolean;
   title: string;
@@ -135,7 +135,7 @@ type DestinationItem = {
 type ResumeItem = {
   key: string;
   label: string;
-  icon: React.ElementType;
+  icon: LucideIcon;
   onClick: () => void;
   disabled: boolean;
   title: string;
@@ -285,7 +285,7 @@ export function JobBulkActionsBar({
           icon: recommendRunning ? Loader2 : BookMarked,
           onClick: onRecommendResumes,
           disabled: resumeLocked || !hasSelection,
-          title: "Recommend Library resumes for selected Bid ready or Worker pool jobs using each job description",
+          title: "Recommend Library resumes for selected jobs",
           busy: recommendRunning,
         }
       : null,

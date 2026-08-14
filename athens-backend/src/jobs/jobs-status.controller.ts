@@ -21,7 +21,9 @@ import {
 } from './dto/job-worker-pool.dto';
 import { ApplyOtherCompanyJobsDto } from './dto/apply-other-company-jobs.dto';
 import { ApplyJobsBulkDto } from './dto/apply-jobs-bulk.dto';
+import { CompanyPostedJobsDto } from './dto/company-posted-jobs.dto';
 import { JobCompanyApplyOthersService } from './job-company-apply-others.service';
+import { JobCompanyPostedService } from './job-company-posted.service';
 import { JobApplyBulkService } from './job-apply-bulk.service';
 import { JobStatusMutateService } from './job-status-mutate.service';
 import { JobWorkerPoolService } from './job-worker-pool.service';
@@ -32,8 +34,15 @@ export class JobsStatusController {
     private readonly mutate: JobStatusMutateService,
     private readonly workerPool: JobWorkerPoolService,
     private readonly companyApply: JobCompanyApplyOthersService,
+    private readonly companyPosted: JobCompanyPostedService,
     private readonly applyBulk: JobApplyBulkService,
   ) {}
+
+  @Post('company/posted-ids')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  postedIds(@Body() body: CompanyPostedJobsDto) {
+    return this.companyPosted.postedIds(body);
+  }
 
   @Post('company/apply-others')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))

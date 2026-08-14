@@ -507,12 +507,14 @@ export type RecommendResumesResponse = {
   results?: RecommendResumeResultRow[];
 };
 
-/** Recommend Library resume stacks for Bid Ready or Worker pool jobs from stored JDs. */
+/** Recommend Library resume stacks. persist:false analyzes without writing vendor_tasks. */
 export async function recommendResumesFromLibrary(params: {
   applierName: string;
   jobIds: string[];
   /** When false, skip LLM for jobs that already have a recommendation. Default true. */
   replaceExisting?: boolean;
+  /** When false, do not write vendor_tasks. Posted jobs are allowed. Default true. */
+  persist?: boolean;
 }): Promise<RecommendResumesResponse> {
   const res = await fetch(`${API_BASE}/jobs/recommend-resumes`, {
     method: "POST",
@@ -521,6 +523,83 @@ export async function recommendResumesFromLibrary(params: {
       applierName: params.applierName,
       jobIds: params.jobIds,
       replaceExisting: params.replaceExisting !== false,
+      ...(params.persist === false ? { persist: false } : {}),
+    }),
+  });
+  return parseJson(res);
+}
+
+export type PersistRecommendedResumeResponse = {
+  success?: boolean;
+  error?: string;
+  jobId?: string;
+  recommendedResumeStack?: string | null;
+  recommendedResumeId?: string | null;
+  recommendedResumeReason?: string | null;
+  useCustomizedResume?: boolean;
+  recommendWarning?: string | null;
+  recommendedAt?: string | null;
+  recommendMode?: "llm" | "heuristic" | string | null;
+};
+
+/** Write a previewed Library match after the job is Bid ready or Worker pool. */
+export async function persistRecommendedResume(params: {
+  applierName: string;
+  jobId: string;
+  recommendedResumeStack: string;
+  recommendedResumeReason?: string | null;
+  warning?: string | null;
+  mode?: "llm" | "heuristic";
+}): Promise<PersistRecommendedResumeResponse> {
+  const res = await fetch(`${API_BASE}/jobs/persist-recommended-resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      applierName: params.applierName,
+      jobId: params.jobId,
+      recommendedResumeStack: params.recommendedResumeStack,
+      recommendedResumeReason: params.recommendedResumeReason ?? undefined,
+      warning: params.warning ?? undefined,
+      mode: params.mode,
+    }),
+  });
+  return parseJson(res);
+}
+
+export async function fetchCompanyPostedJobIds(params: {
+  applierName: string;
+  companyId: string;
+  keepJobId?: string;
+}): Promise<{ success?: boolean; companyId?: string; jobIds?: string[]; error?: string }> {
+  const res = await fetch(`${API_BASE}/jobs/company/posted-ids`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      applierName: params.applierName,
+      companyId: params.companyId,
+      ...(params.keepJobId ? { keepJobId: params.keepJobId } : {}),
+    }),
+  });
+  return parseJson(res);
+}
+
+export async function enqueueJobQueue(params: {
+  jobId: string;
+  applierName: string;
+  destination: "bid-ready" | "worker-pool";
+  catalog?: string;
+}): Promise<{ success?: boolean; data?: Record<string, unknown>; error?: string }> {
+  const path =
+    params.destination === "worker-pool"
+      ? `/jobs/${encodeURIComponent(params.jobId)}/worker-pool`
+      : `/jobs/${encodeURIComponent(params.jobId)}/bid-status`;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      applierName: params.applierName,
+      status: params.destination === "worker-pool" ? "WorkerPool" : "BidReady",
+      catalog: params.catalog || "market",
     }),
   });
   return parseJson(res);

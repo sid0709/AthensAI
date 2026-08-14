@@ -19,6 +19,7 @@
     "migrate:temp-ingest": "node scripts/align-temp-jobs-ingest-schema.mjs",
     "backfill:companies": "node scripts/backfill-companies.mjs",
     "backfill:job-source": "node scripts/backfill-job-source.mjs",
+    "backfill:orphan-vendor-tasks": "node scripts/backfill-orphan-vendor-tasks.mjs",
     "review:temp-jobs": "node scripts/review-temp-jobs-status.mjs",
     "promote:temp-jobs": "node scripts/promote-ready-temp-jobs.cjs",
     "migrate:account-info-unset-legacy": "node scripts/unset-account-info-legacy-fields.mjs",

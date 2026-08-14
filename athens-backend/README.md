@@ -141,6 +141,8 @@ Point athens-lens `WXT_ATHENS_API_URL` (and Athens web API base) at this server 
 
 Marking BidReady upserts a `vendor_tasks` stub and sets stable `job_statuses.bidReadyAt` (folder day). Completing a bid sets `bid-completed` without restamping that date.
 
+`GET /api/bid-results` lists the `job_statuses` bid-ready / bid-completed queue (hydrated from `vendor_tasks`). Pending stubs with a `bidReadyDate` but no Bid ready status are junk. Cleanse with `npm run backfill:orphan-vendor-tasks -- --dry-run` then `npm run backfill:orphan-vendor-tasks`.
+
 ## Resume library
 
 Binary files: Firebase Storage `{slug(ownerName)}_{profileId}/resumes/{sha256}`. Metadata + analysis: Mongo `resumes`.
