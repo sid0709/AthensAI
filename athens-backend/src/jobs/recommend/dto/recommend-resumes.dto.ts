@@ -25,4 +25,12 @@ export class RecommendResumesDto {
   @IsOptional()
   @IsBoolean()
   replaceExisting?: boolean;
+
+  /**
+   * When false, run AI and return stacks without writing vendor_tasks.
+   * Posted (New) jobs are allowed. Default true = persist (Bid ready / Worker pool only).
+   */
+  @IsOptional()
+  @IsBoolean()
+  persist?: boolean;
 }

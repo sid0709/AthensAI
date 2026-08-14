@@ -16,6 +16,7 @@ import { ExposeJobsController } from './expose-jobs.controller';
 import { JobCatalogTotalService } from './job-catalog-total.service';
 import { JobDedupeService } from './job-dedupe.service';
 import { JobCompanyApplyOthersService } from './job-company-apply-others.service';
+import { JobCompanyPostedService } from './job-company-posted.service';
 import { JobStatusApplyBulkService } from './job-status-apply-bulk.service';
 import { JobApplyBulkService } from './job-apply-bulk.service';
 import { JobHardDeleteService } from './job-hard-delete.service';
@@ -32,7 +33,9 @@ import { JobsRemoveController } from './jobs-remove.controller';
 import { JobsStatusController } from './jobs-status.controller';
 import { JobsService } from './jobs.service';
 import { JobRecommendFieldsService } from './recommend/job-recommend-fields.service';
+import { PersistPreviewRecommendService } from './recommend/persist-preview-recommend.service';
 import { RecommendEligibilityService } from './recommend/recommend-eligibility.service';
+import { RecommendOneService } from './recommend/recommend-one.service';
 import { RecommendPersistService } from './recommend/recommend-persist.service';
 import { RecommendResumesController } from './recommend/recommend-resumes.controller';
 import { RecommendResumesService } from './recommend/recommend-resumes.service';
@@ -81,6 +84,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     JobStatusApplyBulkService,
     JobApplyBulkService,
     JobCompanyApplyOthersService,
+    JobCompanyPostedService,
     JobWorkerPoolService,
     JobWorkerPoolTaskService,
     JobHardDeleteService,
@@ -98,6 +102,8 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     RegisterJobService,
     TempJobPromotionService,
     RecommendResumesService,
+    RecommendOneService,
+    PersistPreviewRecommendService,
     RecommendPersistService,
     RecommendEligibilityService,
     SetRecommendedResumeService,

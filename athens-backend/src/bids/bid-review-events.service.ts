@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { deleteManyWithFallback } from '../prisma/mongo-standalone';
+import {
+  deleteManyWithFallback,
+  mongoFieldIdIn,
+  mongoFieldIdQuery,
+} from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import { isoOrNull } from './lib/iso';
 
@@ -51,10 +55,27 @@ export class BidReviewEventsService {
     return deleteManyWithFallback(
       this.prisma,
       BID_REVIEW_EVENTS_COLLECTION,
-      { applierName, jobId },
+      { $and: [{ applierName }, mongoFieldIdQuery('jobId', jobId)] },
       () =>
         this.prisma.bidReviewEvent.deleteMany({
           where: { applierName, jobId },
+        }),
+    );
+  }
+
+  /** Catalog hard-delete: drop review events for these jobs across every applier. */
+  async deleteByJobIds(jobIds: string[]): Promise<number> {
+    const ids = [
+      ...new Set(jobIds.map((id) => String(id || '').trim()).filter(Boolean)),
+    ];
+    if (!ids.length) return 0;
+    return deleteManyWithFallback(
+      this.prisma,
+      BID_REVIEW_EVENTS_COLLECTION,
+      mongoFieldIdIn('jobId', ids),
+      () =>
+        this.prisma.bidReviewEvent.deleteMany({
+          where: { jobId: { in: ids } },
         }),
     );
   }

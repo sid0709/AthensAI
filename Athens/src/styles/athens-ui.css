@@ -1126,6 +1126,229 @@ span.athens-chip:hover {
   background: var(--athens-hover);
 }
 
+/* App left navigation — Lens job-row / user-footer language. */
+
+.athens-sidebar {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  width: 240px;
+  flex-shrink: 0;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  border-right: 1px solid var(--athens-border);
+  background: var(--athens-canvas);
+  color: var(--athens-text);
+  font-family: var(--font-athens);
+  font-size: var(--athens-font-size-sm);
+  font-weight: 400;
+  line-height: var(--athens-line-height-normal);
+  font-synthesis: none;
+  text-rendering: auto;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+.athens-sidebar a,
+.athens-sidebar button,
+.athens-sidebar p,
+.athens-sidebar span,
+.athens-sidebar strong {
+  font-family: var(--font-athens);
+  font-synthesis: none;
+  text-rendering: auto;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+.athens-sidebar a:focus-visible,
+.athens-sidebar button:focus-visible {
+  outline: 2px solid var(--athens-focus);
+  outline-offset: 2px;
+}
+
+.athens-sidebar__brand {
+  padding: var(--athens-space-4) var(--athens-space-5);
+  border-bottom: 1px solid var(--athens-border);
+}
+
+.athens-sidebar__brand-link {
+  display: flex;
+  align-items: center;
+  gap: var(--athens-space-3);
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.athens-sidebar__brand-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.athens-sidebar__title {
+  display: block;
+  color: var(--athens-text);
+  font-size: var(--athens-font-size-md);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: var(--athens-line-height-tight);
+}
+
+.athens-sidebar__tagline {
+  display: block;
+  color: var(--athens-text-muted);
+  font-size: var(--athens-font-size-xs);
+}
+
+.athens-sidebar__nav {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--athens-space-5);
+  padding: var(--athens-space-2) var(--athens-space-3);
+  overflow-y: auto;
+}
+
+.athens-sidebar__items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.athens-sidebar__eyebrow {
+  margin: 0 0 var(--athens-space-2);
+  padding: 0 var(--athens-space-3);
+  color: var(--athens-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.athens-sidebar__item {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: var(--athens-space-3);
+  padding: var(--athens-space-3);
+  border-radius: var(--athens-radius-md);
+  background: transparent;
+  color: var(--athens-text-secondary);
+  font-size: var(--athens-font-size-sm);
+  font-weight: 500;
+  line-height: 1.35;
+  text-decoration: none;
+  transition: background var(--athens-transition-fast), color var(--athens-transition-fast);
+}
+
+.athens-sidebar__item:hover {
+  background: var(--athens-hover);
+  color: var(--athens-text);
+}
+
+.athens-sidebar__item[aria-current="page"] {
+  background: var(--athens-selected);
+  color: var(--athens-text);
+  font-weight: 600;
+}
+
+.athens-sidebar__item svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+.athens-sidebar__item-label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.athens-sidebar__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid var(--athens-border);
+  border-radius: var(--athens-radius-pill);
+  background: var(--athens-surface-subtle);
+  color: var(--athens-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.athens-sidebar__footer {
+  display: flex;
+  min-height: 68px;
+  align-items: center;
+  gap: var(--athens-space-3);
+  padding: var(--athens-space-3) var(--athens-space-4);
+  border-top: 1px solid var(--athens-border);
+}
+
+.athens-sidebar__avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--athens-radius-pill);
+  background: var(--athens-text);
+  color: var(--athens-canvas);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.athens-sidebar__user {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.athens-sidebar__user strong,
+.athens-sidebar__user span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.athens-sidebar__user strong {
+  color: var(--athens-text);
+  font-size: var(--athens-font-size-sm);
+  font-weight: 600;
+}
+
+.athens-sidebar__user span {
+  color: var(--athens-text-muted);
+  font-size: var(--athens-font-size-xs);
+}
+
+.athens-sidebar__logout {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--athens-radius-sm);
+  background: transparent;
+  color: var(--athens-text-secondary);
+  cursor: pointer;
+}
+
+.athens-sidebar__logout:hover {
+  background: var(--athens-hover);
+  color: var(--athens-text);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .athens-tab,
   .athens-chip,
@@ -1134,7 +1357,9 @@ span.athens-chip:hover {
   .athens-btn-primary,
   .athens-icon-btn,
   .athens-text-btn,
-  .athens-progress__bar {
+  .athens-progress__bar,
+  .athens-sidebar__item,
+  .athens-sidebar__logout {
     transition: none;
   }
 
