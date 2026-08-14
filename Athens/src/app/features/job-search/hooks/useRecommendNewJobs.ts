@@ -5,6 +5,7 @@ import type { Job } from "../../../types";
 import type { RecommendResumeBulkProgress } from "./useRecommendResumes";
 import { recommendNewCompany } from "../lib/recommendNewCompany";
 import {
+  jobRecordId,
   postedJobsForRecommend,
   uniqueCompanies,
   type RecommendNewDestination,
@@ -37,7 +38,11 @@ export function useRecommendNewJobs(
         toast.error("Select a profile before recommending resumes.");
         return;
       }
-      const primaries = uniqueCompanies(postedJobsForRecommend(selected));
+      const primaries = uniqueCompanies(
+        postedJobsForRecommend(selected).length
+          ? postedJobsForRecommend(selected)
+          : selected.filter((job) => jobRecordId(job)),
+      );
       if (!primaries.length) {
         toast.message("Select New jobs to recommend Library resumes.");
         return;

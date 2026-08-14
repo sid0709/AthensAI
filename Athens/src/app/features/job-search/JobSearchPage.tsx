@@ -142,6 +142,14 @@ function JobSearchPageContent() {
     recommendNewRunning,
     recommendNewProgress,
   } = useRecommendNewJobs(patchJob, markJobsApplied, refreshStatusCounts);
+  const recommendPostedJobs = useMemo(
+    () =>
+      postedJobsForRecommend(
+        selectedJobs,
+        filters.statusTab === "posted" ? "posted" : undefined,
+      ),
+    [filters.statusTab, selectedJobs],
+  );
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
   const [markAppliedBulkPending, setMarkAppliedBulkPending] = useState(false);
@@ -531,9 +539,13 @@ function JobSearchPageContent() {
           filters.statusTab === "worker-pool" ||
           filters.statusTab === "all"
             ? () => {
-                const posted = postedJobsForRecommend(selectedJobs);
+                const posted = recommendPostedJobs;
                 if (posted.length) {
                   setRecommendNewOpen(true);
+                  return;
+                }
+                if (filters.statusTab === "posted") {
+                  toast.message("Select New jobs to recommend Library resumes.");
                   return;
                 }
                 const eligible = selectedJobs.filter((job) =>
@@ -586,12 +598,12 @@ function JobSearchPageContent() {
       <RecommendNewJobsDialog
         open={recommendNewOpen}
         onOpenChange={setRecommendNewOpen}
-        jobCount={postedJobsForRecommend(selectedJobs).length}
+        jobCount={recommendPostedJobs.length}
         applyAllCompanyRoles={Boolean(isBeta && applyAllCompanyRoles)}
         showWorkerPool={isBeta}
         busy={recommendNewRunning || recommendRunning}
         onConfirm={(choice) => {
-          const posted = postedJobsForRecommend(selectedJobs);
+          const posted = recommendPostedJobs;
           const queued = selectedJobs.filter((job) =>
             canAssignLibraryResume(job.status),
           );

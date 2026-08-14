@@ -15,10 +15,14 @@ export function isLibraryRecommendMatch(
   return Boolean(String(row.recommendedResumeStack || "").trim());
 }
 
-export function postedJobsForRecommend(jobs: Job[]): Job[] {
-  return jobs.filter(
-    (job) => job.status === "posted" && !isExternalJob(job) && jobRecordId(job),
-  );
+export function postedJobsForRecommend(jobs: Job[], statusTab?: string): Job[] {
+  return jobs.filter((job) => {
+    const isPosted = job.status === "posted" || statusTab === "posted";
+    if (!isPosted || !jobRecordId(job)) return false;
+    // New tab already lists posted roles; don't drop rows the client tagged external.
+    if (statusTab === "posted") return true;
+    return !isExternalJob(job);
+  });
 }
 
 export function uniqueCompanies(jobs: Job[]): Job[] {
