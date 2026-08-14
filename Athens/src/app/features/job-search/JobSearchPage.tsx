@@ -8,6 +8,7 @@ import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
 import { downloadJobsCsv } from "../../hooks/useJobSearchFilters";
 import { JobExportDialog } from "./components/JobExportDialog";
+import { RecommendNewJobsDialog } from "./components/RecommendNewJobsDialog";
 import { RecommendResumeConflictDialog } from "./components/RecommendResumeConflictDialog";
 import { JobListSkeleton } from "./components/JobListSkeleton";
 import { JobListErrorState } from "./components/JobListErrorState";
@@ -23,7 +24,9 @@ import {
   jobHasResumeRecommendation,
   useRecommendResumes,
 } from "./hooks/useRecommendResumes";
+import { useRecommendNewJobs } from "./hooks/useRecommendNewJobs";
 import { canAssignLibraryResume } from "./lib/jobRecommendSnapshot";
+import { postedJobsForRecommend } from "./lib/recommendNewJobs";
 import { useJobsList } from "./hooks/useJobsList";
 import { isExternalJob, type CompanyJobGroup, type Job } from "../../types/job";
 import { isBetaTier } from "../../lib/beta";
@@ -71,6 +74,7 @@ function JobSearchPageContent() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [recommendConflictOpen, setRecommendConflictOpen] = useState(false);
+  const [recommendNewOpen, setRecommendNewOpen] = useState(false);
   const [activeJobIds, setActiveJobIds] = useState<Record<string, string>>({});
   const { jobs, groups, total, totalJobs, loading, error, retry, requestKey, resultsSettled, countsLoading, statusCounts, patchJob, markJobsApplied, removeJobsById, removeOtherCompanyJobs, refreshStatusCounts, loadCompanyMembers, memberLoadingIds, memberErrors } =
     useJobsList(filters, removedIds, page, pageSize);
@@ -133,6 +137,11 @@ function JobSearchPageContent() {
     progress: workerPoolProgress,
   } = useJobWorkerPoolTask(patchJob, markJobsApplied, refreshStatusCounts);
   const { recommendBulk, recommendRunning, recommendProgress } = useRecommendResumes(patchJob);
+  const {
+    recommendNew,
+    recommendNewRunning,
+    recommendNewProgress,
+  } = useRecommendNewJobs(patchJob, markJobsApplied, refreshStatusCounts);
   const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
   const [moveToNewBulkPending, setMoveToNewBulkPending] = useState(false);
   const [markAppliedBulkPending, setMarkAppliedBulkPending] = useState(false);
@@ -517,8 +526,16 @@ function JobSearchPageContent() {
           void removeBulkResumes(selectedJobs);
         }}
         onRecommendResumes={
-          filters.statusTab === "bid-ready" || filters.statusTab === "worker-pool"
+          filters.statusTab === "posted" ||
+          filters.statusTab === "bid-ready" ||
+          filters.statusTab === "worker-pool" ||
+          filters.statusTab === "all"
             ? () => {
+                const posted = postedJobsForRecommend(selectedJobs);
+                if (posted.length) {
+                  setRecommendNewOpen(true);
+                  return;
+                }
                 const eligible = selectedJobs.filter((job) =>
                   canAssignLibraryResume(job.status),
                 );
@@ -540,10 +557,10 @@ function JobSearchPageContent() {
         resumeStopping={bulkStopping}
         resumeRemoving={bulkRemoving}
         resumeRemovalStopping={removalStopping}
-        recommendRunning={recommendRunning}
+        recommendRunning={recommendRunning || recommendNewRunning}
         hasSelectedResumes={hasSelectedResumes}
         resumeProgress={bulkProgress ?? undefined}
-        recommendProgress={recommendProgress ?? undefined}
+        recommendProgress={recommendNewProgress ?? recommendProgress ?? undefined}
         page={page}
         pageSize={pageSize}
         total={total}
@@ -564,6 +581,32 @@ function JobSearchPageContent() {
         onExportWithApply={() => void handleExportWithApply()}
         onExportOnly={handleExportOnly}
         busy={exportBusy}
+      />
+
+      <RecommendNewJobsDialog
+        open={recommendNewOpen}
+        onOpenChange={setRecommendNewOpen}
+        jobCount={postedJobsForRecommend(selectedJobs).length}
+        applyAllCompanyRoles={Boolean(isBeta && applyAllCompanyRoles)}
+        showWorkerPool={isBeta}
+        busy={recommendNewRunning || recommendRunning}
+        onConfirm={(choice) => {
+          const posted = postedJobsForRecommend(selectedJobs);
+          const queued = selectedJobs.filter((job) =>
+            canAssignLibraryResume(job.status),
+          );
+          setRecommendNewOpen(false);
+          void (async () => {
+            await recommendNew(posted, {
+              destination: choice.destination,
+              applyAllCompanyRoles: Boolean(isBeta && applyAllCompanyRoles),
+              autoSwap: choice.autoSwap,
+            });
+            if (queued.length) {
+              await recommendBulk(queued, { replaceExisting: true });
+            }
+          })();
+        }}
       />
 
       <RecommendResumeConflictDialog

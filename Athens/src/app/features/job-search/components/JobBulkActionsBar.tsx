@@ -285,7 +285,7 @@ export function JobBulkActionsBar({
           icon: recommendRunning ? Loader2 : BookMarked,
           onClick: onRecommendResumes,
           disabled: resumeLocked || !hasSelection,
-          title: "Recommend Library resumes for selected Bid ready or Worker pool jobs using each job description",
+          title: "Recommend Library resumes for selected jobs",
           busy: recommendRunning,
         }
       : null,
