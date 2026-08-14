@@ -4,6 +4,7 @@ import { useApplier } from "@/context/applier-context";
 import type { Job } from "../../../types";
 import type { RecommendResumeBulkProgress } from "./useRecommendResumes";
 import { recommendNewCompany } from "../lib/recommendNewCompany";
+import { runWithSlidingPool } from "../lib/run-with-sliding-pool";
 import {
   jobRecordId,
   postedJobsForRecommend,
@@ -16,6 +17,9 @@ export type RecommendNewJobsOptions = {
   applyAllCompanyRoles: boolean;
   autoSwap: boolean;
 };
+
+/** Matches backend RECOMMEND_RESUME_CONCURRENCY so this client does not oversubscribe LLM admission. */
+const RECOMMEND_NEW_COMPANY_CONCURRENCY = 8;
 
 export function useRecommendNewJobs(
   patchJob: (job: Job) => void,
@@ -53,49 +57,55 @@ export function useRecommendNewJobs(
       setRunning(true);
       setProgress({ done: 0, total, succeeded: 0, failed: 0 });
 
-      let moved = 0;
-      let skipped = 0;
-      let failed = 0;
+      const tally = { done: 0, moved: 0, skipped: 0, failed: 0 };
+      const publish = (label?: string) => {
+        setProgress({
+          done: tally.done,
+          total,
+          succeeded: tally.moved,
+          failed: tally.failed,
+          label,
+        });
+      };
 
       try {
-        for (let i = 0; i < primaries.length; i += 1) {
-          if (cancelledRef.current) break;
-          const primary = primaries[i];
-          const outcome = await recommendNewCompany({
-            primary,
-            applier,
-            destination: options.destination,
-            applyAllCompanyRoles: options.applyAllCompanyRoles,
-            autoSwap: options.autoSwap,
-            cancelled: () => cancelledRef.current,
-            onProgress: (label) => {
-              setProgress({ done: i, total, succeeded: moved, failed, label });
-            },
-            patchJob,
-            markJobsApplied,
-          });
-          if (outcome.status === "moved") {
-            moved += 1;
-            if (outcome.error) {
-              toast.error(`Queued ${outcome.company} without marking other roles`, {
+        await runWithSlidingPool(
+          primaries,
+          async (primary) => {
+            const outcome = await recommendNewCompany({
+              primary,
+              applier,
+              destination: options.destination,
+              applyAllCompanyRoles: options.applyAllCompanyRoles,
+              autoSwap: options.autoSwap,
+              cancelled: () => cancelledRef.current,
+              onProgress: (label) => publish(label),
+              patchJob,
+              markJobsApplied,
+            });
+            if (outcome.status === "moved") {
+              tally.moved += 1;
+              if (outcome.error) {
+                toast.error(`Queued ${outcome.company} without marking other roles`, {
+                  description: outcome.error,
+                });
+              }
+            } else if (outcome.status === "failed") {
+              tally.failed += 1;
+              toast.error(`Could not recommend for ${outcome.company}`, {
                 description: outcome.error,
               });
+            } else {
+              tally.skipped += 1;
             }
-          }
-          else if (outcome.status === "failed") {
-            failed += 1;
-            toast.error(`Could not recommend for ${outcome.company}`, {
-              description: outcome.error,
-            });
-          } else skipped += 1;
-          setProgress({
-            done: i + 1,
-            total,
-            succeeded: moved,
-            failed,
-          });
-        }
+            tally.done += 1;
+            publish();
+          },
+          RECOMMEND_NEW_COMPANY_CONCURRENCY,
+          () => !cancelledRef.current,
+        );
 
+        const { moved, skipped, failed } = tally;
         if (failed === 0 && skipped === 0 && moved > 0) {
           toast.success(
             moved === 1
