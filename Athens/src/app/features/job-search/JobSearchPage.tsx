@@ -609,14 +609,17 @@ function JobSearchPageContent() {
           );
           setRecommendNewOpen(false);
           void (async () => {
-            await recommendNew(posted, {
-              destination: choice.destination,
-              applyAllCompanyRoles: Boolean(isBeta && applyAllCompanyRoles),
-              autoSwap: choice.autoSwap,
-            });
+            const tasks = [
+              recommendNew(posted, {
+                destination: choice.destination,
+                applyAllCompanyRoles: Boolean(isBeta && applyAllCompanyRoles),
+                autoSwap: choice.autoSwap,
+              }),
+            ];
             if (queued.length) {
-              await recommendBulk(queued, { replaceExisting: true });
+              tasks.push(recommendBulk(queued, { replaceExisting: true }));
             }
+            await Promise.all(tasks);
           })();
         }}
       />
