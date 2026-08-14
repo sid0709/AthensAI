@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { FirebaseAdminService } from '../firebase/firebase-admin.service';
+import { asObjectIdHex } from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import { BidLifecycleService } from './bid-lifecycle.service';
 import { BidReviewEventsService } from './bid-review-events.service';
@@ -44,14 +45,18 @@ export class BidResultsService {
       account.name,
       BID_QUEUE_LIMIT,
     );
-    const byJob = new Map(tasks.map((t) => [t.jobId, t]));
+    const byJob = new Map(
+      tasks.map((t) => [asObjectIdHex(t.jobId) || t.jobId, t]),
+    );
 
     const results: Record<string, unknown>[] = [];
     const seen = new Set<string>();
 
     for (const row of queue) {
-      seen.add(row.jobId);
-      let task = byJob.get(row.jobId);
+      const jobId = asObjectIdHex(row.jobId) || row.jobId;
+      if (seen.has(jobId)) continue;
+      seen.add(jobId);
+      let task = byJob.get(jobId);
       if (!task) {
         const job = await this.prisma.job.findUnique({
           where: { id: row.jobId },
@@ -73,14 +78,6 @@ export class BidResultsService {
         serialized.progress = 'completed';
       }
       results.push(mapTaskToBidResult(serialized));
-    }
-
-    for (const task of tasks) {
-      if (seen.has(task.jobId)) continue;
-      // Recommend-only New jobs have a vendor_task with no bidReadyDate.
-      // Keep them out of Bid Management until the job is actually Bid Ready.
-      if (!task.bidReadyDate) continue;
-      results.push(mapTaskToBidResult(this.vendorTasks.serialize(task)));
     }
 
     return { success: true as const, results, total: results.length };

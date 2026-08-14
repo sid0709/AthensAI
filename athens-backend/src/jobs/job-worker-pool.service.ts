@@ -3,8 +3,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { BidStatusQueueService } from '../bids/bid-status-queue.service';
 import {
-  deleteManyWithFallback,
   rawInsertOne,
   rawUpdateMany,
   withReplicaSetFallback,
@@ -32,6 +32,7 @@ export class JobWorkerPoolService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly recommendFields: JobRecommendFieldsService,
+    private readonly bidQueue: BidStatusQueueService,
   ) {}
 
   async setStatus(
@@ -142,22 +143,15 @@ export class JobWorkerPoolService {
       jobIdRaw,
       applierName,
     );
-    const deletedCount = await deleteManyWithFallback(
-      this.prisma,
-      JOB_STATUSES_COLLECTION,
-      {
-        profileId: { $oid: profileId },
-        jobId: { $oid: job.id },
-      },
-      () =>
-        this.prisma.jobStatus.deleteMany({
-          where: { profileId, jobId: job.id },
-        }),
-    );
+    const { changed } = await this.bidQueue.clearBidReady({
+      profileId,
+      applierName: String(applierName).trim(),
+      jobId: job.id,
+    });
     return {
       success: true,
       data: await this.jobDoc(job, profileId, 'posted'),
-      changed: deletedCount > 0,
+      changed,
       viewerStatus: 'posted',
       mutationId: mutationId?.trim() || null,
     };

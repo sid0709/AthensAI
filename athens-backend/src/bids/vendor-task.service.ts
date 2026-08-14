@@ -4,6 +4,8 @@ import {
   deleteManyWithFallback,
   isInconsistentDateTime,
   isReplicaSetRequired,
+  mongoFieldIdIn,
+  mongoFieldIdQuery,
   rawInsertOne,
   rawUpdateMany,
   repairNullDateFields,
@@ -188,10 +190,27 @@ export class VendorTaskService {
     return deleteManyWithFallback(
       this.prisma,
       VENDOR_TASKS_COLLECTION,
-      { applierName, jobId },
+      { $and: [{ applierName }, mongoFieldIdQuery('jobId', jobId)] },
       () =>
         this.prisma.vendorTask.deleteMany({
           where: { applierName, jobId },
+        }),
+    );
+  }
+
+  /** Catalog hard-delete: drop stubs for these jobs across every applier. */
+  async deleteByJobIds(jobIds: string[]): Promise<number> {
+    const ids = [
+      ...new Set(jobIds.map((id) => String(id || '').trim()).filter(Boolean)),
+    ];
+    if (!ids.length) return 0;
+    return deleteManyWithFallback(
+      this.prisma,
+      VENDOR_TASKS_COLLECTION,
+      mongoFieldIdIn('jobId', ids),
+      () =>
+        this.prisma.vendorTask.deleteMany({
+          where: { jobId: { in: ids } },
         }),
     );
   }

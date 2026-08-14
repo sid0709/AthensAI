@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { deleteManyWithFallback, objectIdIn } from '../prisma/mongo-standalone';
+import { BidReviewEventsService } from '../bids/bid-review-events.service';
+import { VendorTaskService } from '../bids/vendor-task.service';
+import {
+  deleteManyWithFallback,
+  mongoFieldIdIn,
+  objectIdIn,
+} from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompanyCatalogTotalService } from './company-catalog-total.service';
 import { CompanyMembershipService } from './company-membership.service';
@@ -22,7 +28,7 @@ export type HardDeleteResult = {
 
 /**
  * Permanent hard delete for catalog `jobs` and staging `temp_jobs`.
- * Also clears job_statuses and company membership for catalog rows.
+ * Also clears job_statuses, vendor_tasks, bid_review_events, and company membership.
  */
 @Injectable()
 export class JobHardDeleteService {
@@ -31,6 +37,8 @@ export class JobHardDeleteService {
     private readonly companies: CompanyMembershipService,
     private readonly jobTotals: JobCatalogTotalService,
     private readonly companyTotals: CompanyCatalogTotalService,
+    private readonly vendorTasks: VendorTaskService,
+    private readonly bidEvents: BidReviewEventsService,
   ) {}
 
   async deleteCatalogJobs(rawIds: unknown): Promise<HardDeleteResult> {
@@ -58,12 +66,14 @@ export class JobHardDeleteService {
     await deleteManyWithFallback(
       this.prisma,
       JOB_STATUSES_COLLECTION,
-      { jobId: objectIdIn(deletedIds) },
+      mongoFieldIdIn('jobId', deletedIds),
       () =>
         this.prisma.jobStatus.deleteMany({
           where: { jobId: { in: deletedIds } },
         }),
     );
+    await this.vendorTasks.deleteByJobIds(deletedIds);
+    await this.bidEvents.deleteByJobIds(deletedIds);
     await this.companies.detachJobs(existing);
     await deleteManyWithFallback(
       this.prisma,

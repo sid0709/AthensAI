@@ -179,18 +179,70 @@ export function objectIdIn(ids: string[]): Prisma.InputJsonValue {
 
 const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
 
+/** 24-char hex from a string, ObjectId, or Extended JSON `{ $oid }`. */
+export function asObjectIdHex(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const id = value.trim();
+    return OBJECT_ID_HEX.test(id) ? id : null;
+  }
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value) && value.length === 12) {
+    return value.toString('hex');
+  }
+  if (typeof value !== 'object') return null;
+  const raw = value as { $oid?: string; toHexString?: () => string };
+  if (typeof raw.$oid === 'string' && OBJECT_ID_HEX.test(raw.$oid)) {
+    return raw.$oid.trim();
+  }
+  if (typeof raw.toHexString === 'function') {
+    const hex = raw.toHexString();
+    if (typeof hex === 'string' && OBJECT_ID_HEX.test(hex)) return hex;
+  }
+  return null;
+}
+
+/**
+ * Match `field` as a legacy string or BSON ObjectId for `$runCommandRaw`.
+ * Some Athens-server rows store 24-hex ids as plain strings.
+ */
+export function mongoFieldIdQuery(
+  field: string,
+  id: string,
+): Prisma.InputJsonValue {
+  const trimmed = String(id || '').trim();
+  if (!trimmed) return { [field]: trimmed };
+  if (!OBJECT_ID_HEX.test(trimmed)) return { [field]: trimmed };
+  return { $or: [{ [field]: { $oid: trimmed } }, { [field]: trimmed }] };
+}
+
+/** `$in` that matches both string and ObjectId encodings of each hex id. */
+export function mongoFieldIdIn(
+  field: string,
+  ids: string[],
+): Prisma.InputJsonValue {
+  const unique = [
+    ...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  const values: Prisma.InputJsonValue[] = [];
+  for (const id of unique) {
+    values.push(id);
+    if (OBJECT_ID_HEX.test(id)) values.push({ $oid: id });
+  }
+  return { [field]: { $in: values } };
+}
+
 /**
  * Match legacy string `_id` or BSON ObjectId for `$runCommandRaw` updates.
  * Some Athens-server accounts store `_id` as a plain string.
  */
 export function mongoIdQuery(id: string): Prisma.InputJsonValue {
-  const trimmed = String(id || '').trim();
-  if (!trimmed) return { _id: trimmed };
-  if (!OBJECT_ID_HEX.test(trimmed)) return { _id: trimmed };
-  return { $or: [{ _id: { $oid: trimmed } }, { _id: trimmed }] };
+  return mongoFieldIdQuery('_id', id);
 }
 
-/** Prefer typed Prisma deleteMany; fall back to raw on standalone Mongo. */
+/**
+ * Prefer typed Prisma deleteMany; fall back to raw on standalone Mongo.
+ * When Prisma reports 0, still run raw so string vs ObjectId rows are not missed.
+ */
 export async function deleteManyWithFallback(
   prisma: PrismaClient,
   collection: string,
@@ -199,7 +251,8 @@ export async function deleteManyWithFallback(
 ): Promise<number> {
   try {
     const result = await viaPrisma();
-    return result.count;
+    const extra = await rawDeleteMany(prisma, collection, rawQuery);
+    return result.count + extra;
   } catch (error) {
     if (!isReplicaSetRequired(error)) throw error;
     return rawDeleteMany(prisma, collection, rawQuery);

@@ -3,6 +3,7 @@ import type { Job } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   deleteManyWithFallback,
+  mongoFieldIdQuery,
   rawInsertOne,
   rawUpdateMany,
   isInconsistentDateTime,
@@ -261,8 +262,10 @@ export class BidStatusQueueService {
       this.prisma,
       JOB_STATUSES_COLLECTION,
       {
-        profileId: { $oid: profileId },
-        jobId: { $oid: jobId },
+        $and: [
+          mongoFieldIdQuery('profileId', profileId),
+          mongoFieldIdQuery('jobId', jobId),
+        ],
       },
       () =>
         this.prisma.jobStatus.deleteMany({

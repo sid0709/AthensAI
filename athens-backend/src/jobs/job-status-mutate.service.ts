@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 import { BidStatusQueueService } from '../bids/bid-status-queue.service';
 import {
-  deleteManyWithFallback,
   rawInsertOne,
   rawUpdateMany,
   withReplicaSetFallback,
@@ -322,24 +321,16 @@ export class JobStatusMutateService {
       jobIdRaw,
       applierName,
     );
-
-    const deletedCount = await deleteManyWithFallback(
-      this.prisma,
-      JOB_STATUSES_COLLECTION,
-      {
-        profileId: { $oid: profileId },
-        jobId: { $oid: job.id },
-      },
-      () =>
-        this.prisma.jobStatus.deleteMany({
-          where: { profileId, jobId: job.id },
-        }),
-    );
+    const { changed } = await this.bidQueue.clearBidReady({
+      profileId,
+      applierName: String(applierName).trim(),
+      jobId: job.id,
+    });
 
     return {
       success: true,
       data: await this.jobDocWithRecommend(job, profileId, 'posted'),
-      changed: deletedCount > 0,
+      changed,
       viewerStatus: 'posted',
       mutationId: mutationId?.trim() || null,
     };
