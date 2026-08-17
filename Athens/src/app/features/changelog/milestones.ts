@@ -14,6 +14,22 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "resume-american-dates",
+    version: "0.12.0",
+    title: "Resume dates",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Show experience and education dates as Apr 2022 instead of 2022.4, including Word downloads.",
+    tags: ["Resumes"],
+    current: true,
+    changes: [
+      "Role and school dates use American month-year labels such as Apr 2022",
+      "Word downloads use the same date labels as the résumé preview",
+    ],
+  },
+  {
     id: "settings-layout",
     version: "0.11.0",
     title: "Settings layout",
@@ -23,7 +39,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Tighten Settings chrome: theme lives on the tab bar as icon-only controls, and section headers are no longer extra cards.",
     tags: ["Settings"],
-    current: true,
     changes: [
       "Light, System, and Dark sit as compact icons on the Settings tab bar",
       "Profile, Notifications, and Security titles sit as a heading row instead of a second boxed toolbar",

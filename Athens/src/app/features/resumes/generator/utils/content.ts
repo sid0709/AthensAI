@@ -1,3 +1,4 @@
+import { formatResumePeriodLabel } from "../../lib/formatResumeDate";
 import type { GeneratedContent } from "../types";
 
 export function normalizeGenerated(sections: Record<string, unknown> | null | undefined): GeneratedContent {
@@ -27,7 +28,7 @@ export function normalizeGenerated(sections: Record<string, unknown> | null | un
           title: String(row.title ?? row.role ?? ""),
           company: String(row.company ?? ""),
           location: String(row.location ?? ""),
-          period: String(row.period ?? row.dates ?? ""),
+          period: formatResumePeriodLabel(String(row.period ?? row.dates ?? "")),
           bullets: Array.isArray(row.bullets) ? row.bullets.map(String) : [],
         };
       })

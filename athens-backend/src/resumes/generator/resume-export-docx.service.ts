@@ -10,6 +10,7 @@ import {
   TextRun,
 } from 'docx';
 import { cleanString } from './lib/clean-string';
+import { formatResumePeriodLabel } from './lib/format-resume-date';
 
 const TWIPS_PER_IN = 1440;
 const PAGE_IN = {
@@ -224,7 +225,7 @@ function appendSectionBody(
             }),
             new TextRun({
               ...bodyRun,
-              children: [new Tab(), cleanString(exp.period)],
+              children: [new Tab(), formatResumePeriodLabel(cleanString(exp.period))],
               color: '6b7280',
             }),
           ],
@@ -275,7 +276,7 @@ function appendSectionBody(
             }),
             new TextRun({
               ...bodyRun,
-              children: [new Tab(), cleanString(row.period)],
+              children: [new Tab(), formatResumePeriodLabel(cleanString(row.period))],
               color: '6b7280',
             }),
           ],

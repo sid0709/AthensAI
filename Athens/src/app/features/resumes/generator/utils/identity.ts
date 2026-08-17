@@ -1,3 +1,4 @@
+import { formatResumePeriodFromProfile } from "../../lib/formatResumeDate";
 import type { CareerEntry, EducationEntry, Identity } from "../types";
 
 export const storageKey = (applierName: string | null | undefined) => `resumeGeneratorConfig:${applierName ?? "default"}`;
@@ -38,9 +39,7 @@ export function identityFromProfile(profile: Record<string, unknown>): Identity 
     .sort(byNewestFirst)
     .map((c) => {
       const row = (c ?? {}) as Record<string, unknown>;
-      const start = [str(row.startYear), str(row.startMonth)].filter(Boolean).join(".");
-      const end = row.endPresent ? "Present" : [str(row.endYear), str(row.endMonth)].filter(Boolean).join(".");
-      const period = start || end ? `${start || "?"} – ${end || "?"}` : "";
+      const period = formatResumePeriodFromProfile(row);
       return { company: str(row.company), title: str(row.title), period, description: str(row.description).trim() };
     })
     .filter((c) => c.company || c.title);
@@ -54,9 +53,7 @@ export function identityFromProfile(profile: Record<string, unknown>): Identity 
     .sort(byNewestFirst)
     .map((e) => {
       const row = (e ?? {}) as Record<string, unknown>;
-      const start = [str(row.startYear), str(row.startMonth)].filter(Boolean).join(".");
-      const end = row.endPresent ? "Present" : [str(row.endYear), str(row.endMonth)].filter(Boolean).join(".");
-      const period = start || end ? `${start || "?"} – ${end || "?"}` : "";
+      const period = formatResumePeriodFromProfile(row);
       const degree = [str(row.diploma) || str(row.degree), str(row.major) || str(row.field)].filter(Boolean).join(", ");
       return { school: str(row.school) || str(row.university), degree, period };
     })
