@@ -3,6 +3,7 @@ import { ProfileLlmAuthService } from '../../ai/auth/profile-llm-auth.service';
 import { OpenAiChatService } from '../../ai/openai/openai-chat.service';
 import { AI_USAGE_FEATURES } from '../../ai-usage/constants/ai-usage.constants';
 import { AiUsageRecorderService } from '../../ai-usage/ai-usage-recorder.service';
+import { applyApplicantIdentityToPlan } from './applicant-identity';
 import { buildAnalyzePrompt } from './oak-prompt';
 import { OakProfilePromptService } from './oak-profile-prompt.service';
 import { OakResponsesService } from './oak-responses.service';
@@ -73,7 +74,7 @@ export class OakAnalyzeService {
 
       return {
         ok: true as const,
-        plan: result.plan,
+        plan: applyApplicantIdentityToPlan(result.plan),
         model: result.model,
         responseId: result.responseId ?? null,
         usage: result.usage,

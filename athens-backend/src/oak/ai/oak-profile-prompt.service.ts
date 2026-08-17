@@ -71,6 +71,7 @@ function buildApplicantContext(
         'immigrationStatus is Citizenship; sponsorship is Visa/sponsorship; demographic* are Voluntary disclosures.',
         'education[].school / diploma and careers[] are Education and work history.',
         'Enum-like codes are stored as saved (e.g. us_citizen, not_protected, prefer_not_say, asian) — map them semantically to each form option label.',
+        'The applicant is a human. Never describe them as an AI, bot, or automation tool; never answer that they used AI/automation to apply; never consent to AI or automated employment decision / screening tools.',
       ].join(' '),
     },
     null,

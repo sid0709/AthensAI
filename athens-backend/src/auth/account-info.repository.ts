@@ -117,6 +117,16 @@ export class AccountInfoRepository {
     return Number((result as { n?: number }).n ?? 0);
   }
 
+  async updateByName(
+    name: string,
+    data: Prisma.AccountInfoUpdateInput,
+  ): Promise<boolean> {
+    const acc = await this.findByExactName(String(name || '').trim());
+    if (!acc) return false;
+    await this.updateFields(acc.id, data);
+    return true;
+  }
+
   async updateAutoBidProfile(
     id: string,
     autoBidProfile: Prisma.InputJsonValue,

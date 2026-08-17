@@ -10,7 +10,6 @@ import { StatusPage } from "../features/status/StatusPage";
 import { BetaRoute } from "./BetaRoute";
 
 const {
-  dashboard: DashboardPage,
   "job-board": JobSearchPage,
   "title-review": TitleReviewPage,
   resumes: ResumesPage,
@@ -40,7 +39,7 @@ export function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<DashboardPage />} />
+        <Route index element={<Navigate to={PATHS.jobs} replace />} />
         <Route path={PATHS.jobs.slice(1)} element={<JobSearchPage />} />
         <Route path={PATHS.titleReview.slice(1)} element={<BetaRoute><TitleReviewPage /></BetaRoute>} />
         <Route path={`${PATHS.resumes.slice(1)}/:tab?`} element={<ResumesPage />} />
@@ -69,7 +68,7 @@ export function AppRoutes() {
         <Route path={PATHS.appsPlugins.slice(1)} element={<AppsPluginsPage />} />
         <Route path={PATHS.changelog.slice(1)} element={<ChangelogPage />} />
         <Route path={`${PATHS.settings.slice(1)}/:tab?`} element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to={PATHS.dashboard} replace />} />
+        <Route path="*" element={<Navigate to={PATHS.jobs} replace />} />
       </Route>
     </Routes>
   );

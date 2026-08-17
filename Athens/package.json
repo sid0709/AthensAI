@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "test:auth": "tsx --test src/app/features/auth/components/authNarrative.test.ts src/app/features/auth/components/authScene.test.ts src/app/features/auth/experience/authExperienceState.test.ts src/app/features/auth/experience/authAudio.test.ts src/app/features/dashboard/dashboardIdentity.test.ts",
+    "test:auth": "tsx --test src/app/features/auth/components/authNarrative.test.ts src/app/features/auth/components/authScene.test.ts src/app/features/auth/experience/authExperienceState.test.ts src/app/features/auth/experience/authAudio.test.ts",
     "test:job-search": "tsx --test src/app/features/job-search/lib/jobSearchUrlState.test.ts src/app/features/job-search/lib/companyGroupState.test.ts src/app/features/job-search/lib/companyApplyTargets.test.ts",
     "test:title-review": "tsx --test src/app/api/titleReviewRemoval.test.ts src/app/api/jobTitleReviewCache.test.ts",
     "dev": "vite",

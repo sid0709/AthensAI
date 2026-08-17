@@ -1,59 +1,55 @@
-import React from "react";
-import { useNavigate, useParams } from "react-router";
+import React, { useMemo } from "react";
+import { useLocation, useNavigate, useParams } from "react-router";
 import { PageShell } from "../../components/layout/PageShell";
-import { Pill } from "../../components/ui";
 import { TabTransition } from "../../components/overlays";
-import { AthensSelect } from "../../components/forms";
 import { DEFAULT_TABS, normalizeTab, PATHS, type ReportsTab } from "../../config/routes";
-import { useAnalyticsFilters, DATE_RANGE_OPTIONS } from "../../hooks/useAnalyticsFilters";
-import { useJobAnalytics } from "./hooks/useJobAnalytics";
-import { JobPostingProgress } from "./components/JobPostingProgress";
-import { ApplicationProgress } from "./components/ApplicationProgress";
+import { AnalyticsFilterPanel } from "./components/AnalyticsFilterPanel";
 import { AnalyticsLoading, AnalyticsProfileGate } from "./components/AnalyticsStates";
+import { ApplicationProgress } from "./components/ApplicationProgress";
+import { JobPostingProgress } from "./components/JobPostingProgress";
+import { useAnalyticsUrlState } from "./hooks/useAnalyticsUrlState";
+import { useJobAnalytics } from "./hooks/useJobAnalytics";
+import { resolveAnalyticsBounds } from "./lib/dateRange";
+import { rangeLabel } from "./lib/rangeFilter";
 
 const TABS = ["postings", "applications"] as const satisfies readonly ReportsTab[];
-const TAB_LABELS: Record<ReportsTab, string> = {
-  postings: "Job postings",
-  applications: "My applications",
-};
 
 export function AnalyticsPage() {
   const { tab: tabParam } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const tab = normalizeTab(tabParam, TABS, DEFAULT_TABS.reports);
-  const { range, setRange } = useAnalyticsFilters();
-  const analytics = useJobAnalytics(range);
+  const { filters, setFilters } = useAnalyticsUrlState();
+  const analytics = useJobAnalytics(filters);
+  const bounds = useMemo(() => resolveAnalyticsBounds(filters), [filters]);
+  const caption = `${tab === "postings" ? "Job posting progress" : "Your application progress"} for ${rangeLabel(filters.range, {
+    from: bounds.startDay,
+    to: bounds.endDay,
+  })}`;
 
   const body = analytics.loading ? (
     <AnalyticsLoading />
   ) : (
     <AnalyticsProfileGate ready={analytics.ready}>
-      {tab === "postings" && <JobPostingProgress range={range} analytics={analytics} />}
-      {tab === "applications" && <ApplicationProgress range={range} analytics={analytics} />}
+      {tab === "postings" && (
+        <JobPostingProgress caption={caption} analytics={analytics} bounds={bounds} />
+      )}
+      {tab === "applications" && (
+        <ApplicationProgress caption={caption} analytics={analytics} bounds={bounds} />
+      )}
     </AnalyticsProfileGate>
   );
 
   return (
-    <PageShell>
-      <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-        <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 scroll-row">
-          {TABS.map((t) => (
-            <Pill
-              key={t}
-              active={tab === t}
-              onClick={() => navigate(`${PATHS.reports}/${t}`)}
-            >
-              {TAB_LABELS[t]}
-            </Pill>
-          ))}
-        </div>
-        <AthensSelect
-          value={range}
-          onChange={(v) => setRange(v as typeof range)}
-          options={DATE_RANGE_OPTIONS}
-          className="w-44"
-        />
-      </div>
+    <PageShell className="athens-ui">
+      <AnalyticsFilterPanel
+        tab={tab}
+        onTabChange={(next) =>
+          navigate({ pathname: `${PATHS.reports}/${next}`, search: location.search })
+        }
+        filters={filters}
+        onChange={setFilters}
+      />
       <TabTransition tabKey={tab}>{body}</TabTransition>
     </PageShell>
   );

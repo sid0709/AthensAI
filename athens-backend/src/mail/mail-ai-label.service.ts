@@ -1,96 +1,38 @@
 import { Injectable } from '@nestjs/common';
 import { ProfileLlmAuthService } from '../ai/auth/profile-llm-auth.service';
-import { AiChatWithUsageService } from '../ai-usage/ai-chat-with-usage.service';
-import { AI_USAGE_FEATURES } from '../ai-usage/constants/ai-usage.constants';
-import { ALL_MAIL_PATH } from './constants/mail.constants';
+import { WaveBatchRunner } from '../ai/batch/wave-batch.runner';
+import {
+  MAIL_AI_LABEL_BATCH_CONCURRENCY,
+  MAIL_AI_LABEL_BATCH_SIZE,
+  MAIL_AI_LABEL_BODY_MAX_CHARS,
+} from '../ai/constants/ai-concurrency.constants';
+import { MAIL_AI_LABEL_MAX_MESSAGES } from './constants/mail.constants';
 import { ImapClientService } from './imap/imap-client.service';
-import { MailCacheService } from './mail-cache.service';
-import { MailLabelDefinitionsService } from './mail-label-definitions.service';
+import { MailAiLabelApplyService } from './mail-ai-label-apply.service';
+import type { MailAiLabelClassifyBatch } from './mail-ai-label-classify.service';
+import { MailAiLabelClassifyService } from './mail-ai-label-classify.service';
+import { MailAiLabelLoadService } from './mail-ai-label-load.service';
+import {
+  formatEmailText,
+  isAbortError,
+  mergeUsage,
+  type MailAiLabelProgress,
+  type MailAiLabelResult,
+} from './mail-ai-label.parse';
 import type { MailCredentialsOk } from './mail-credentials.service';
+import { MailLabelDefinitionsService } from './mail-label-definitions.service';
 
-export type MailAiLabelResult = {
-  uid: number;
-  label: string | null;
-  applied: boolean;
-  reason?:
-    | 'applied'
-    | 'no_match'
-    | 'body_error'
-    | 'classification_error'
-    | 'gmail_error';
-  error?: string;
-};
-
-export type MailAiLabelProgress = {
-  total: number;
-  completed: number;
-  failed: number;
-  applied: number;
-  skipped: number;
-  phase:
-    | 'loading_snippets'
-    | 'classifying_snippet'
-    | 'loading_body'
-    | 'classifying_body'
-    | 'labeling'
-    | 'done';
-  items?: Record<string, { result?: MailAiLabelResult }>;
-};
-
-function parseJsonLoose(text: string): unknown {
-  const raw = String(text ?? '').trim();
-  try {
-    return JSON.parse(raw);
-  } catch {
-    /* fall through */
-  }
-  const fenced = raw
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```\s*$/i, '')
-    .trim();
-  const first = fenced.indexOf('{');
-  const last = fenced.lastIndexOf('}');
-  if (first !== -1 && last > first) {
-    try {
-      return JSON.parse(fenced.slice(first, last + 1));
-    } catch {
-      /* fall through */
-    }
-  }
-  return null;
-}
-
-function resolveCanonicalLabel(
-  raw: unknown,
-  allowedLabels: string[],
-): string | null {
-  const candidate = String(raw ?? '').trim();
-  if (!candidate) return null;
-  const exact = allowedLabels.find((label) => label === candidate);
-  if (exact) return exact;
-  const lower = candidate.toLowerCase();
-  return allowedLabels.find((label) => label.toLowerCase() === lower) || null;
-}
-
-function parseMessageId(raw: string): { mailbox: string; uid: number } {
-  const s = String(raw || '');
-  if (s.includes('\0')) {
-    const [mailbox, uidStr] = s.split('\0');
-    return {
-      mailbox: mailbox || ALL_MAIL_PATH,
-      uid: Number(uidStr),
-    };
-  }
-  return { mailbox: 'INBOX', uid: Number(s) };
-}
+export type { MailAiLabelProgress, MailAiLabelResult };
 
 @Injectable()
 export class MailAiLabelService {
   constructor(
     private readonly llmAuth: ProfileLlmAuthService,
-    private readonly chat: AiChatWithUsageService,
+    private readonly waves: WaveBatchRunner,
+    private readonly classify: MailAiLabelClassifyService,
+    private readonly loader: MailAiLabelLoadService,
+    private readonly apply: MailAiLabelApplyService,
     private readonly imap: ImapClientService,
-    private readonly cache: MailCacheService,
     private readonly definitions: MailLabelDefinitionsService,
   ) {}
 
@@ -113,7 +55,7 @@ export class MailAiLabelService {
       auth,
       allowedLabels,
       labelDefinitions,
-      messageIds: messageIds.slice(0, 50),
+      messageIds: messageIds.slice(0, MAIL_AI_LABEL_MAX_MESSAGES),
     };
   }
 
@@ -125,14 +67,23 @@ export class MailAiLabelService {
   }) {
     const started = Date.now();
     const prepared = await this.prepare(input.creds, input.messageIds);
-    const results: MailAiLabelResult[] = [];
+    const resultsById = new Map<string, MailAiLabelResult>();
     const items: Record<string, { result?: MailAiLabelResult }> = {};
-    let completed = 0;
-    let applied = 0;
-    let failed = 0;
-    let skipped = 0;
+    const stats = { completed: 0, applied: 0, failed: 0, skipped: 0 };
     let usage: Record<string, unknown> | undefined;
     let aiRequests = 0;
+    let firstResultMs: number | null = null;
+
+    const record = (id: string, result: MailAiLabelResult) => {
+      if (resultsById.has(id)) return;
+      resultsById.set(id, result);
+      items[id] = { result };
+      stats.completed += 1;
+      if (result.applied) stats.applied += 1;
+      else if (result.reason === 'no_match') stats.skipped += 1;
+      else stats.failed += 1;
+      if (firstResultMs == null) firstResultMs = Date.now() - started;
+    };
 
     const report = async (
       phase: MailAiLabelProgress['phase'],
@@ -140,10 +91,7 @@ export class MailAiLabelService {
     ) => {
       await input.onProgress?.({
         total: prepared.messageIds.length,
-        completed,
-        failed,
-        applied,
-        skipped,
+        ...stats,
         phase,
         items,
         ...extra,
@@ -151,169 +99,94 @@ export class MailAiLabelService {
     };
 
     await report('loading_snippets');
+    const tLoad = Date.now();
+    const { emails, loadFailed } = await this.loader.loadEmails(
+      input.creds,
+      prepared.messageIds,
+    );
+    for (const row of loadFailed) record(row.id, row.result);
+    const snippetFetchMs = Date.now() - tLoad;
+    const snippetCacheHits = emails.filter((email) => email.bodyText).length;
+
+    await report('loading_body');
+    const tBody = Date.now();
+    const fullBodyFallbacks = await this.loader.fillBodies(input.creds, emails);
+    const bodyFetchMs = Date.now() - tBody;
 
     const catalog = prepared.allowedLabels.map((name) => ({
       name,
       description: String(prepared.labelDefinitions[name] || '').trim(),
     }));
+    let classifiedCount = 0;
+    let batches: MailAiLabelClassifyBatch[] = [];
 
-    for (const id of prepared.messageIds) {
-      if (input.signal?.aborted) break;
-      const { mailbox, uid } = parseMessageId(id);
-      if (!Number.isFinite(uid)) {
-        const r: MailAiLabelResult = {
-          uid: 0,
-          label: null,
-          applied: false,
-          reason: 'body_error',
-          error: 'Invalid message id',
-        };
-        results.push(r);
-        items[id] = { result: r };
-        failed += 1;
-        completed += 1;
-        continue;
-      }
-
-      try {
-        let cached = await this.cache.getMessage(
-          input.creds.applierName,
-          uid,
-          mailbox,
-        );
-        if (!cached) {
-          const env = await this.imap.fetchEnvelopeForUid(
-            input.creds.email,
-            input.creds.password,
-            uid,
-            input.creds.applierName,
-            mailbox,
-          );
-          if (env) {
-            await this.cache.upsertMessages([env]);
-            cached = await this.cache.getMessage(
-              input.creds.applierName,
-              uid,
-              mailbox,
-            );
-          }
-        }
-        if (!cached) {
-          throw new Error('Message not found');
-        }
-
-        await report('classifying_snippet');
-        const snippetText = [
-          `From: ${cached.fromName || cached.fromEmail || ''}`,
-          `Subject: ${cached.subject}`,
-          `Snippet: ${cached.preview || ''}`,
-        ].join('\n');
-
-        const snippetResult = await this.classifySnippet({
-          auth: prepared.auth,
-          catalog,
-          id,
-          text: snippetText,
-        });
-        aiRequests += 1;
-        usage = mergeUsage(usage, snippetResult.usage);
-
-        let label: string | null = null;
-        if (snippetResult.action === 'label') {
-          label = resolveCanonicalLabel(
-            snippetResult.label,
-            prepared.allowedLabels,
-          );
-        } else if (snippetResult.action === 'needs_body') {
-          await report('loading_body');
-          const bodyText = await this.imap.fetchMessagePlainText(
-            input.creds.email,
-            input.creds.password,
-            uid,
-            mailbox,
-            4000,
-          );
-          await report('classifying_body');
-          const bodyResult = await this.classifyBody({
+    await report('classifying_body');
+    const tAi = Date.now();
+    try {
+      batches = await this.waves.runBatches({
+        items: emails.map((email) => ({
+          id: email.id,
+          text: formatEmailText(email, MAIL_AI_LABEL_BODY_MAX_CHARS),
+        })),
+        batchSize: MAIL_AI_LABEL_BATCH_SIZE,
+        batchConcurrency: MAIL_AI_LABEL_BATCH_CONCURRENCY,
+        profileKey: prepared.auth.applierName,
+        signal: input.signal,
+        processBatch: async (batch) => {
+          const result = await this.classify.classifyBatch({
             auth: prepared.auth,
             catalog,
-            id,
-            text: [
-              `From: ${cached.fromName || cached.fromEmail || ''}`,
-              `Subject: ${cached.subject}`,
-              `Body:\n${bodyText}`,
-            ].join('\n'),
+            emails: batch,
+            signal: input.signal,
           });
-          aiRequests += 1;
-          usage = mergeUsage(usage, bodyResult.usage);
-          label = resolveCanonicalLabel(
-            bodyResult.label,
-            prepared.allowedLabels,
-          );
-        }
+          classifiedCount += batch.length;
+          await report('classifying_body', {
+            completed: loadFailed.length + classifiedCount,
+          });
+          return result;
+        },
+      });
+    } catch (err) {
+      if (!isAbortError(err) && !input.signal?.aborted) throw err;
+    }
+    const aiRequestMs = Date.now() - tAi;
+    for (const batch of batches) {
+      usage = mergeUsage(usage, batch.usage);
+      aiRequests += batch.requests;
+    }
+    const targets = this.apply.collectTargets(
+      batches,
+      emails,
+      prepared.allowedLabels,
+      record,
+    );
 
-        if (!label) {
-          const r: MailAiLabelResult = {
-            uid,
-            label: null,
-            applied: false,
-            reason: 'no_match',
-          };
-          results.push(r);
-          items[id] = { result: r };
-          skipped += 1;
-          completed += 1;
-          await report('labeling');
-          continue;
-        }
+    await report('labeling');
+    const tGmail = Date.now();
+    const gmailWriteBatches = await this.apply.applyLabels(
+      input.creds,
+      targets,
+      record,
+      input.signal,
+    );
+    const gmailWriteMs = Date.now() - tGmail;
 
-        await report('labeling');
-        await this.imap.addLabelsToMessages(
-          input.creds.email,
-          input.creds.password,
-          [uid],
-          [label],
-          mailbox,
-          { signal: input.signal },
-        );
-        const nextLabels = [...new Set([...(cached.gmailLabels || []), label])];
-        await this.cache.updateMessageFlags(
-          input.creds.applierName,
-          uid,
-          { gmailLabels: nextLabels },
-          mailbox,
-        );
-        const r: MailAiLabelResult = {
-          uid,
-          label,
-          applied: true,
-          reason: 'applied',
-        };
-        results.push(r);
-        items[id] = { result: r };
-        applied += 1;
-        completed += 1;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const r: MailAiLabelResult = {
-          uid,
-          label: null,
-          applied: false,
-          reason: /IMAP|Gmail|label/i.test(message)
-            ? 'gmail_error'
-            : 'classification_error',
-          error: message,
-        };
-        results.push(r);
-        items[id] = { result: r };
-        failed += 1;
-        completed += 1;
-      }
+    for (const email of emails) {
+      if (resultsById.has(email.id)) continue;
+      record(email.id, {
+        uid: email.uid,
+        label: null,
+        applied: false,
+        reason: input.signal?.aborted ? 'classification_error' : 'no_match',
+        error: input.signal?.aborted ? 'AI labeling was stopped.' : undefined,
+      });
     }
 
     await report('done');
     return {
-      results,
+      results: prepared.messageIds
+        .map((id) => resultsById.get(id))
+        .filter((row): row is MailAiLabelResult => Boolean(row)),
       usage,
       model: {
         provider: prepared.auth.provider,
@@ -323,134 +196,15 @@ export class MailAiLabelService {
         durationMs: Date.now() - started,
         messages: prepared.messageIds.length,
         aiRequests,
-        gmailWriteBatches: applied,
-        snippetFetchMs: 0,
-        bodyFetchMs: 0,
-        aiRequestMs: 0,
-        gmailWriteMs: 0,
-        snippetCacheHits: 0,
-        fullBodyFallbacks: 0,
-        firstResultMs: null as number | null,
+        gmailWriteBatches,
+        snippetFetchMs,
+        bodyFetchMs,
+        aiRequestMs,
+        gmailWriteMs,
+        snippetCacheHits,
+        fullBodyFallbacks,
+        firstResultMs,
       },
     };
   }
-
-  private async classifySnippet(input: {
-    auth: {
-      provider: 'openai' | 'deepseek';
-      apiKey: string;
-      model: string;
-      applierName: string;
-    };
-    catalog: Array<{ name: string; description: string }>;
-    id: string;
-    text: string;
-  }) {
-    const result = await this.chat.chatCompletion({
-      provider: input.auth.provider,
-      apiKey: input.auth.apiKey,
-      model: input.auth.model,
-      jsonMode: true,
-      temperature: 0,
-      messages: [
-        {
-          role: 'system',
-          content: [
-            'You classify emails into custom Gmail labels using only sender, subject, and a short snippet.',
-            'For every email choose exactly one action: "label", "no_match", or "needs_body".',
-            'Return ONLY JSON: { "results": [{ "id": string, "action": "label"|"no_match"|"needs_body", "label": string|null }] }.',
-          ].join('\n'),
-        },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            allowedLabels: input.catalog,
-            emails: [{ id: input.id, text: input.text }],
-          }),
-        },
-      ],
-      usageMeta: {
-        feature: AI_USAGE_FEATURES.mailLabel,
-        applierName: input.auth.applierName,
-        path: '/mail/ai-label/snippet',
-      },
-    });
-    const parsed = parseJsonLoose(String(result.content || '')) as {
-      results?: Array<{ action?: string; label?: string | null }>;
-    } | null;
-    const row = parsed?.results?.[0];
-    return {
-      action: (row?.action || 'needs_body') as
-        'label' | 'no_match' | 'needs_body',
-      label: row?.label ?? null,
-      usage: result.usage as Record<string, unknown> | undefined,
-    };
-  }
-
-  private async classifyBody(input: {
-    auth: {
-      provider: 'openai' | 'deepseek';
-      apiKey: string;
-      model: string;
-      applierName: string;
-    };
-    catalog: Array<{ name: string; description: string }>;
-    id: string;
-    text: string;
-  }) {
-    const result = await this.chat.chatCompletion({
-      provider: input.auth.provider,
-      apiKey: input.auth.apiKey,
-      model: input.auth.model,
-      jsonMode: true,
-      temperature: 0,
-      messages: [
-        {
-          role: 'system',
-          content: [
-            'You classify each email into exactly ONE custom Gmail label from the provided list.',
-            'If no label is a reasonable fit, return null for that email label.',
-            'Return ONLY JSON: { "results": [{ "id": string, "label": string|null }] }.',
-          ].join('\n'),
-        },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            allowedLabels: input.catalog,
-            emails: [{ id: input.id, text: input.text }],
-          }),
-        },
-      ],
-      usageMeta: {
-        feature: AI_USAGE_FEATURES.mailLabel,
-        applierName: input.auth.applierName,
-        path: '/mail/ai-label/body',
-      },
-    });
-    const parsed = parseJsonLoose(String(result.content || '')) as {
-      results?: Array<{ label?: string | null }>;
-    } | null;
-    return {
-      label: parsed?.results?.[0]?.label ?? null,
-      usage: result.usage as Record<string, unknown> | undefined,
-    };
-  }
-}
-
-function mergeUsage(
-  a?: Record<string, unknown>,
-  b?: Record<string, unknown>,
-): Record<string, unknown> | undefined {
-  if (!a && !b) return undefined;
-  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
-  const out: Record<string, unknown> = {};
-  for (const key of keys) {
-    const av = a?.[key];
-    const bv = b?.[key];
-    out[key] =
-      typeof av === 'number' || typeof bv === 'number'
-        ? (typeof av === 'number' ? av : 0) + (typeof bv === 'number' ? bv : 0)
-        : (av ?? bv);
-  }
-  return out;
 }

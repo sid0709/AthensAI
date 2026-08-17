@@ -18,8 +18,6 @@ import {
 } from "../../../components/ui/dialog";
 import {
   AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -29,11 +27,7 @@ import {
 import { Input } from "../../../components/ui/input";
 
 function NotionMark() {
-  return (
-    <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-foreground text-xl font-black text-background">
-      N
-    </div>
-  );
+  return <div className="athens-settings__mark">N</div>;
 }
 
 export function IntegrationsTab() {
@@ -96,42 +90,40 @@ export function IntegrationsTab() {
 
   return (
     <div className="max-w-2xl space-y-4">
-      <div className="flex items-center gap-5 rounded-xl border border-border bg-card p-5 shadow-sm">
-        <NotionMark />
-        <div className="min-w-0 flex-1">
-          <p className="text-base font-bold text-foreground">Notion</p>
-          <p className="text-sm text-muted-foreground">
-            Browse shared pages and show Call Record in Calendar
-          </p>
-          {status.connected && (
-            <p className="mt-1 truncate text-xs text-muted-foreground">
-              {status.bot?.workspaceName || status.bot?.name || "Connected workspace"}
-              {status.callRecord?.dateProperty?.name
-                ? ` · Calendar date: ${status.callRecord.dateProperty.name}`
-                : ""}
+      <div className="athens-card">
+        <div className="flex items-center gap-4">
+          <NotionMark />
+          <div className="min-w-0 flex-1">
+            <p className="athens-card-title">Notion</p>
+            <p className="athens-card-meta mt-0.5">
+              Browse shared pages and show Call Record in Calendar
             </p>
-          )}
-        </div>
-        <div className="flex flex-shrink-0 items-center gap-4">
-          {loading ? (
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          ) : (
-            <span className={status.connected ? "text-sm font-bold text-emerald-600" : "text-sm font-bold text-muted-foreground"}>
-              {status.connected ? "Connected" : "Disconnected"}
-            </span>
-          )}
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => (status.connected ? setDisconnectOpen(true) : setConnectOpen(true))}
-            className={
-              status.connected
-                ? "min-h-10 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
-                : "min-h-10 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50"
-            }
-          >
-            {status.connected ? "Disconnect" : "Connect"}
-          </button>
+            {status.connected && (
+              <p className="athens-card-meta mt-1 truncate">
+                {status.bot?.workspaceName || status.bot?.name || "Connected workspace"}
+                {status.callRecord?.dateProperty?.name
+                  ? ` · Calendar date: ${status.callRecord.dateProperty.name}`
+                  : ""}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-3">
+            {loading ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <span className="athens-status">
+                {status.connected ? "Connected" : "Disconnected"}
+              </span>
+            )}
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => (status.connected ? setDisconnectOpen(true) : setConnectOpen(true))}
+              className={status.connected ? "athens-btn-danger" : "athens-btn-primary"}
+            >
+              {status.connected ? "Disconnect" : "Connect"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -147,15 +139,15 @@ export function IntegrationsTab() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Connect Notion</DialogTitle>
-            <DialogDescription>
+        <DialogContent className="athens-ui athens-dialog athens-settings flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <DialogHeader className="athens-dialog-header">
+            <DialogTitle className="athens-settings__title">Connect Notion</DialogTitle>
+            <DialogDescription className="athens-settings__lede">
               Enter an internal integration token. Before confirming, share a database named exactly
               “Call Record” with that connection and give it Read content access.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
+          <div className="athens-dialog-body space-y-3">
             <Input
               type="password"
               autoComplete="off"
@@ -171,28 +163,28 @@ export function IntegrationsTab() {
               href="https://www.notion.so/profile/integrations"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline"
+              className="athens-link inline-flex items-center gap-1"
             >
               Open Notion integrations <ExternalLink className="h-3.5 w-3.5" />
             </a>
             {error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+              <div className="athens-callout athens-settings__danger">
                 {error}
               </div>
             )}
             {!error && token.trim() && (
-              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+              <p className="flex items-center gap-1.5 athens-card-meta">
+                <CheckCircle2 className="h-3.5 w-3.5" />
                 The token will be encrypted and never returned to this browser.
               </p>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="athens-dialog-footer">
             <button
               type="button"
               onClick={() => setConnectOpen(false)}
               disabled={saving}
-              className="min-h-10 rounded-xl border border-border px-4 py-2 text-sm font-semibold hover:bg-secondary disabled:opacity-50"
+              className="athens-btn"
             >
               Cancel
             </button>
@@ -200,7 +192,7 @@ export function IntegrationsTab() {
               type="button"
               onClick={() => void handleConnect()}
               disabled={!token.trim() || saving}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50"
+              className="athens-btn-primary"
             >
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               Confirm connection
@@ -210,25 +202,25 @@ export function IntegrationsTab() {
       </Dialog>
 
       <AlertDialog open={disconnectOpen} onOpenChange={(open) => !saving && setDisconnectOpen(open)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Disconnect Notion?</AlertDialogTitle>
-            <AlertDialogDescription>
+        <AlertDialogContent className="athens-ui athens-dialog flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <AlertDialogHeader className="athens-dialog-header">
+            <AlertDialogTitle className="athens-settings__title">Disconnect Notion?</AlertDialogTitle>
+            <AlertDialogDescription className="athens-settings__lede">
               This removes the stored token and immediately hides Notion data from the browser and Calendar.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={saving}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
+          <AlertDialogFooter className="athens-dialog-footer">
+            <button type="button" className="athens-btn" disabled={saving} onClick={() => setDisconnectOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
               disabled={saving}
-              onClick={(event) => {
-                event.preventDefault();
-                void handleDisconnect();
-              }}
-              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={() => void handleDisconnect()}
+              className="athens-btn-danger"
             >
               {saving ? "Disconnecting…" : "Disconnect"}
-            </AlertDialogAction>
+            </button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

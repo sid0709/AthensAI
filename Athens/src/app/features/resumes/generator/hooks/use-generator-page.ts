@@ -13,6 +13,7 @@ import {
   getResumeGenerationTaskResult,
 } from "@/app/api/backgroundTasks";
 import { buildResumeModel } from "../build-resume-model";
+import { resumeDownloadFileName } from "../../lib/resumeFileName";
 import { templateById } from "../constants/templates";
 import {
   defaultConfig,
@@ -25,7 +26,7 @@ import {
   fontStack,
 } from "../constants/defaults";
 import { JOB_DESC_TOKEN } from "../constants/tokens";
-import { mergeGeneratedSection, normalizeGenerated } from "../utils/content";
+import { generatedFromStepEvents, mergeGeneratedSection, normalizeGenerated } from "../utils/content";
 import { defaultCoverageDecision, defaultCoverageDecisions } from "../utils/coverage";
 import { applicationDraftStorageKey, identityFromProfile, isValidJson, storageKey } from "../utils/identity";
 import {
@@ -327,7 +328,7 @@ export function useGeneratorPage() {
 
   // Export the live preview to Word (DOCX only — PDF is not supported).
   const exportResume = async (format: "docx" = "docx") => {
-    const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.docx`;
+    const fileName = resumeDownloadFileName(identity?.fullName);
 
     if (usingUploadedTemplate) {
       if (!generated) {
@@ -928,6 +929,10 @@ export function useGeneratorPage() {
 		const previousRevision = restoredRevisions.current.get(task.id) ?? -1;
 		const shouldReadPartial = active && revision > previousRevision;
 		const shouldReadTerminal = terminal && !terminalHandled.current.has(task.id);
+		const streamedEvents = [
+			...(Array.isArray(item?.generationSteps) ? item.generationSteps : []),
+			stepEvent,
+		];
 		if (active) {
 			setGenerating(true);
 			const message = String(item?.step || (task.status === "queued" ? "Queued for generation…" : "Preparing résumé generation…"));
@@ -945,11 +950,12 @@ export function useGeneratorPage() {
 						}
 					}
 				}
-				if (shouldReadPartial && item?.stepEvent && typeof item.stepEvent === "object") {
-					next = mergeGenerationStep(next, item.stepEvent as Record<string, unknown>, message);
+				if (shouldReadPartial && stepEvent) {
+					next = mergeGenerationStep(next, stepEvent, message);
 				}
 				return { ...next, done: false, message };
 			});
+			setGenerated((current) => generatedFromStepEvents(streamedEvents, current));
 		}
 		if (!shouldReadPartial && !shouldReadTerminal) return;
 
@@ -1017,7 +1023,18 @@ export function useGeneratorPage() {
 				if (shouldReadPartial && restoredRevisions.current.get(task.id) === revision) {
 					restoredRevisions.current.set(task.id, previousRevision);
 				}
-				if (shouldReadTerminal) terminalHandled.current.delete(task.id);
+				setGenerated((current) => generatedFromStepEvents(streamedEvents, current));
+				if (shouldReadTerminal) {
+					setGenerating(false);
+					setGenProgress((current) => ({
+						steps: hydrateGenProgressSteps(plan, current?.steps, item?.generationSteps),
+						cumulative: current?.cumulative ?? null,
+						done: true,
+						message: terminalFailureMessage,
+					}));
+				} else {
+					terminalHandled.current.delete(task.id);
+				}
 			})
 			.finally(() => restorationInFlight.current.delete(readKey));
 	}, [applier?.name, editorGenerationTask, notify, plan]);
@@ -1139,6 +1156,7 @@ export function useGeneratorPage() {
     const checklist = plannedGenerationSteps(plan);
     setGenProgress({ steps: checklist, cumulative: null, done: false, message: "Submitting generation…" });
     let queuedInputId: string | null = null;
+    let terminalTask: Awaited<ReturnType<typeof waitForTask>> | null = null;
     try {
       const queued = await enqueueResumeGenerationRequest(generationPayload);
       queuedInputId = queued.inputId;
@@ -1150,17 +1168,19 @@ export function useGeneratorPage() {
         done: false,
         message: "Queued for generation…",
       });
-      const terminal = await waitForTask(queued.task.id);
+      terminalTask = await waitForTask(queued.task.id);
       terminalHandled.current.add(queued.task.id);
-      if (terminal.status === "failed" || terminal.status === "completed_with_errors") {
-        throw new Error(terminal.error || "Resume generation failed");
+      const terminalItem = terminalTask.progress?.items?.[queued.inputId];
+      if (terminalTask.status === "failed" || terminalTask.status === "completed_with_errors") {
+        throw new Error(
+          String(terminalItem?.error || terminalTask.error || "Resume generation failed"),
+        );
       }
-      if (terminal.status === "cancelled") throw new Error("Resume generation cancelled");
+      if (terminalTask.status === "cancelled") throw new Error("Resume generation cancelled");
       const stored = await getCompletedResumeGenerationTaskResult(queued.inputId, applier.name);
       const nextUsage = (stored.result.usage as UsageBreakdown) ?? null;
       setUsage(nextUsage);
       setGenerated(normalizeGenerated(stored.result.sections as Record<string, unknown> | undefined));
-      const terminalItem = terminal.progress?.items?.[queued.inputId];
       setGenProgress((current) => ({
         steps: hydrateGenProgressSteps(
           plan,
@@ -1176,18 +1196,35 @@ export function useGeneratorPage() {
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Generation failed — see backend logs.";
+      const terminalItem = queuedInputId
+        ? terminalTask?.progress?.items?.[queuedInputId]
+        : undefined;
+      const streamedEvents = [
+        ...(Array.isArray(terminalItem?.generationSteps) ? terminalItem.generationSteps : []),
+        terminalItem?.stepEvent,
+      ];
       if (queuedInputId) {
         try {
           const stored = await getResumeGenerationTaskResult(queuedInputId, applier.name);
           const sections = (stored.result?.sections || stored.partialSections || {}) as Record<string, unknown>;
-          if (Object.keys(sections).length) setGenerated(normalizeGenerated(sections));
+          if (Object.keys(sections).length) {
+            setGenerated(normalizeGenerated(sections));
+          } else {
+            setGenerated((current) => generatedFromStepEvents(streamedEvents, current));
+          }
         } catch {
-          // The per-task restoration effect remains the fallback for transient reads.
+          setGenerated((current) => generatedFromStepEvents(streamedEvents, current));
         }
+      } else {
+        setGenerated((current) => generatedFromStepEvents(streamedEvents, current));
       }
       setGenerationError(message);
       setGenProgress((current) => ({
-        steps: current?.steps ?? [],
+        steps: hydrateGenProgressSteps(
+          plan,
+          current?.steps,
+          terminalItem?.generationSteps,
+        ),
         cumulative: current?.cumulative ?? null,
         done: true,
         message,

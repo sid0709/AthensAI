@@ -8,6 +8,7 @@ import { Button } from "../../components/ui/button";
 import { AuthSplitLayout } from "./components/AuthSplitLayout";
 import { display } from "../../lib/utils";
 import { useAuthExperience } from "./experience/AuthExperienceContext";
+import { PATHS } from "../../config/routes";
 
 export function SignInPage() {
   const [name, setName] = useState("");
@@ -26,7 +27,7 @@ export function SignInPage() {
   }, [experience.introActive]);
 
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={PATHS.jobs} replace />;
   }
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -42,7 +43,7 @@ export function SignInPage() {
     setLoading(false);
     if (result.success) {
       experience.completeAttempt(result.user?.name);
-      navigate("/", { replace: true });
+      navigate(PATHS.jobs, { replace: true });
     } else {
       experience.failAttempt();
       const msg = result.message || "Sign in failed";

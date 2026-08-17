@@ -1,3 +1,4 @@
+import { formatResumePeriodLabel } from "../lib/formatResumeDate";
 import { templateById } from "./constants/templates";
 import { SAMPLE_BULLETS, SAMPLE_EDUCATION, SAMPLE_PREVIEW_CAREERS, SAMPLE_SKILL_GROUPS, SAMPLE_SUMMARY } from "./constants/samples";
 import { SECTION_LABEL, type GeneratedContent, type GeneratorConfig, type Identity, type PreviewCareer } from "./types";
@@ -28,8 +29,19 @@ export function buildResumeModel(config: GeneratorConfig, generated: GeneratedCo
     if (s.type === "summary") return { ...base, summary: summaryText };
     if (s.type === "skills") return { ...base, skills: skillGroups };
     if (s.type === "experience")
-      return { ...base, experience: careers.map((c) => ({ title: c.title, company: c.company, period: c.period, bullets: c.bullets })) };
-    return { ...base, education };
+      return {
+        ...base,
+        experience: careers.map((c) => ({
+          title: c.title,
+          company: c.company,
+          period: formatResumePeriodLabel(c.period),
+          bullets: c.bullets,
+        })),
+      };
+    return {
+      ...base,
+      education: education.map((e) => ({ ...e, period: formatResumePeriodLabel(e.period) })),
+    };
   });
 
   return {

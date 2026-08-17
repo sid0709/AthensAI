@@ -1,3 +1,4 @@
+import { formatResumePeriodLabel } from "../../lib/formatResumeDate";
 import type { GeneratedContent } from "../types";
 
 export function normalizeGenerated(sections: Record<string, unknown> | null | undefined): GeneratedContent {
@@ -27,7 +28,7 @@ export function normalizeGenerated(sections: Record<string, unknown> | null | un
           title: String(row.title ?? row.role ?? ""),
           company: String(row.company ?? ""),
           location: String(row.location ?? ""),
-          period: String(row.period ?? row.dates ?? ""),
+          period: formatResumePeriodLabel(String(row.period ?? row.dates ?? "")),
           bullets: Array.isArray(row.bullets) ? row.bullets.map(String) : [],
         };
       })
@@ -45,4 +46,32 @@ export function mergeGeneratedSection(prev: GeneratedContent | null, purpose: st
   if (purpose === "skills") return { ...base, skills: one.skills ?? base.skills };
   if (purpose === "experience") return { ...base, experience: one.experience ?? base.experience };
   return base;
+}
+
+/** Apply a streamed final step event to the live preview, ignoring non-final progress. */
+export function mergeGeneratedFromStepEvent(
+  prev: GeneratedContent | null,
+  event: Record<string, unknown> | null | undefined,
+): GeneratedContent | null {
+  if (!event) return prev;
+  const phase = String(event.phase || "step-done");
+  const kind = String(event.kind || "");
+  const purpose = String(event.purpose || "");
+  if (phase !== "step-done") return prev;
+  if (kind && kind !== "final") return prev;
+  if (!purpose || !("output" in event) || event.output == null) return prev;
+  return mergeGeneratedSection(prev, purpose, event.output);
+}
+
+export function generatedFromStepEvents(
+  events: unknown,
+  prev: GeneratedContent | null = null,
+): GeneratedContent | null {
+  if (!Array.isArray(events)) return prev;
+  let next = prev;
+  for (const event of events) {
+    if (!event || typeof event !== "object") continue;
+    next = mergeGeneratedFromStepEvent(next, event as Record<string, unknown>);
+  }
+  return next;
 }

@@ -1,5 +1,4 @@
 export type View =
-  | "dashboard"
   | "job-board"
   | "title-review"
   | "resumes"

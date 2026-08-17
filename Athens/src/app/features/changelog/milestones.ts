@@ -11,8 +11,155 @@ export type ChangelogMilestone = {
   current?: boolean;
 };
 
-/** Product milestones — one entry per merge / release. Newest first. */
+/** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
+  {
+    id: "resume-word-filename",
+    version: "0.14.0",
+    title: "Word file name",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Word downloads keep the candidate’s full name, including spaces, as in John Doe.docx.",
+    tags: ["Resumes"],
+    current: true,
+    changes: [
+      "Generate and History Word files use the full name as-is, such as John Doe.docx",
+    ],
+  },
+  {
+    id: "resume-preview-draft",
+    version: "0.13.0",
+    title: "Resume draft in preview",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Keep the generated résumé in the live preview when a run fails after the model steps finish.",
+    tags: ["Resumes"],
+    changes: [
+      "Summary, Skills, and Experience land in the preview as each final step completes",
+      "If saving the run fails, the draft stays visible instead of falling back to placeholder text",
+    ],
+  },
+  {
+    id: "resume-american-dates",
+    version: "0.12.0",
+    title: "Resume dates",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Show experience and education dates as Apr 2022 instead of 2022.4, including Word downloads.",
+    tags: ["Resumes"],
+    changes: [
+      "Role and school dates use American month-year labels such as Apr 2022",
+      "Word downloads use the same date labels as the résumé preview",
+    ],
+  },
+  {
+    id: "settings-layout",
+    version: "0.11.0",
+    title: "Settings layout",
+    date: "2026-08-17",
+    merge: "main · settings-ui",
+    branch: "main",
+    summary:
+      "Tighten Settings chrome: theme lives on the tab bar as icon-only controls, and section headers are no longer extra cards.",
+    tags: ["Settings"],
+    changes: [
+      "Light, System, and Dark sit as compact icons on the Settings tab bar",
+      "Profile, Notifications, and Security titles sit as a heading row instead of a second boxed toolbar",
+      "Notification preferences are one list instead of a card per toggle",
+      "The LinkedIn résumé reminder is a highlighted notice under Auto-bid profile, with Update résumés as a text action",
+    ],
+  },
+  {
+    id: "job-search-home",
+    version: "0.10.0",
+    title: "Job Search is home",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Drop the unused Dashboard and open Job Search after sign-in, from the logo, and for unknown URLs.",
+    tags: ["Job Search", "Navigation"],
+    changes: [
+      "Dashboard is gone from the sidebar; Job Search is the first workspace page",
+      "Signing in, the AthensAI logo, and unknown URLs now open Job Search",
+      "Beta and admin lock screens link back to Job Search instead of Dashboard",
+    ],
+  },
+  {
+    id: "settings-lens",
+    version: "0.9.0",
+    title: "Settings, Lens chrome",
+    date: "2026-08-17",
+    merge: "main · settings-ui",
+    branch: "main",
+    summary:
+      "Bring Settings onto the same quiet Lens chrome as Job Search — system sans, 1px borders, and flat cards instead of pill tabs and primary buttons.",
+    tags: ["Settings"],
+    changes: [
+      "Profile, Notifications, Integrations, and Security share the Job Search toolbar and tab chrome",
+      "Forms, switches, and dialogs use the same quiet cards and control styling as Job Search",
+      "Account deletion and vendor access stay in place with a calmer danger zone",
+    ],
+  },
+  {
+    id: "analytics-lens",
+    version: "0.8.0",
+    title: "Analytics, Lens chrome",
+    date: "2026-08-17",
+    merge: "main · analytics-ui",
+    branch: "main",
+    summary:
+      "Bring Job Search Analytics onto the same quiet Lens chrome as Job Search, with real time-range and source filters.",
+    tags: ["Analytics", "Job Search"],
+    changes: [
+      "Analytics uses the Job Search toolbar, tabs, and filter sheet instead of pill tabs and colored KPI cards",
+      "Time presets now include 7 days, 30 days, 90 days, year to date, all time, and a custom from/to range",
+      "Source filters, shareable URL state, and previous-period deltas sit on the same metrics",
+      "Postings chart is a quiet daily total; click a source to overlay it in blue, with conversion and Job Search links in the list",
+    ],
+  },
+  {
+    id: "mail-ai-label",
+    version: "0.7.0",
+    title: "Mail AI Label",
+    date: "2026-08-17",
+    merge: "main · mail-ai-label",
+    branch: "main",
+    summary:
+      "Save custom Gmail label definitions reliably, then classify inbox mail in parallel from truncated body text instead of full messages.",
+    tags: ["Mail", "AI Label"],
+    changes: [
+      "Label definitions persist on standalone Mongo without a replica-set transaction error",
+      "Analyze classifies many emails per AI request, with concurrent batches instead of one-by-one calls",
+      "Requests send sender, subject, and truncated plain-text body — not full MIME or attachments",
+      "Gmail label writes are grouped by mailbox and label, and the dialog reports real AI and write metrics",
+      "Changelog uses the same Athens Lens chrome as Job Search — system sans, quiet cards, and a 1px border",
+    ],
+  },
+  {
+    id: "worker-pool-and-recommend",
+    version: "0.6.0",
+    title: "Worker Pool & Recommend",
+    date: "2026-08-14",
+    merge: "main · worker-pool / applied-fix",
+    branch: "main",
+    summary:
+      "Move jobs through Worker Pool and Bid Ready with explicit resume recommendation, company-wide apply, and a faster analysis pass.",
+    tags: ["Job Search", "Worker Pool", "Recommend"],
+    changes: [
+      "Worker Pool sits alongside Bid Ready so pooled jobs keep a durable status without breaking Posted cards",
+      "Recommend resumes for New jobs after choosing Bid Ready or Worker Pool in a confirmation modal",
+      "Apply all company roles can continue to the next posting when a library resume does not fit, with auto-swap on or off",
+      "Applied marking, company-role apply, and Job Search cards, pagination, and typography are more consistent",
+      "Job analysis runs in larger parallel batches so ranking and recommend catch up faster",
+    ],
+  },
   {
     id: "job-search-at-scale",
     version: "0.5.0",
@@ -23,7 +170,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Turn Job Search into a fast, resilient career command center for exploring, ranking, and managing thousands of opportunities.",
     tags: ["Job Search", "Personalization", "Reliability"],
-    current: true,
     changes: [
       "Company-grouped results keep related roles together, with expandable role trays and focused-job deep links",
       "Shareable URL state preserves filters, sorting, pagination, view mode, expanded company, and focused role",

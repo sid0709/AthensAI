@@ -5,7 +5,6 @@ import type { View } from "../types";
  * View ids (used in types/config) are decoupled from paths where it improves readability.
  */
 export const PATHS = {
-  dashboard: "/",
   jobs: "/jobs",
   titleReview: "/title-review",
   resumes: "/resumes",
@@ -38,7 +37,6 @@ export type ReportsTab = "postings" | "applications";
 export type SettingsTab = "profile" | "notifications" | "integrations" | "security";
 
 const VIEW_TO_BASE: Record<View, string> = {
-  dashboard: PATHS.dashboard,
   "job-board": PATHS.jobs,
   "title-review": PATHS.titleReview,
   resumes: PATHS.resumes,
@@ -85,7 +83,6 @@ export function pathForView(view: View, options?: NavigateOptions): string {
 /** Infer the active sidebar View from the current pathname. */
 export function viewFromPathname(pathname: string): View {
   const p = pathname.split("?")[0];
-  if (p === PATHS.dashboard) return "dashboard";
   if (p.startsWith(PATHS.jobs)) return "job-board";
   if (p.startsWith(PATHS.titleReview)) return "title-review";
   if (p.startsWith(PATHS.resumes)) return "resumes";
@@ -100,7 +97,7 @@ export function viewFromPathname(pathname: string): View {
   if (p.startsWith(PATHS.appsPlugins)) return "apps-plugins";
   if (p.startsWith(PATHS.changelog)) return "changelog";
   if (p.startsWith(PATHS.settings)) return "settings";
-  return "dashboard";
+  return "job-board";
 }
 
 /** Validate tab segment; fall back to default if unknown. */

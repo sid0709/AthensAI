@@ -1,4 +1,3 @@
-export { DashboardPage } from "./dashboard/DashboardPage";
 export { JobSearchPage } from "./job-search/JobSearchPage";
 export { ResumesPage } from "./resumes/ResumesPage";
 export { MailPage } from "./mail/MailPage";

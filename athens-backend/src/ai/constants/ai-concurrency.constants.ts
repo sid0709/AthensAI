@@ -72,3 +72,22 @@ export const RECOMMEND_RESUME_CONCURRENCY = envInt(
   1,
   32,
 );
+
+export const MAIL_AI_LABEL_BATCH_SIZE = envInt(
+  'MAIL_AI_LABEL_BATCH_SIZE',
+  8,
+  1,
+  12,
+);
+export const MAIL_AI_LABEL_BATCH_CONCURRENCY = envInt(
+  'MAIL_AI_LABEL_BATCH_CONCURRENCY',
+  8,
+  1,
+  32,
+);
+export const MAIL_AI_LABEL_BODY_MAX_CHARS = envInt(
+  'MAIL_AI_LABEL_BODY_MAX_CHARS',
+  2_000,
+  500,
+  8_000,
+);

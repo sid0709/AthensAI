@@ -1,4 +1,5 @@
 import { cleanString } from './clean-string';
+import { formatResumePeriodLabel } from './format-resume-date';
 
 type Dict = Record<string, unknown>;
 
@@ -96,7 +97,7 @@ export function buildDocxModelFromGeneration(input: {
           experience: exps.map((e) => ({
             title: cleanString(e.title),
             company: cleanString(e.company),
-            period: cleanString(e.period),
+            period: formatResumePeriodLabel(cleanString(e.period)),
             bullets: Array.isArray(e.bullets)
               ? e.bullets.map((b) => cleanString(b)).filter(Boolean)
               : [],
@@ -118,7 +119,7 @@ export function buildDocxModelFromGeneration(input: {
           education: list.map((e) => ({
             school: cleanString(e.school),
             degree: cleanString(e.degree),
-            period: cleanString(e.period || e.graduationDate),
+            period: formatResumePeriodLabel(cleanString(e.period || e.graduationDate)),
           })),
         };
       }

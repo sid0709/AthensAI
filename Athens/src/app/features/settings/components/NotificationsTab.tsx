@@ -75,46 +75,50 @@ export function NotificationsTab() {
 
   if (!applierReady) {
     return (
-      <div className="flex items-center justify-center py-16 text-muted-foreground">
-        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+      <div className="athens-settings__loading">
+        <Loader2 className="w-5 h-5 animate-spin" />
         Loading…
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl space-y-4">
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
-        <div>
-          <h2 className="text-lg font-bold text-foreground">Notifications</h2>
-          <p className="text-sm text-muted-foreground">Choose what Athens should notify you about</p>
+    <div className="max-w-xl space-y-4">
+      <div className="athens-settings__head">
+        <div className="min-w-0">
+          <h2 className="athens-settings__title">Notifications</h2>
+          <p className="athens-settings__lede">Choose what Athens should notify you about</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void save()}
-          disabled={saving || loading || !dirty || !applier?.name}
-          className="bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10 disabled:opacity-50"
-        >
-          {saving ? "Saving…" : dirty ? "Save" : "Saved"}
-        </button>
+        <div className="athens-toolbar-actions">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving || loading || !dirty || !applier?.name}
+            className="athens-btn-primary"
+          >
+            {saving ? "Saving…" : dirty ? "Save" : "Saved"}
+          </button>
+        </div>
       </div>
 
       {loading ? (
-        <div className="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground text-center flex items-center justify-center gap-2">
+        <div className="athens-settings__loading">
           <Loader2 className="w-4 h-4 animate-spin" />
           Loading preferences…
         </div>
       ) : (
-        NOTIFICATION_GROUPS.map((g) => (
-          <div key={g.id} className="bg-card border border-border rounded-xl p-4 shadow-sm">
-            <AthensSwitch
-              label={g.label}
-              description={g.description}
-              checked={prefs[g.id]}
-              onCheckedChange={(checked) => updatePref(g.id, checked)}
-            />
-          </div>
-        ))
+        <div className="athens-settings__list">
+          {NOTIFICATION_GROUPS.map((g) => (
+            <div key={g.id} className="athens-settings__list-row">
+              <AthensSwitch
+                label={g.label}
+                description={g.description}
+                checked={prefs[g.id]}
+                onCheckedChange={(checked) => updatePref(g.id, checked)}
+              />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

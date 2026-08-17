@@ -1,4 +1,5 @@
 import type { EditorDraft, GeneratorIdentity, ResumeDocument } from "../../../types/resume";
+import { formatResumePeriodLabel } from "./formatResumeDate";
 import { templateById } from "./templates";
 
 const SECTION_TITLES: Record<string, string> = {
@@ -38,7 +39,7 @@ export function buildResumeModel(draft: EditorDraft, identity: GeneratorIdentity
         experience: doc.experiences.map((e) => ({
           title: e.role,
           company: e.company,
-          period: `${e.startDate} – ${e.endDate}`,
+          period: formatResumePeriodLabel(`${e.startDate} – ${e.endDate}`),
           bullets: e.bullets,
         })),
       };
@@ -48,7 +49,7 @@ export function buildResumeModel(draft: EditorDraft, identity: GeneratorIdentity
       education: doc.education.map((e) => ({
         school: e.school,
         degree: e.degree,
-        period: e.graduationDate,
+        period: formatResumePeriodLabel(e.graduationDate),
       })),
     };
   });
