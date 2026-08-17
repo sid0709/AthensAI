@@ -14,6 +14,24 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "analytics-lens",
+    version: "0.8.0",
+    title: "Analytics, Lens chrome",
+    date: "2026-08-17",
+    merge: "main · analytics-ui",
+    branch: "main",
+    summary:
+      "Bring Job Search Analytics onto the same quiet Lens chrome as Job Search, with real time-range and source filters.",
+    tags: ["Analytics", "Job Search"],
+    current: true,
+    changes: [
+      "Analytics uses the Job Search toolbar, tabs, and filter sheet instead of pill tabs and colored KPI cards",
+      "Time presets now include 7 days, 30 days, 90 days, year to date, all time, and a custom from/to range",
+      "Source filters, shareable URL state, and previous-period deltas sit on the same metrics",
+      "Postings and applications charts stay neutral, with source conversion and Job Search drill-down from each row",
+    ],
+  },
+  {
     id: "mail-ai-label",
     version: "0.7.0",
     title: "Mail AI Label",
@@ -23,7 +41,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Save custom Gmail label definitions reliably, then classify inbox mail in parallel from truncated body text instead of full messages.",
     tags: ["Mail", "AI Label"],
-    current: true,
     changes: [
       "Label definitions persist on standalone Mongo without a replica-set transaction error",
       "Analyze classifies many emails per AI request, with concurrent batches instead of one-by-one calls",

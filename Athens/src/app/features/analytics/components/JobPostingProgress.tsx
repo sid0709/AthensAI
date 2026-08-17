@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from "react";
+import { ArrowUpRight } from "lucide-react";
+import { Link } from "react-router";
 import {
   Area,
   AreaChart,
@@ -9,38 +11,17 @@ import {
   YAxis,
 } from "recharts";
 import { ChartTip } from "../../../components/ui";
-import type { DateRange } from "../../../hooks/useAnalyticsFilters";
 import type { JobAnalytics } from "../hooks/useJobAnalytics";
+import { analyticsJobSearchHref } from "../lib/analyticsJobSearch";
+import type { AnalyticsDateBounds } from "../lib/dateRange";
 import {
   lensSeriesColor,
   POSTINGS_CHART_TOP_N,
   sourcePeriodTotals,
   toTopNOtherSeries,
 } from "../lib/postingsAreaChart";
-import { rangeLabel } from "../lib/rangeFilter";
 import { AnalyticsEmpty } from "./AnalyticsStates";
-
-function QuietMetric({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-}) {
-  return (
-    <div className="rounded-xl border border-[#dedede] bg-white px-5 py-4">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#8e8e8e]">
-        {label}
-      </p>
-      <p className="mt-2 text-2xl font-semibold tracking-tight text-[#0d0d0d] tabular-nums">
-        {value}
-      </p>
-      <p className="mt-1.5 text-xs text-[#8e8e8e]">{sub}</p>
-    </div>
-  );
-}
+import { AnalyticsMetric, AnalyticsSurfaceCard } from "./AnalyticsMetric";
 
 function PostingsTip({
   active,
@@ -52,7 +33,7 @@ function PostingsTip({
   label?: string | number;
 }) {
   const total =
-    payload?.reduce((sum, p) => sum + (Number(p.value) || 0), 0) ?? null;
+    payload?.reduce((sum, item) => sum + (Number(item.value) || 0), 0) ?? null;
   return (
     <ChartTip
       active={active}
@@ -68,14 +49,15 @@ function PostingsTip({
 }
 
 export function JobPostingProgress({
-  range,
+  caption,
   analytics,
+  bounds,
 }: {
-  range: DateRange;
+  caption: string;
   analytics: JobAnalytics;
+  bounds: AnalyticsDateBounds;
 }) {
   const [focusSource, setFocusSource] = useState<string | null>(null);
-
   const applyRate =
     analytics.posted > 0
       ? Math.round((analytics.applications / analytics.posted) * 100)
@@ -102,43 +84,43 @@ export function JobPostingProgress({
 
   return (
     <div className="space-y-5">
-      <p className="text-xs text-[#8e8e8e]">
-        Job posting progress for {rangeLabel(range)}
+      <p className="text-xs text-[var(--athens-text-muted)]">
+        {caption}
+        {analytics.deltas ? " · vs previous period" : ""}
       </p>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <QuietMetric
+        <AnalyticsMetric
           label="New postings"
-          value={String(analytics.posted)}
+          value={analytics.posted.toLocaleString()}
           sub="in this period"
+          delta={analytics.deltas?.posted}
         />
-        <QuietMetric
+        <AnalyticsMetric
           label="Active sources"
           value={String(analytics.postingSources)}
           sub="sources with postings"
+          delta={analytics.deltas?.postingSources}
         />
-        <QuietMetric
+        <AnalyticsMetric
           label="Applied"
-          value={String(analytics.applications)}
+          value={analytics.applications.toLocaleString()}
           sub="from available postings"
+          delta={analytics.deltas?.applications}
         />
-        <QuietMetric
+        <AnalyticsMetric
           label="Posting apply rate"
           value={analytics.posted > 0 ? `${applyRate}%` : "—"}
           sub="applications ÷ postings"
+          delta={analytics.posted > 0 ? analytics.deltas?.applyRate : null}
+          deltaKind="points"
         />
       </div>
 
-      <div className="rounded-xl border border-[#dedede] bg-white p-6">
-        <div className="mb-5">
-          <h3 className="text-sm font-semibold tracking-tight text-[#0d0d0d]">
-            Postings by source
-          </h3>
-          <p className="mt-1 text-sm text-[#5d5d5d]">
-            Top sources over time · full breakdown below
-          </p>
-        </div>
-
+      <AnalyticsSurfaceCard
+        title="Postings by source"
+        subtitle="Top sources over time · full breakdown below"
+      >
         {!hasSeries ? (
           <AnalyticsEmpty message="No job postings were recorded in this date range." />
         ) : (
@@ -151,19 +133,19 @@ export function JobPostingProgress({
                 >
                   <CartesianGrid
                     strokeDasharray="2 4"
-                    stroke="rgba(13,13,13,0.06)"
+                    stroke="rgb(13 13 13 / 6%)"
                     vertical={false}
                   />
                   <XAxis
                     dataKey="label"
-                    tick={{ fill: "#8e8e8e", fontSize: 11 }}
+                    tick={{ fill: "var(--athens-text-muted)", fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
                     minTickGap={28}
                   />
                   <YAxis
                     allowDecimals={false}
-                    tick={{ fill: "#8e8e8e", fontSize: 12 }}
+                    tick={{ fill: "var(--athens-text-muted)", fontSize: 12 }}
                     axisLine={false}
                     tickLine={false}
                   />
@@ -171,7 +153,7 @@ export function JobPostingProgress({
                     content={<PostingsTip />}
                     allowEscapeViewBox={{ x: true, y: true }}
                     wrapperStyle={{ zIndex: 40, outline: "none" }}
-                    cursor={{ stroke: "#c7c7c7", strokeWidth: 1 }}
+                    cursor={{ stroke: "var(--athens-border-strong)", strokeWidth: 1 }}
                   />
                   {chart.series.map((source, index) => {
                     const color = lensSeriesColor(source, index, chart.series);
@@ -200,80 +182,99 @@ export function JobPostingProgress({
 
             <div>
               <div className="mb-2 flex items-baseline justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-[#8e8e8e]">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--athens-text-muted)]">
                   All sources
                 </p>
-                <p className="text-xs text-[#8e8e8e] tabular-nums">
+                <p className="text-xs text-[var(--athens-text-muted)] tabular-nums">
                   {ranked.length} sources · {periodTotal.toLocaleString()} postings
                 </p>
               </div>
-              <ul className="max-h-[320px] overflow-y-auto rounded-xl border border-[#dedede] bg-[#f7f7f7]/p-1">
+              <ul className="max-h-[320px] overflow-y-auto rounded-[var(--athens-radius-md)] border border-[var(--athens-border)] bg-[var(--athens-surface-subtle)]">
                 {ranked.map((row) => {
                   const selected = focusSource === row.source;
                   const pct = Math.round(row.share * 1000) / 10;
+                  const href = analyticsJobSearchHref({
+                    source: row.source,
+                    startDay: bounds.startDay,
+                    endDay: bounds.endDay,
+                  });
                   return (
                     <li key={row.source}>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setFocusSource((prev) =>
-                            prev === row.source ? null : row.source,
-                          )
-                        }
-                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors duration-150 ${
+                      <div
+                        className={`flex w-full items-center gap-3 rounded-[var(--athens-radius-md)] px-3 py-2.5 ${
                           selected
-                            ? "bg-[rgb(13_13_13_/9%)]"
-                            : "hover:bg-[rgb(13_13_13_/6%)]"
+                            ? "bg-[var(--athens-selected)]"
+                            : "hover:bg-[var(--athens-hover)]"
                         }`}
-                        aria-pressed={selected}
                       >
-                        <span
-                          className="h-2 w-2 shrink-0 rounded-full"
-                          style={{
-                            background: selected
-                              ? "#1f6feb"
-                              : chart.series.includes(row.source)
-                                ? lensSeriesColor(
-                                    row.source,
-                                    chart.series.indexOf(row.source),
-                                    chart.series,
-                                  )
-                                : "#c7c7c7",
-                          }}
-                          aria-hidden
-                        />
-                        <span className="min-w-0 flex-1 truncate text-sm text-[#0d0d0d]">
-                          {row.source}
-                        </span>
-                        <span className="w-16 text-right text-xs text-[#5d5d5d] tabular-nums">
-                          {pct}%
-                        </span>
-                        <span className="w-14 text-right text-sm font-semibold text-[#0d0d0d] tabular-nums">
-                          {row.count.toLocaleString()}
-                        </span>
-                        <span className="hidden sm:block w-24 h-1.5 rounded-full bg-[#dedede] overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFocusSource((prev) =>
+                              prev === row.source ? null : row.source,
+                            )
+                          }
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                          aria-pressed={selected}
+                        >
                           <span
-                            className="block h-full rounded-full bg-[#1f6feb]"
+                            className="h-2 w-2 shrink-0 rounded-full"
                             style={{
-                              width: `${Math.max(2, row.share * 100)}%`,
-                              opacity: selected ? 1 : 0.55,
+                              background: selected
+                                ? "var(--athens-brand)"
+                                : chart.series.includes(row.source)
+                                  ? lensSeriesColor(
+                                      row.source,
+                                      chart.series.indexOf(row.source),
+                                      chart.series,
+                                    )
+                                  : "var(--athens-border-strong)",
                             }}
+                            aria-hidden
                           />
-                        </span>
-                      </button>
+                          <span className="min-w-0 flex-1 truncate text-sm text-[var(--athens-text)]">
+                            {row.source}
+                          </span>
+                          <span className="w-16 text-right text-xs text-[var(--athens-text-secondary)] tabular-nums">
+                            {pct}%
+                          </span>
+                          <span className="w-14 text-right text-sm font-semibold text-[var(--athens-text)] tabular-nums">
+                            {row.count.toLocaleString()}
+                          </span>
+                          <span className="hidden sm:block w-24 h-1.5 rounded-full bg-[var(--athens-border)] overflow-hidden">
+                            <span
+                              className="block h-full rounded-full bg-[var(--athens-brand)]"
+                              style={{
+                                width: `${Math.max(2, row.share * 100)}%`,
+                                opacity: selected ? 1 : 0.55,
+                              }}
+                            />
+                          </span>
+                        </button>
+                        {href ? (
+                          <Link
+                            to={href}
+                            className="athens-icon-btn shrink-0 no-underline"
+                            aria-label={`View ${row.source} in Job Search`}
+                            title="View in Job Search"
+                          >
+                            <ArrowUpRight size={16} aria-hidden="true" />
+                          </Link>
+                        ) : null}
+                      </div>
                     </li>
                   );
                 })}
               </ul>
-              {focusSource && (
-                <p className="mt-2 text-xs text-[#8e8e8e]">
+              {focusSource ? (
+                <p className="mt-2 text-xs text-[var(--athens-text-muted)]">
                   Focusing {focusSource}. Click again to clear.
                 </p>
-              )}
+              ) : null}
             </div>
           </div>
         )}
-      </div>
+      </AnalyticsSurfaceCard>
     </div>
   );
 }

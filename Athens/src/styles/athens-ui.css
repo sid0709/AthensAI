@@ -572,6 +572,7 @@ span.athens-chip:hover {
   background: var(--athens-hover);
 }
 
+.athens-segment button.is-active,
 .athens-segment button.is-busy {
   background: var(--athens-selected);
 }

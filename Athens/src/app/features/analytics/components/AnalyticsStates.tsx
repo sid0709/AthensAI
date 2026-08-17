@@ -3,7 +3,7 @@ import type { JobAnalytics } from "../hooks/useJobAnalytics";
 
 export function AnalyticsLoading({ label = "Loading analytics…" }: { label?: string }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+    <div className="athens-surface p-8 text-center text-sm text-[var(--athens-text-secondary)]">
       {label}
     </div>
   );
@@ -11,7 +11,7 @@ export function AnalyticsLoading({ label = "Loading analytics…" }: { label?: s
 
 export function AnalyticsEmpty({ message }: { message: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-muted/30 p-8 text-center text-sm text-muted-foreground">
+    <div className="rounded-[var(--athens-radius-md)] border border-dashed border-[var(--athens-border)] bg-[var(--athens-surface-subtle)] p-8 text-center text-sm text-[var(--athens-text-secondary)]">
       {message}
     </div>
   );

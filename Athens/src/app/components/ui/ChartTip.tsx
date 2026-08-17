@@ -66,16 +66,16 @@ export function ChartTip({
 
   return (
     <div
-      className="bg-white border border-[#dedede] rounded-xl px-3.5 py-3 text-sm shadow-[0_12px_32px_rgb(13_13_13_/8%)]"
+      className="bg-white border border-[var(--athens-border)] rounded-xl px-3.5 py-3 text-sm shadow-[var(--athens-shadow-raised)]"
       style={
         scrollable
           ? { maxHeight, overflowY: "auto", pointerEvents: "auto" }
           : undefined
       }
     >
-      <p className="text-[#8e8e8e] text-xs font-semibold mb-1.5">{label}</p>
+      <p className="text-[var(--athens-text-muted)] text-xs font-semibold mb-1.5">{label}</p>
       {showTotal && (
-        <p className="text-[#0d0d0d] text-xs font-semibold mb-2">
+        <p className="text-[var(--athens-text)] text-xs font-semibold mb-2">
           Total: {total}
         </p>
       )}
@@ -87,13 +87,13 @@ export function ChartTip({
           >
             <span
               className="w-2 h-2 rounded-full shrink-0"
-              style={{ background: p.color || "#8e8e8e" }}
+              style={{ background: p.color || "var(--athens-text-muted)" }}
               aria-hidden
             />
-            <span className="text-[#5d5d5d] flex-1 min-w-0 truncate">
+            <span className="text-[var(--athens-text-secondary)] flex-1 min-w-0 truncate">
               {p.name}
             </span>
-            <span className="text-[#0d0d0d] font-semibold tabular-nums">
+            <span className="text-[var(--athens-text)] font-semibold tabular-nums">
               {p.value}
             </span>
           </div>

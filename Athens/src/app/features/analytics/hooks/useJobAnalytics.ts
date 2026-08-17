@@ -8,8 +8,13 @@ import {
   type DailyPostingBySourceRow,
   type JobSourceSummaryRow,
 } from "../../../api/reports";
-import type { DateRange } from "../../../hooks/useAnalyticsFilters";
-import { rangeToIsoDates } from "../lib/dateRange";
+import type { AnalyticsFilterState } from "../lib/analyticsFilters";
+import {
+  percentDelta,
+  pointDelta,
+  previousAnalyticsBounds,
+  resolveAnalyticsBounds,
+} from "../lib/dateRange";
 import {
   computeFunnel,
   computeSourceRows,
@@ -31,12 +36,25 @@ import {
   type PostingsAreaPoint,
 } from "../lib/postingsAreaChart";
 
+export type AnalyticsDelta = {
+  posted: number | null;
+  applications: number | null;
+  postingSources: number | null;
+  applyRate: number | null;
+  interviews: number | null;
+  interviewRate: number | null;
+  declined: number | null;
+};
+
 export interface JobAnalytics {
   loading: boolean;
   ready: boolean;
   applications: number;
   responseRate: number;
   interviewRate: number;
+  applyRate: number;
+  interviews: number;
+  declined: number;
   avgResponseDays: number | null;
   posted: number;
   postingSources: number;
@@ -52,6 +70,8 @@ export interface JobAnalytics {
   pipelineBySource: JobSourceSummaryRow[];
   postingsArea: PostingsAreaPoint[];
   postingSourceKeys: string[];
+  sourceFiltered: boolean;
+  deltas: AnalyticsDelta | null;
 }
 
 const EMPTY: JobAnalytics = {
@@ -60,6 +80,9 @@ const EMPTY: JobAnalytics = {
   applications: 0,
   responseRate: 0,
   interviewRate: 0,
+  applyRate: 0,
+  interviews: 0,
+  declined: 0,
   avgResponseDays: null,
   posted: 0,
   postingSources: 0,
@@ -75,18 +98,47 @@ const EMPTY: JobAnalytics = {
   pipelineBySource: [],
   postingsArea: [],
   postingSourceKeys: [],
+  sourceFiltered: false,
+  deltas: null,
 };
 
-export function useJobAnalytics(range: DateRange): JobAnalytics {
+function filterBySources<T extends { source: string }>(rows: T[], sources: string[]): T[] {
+  if (!sources.length) return rows;
+  const allowed = new Set(sources);
+  return rows.filter((row) => allowed.has(row.source || "Other"));
+}
+
+function snapshotFromSummary(summary: JobSourceSummaryRow[]) {
+  const totals = sumSourceTotals(summary);
+  const applyRate = totals.postings > 0 ? Math.round((totals.applied / totals.postings) * 100) : 0;
+  const interviewRate = totals.applied > 0 ? Math.round((totals.scheduled / totals.applied) * 100) : 0;
+  return {
+    posted: totals.postings,
+    applications: totals.applied,
+    postingSources: summary.filter((row) => row.postings > 0).length,
+    applyRate,
+    interviews: totals.scheduled,
+    interviewRate,
+    declined: totals.declined,
+  };
+}
+
+export function useJobAnalytics(filters: AnalyticsFilterState): JobAnalytics {
   const { applier, applierReady } = useApplier();
   const applierName = applier?.name;
 
   const [loading, setLoading] = useState(true);
   const [daily, setDaily] = useState<DailyApplicationRow[]>([]);
   const [sourceSummary, setSourceSummary] = useState<JobSourceSummaryRow[]>([]);
+  const [previousSummary, setPreviousSummary] = useState<JobSourceSummaryRow[]>([]);
   const [postingRows, setPostingRows] = useState<DailyPostingBySourceRow[]>([]);
 
-  const { startDate, endDate } = useMemo(() => rangeToIsoDates(range), [range]);
+  const bounds = useMemo(() => resolveAnalyticsBounds(filters), [filters]);
+  const previous = useMemo(() => previousAnalyticsBounds(bounds), [bounds]);
+  const sourceKey = filters.source.join("|");
+  const { startDate, endDate } = bounds;
+  const previousStart = previous?.startDate ?? "";
+  const previousEnd = previous?.endDate ?? "";
 
   useEffect(() => {
     if (!applierReady) return;
@@ -95,15 +147,19 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
     (async () => {
       setLoading(true);
       try {
-        const [dailyRows, summaryRows, postingBySource] = await Promise.all([
+        const [dailyRows, summaryRows, postingBySource, previousRows] = await Promise.all([
           fetchDailyApplications(applierName, startDate, endDate),
           fetchJobSourceSummary(applierName, startDate, endDate),
           fetchDailyPostingsBySource(startDate, endDate),
+          previousStart && previousEnd
+            ? fetchJobSourceSummary(applierName, previousStart, previousEnd)
+            : Promise.resolve([] as JobSourceSummaryRow[]),
         ]);
         if (cancelled) return;
         setDaily(dailyRows);
         setSourceSummary(summaryRows);
         setPostingRows(postingBySource);
+        setPreviousSummary(previousRows);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -112,51 +168,82 @@ export function useJobAnalytics(range: DateRange): JobAnalytics {
     return () => {
       cancelled = true;
     };
-  }, [applierName, applierReady, startDate, endDate]);
+  }, [applierName, applierReady, endDate, previousEnd, previousStart, startDate]);
 
   return useMemo(() => {
     if (!applierReady || loading) return { ...EMPTY, loading: true, ready: applierReady };
 
-    const totals = sumSourceTotals(sourceSummary);
-    const applications = sumAppliedInRange(daily) || totals.applied;
-    const responseRate = totals.applied > 0 ? Math.round((totals.scheduled / totals.applied) * 100) : 0;
-    const interviewRate = responseRate;
-    const { points, sources } = pivotPostingsBySource(postingRows, startDate, endDate);
+    const selectedSources = sourceKey ? sourceKey.split("|") : [];
+    const summary = filterBySources(sourceSummary, selectedSources);
+    const rows = filterBySources(postingRows, selectedSources);
+    const totals = snapshotFromSummary(summary);
+    const applications = selectedSources.length
+      ? totals.applications
+      : sumAppliedInRange(daily) || totals.applications;
+    const { points, sources } = pivotPostingsBySource(
+      rows,
+      bounds.startDate,
+      bounds.endDate,
+    );
+    const postingSources = totals.postingSources || sources.length;
+    const previousSnap = previous
+      ? snapshotFromSummary(filterBySources(previousSummary, selectedSources))
+      : null;
 
     return {
       loading: false,
       ready: true,
       applications,
-      responseRate,
-      interviewRate,
+      responseRate: totals.interviewRate,
+      interviewRate: totals.interviewRate,
+      applyRate: totals.applyRate,
+      interviews: totals.interviews,
+      declined: totals.declined,
       avgResponseDays: null,
-      posted: totals.postings,
-      postingSources: sourceSummary.filter((row) => row.postings > 0).length || sources.length,
-      trendData: computeTrend(daily, [], null, startDate, endDate),
+      posted: totals.posted,
+      postingSources,
+      trendData: selectedSources.length
+        ? []
+        : computeTrend(daily, [], null, bounds.startDate, bounds.endDate),
       rolePie: [],
       heatmapData: [],
-      sourceData: computeSourceRows(sourceSummary),
+      sourceData: computeSourceRows(summary),
       funnel: computeFunnel({
-        posted: totals.postings,
-        applied: totals.applied,
-        scheduled: totals.scheduled,
-        declined: sourceSummary.reduce((sum, row) => sum + row.declined, 0),
+        posted: totals.posted,
+        applied: applications,
+        scheduled: totals.interviews,
+        declined: totals.declined,
       }),
       stageOverTime: [],
       velocitySeries: [],
       cohortData: [],
       matchScatter: [],
-      pipelineBySource: sourceSummary.filter((r) => r.applied > 0 || r.postings > 0),
+      pipelineBySource: summary.filter((row) => row.applied > 0 || row.postings > 0),
       postingsArea: points,
       postingSourceKeys: sources,
+      sourceFiltered: selectedSources.length > 0,
+      deltas: previousSnap
+        ? {
+            posted: percentDelta(totals.posted, previousSnap.posted),
+            applications: percentDelta(applications, previousSnap.applications),
+            postingSources: percentDelta(postingSources, previousSnap.postingSources),
+            applyRate: pointDelta(totals.applyRate, previousSnap.applyRate),
+            interviews: percentDelta(totals.interviews, previousSnap.interviews),
+            interviewRate: pointDelta(totals.interviewRate, previousSnap.interviewRate),
+            declined: percentDelta(totals.declined, previousSnap.declined),
+          }
+        : null,
     };
   }, [
     applierReady,
+    bounds.endDate,
+    bounds.startDate,
     daily,
-    endDate,
     loading,
     postingRows,
+    previous,
+    previousSummary,
+    sourceKey,
     sourceSummary,
-    startDate,
   ]);
 }
