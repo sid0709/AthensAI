@@ -14,6 +14,22 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "resume-preview-draft",
+    version: "0.13.0",
+    title: "Resume draft in preview",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Keep the generated résumé in the live preview when a run fails after the model steps finish.",
+    tags: ["Resumes"],
+    current: true,
+    changes: [
+      "Summary, Skills, and Experience land in the preview as each final step completes",
+      "If saving the run fails, the draft stays visible instead of falling back to placeholder text",
+    ],
+  },
+  {
     id: "resume-american-dates",
     version: "0.12.0",
     title: "Resume dates",
@@ -23,7 +39,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Show experience and education dates as Apr 2022 instead of 2022.4, including Word downloads.",
     tags: ["Resumes"],
-    current: true,
     changes: [
       "Role and school dates use American month-year labels such as Apr 2022",
       "Word downloads use the same date labels as the résumé preview",
