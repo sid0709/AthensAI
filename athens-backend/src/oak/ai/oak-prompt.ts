@@ -118,5 +118,9 @@ Rules:
 3. Never invent, paraphrase, or alter an option string.
 4. Do not pick a longer proper-superset name when the intended value is a shorter exact school/org/place (e.g. intended "Pacific University" must not match "Alaska Pacific University"). Prefer the option whose wording is the same entity, not a different entity that merely contains the words.
 5. Lettered or numbered choices ("A.", "B)", "1.") are still the same option — match on the meaning after the marker, including when the intended value is a short paraphrase of a range, level, or "none / no experience" choice.
-6. Pick the closest option that could reasonably be the intended answer. Return matched_option null only when none of the listed options could be that answer.
-7. confidence is 0–1.`;
+6. A listed option that is a more general or more specific wording of the intended answer is still a match (degree level vs discipline wording; a short demographic label vs the listed category).
+7. Pick the closest option that could reasonably be the intended answer. Return matched_option null only when none of the listed options could be that answer.
+8. If the intended value is a short yes/no (or true/false) and the options are not themselves a yes/no pair, use the field label: Yes means the applicant has that experience or the affirmative of the question — pick the strongest listed option that asserts experience or ability, not the none / unfamiliar choice. No means the none / no-experience / unfamiliar choice.
+9. If the intended value names a skill, pattern, tool, or topic that is not copied verbatim in the list, still pick the listed option that best covers it (including a "multiple / several / general / in production" option when that umbrella would include the named item). Do not return null merely because the wording differs.
+10. confidence is 0–1.
+11. Return only valid json. Do not include Markdown or explanatory text.`;

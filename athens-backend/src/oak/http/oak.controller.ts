@@ -68,16 +68,30 @@ export class OakController {
 
   @Post('match-option')
   @UseGuards(OakAuthGuard)
-  match(@Req() req: OakAuthedRequest, @Body() dto: OakMatchOptionDto) {
+  async match(@Req() req: OakAuthedRequest, @Body() dto: OakMatchOptionDto) {
     const session = req.oakSession!;
-    return this.matchOption.match({
-      profileId: session.profileId,
-      applierName: session.applierName,
-      intendedValue: dto.intendedValue,
-      options: dto.options,
-      fieldLabel: dto.fieldLabel,
-      typedQuery: dto.typedQuery,
-    });
+    try {
+      return await this.matchOption.match({
+        profileId: session.profileId,
+        applierName: session.applierName,
+        intendedValue: dto.intendedValue,
+        options: dto.options,
+        fieldLabel: dto.fieldLabel,
+        typedQuery: dto.typedQuery,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `match-option failed for ${session.applierName}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return {
+        ok: false as const,
+        matched_option: null,
+        confidence: 0,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   @Get('runtime-file')
