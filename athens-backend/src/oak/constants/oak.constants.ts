@@ -20,6 +20,15 @@ export function oakMaxOutputTokens(): number {
   return Number.isFinite(n) && n > 0 ? n : 12000;
 }
 
+/** Option matching is a short JSON object; still needs headroom for reasoning models. */
+export function oakMatchOptionMaxOutputTokens(): number {
+  const n = Number.parseInt(
+    String(process.env.OAK_MATCH_OPTION_MAX_OUTPUT_TOKENS || '2500'),
+    10,
+  );
+  return Number.isFinite(n) && n > 0 ? n : 2500;
+}
+
 export function oakTemperature(): number {
   const n = Number.parseFloat(
     String(process.env.OAK_OPENAI_TEMPERATURE || '0.1'),

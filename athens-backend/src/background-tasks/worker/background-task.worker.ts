@@ -15,6 +15,7 @@ import {
   BACKGROUND_TASK_STATUSES,
   BACKGROUND_TASK_TYPES,
   WORKER_HEARTBEAT_MS,
+  backgroundWorkersMode,
 } from '../constants/task-types';
 import type { MailAiLabelProgress } from '../../mail/mail-ai-label.service';
 
@@ -36,10 +37,8 @@ export class BackgroundTaskWorker implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    const mode = String(process.env.BACKGROUND_WORKERS_MODE || 'embedded')
-      .trim()
-      .toLowerCase();
-    if (mode === 'off' || mode === 'disabled') {
+    const mode = backgroundWorkersMode();
+    if (mode === 'off') {
       this.tasks.setWorkerHealthy(false);
       this.logger.warn(
         'Background worker disabled via BACKGROUND_WORKERS_MODE',
@@ -52,7 +51,7 @@ export class BackgroundTaskWorker implements OnModuleInit {
     }, WORKER_HEARTBEAT_MS);
     this.timer.unref?.();
     void this.tick();
-    this.logger.log(`Embedded background worker started (${this.workerId})`);
+    this.logger.log(`Background worker started (${this.workerId})`);
   }
 
   private async tick() {

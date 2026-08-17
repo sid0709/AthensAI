@@ -19,7 +19,6 @@ type AggregateFacetRow = {
   totals?: Array<{ companies?: number; jobs?: number }>;
   page?: Array<{
     _id?: unknown;
-    matchingJobIds?: unknown[];
     matchingCount?: number;
   }>;
 };
@@ -86,11 +85,61 @@ export class JobsCompanyListService {
       companyUrl: row.companyUrl,
       matchingJobCount: row.jobCount,
       matchingJobIds: (row.jobIds || [])
+        .slice(0, COMPANY_MEMBERS_PAGE_SIZE)
         .map((id) => asObjectIdHex(id))
         .filter((id): id is string => Boolean(id)),
     }));
 
     return this.hydrateGroups(groups, profileId, applierName);
+  }
+
+  /** First N matching job ids per company on the current page — not the full catalog. */
+  private async memberIdsByCompany(
+    companyIds: string[],
+    match: Record<string, unknown>,
+  ): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    if (!companyIds.length) return out;
+    const raw = await this.prisma.$runCommandRaw({
+      aggregate: 'jobs',
+      pipeline: [
+        {
+          $match: {
+            ...match,
+            companyId: { $in: companyIds.map((id) => ({ $oid: id })) },
+          },
+        },
+        { $sort: { postedAt: -1 } },
+        {
+          $setWindowFields: {
+            partitionBy: '$companyId',
+            sortBy: { postedAt: -1 },
+            output: { memberRank: { $documentNumber: {} } },
+          },
+        },
+        { $match: { memberRank: { $lte: COMPANY_MEMBERS_PAGE_SIZE } } },
+        {
+          $group: {
+            _id: '$companyId',
+            matchingJobIds: { $push: '$_id' },
+          },
+        },
+      ] as Prisma.InputJsonValue[],
+      cursor: {},
+    });
+    for (const row of extractFirstBatch(raw)) {
+      if (!row || typeof row !== 'object') continue;
+      const doc = row as { _id?: unknown; matchingJobIds?: unknown[] };
+      const companyId = asObjectIdHex(doc._id);
+      if (!companyId) continue;
+      out.set(
+        companyId,
+        (doc.matchingJobIds || [])
+          .map((id) => asObjectIdHex(id))
+          .filter((id): id is string => Boolean(id)),
+      );
+    }
+    return out;
   }
 
   /**
@@ -129,7 +178,6 @@ export class JobsCompanyListService {
           $group: {
             _id: '$companyId',
             lastPostedAt: { $max: '$postedAt' },
-            matchingJobIds: { $push: '$_id' },
             matchingCount: { $sum: 1 },
           },
         },
@@ -163,12 +211,20 @@ export class JobsCompanyListService {
       .map((row) => asObjectIdHex(row._id))
       .filter((id): id is string => Boolean(id));
 
-    const companyDocs =
+    const [companyDocs, memberIdsByCompany] = await Promise.all([
       companyIds.length === 0
-        ? []
-        : await this.prisma.company.findMany({
+        ? Promise.resolve([])
+        : this.prisma.company.findMany({
             where: { id: { in: companyIds } },
-          });
+            select: {
+              id: true,
+              companyName: true,
+              companyLogo: true,
+              companyUrl: true,
+            },
+          }),
+      this.memberIdsByCompany(companyIds, match),
+    ]);
     const companyById = new Map(companyDocs.map((row) => [row.id, row]));
 
     const groups: CompanyGroupSource[] = [];
@@ -176,12 +232,8 @@ export class JobsCompanyListService {
       const companyId = asObjectIdHex(row._id);
       if (!companyId) continue;
       const company = companyById.get(companyId);
-      const matchingJobIds = (row.matchingJobIds || [])
-        .map((id) => asObjectIdHex(id))
-        .filter((id): id is string => Boolean(id));
-      const matchingJobCount = Number(
-        row.matchingCount || matchingJobIds.length,
-      );
+      const matchingJobIds = memberIdsByCompany.get(companyId) || [];
+      const matchingJobCount = Number(row.matchingCount || matchingJobIds.length);
       groups.push({
         companyId,
         companyName: company?.companyName || 'Unknown',

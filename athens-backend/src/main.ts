@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { AuthResponseFilter } from './common/auth-response.filter';
 import { loadAppConfig } from './config/app.config';
 import { OakGatewayBootstrap } from './oak/gateway/oak-gateway.bootstrap';
+import { backgroundWorkersMode } from './background-tasks/constants/task-types';
 
 async function bootstrap() {
   const config = loadAppConfig();
@@ -41,11 +42,18 @@ async function bootstrap() {
   });
 
   await app.listen(config.port);
-  const httpServer = app.getHttpServer();
-  app.get(OakGatewayBootstrap).attach(httpServer);
-  console.log(
-    `athens-backend listening on http://127.0.0.1:${config.port}/api (Oak socket path /oak)`,
-  );
+  const mode = backgroundWorkersMode();
+  if (mode !== 'worker') {
+    const httpServer = app.getHttpServer();
+    app.get(OakGatewayBootstrap).attach(httpServer);
+    console.log(
+      `athens-backend listening on http://127.0.0.1:${config.port}/api (Oak socket path /oak)`,
+    );
+  } else {
+    console.log(
+      `athens-backend worker listening on http://127.0.0.1:${config.port}/readyz`,
+    );
+  }
 }
 
 void bootstrap();

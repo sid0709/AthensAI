@@ -165,7 +165,7 @@ export class MonitorLoopService implements OnModuleInit, OnModuleDestroy {
     };
     const started = performance.now();
     try {
-      if (!this.backgroundTasks.isWorkerHealthy()) {
+      if (!(await this.backgroundTasks.isWorkerHealthy())) {
         throw new Error('No fresh worker heartbeat');
       }
       const now = new Date();

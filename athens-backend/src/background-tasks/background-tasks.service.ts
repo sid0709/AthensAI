@@ -9,6 +9,8 @@ import { MailCredentialsService } from '../mail/mail-credentials.service';
 import {
   BACKGROUND_TASK_STATUSES,
   BACKGROUND_TASK_TYPES,
+  WORKER_HEALTH_PROBE_TTL_MS,
+  backgroundWorkersMode,
 } from './constants/task-types';
 import { initialTaskProgress, normalizeTaskPayload } from './task-payload';
 import { TaskStoreService } from './task-store.service';
@@ -16,6 +18,7 @@ import { TaskStoreService } from './task-store.service';
 @Injectable()
 export class BackgroundTasksService {
   private workerHealthy = false;
+  private probe: { at: number; ok: boolean } | null = null;
 
   constructor(
     private readonly store: TaskStoreService,
@@ -27,8 +30,10 @@ export class BackgroundTasksService {
     this.workerHealthy = ok;
   }
 
-  isWorkerHealthy() {
-    return this.workerHealthy;
+  async isWorkerHealthy(): Promise<boolean> {
+    const mode = backgroundWorkersMode();
+    if (mode === 'embedded' || mode === 'worker') return this.workerHealthy;
+    return this.probeSplitWorker();
   }
 
   async create(input: {
@@ -47,7 +52,7 @@ export class BackgroundTasksService {
         `Unsupported background task type: ${input.type}`,
       );
     }
-    if (!this.workerHealthy) {
+    if (!(await this.isWorkerHealthy())) {
       throw new ServiceUnavailableException({
         success: false,
         error: 'BACKGROUND_WORKER_UNAVAILABLE',
@@ -148,5 +153,27 @@ export class BackgroundTasksService {
 
   getStore() {
     return this.store;
+  }
+
+  private async probeSplitWorker(): Promise<boolean> {
+    const now = Date.now();
+    if (this.probe && now - this.probe.at < WORKER_HEALTH_PROBE_TTL_MS) {
+      return this.probe.ok;
+    }
+    const url = String(
+      process.env.WORKER_HEALTH_URL || 'http://127.0.0.1:8981/readyz',
+    ).trim();
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(2000),
+        headers: { 'user-agent': 'athens-worker-health/1.0' },
+      });
+      const ok = response.ok;
+      this.probe = { at: now, ok };
+      return ok;
+    } catch {
+      this.probe = { at: now, ok: false };
+      return false;
+    }
   }
 }

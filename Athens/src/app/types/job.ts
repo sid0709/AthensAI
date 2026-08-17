@@ -97,7 +97,7 @@ export interface CompanyJobGroup {
 	jobs: Job[];
 	/** Total roles matching the current grouped Job Search request. */
 	matchingJobCount?: number;
-	/** Matching job ids for this company (may be longer than hydrated `jobs`). */
+	/** Hydrated page of matching job ids (same length as `jobs`, not the full company catalog). */
 	matchingJobIds?: string[];
 	nextMemberOffset?: number | null;
 	/** Client-side ordering for partially loaded member batches and deep-linked roles. */

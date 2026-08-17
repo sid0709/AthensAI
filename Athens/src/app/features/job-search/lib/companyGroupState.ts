@@ -109,7 +109,11 @@ export function dropMatchingJobsById(
       removedGroups += 1;
       return [];
     }
-    if (!jobs.length) needsDirectoryRefresh = true;
+    const idListIncomplete =
+      (group.matchingJobCount ?? 0) > matchingJobIds.length;
+    if (!jobs.length || (idListIncomplete && dropped > 0)) {
+      needsDirectoryRefresh = true;
+    }
 
     return [{
       ...group,

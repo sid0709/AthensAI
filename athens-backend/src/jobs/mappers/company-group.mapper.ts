@@ -8,7 +8,7 @@ export type CompanyGroupSource = {
   companyLogo?: string | null;
   companyUrl?: string | null;
   matchingJobCount: number;
-  /** Newest-first matching job ids (may be longer than members returned). */
+  /** Newest-first ids used to hydrate this page (≤ COMPANY_MEMBERS_PAGE_SIZE). */
   matchingJobIds: string[];
 };
 
@@ -53,7 +53,7 @@ export function mapCompanyGroupRow(
       mapJobToListDoc(job, stateByJobId.get(job.id) || 'posted'),
     ),
     matchingJobCount: group.matchingJobCount,
-    matchingJobIds: group.matchingJobIds,
+    matchingJobIds: memberIds,
     nextMemberOffset:
       group.matchingJobCount > ordered.length ? ordered.length : null,
   };
