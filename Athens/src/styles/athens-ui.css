@@ -658,6 +658,19 @@ span.athens-chip:hover {
   background: var(--athens-selected);
 }
 
+.athens-segment--compact {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  width: max-content;
+  min-width: 0;
+}
+
+.athens-segment--compact button {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+}
+
 .athens-segment__label {
   white-space: nowrap;
 }
@@ -1521,6 +1534,49 @@ span.athens-chip:hover {
   color: var(--athens-text-secondary);
   font-size: var(--athens-font-size-sm);
   line-height: var(--athens-line-height-normal);
+}
+
+.athens-settings__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--athens-space-3);
+  margin-bottom: var(--athens-space-4);
+}
+
+.athens-settings__theme {
+  align-self: center;
+  margin: 0 var(--athens-space-3) var(--athens-space-2) 0;
+  flex: 0 0 auto;
+}
+
+.athens-settings__chrome {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--athens-border);
+}
+
+.athens-settings__chrome .athens-tabs {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.athens-settings__list {
+  max-width: 36rem;
+  border: 1px solid var(--athens-border);
+  border-radius: var(--athens-radius-md);
+  background: var(--athens-canvas);
+  box-shadow: var(--athens-shadow-control);
+}
+
+.athens-settings__list-row {
+  padding: var(--athens-space-3) var(--athens-space-4);
+}
+
+.athens-settings__list-row + .athens-settings__list-row {
+  border-top: 1px solid var(--athens-border);
 }
 
 .athens-settings__split {

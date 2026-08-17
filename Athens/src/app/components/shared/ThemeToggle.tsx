@@ -24,7 +24,7 @@ export function ThemeToggle({ compact = false, className, tone = "default" }: Th
     <div
       className={cn(
         lens
-          ? "athens-segment"
+          ? cn("athens-segment", compact && "athens-segment--compact")
           : "flex items-center gap-0.5 bg-secondary border border-border rounded-xl p-1",
         className,
       )}

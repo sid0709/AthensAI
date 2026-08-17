@@ -83,44 +83,42 @@ export function NotificationsTab() {
   }
 
   return (
-    <div className="max-w-2xl space-y-4">
-      <div className="athens-toolbar mb-2">
-        <div className="athens-surface">
-          <div className="athens-toolbar-row">
-            <div className="min-w-0">
-              <h2 className="athens-settings__title">Notifications</h2>
-              <p className="athens-settings__lede">Choose what Athens should notify you about</p>
-            </div>
-            <div className="athens-toolbar-actions ml-auto">
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={saving || loading || !dirty || !applier?.name}
-                className="athens-btn-primary"
-              >
-                {saving ? "Saving…" : dirty ? "Save" : "Saved"}
-              </button>
-            </div>
-          </div>
+    <div className="max-w-xl space-y-4">
+      <div className="athens-settings__head">
+        <div className="min-w-0">
+          <h2 className="athens-settings__title">Notifications</h2>
+          <p className="athens-settings__lede">Choose what Athens should notify you about</p>
+        </div>
+        <div className="athens-toolbar-actions">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving || loading || !dirty || !applier?.name}
+            className="athens-btn-primary"
+          >
+            {saving ? "Saving…" : dirty ? "Save" : "Saved"}
+          </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="athens-card athens-settings__loading">
+        <div className="athens-settings__loading">
           <Loader2 className="w-4 h-4 animate-spin" />
           Loading preferences…
         </div>
       ) : (
-        NOTIFICATION_GROUPS.map((g) => (
-          <div key={g.id} className="athens-card">
-            <AthensSwitch
-              label={g.label}
-              description={g.description}
-              checked={prefs[g.id]}
-              onCheckedChange={(checked) => updatePref(g.id, checked)}
-            />
-          </div>
-        ))
+        <div className="athens-settings__list">
+          {NOTIFICATION_GROUPS.map((g) => (
+            <div key={g.id} className="athens-settings__list-row">
+              <AthensSwitch
+                label={g.label}
+                description={g.description}
+                checked={prefs[g.id]}
+                onCheckedChange={(checked) => updatePref(g.id, checked)}
+              />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

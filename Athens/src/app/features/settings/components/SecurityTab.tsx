@@ -151,14 +151,10 @@ export function SecurityTab() {
 
   return (
     <div className="max-w-md space-y-4">
-      <div className="athens-toolbar mb-2">
-        <div className="athens-surface">
-          <div className="athens-toolbar-row">
-            <div className="min-w-0">
-              <h2 className="athens-settings__title">Security</h2>
-              <p className="athens-settings__lede">Update your account password</p>
-            </div>
-          </div>
+      <div className="athens-settings__head">
+        <div className="min-w-0">
+          <h2 className="athens-settings__title">Security</h2>
+          <p className="athens-settings__lede">Update your account password</p>
         </div>
       </div>
       <div className="athens-card">

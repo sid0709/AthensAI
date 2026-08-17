@@ -14,6 +14,23 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "settings-layout",
+    version: "0.11.0",
+    title: "Settings layout",
+    date: "2026-08-17",
+    merge: "main · settings-ui",
+    branch: "main",
+    summary:
+      "Tighten Settings chrome: theme lives on the tab bar as icon-only controls, and section headers are no longer extra cards.",
+    tags: ["Settings"],
+    current: true,
+    changes: [
+      "Light, System, and Dark sit as compact icons on the Settings tab bar",
+      "Profile, Notifications, and Security titles sit as a heading row instead of a second boxed toolbar",
+      "Notification preferences are one list instead of a card per toggle",
+    ],
+  },
+  {
     id: "job-search-home",
     version: "0.10.0",
     title: "Job Search is home",
@@ -23,7 +40,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Drop the unused Dashboard and open Job Search after sign-in, from the logo, and for unknown URLs.",
     tags: ["Job Search", "Navigation"],
-    current: true,
     changes: [
       "Dashboard is gone from the sidebar; Job Search is the first workspace page",
       "Signing in, the AthensAI logo, and unknown URLs now open Job Search",

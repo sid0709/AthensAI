@@ -3,7 +3,6 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
 import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
-import { ThemeToggle } from "../../../components/shared/ThemeToggle";
 import { emptyCareer, emptyEducation, emptyProfile, type UserProfile } from "../../../data/settings/profile";
 import {
   clearVendorAccessPassword,
@@ -312,45 +311,40 @@ export function ProfileTab() {
 
   return (
     <div className="max-w-none w-full">
-      <div className="athens-toolbar mb-2">
-        <div className="athens-surface">
-          <div className="athens-toolbar-row">
-            <div className="min-w-0">
-              <h2 className="athens-settings__title">Auto-bid profile</h2>
-              <p className="athens-settings__lede">Identity, preferences, and career history</p>
-            </div>
-            <div className="athens-toolbar-actions ml-auto">
-              <ThemeToggle tone="lens" />
-              {isBeta && (
-                <button
-                  type="button"
-                  onClick={() => void refreshResumes()}
-                  disabled={refreshStopping || (refreshingResumes && !activeResumeRefreshTask) || saving || loading}
-                  className="athens-btn"
-                  title={refreshingResumes
-                    ? "Stop résumé updates immediately"
-                    : "Save profile, then re-apply name, contact, and LinkedIn to all generated résumé PDFs"}
-                >
-                  {refreshingResumes ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                  {refreshStopping
-                    ? "Stopping…"
-                    : refreshingResumes
-                      ? refreshProgress && refreshProgress.total > 0
-                        ? `Update ${refreshProgress.done}/${refreshProgress.total} · Stop`
-                        : "Stop update"
-                      : "Update generated résumés"}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={saving || loading || refreshingResumes}
-                className="athens-btn-primary"
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
+      <div className="athens-settings__head">
+        <div className="min-w-0">
+          <h2 className="athens-settings__title">Auto-bid profile</h2>
+          <p className="athens-settings__lede">Identity, preferences, and career history</p>
+        </div>
+        <div className="athens-toolbar-actions">
+          {isBeta && (
+            <button
+              type="button"
+              onClick={() => void refreshResumes()}
+              disabled={refreshStopping || (refreshingResumes && !activeResumeRefreshTask) || saving || loading}
+              className="athens-btn"
+              title={refreshingResumes
+                ? "Stop résumé updates immediately"
+                : "Save profile, then re-apply name, contact, and LinkedIn to all generated résumé PDFs"}
+            >
+              {refreshingResumes ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {refreshStopping
+                ? "Stopping…"
+                : refreshingResumes
+                  ? refreshProgress && refreshProgress.total > 0
+                    ? `Update ${refreshProgress.done}/${refreshProgress.total} · Stop`
+                    : "Stop update"
+                  : "Update generated résumés"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving || loading || refreshingResumes}
+            className="athens-btn-primary"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
         </div>
       </div>
 

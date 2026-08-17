@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router";
 import { Bell, Plug, Shield, UserRound } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { TabTransition } from "../../components/overlays";
+import { ThemeToggle } from "../../components/shared/ThemeToggle";
 import { DEFAULT_TABS, normalizeTab, PATHS, type SettingsTab } from "../../config/routes";
 import { ProfileTab } from "./components/ProfileTab";
 import { NotificationsTab } from "./components/NotificationsTab";
@@ -32,27 +33,30 @@ export function SettingsPage() {
     <PageShell className="athens-ui athens-settings">
       <div className="athens-toolbar mb-2">
         <div className="athens-surface">
-          <div className="athens-tabs scroll-x-only" role="tablist" aria-label="Settings">
-            {tabs.map((t) => {
-              const active = tab === t;
-              const { label, icon: Icon } = TAB_META[t];
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  aria-current={active ? "true" : undefined}
-                  onClick={() => navigate(`${PATHS.settings}/${t}`)}
-                  className={cn("athens-tab", active && "is-active")}
-                >
-                  <span className="athens-tab-icon">
-                    <Icon size={16} aria-hidden="true" />
-                  </span>
-                  {label}
-                </button>
-              );
-            })}
+          <div className="athens-settings__chrome">
+            <div className="athens-tabs scroll-x-only" role="tablist" aria-label="Settings">
+              {tabs.map((t) => {
+                const active = tab === t;
+                const { label, icon: Icon } = TAB_META[t];
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    aria-current={active ? "true" : undefined}
+                    onClick={() => navigate(`${PATHS.settings}/${t}`)}
+                    className={cn("athens-tab", active && "is-active")}
+                  >
+                    <span className="athens-tab-icon">
+                      <Icon size={16} aria-hidden="true" />
+                    </span>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <ThemeToggle tone="lens" compact className="athens-settings__theme" />
           </div>
         </div>
       </div>
