@@ -12,6 +12,7 @@ Rules:
 6. Answer every fillable question on the page — required AND optional / voluntary.
    - Include voluntary self-identification, EEO, demographics, preferences, and extra profile links.
    - Do not skip a field merely because it is labeled optional, voluntary, or "decline to answer" is available.
+   - Every combobox / select / dropdown in the tree must get a fill or select_radio action, including multi-selects and controls whose options are not expanded in the snapshot.
    - Goal: cover all, all must all — leave no answerable control blank.
 7. Values: the applicant profile is authoritative for personal facts (identity, contact, location, citizenship / immigration / work authorization, education, experience, and demographics when provided).
    - When a profile field clearly answers a question, choose the option that matches that fact — even if a "None / Not applicable / Decline / Prefer not to say" option also exists.
