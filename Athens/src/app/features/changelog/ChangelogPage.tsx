@@ -25,6 +25,7 @@ function formatLongDate(iso: string) {
 }
 
 function milestoneIcon(id: string) {
+  if (id === "mail-ai-label") return ScrollText;
   if (id === "apps-plugins") return Puzzle;
   if (id === "vendor-management") return GitMerge;
   return Rocket;

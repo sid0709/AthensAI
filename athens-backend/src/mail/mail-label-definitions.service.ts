@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { AccountInfoRepository } from '../auth/account-info.repository';
 import { MAIL_DEFINITION_MAX_CHARS } from './constants/mail.constants';
 
 @Injectable()
 export class MailLabelDefinitionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly accounts: AccountInfoRepository) {}
 
   normalize(raw: unknown): Record<string, string> {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -20,10 +20,7 @@ export class MailLabelDefinitionsService {
   }
 
   async get(applierName: string): Promise<Record<string, string>> {
-    const acc = await this.prisma.accountInfo.findFirst({
-      where: { name: applierName },
-      select: { mailAiLabelDefinitions: true, autoBidProfile: true },
-    });
+    const acc = await this.accounts.findByExactName(applierName);
     if (!acc) return {};
     const primary = this.normalize(acc.mailAiLabelDefinitions);
     if (Object.keys(primary).length) return primary;
@@ -47,9 +44,8 @@ export class MailLabelDefinitionsService {
     definitions: Record<string, string>,
   ): Promise<Record<string, string>> {
     const normalized = this.normalize(definitions);
-    await this.prisma.accountInfo.updateMany({
-      where: { name: applierName },
-      data: { mailAiLabelDefinitions: normalized },
+    await this.accounts.updateByName(applierName, {
+      mailAiLabelDefinitions: normalized,
     });
     return normalized;
   }

@@ -11,8 +11,44 @@ export type ChangelogMilestone = {
   current?: boolean;
 };
 
-/** Product milestones — one entry per merge / release. Newest first. */
+/** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
+  {
+    id: "mail-ai-label",
+    version: "0.7.0",
+    title: "Mail AI Label",
+    date: "2026-08-17",
+    merge: "main · mail-ai-label",
+    branch: "main",
+    summary:
+      "Save custom Gmail label definitions reliably, then classify inbox mail in parallel from truncated body text instead of full messages.",
+    tags: ["Mail", "AI Label"],
+    current: true,
+    changes: [
+      "Label definitions persist on standalone Mongo without a replica-set transaction error",
+      "Analyze classifies many emails per AI request, with concurrent batches instead of one-by-one calls",
+      "Requests send sender, subject, and truncated plain-text body — not full MIME or attachments",
+      "Gmail label writes are grouped by mailbox and label, and the dialog reports real AI and write metrics",
+    ],
+  },
+  {
+    id: "worker-pool-and-recommend",
+    version: "0.6.0",
+    title: "Worker Pool & Recommend",
+    date: "2026-08-14",
+    merge: "main · worker-pool / applied-fix",
+    branch: "main",
+    summary:
+      "Move jobs through Worker Pool and Bid Ready with explicit resume recommendation, company-wide apply, and a faster analysis pass.",
+    tags: ["Job Search", "Worker Pool", "Recommend"],
+    changes: [
+      "Worker Pool sits alongside Bid Ready so pooled jobs keep a durable status without breaking Posted cards",
+      "Recommend resumes for New jobs after choosing Bid Ready or Worker Pool in a confirmation modal",
+      "Apply all company roles can continue to the next posting when a library resume does not fit, with auto-swap on or off",
+      "Applied marking, company-role apply, and Job Search cards, pagination, and typography are more consistent",
+      "Job analysis runs in larger parallel batches so ranking and recommend catch up faster",
+    ],
+  },
   {
     id: "job-search-at-scale",
     version: "0.5.0",
@@ -23,7 +59,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Turn Job Search into a fast, resilient career command center for exploring, ranking, and managing thousands of opportunities.",
     tags: ["Job Search", "Personalization", "Reliability"],
-    current: true,
     changes: [
       "Company-grouped results keep related roles together, with expandable role trays and focused-job deep links",
       "Shareable URL state preserves filters, sorting, pagination, view mode, expanded company, and focused role",
