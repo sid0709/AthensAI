@@ -37,9 +37,15 @@ docker pull "$IMAGE_REF"
 docker stop "$CONTAINER_NAME" 2>/dev/null || true
 docker rm "$CONTAINER_NAME" 2>/dev/null || true
 
+# 3g leaves RAM for OS + monitoring + a local mongod. Two Node heaps
+# (768+512) plus nginx fit; the old 8GB V8 heap did not.
+MEMORY_LIMIT="${ATHENS_CONTAINER_MEMORY:-3g}"
+
 docker run -d \
 	--name "$CONTAINER_NAME" \
 	--restart unless-stopped \
+	--memory="${MEMORY_LIMIT}" \
+	--memory-swap="${MEMORY_LIMIT}" \
 	--network "$MONITORING_NETWORK" \
 	--add-host=host.docker.internal:host-gateway \
 	--env-file "$DEPLOY_ENV" \
@@ -49,7 +55,6 @@ docker run -d \
 	-e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json \
 	-e PORT=8980 \
 	-e METRICS_PORT=9101 \
-	-e BACKGROUND_WORKERS_MODE=embedded \
 	"$IMAGE_REF"
 
 wait_for_url() {
@@ -65,6 +70,18 @@ wait_for_url() {
 
 wait_for_url "$HEALTH_URL"
 wait_for_url "$STATUS_URL"
+docker exec "$CONTAINER_NAME" node -e "require('http').get('http://127.0.0.1:8981/readyz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" || {
+	echo "Worker health check failed" >&2
+	docker logs --tail 80 "$CONTAINER_NAME" || true
+	exit 1
+}
+
+# Local mongod only. Remote Atlas/hosts are skipped inside the script.
+if [[ -x /opt/nextoffer/tune-mongod-cache.sh ]]; then
+	/opt/nextoffer/tune-mongod-cache.sh || true
+elif [[ -f "$(dirname "$0")/tune-mongod-cache.sh" ]]; then
+	bash "$(dirname "$0")/tune-mongod-cache.sh" || true
+fi
 
 docker exec "$CONTAINER_NAME" node --input-type=module -e '
 	const response = await fetch("http://127.0.0.1:8980/api/status/current", { signal: AbortSignal.timeout(5000) });

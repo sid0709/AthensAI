@@ -27,4 +27,7 @@ export const MAIL_DEFINITION_MAX_CHARS = 2000;
 export const MAIL_PAGE_SIZE_MAX = 100;
 export const MAIL_AI_LABEL_MAX_MESSAGES = 50;
 
+/** Cap incremental / first-sync envelope fetch so All Mail cannot fill the heap. */
+export const IMAP_MAX_NEW_ENVELOPES = 200;
+
 export const BETA_TIER = 'beta';

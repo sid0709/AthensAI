@@ -218,7 +218,7 @@ Uses profile `email` + decrypted `gmailAppPassword`. List responses omit full bo
 
 ## Background tasks
 
-Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default) claims `mail_ai_label`, `resume_generation`, and `job_worker_pool` tasks.
+Embedded worker (`BACKGROUND_WORKERS_MODE=embedded` default locally) claims `mail_ai_label`, `resume_generation`, and `job_worker_pool` tasks. Production Supervisord runs a separate worker process (`BACKGROUND_WORKERS_MODE=worker` on :8981) so the public API (`BACKGROUND_WORKERS_MODE=off`) does not share that heap.
 
 | Method | Path | Notes |
 |--------|------|-------|

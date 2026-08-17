@@ -417,7 +417,9 @@ jobs:
             set_env FIREBASE_SECRET_HOST_PATH /opt/nextoffer/secrets/firebase-service-account.json
             set_env KMS_KEY_NAME projects/drwretail-bm/locations/us-east4/keyRings/athens/cryptoKeys/profile-secrets
             set_env FIREBASE_AUTH_REQUIRED false
-            set_env BACKGROUND_WORKERS_MODE embedded
+            set_env BACKGROUND_WORKERS_MODE split
+            set_env NODE_MAX_OLD_SPACE_SIZE 768
+            set_env NODE_WORKER_MAX_OLD_SPACE_SIZE 512
             set_env FIRESTORE_WRITES_ENABLED true
 
       - name: Sync deploy script to VPS
@@ -427,7 +429,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
-          source: docker/deploy-remote.sh
+          source: docker/deploy-remote.sh,docker/tune-mongod-cache.sh,docker/mongod.conf
           target: /opt/nextoffer/
           strip_components: 1
 
