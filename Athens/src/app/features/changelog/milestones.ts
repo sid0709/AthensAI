@@ -28,6 +28,7 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
       "Light, System, and Dark sit as compact icons on the Settings tab bar",
       "Profile, Notifications, and Security titles sit as a heading row instead of a second boxed toolbar",
       "Notification preferences are one list instead of a card per toggle",
+      "The LinkedIn résumé reminder is a highlighted notice under Auto-bid profile, with Update résumés as a text action",
     ],
   },
   {

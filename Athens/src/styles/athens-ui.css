@@ -1539,10 +1539,41 @@ span.athens-chip:hover {
 .athens-settings__head {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--athens-space-3);
   margin-bottom: var(--athens-space-4);
+}
+
+.athens-settings__head .athens-settings__title {
+  font-size: var(--athens-font-size-lg);
+}
+
+.athens-settings__head .athens-text-btn {
+  min-height: 40px;
+  font-size: var(--athens-font-size-sm);
+}
+
+.athens-settings__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--athens-space-3);
+  margin-bottom: var(--athens-space-4);
+  padding: var(--athens-space-3) var(--athens-space-4);
+  border: 1px solid var(--athens-brand-border);
+  border-left-width: 3px;
+  border-left-color: var(--athens-brand);
+  border-radius: var(--athens-radius-sm);
+  background: var(--athens-brand-subtle);
+  color: var(--athens-brand-strong);
+  font-size: var(--athens-font-size-sm);
+  line-height: var(--athens-line-height-normal);
+}
+
+.athens-settings__notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--athens-brand);
 }
 
 .athens-settings__theme {

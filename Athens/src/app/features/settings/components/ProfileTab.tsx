@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
 import { useBackgroundTasks } from "@/app/context/BackgroundTaskContext";
@@ -322,19 +322,19 @@ export function ProfileTab() {
               type="button"
               onClick={() => void refreshResumes()}
               disabled={refreshStopping || (refreshingResumes && !activeResumeRefreshTask) || saving || loading}
-              className="athens-btn"
+              className="athens-text-btn"
               title={refreshingResumes
                 ? "Stop résumé updates immediately"
                 : "Save profile, then re-apply name, contact, and LinkedIn to all generated résumé PDFs"}
             >
-              {refreshingResumes ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {refreshingResumes ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               {refreshStopping
                 ? "Stopping…"
                 : refreshingResumes
                   ? refreshProgress && refreshProgress.total > 0
-                    ? `Update ${refreshProgress.done}/${refreshProgress.total} · Stop`
+                    ? `Stop · ${refreshProgress.done}/${refreshProgress.total}`
                     : "Stop update"
-                  : "Update generated résumés"}
+                  : "Update résumés"}
             </button>
           )}
           <button
@@ -347,6 +347,21 @@ export function ProfileTab() {
           </button>
         </div>
       </div>
+
+      {isBeta && !loading && !refreshingResumes && (
+        <div className="athens-settings__notice" role="status">
+          <Info size={16} aria-hidden="true" />
+          <p>
+            After changing LinkedIn or other contact details, use{" "}
+            <strong>Update résumés</strong> to refresh outdated PDF headers.
+            {profile.updatedAt && profile.resumeUpdatedAt && profile.resumeUpdatedAt >= profile.updatedAt
+              ? " All résumés are currently in sync."
+              : profile.updatedAt
+                ? " Some résumés may be out of date."
+                : ""}
+          </p>
+        </div>
+      )}
 
       {refreshingResumes && refreshProgress && (
         <div className="athens-card mb-4">
@@ -380,19 +395,6 @@ export function ProfileTab() {
             )}
           </div>
         </div>
-      )}
-
-      {isBeta && !loading && !refreshingResumes && (
-        <p className="athens-card-meta mb-4">
-          After changing LinkedIn or other contact details, use{" "}
-          <strong>Update generated résumés</strong> to refresh outdated
-          Job Search / Agent PDF headers (skips ones already synced).
-          {profile.updatedAt && profile.resumeUpdatedAt && profile.resumeUpdatedAt >= profile.updatedAt
-            ? " All résumés are currently in sync."
-            : profile.updatedAt
-              ? " Some résumés may be out of date."
-              : ""}
-        </p>
       )}
 
       {accountMissing && (
