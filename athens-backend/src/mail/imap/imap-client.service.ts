@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import { ALL_MAIL_PATH, FOLDER_MAILBOX } from '../constants/mail.constants';
+import {
+  ALL_MAIL_PATH,
+  FOLDER_MAILBOX,
+  IMAP_MAX_NEW_ENVELOPES,
+} from '../constants/mail.constants';
 import {
   displayLabelName,
   folderToMailbox,
@@ -93,17 +97,30 @@ export class ImapClientService {
     applierName: string,
   ): Promise<MailMessageDoc[]> {
     return this.withPath(email, password, ALL_MAIL_PATH, async (client) => {
+      const box = client.mailbox;
+      const total = box && typeof box === 'object' ? Number(box.exists ?? 0) : 0;
+      if (total === 0) return [];
+
+      const range =
+        highestUid > 0
+          ? `${highestUid + 1}:*`
+          : `${Math.max(1, total - IMAP_MAX_NEW_ENVELOPES + 1)}:${total}`;
+      const fetchOpts = highestUid > 0 ? { uid: true as const } : undefined;
       const messages: MailMessageDoc[] = [];
-      const range = highestUid > 0 ? `${highestUid + 1}:*` : '1:*';
       try {
-        for await (const message of client.fetch(range, {
-          envelope: true,
-          flags: true,
-          uid: true,
-          labels: true,
-        })) {
+        for await (const message of client.fetch(
+          range,
+          {
+            envelope: true,
+            flags: true,
+            uid: true,
+            labels: true,
+          },
+          fetchOpts,
+        )) {
           if (message.uid <= highestUid) continue;
           messages.push(messageToDoc(message, applierName, ALL_MAIL_PATH));
+          if (messages.length >= IMAP_MAX_NEW_ENVELOPES) break;
         }
       } catch {
         /* empty range */
@@ -172,16 +189,13 @@ export class ImapClientService {
         { total: number; unread: number; badge: number }
       > = {};
       for (const [folder, path] of Object.entries(FOLDER_MAILBOX)) {
-        const lock = await client.getMailboxLock(path);
-        try {
-          const box = client.mailbox;
-          const total = box && typeof box === 'object' ? (box.exists ?? 0) : 0;
-          const unseen = await client.search({ seen: false });
-          const unread = Array.isArray(unseen) ? unseen.length : 0;
-          counts[folder] = { total, unread, badge: unread };
-        } finally {
-          lock.release();
-        }
+        const status = await client.status(path, {
+          messages: true,
+          unseen: true,
+        });
+        const total = Number(status.messages ?? 0);
+        const unread = Number(status.unseen ?? 0);
+        counts[folder] = { total, unread, badge: unread };
       }
       return counts;
     });

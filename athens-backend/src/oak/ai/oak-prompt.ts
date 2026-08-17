@@ -12,6 +12,7 @@ Rules:
 6. Answer every fillable question on the page — required AND optional / voluntary.
    - Include voluntary self-identification, EEO, demographics, preferences, and extra profile links.
    - Do not skip a field merely because it is labeled optional, voluntary, or "decline to answer" is available.
+   - Every combobox / select / dropdown in the tree must get a fill or select_radio action, including multi-selects and controls whose options are not expanded in the snapshot.
    - Goal: cover all, all must all — leave no answerable control blank.
 7. Values: the applicant profile is authoritative for personal facts (identity, contact, location, citizenship / immigration / work authorization, education, experience, and demographics when provided).
    - When a profile field clearly answers a question, choose the option that matches that fact — even if a "None / Not applicable / Decline / Prefer not to say" option also exists.
@@ -24,7 +25,7 @@ Rules:
 10. Explicitly mark the submit button as forbidden.
 11. For combobox / select / dropdown controls (including placeholders like "Select..."):
     - Prefer action "fill" or "select_radio".
-    - Set value to the exact option label for THAT control when the Pure/Meta tree lists options (copy spelling/casing from the tree for that field only).
+    - Set value to the exact option label for THAT control when the Pure/Meta tree lists options (copy spelling/casing from the tree for that field only). If the tree omits options, still emit a concrete answer; the runtime matches it to the live list.
     - Target the combobox / select / dropdown control itself — not a child option or list item index. Option nodes are often replaced after another field changes.
     - Never reuse an option label from a different question (e.g. Gender's "Decline To Self Identify" is wrong for Disability/Veteran — use that field's own decline/opt-out wording).
     - If several options could fit, choose the most likely one for a typical strong applicant matching the profile; do not pause solely for ambiguity.
@@ -113,8 +114,13 @@ export const MATCH_OPTION_SYSTEM_PROMPT = `You match an intended form answer to 
 
 Rules:
 1. Return matched_option as an EXACT copy of one string from the provided options list, or null.
-2. Prefer semantic equivalence over wording (e.g. "I am not a protected veteran" may match "No, I am not a veteran or active member").
+2. Prefer semantic equivalence over wording (e.g. "I am not a protected veteran" may match "No, I am not a veteran or active member"; "I agree" may match "I Consent"; an acknowledgment intended value may match that field's Yes).
 3. Never invent, paraphrase, or alter an option string.
 4. Do not pick a longer proper-superset name when the intended value is a shorter exact school/org/place (e.g. intended "Pacific University" must not match "Alaska Pacific University"). Prefer the option whose wording is the same entity, not a different entity that merely contains the words.
-5. If no option is a confident match (about 0.9+), return matched_option null.
-6. confidence is 0–1.`;
+5. Lettered or numbered choices ("A.", "B)", "1.") are still the same option — match on the meaning after the marker, including when the intended value is a short paraphrase of a range, level, or "none / no experience" choice.
+6. A listed option that is a more general or more specific wording of the intended answer is still a match (degree level vs discipline wording; a short demographic label vs the listed category).
+7. Pick the closest option that could reasonably be the intended answer. Return matched_option null only when none of the listed options could be that answer.
+8. If the intended value is a short yes/no (or true/false) and the options are not themselves a yes/no pair, use the field label: Yes means the applicant has that experience or the affirmative of the question — pick the strongest listed option that asserts experience or ability, not the none / unfamiliar choice. No means the none / no-experience / unfamiliar choice.
+9. If the intended value names a skill, pattern, tool, or topic that is not copied verbatim in the list, still pick the listed option that best covers it (including a "multiple / several / general / in production" option when that umbrella would include the named item). Do not return null merely because the wording differs.
+10. confidence is 0–1.
+11. Return only valid json. Do not include Markdown or explanatory text.`;

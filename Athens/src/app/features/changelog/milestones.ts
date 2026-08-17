@@ -14,6 +14,22 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "vps-memory",
+    version: "0.15.0",
+    title: "VPS memory",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Keep Job Search and Mail stable instead of the host filling RAM a few hours after a restart.",
+    tags: ["Job Search", "Mail"],
+    current: true,
+    changes: [
+      "Job Search company cards send only the jobs on the page, not every role id at that company",
+      "Mail sync reads a bounded page of new messages, and folder badges no longer load every unread id",
+    ],
+  },
+  {
     id: "resume-word-filename",
     version: "0.14.0",
     title: "Word file name",
@@ -23,7 +39,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Word downloads keep the candidate’s full name, including spaces, as in John Doe.docx.",
     tags: ["Resumes"],
-    current: true,
     changes: [
       "Generate and History Word files use the full name as-is, such as John Doe.docx",
     ],

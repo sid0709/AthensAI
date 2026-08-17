@@ -25,5 +25,20 @@ export const JOB_WORKER_POOL_MAX_IDS = 150;
 
 export const WORKER_HEARTBEAT_MS = 5_000;
 export const WORKER_LEASE_MS = 60_000;
-export const SSE_POLL_MS = 1_000;
+export const SSE_POLL_MS = 10_000;
 export const SSE_HEARTBEAT_MS = 15_000;
+export const WORKER_HEALTH_PROBE_TTL_MS = 5_000;
+
+export type BackgroundWorkersMode = 'embedded' | 'worker' | 'off';
+
+/** `off` = API only (split deploy). `worker` = claim loop, no public API duties. */
+export function backgroundWorkersMode(
+  env = process.env,
+): BackgroundWorkersMode {
+  const mode = String(env.BACKGROUND_WORKERS_MODE || 'embedded')
+    .trim()
+    .toLowerCase();
+  if (mode === 'off' || mode === 'disabled') return 'off';
+  if (mode === 'worker' || mode === 'split-worker') return 'worker';
+  return 'embedded';
+}

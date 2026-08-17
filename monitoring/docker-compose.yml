@@ -59,6 +59,10 @@ services:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     restart: unless-stopped
     privileged: true
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      - --store_container_labels=false
     devices:
       - /dev/kmsg:/dev/kmsg
     volumes:

@@ -3,6 +3,7 @@ import { ProfileLlmAuthService } from '../../ai/auth/profile-llm-auth.service';
 import { OpenAiChatService } from '../../ai/openai/openai-chat.service';
 import { AI_USAGE_FEATURES } from '../../ai-usage/constants/ai-usage.constants';
 import { AiUsageRecorderService } from '../../ai-usage/ai-usage-recorder.service';
+import { oakMatchOptionMaxOutputTokens } from '../constants/oak.constants';
 import { MATCH_OPTION_SYSTEM_PROMPT } from './oak-prompt';
 import { summarizeUsage } from './oak-pricing';
 import { OakResponsesService } from './oak-responses.service';
@@ -48,12 +49,39 @@ export class OakMatchOptionService {
       'Visible options:',
       ...list.map((opt, i) => `${i + 1}. ${opt}`),
       'Pick the best matching option string exactly, or null.',
+      'Respond with json.',
     ]
       .filter(Boolean)
       .join('\n');
 
     const startedAt = new Date();
     const t0 = Date.now();
+    // #region agent log
+    try {
+      const { appendFile } = await import('fs/promises');
+      await appendFile(
+        '/Users/robin/Desktop/Utils/AthensAI/.cursor/debug-543c46.log',
+        `${JSON.stringify({
+          sessionId: '543c46',
+          runId: 'post-fix',
+          hypothesisId: 'G',
+          location: 'oak-match-option.service.ts:entry',
+          message: 'match-option request',
+          data: {
+            optionCount: list.length,
+            intendedLen: input.intendedValue.trim().length,
+            fieldLabelLen: String(input.fieldLabel || '').trim().length,
+            jsonMode: false,
+            promptHasJson: /json/i.test(`${MATCH_OPTION_SYSTEM_PROMPT}\n${userPrompt}`),
+            provider: auth.provider,
+          },
+          timestamp: Date.now(),
+        })}\n`,
+      );
+    } catch {
+      /* ignore */
+    }
+    // #endregion
     try {
       const raw =
         auth.provider === 'openai'
@@ -63,7 +91,7 @@ export class OakMatchOptionService {
                 systemPrompt: MATCH_OPTION_SYSTEM_PROMPT,
                 userPrompt,
                 format: MATCH_OPTION_FORMAT,
-                maxOutputTokens: 400,
+                maxOutputTokens: oakMatchOptionMaxOutputTokens(),
                 clampReasoningToLow: true,
               },
             )
@@ -90,6 +118,35 @@ export class OakMatchOptionService {
         );
         matched = recovered || null;
       }
+
+      // #region agent log
+      try {
+        const { appendFile } = await import('fs/promises');
+        await appendFile(
+          '/Users/robin/Desktop/Utils/AthensAI/.cursor/debug-543c46.log',
+          `${JSON.stringify({
+            sessionId: '543c46',
+            runId: 'post-fix',
+            hypothesisId: 'N',
+            location: 'oak-match-option.service.ts:parsed',
+            message: 'match-option parsed',
+            data: {
+              optionCount: list.length,
+              intendedLen: input.intendedValue.trim().length,
+              fieldLabelLen: String(input.fieldLabel || '').trim().length,
+              hasMatch: Boolean(matched),
+              confidence:
+                typeof parsed.confidence === 'number'
+                  ? Math.round(parsed.confidence * 100)
+                  : 0,
+            },
+            timestamp: Date.now(),
+          })}\n`,
+        );
+      } catch {
+        /* ignore */
+      }
+      // #endregion
 
       await this.usage.record({
         feature: AI_USAGE_FEATURES.oakMatchOption,
@@ -120,6 +177,30 @@ export class OakMatchOptionService {
         usage: raw.usage,
       };
     } catch (error) {
+      // #region agent log
+      try {
+        const { appendFile } = await import('fs/promises');
+        await appendFile(
+          '/Users/robin/Desktop/Utils/AthensAI/.cursor/debug-543c46.log',
+          `${JSON.stringify({
+            sessionId: '543c46',
+            runId: 'post-fix',
+            hypothesisId: 'G',
+            location: 'oak-match-option.service.ts:catch',
+            message: 'match-option backend error',
+            data: {
+              optionCount: list.length,
+              errorKind: String(
+                error instanceof Error ? error.message : error,
+              ).slice(0, 180),
+            },
+            timestamp: Date.now(),
+          })}\n`,
+        );
+      } catch {
+        /* ignore */
+      }
+      // #endregion
       await this.usage.record({
         feature: AI_USAGE_FEATURES.oakMatchOption,
         applierName: input.applierName,
@@ -148,7 +229,9 @@ export class OakMatchOptionService {
         { role: 'system', content: MATCH_OPTION_SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },
       ],
-      jsonMode: true,
+      // json_object mode 400s unless the prompt contains "json"; keep
+      // structured replies via the prompt and parse the text instead.
+      jsonMode: false,
       temperature: 0.1,
     });
     const model = completion.model || auth.model;

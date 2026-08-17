@@ -113,3 +113,17 @@ test("drops unloaded matching ids when marking siblings applied", () => {
   assert.deepEqual(result.groups[0].matchingJobIds, ["primary"]);
   assert.equal(result.removedJobs, 3);
 });
+
+test("incomplete matching id page refreshes after applying extra siblings", () => {
+  const groups: CompanyJobGroup[] = [{
+    companyId: "acme",
+    company: { name: "Acme" },
+    jobs: [job("primary"), job("b")],
+    matchingJobCount: 20,
+    matchingJobIds: ["primary", "b"],
+    nextMemberOffset: 2,
+  }];
+  const result = dropMatchingJobsById(groups, ["b", "c", "d"]);
+  assert.equal(result.needsDirectoryRefresh, true);
+  assert.deepEqual(result.groups[0].jobs.map(({ id }) => id), ["primary"]);
+});
