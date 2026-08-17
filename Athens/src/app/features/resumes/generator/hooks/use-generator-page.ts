@@ -13,6 +13,7 @@ import {
   getResumeGenerationTaskResult,
 } from "@/app/api/backgroundTasks";
 import { buildResumeModel } from "../build-resume-model";
+import { resumeDownloadFileName } from "../../lib/resumeFileName";
 import { templateById } from "../constants/templates";
 import {
   defaultConfig,
@@ -327,7 +328,7 @@ export function useGeneratorPage() {
 
   // Export the live preview to Word (DOCX only — PDF is not supported).
   const exportResume = async (format: "docx" = "docx") => {
-    const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.docx`;
+    const fileName = resumeDownloadFileName(identity?.fullName);
 
     if (usingUploadedTemplate) {
       if (!generated) {

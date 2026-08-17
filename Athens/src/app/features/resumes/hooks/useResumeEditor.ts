@@ -18,6 +18,7 @@ import {
 import { getEditorDraft, saveEditorDraft } from "../../../services/resumeStorage";
 import type { EditorDraft, GeneratorIdentity, RefinementStep, SectionId } from "../../../types/resume";
 import { buildResumeModel, exportResumeServer, fontStack } from "../lib/buildResumeModel";
+import { resumeDownloadFileName } from "../lib/resumeFileName";
 import { resolveTemplateId } from "../lib/templates";
 import {
   DEFAULT_SYSTEM_INSTRUCTION,
@@ -359,7 +360,7 @@ export function useResumeEditor() {
     async (_format: "docx" = "docx") => {
       if (!draft) throw new Error("No draft");
       const identity = draft.generatorIdentity ?? generatorIdentity;
-      const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.docx`;
+      const fileName = resumeDownloadFileName(identity?.fullName);
       await exportResumeServer(
         {
           model: buildResumeModel(draft, identity),

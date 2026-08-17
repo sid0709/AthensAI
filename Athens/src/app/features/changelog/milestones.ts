@@ -14,6 +14,21 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "resume-word-filename",
+    version: "0.14.0",
+    title: "Word file name",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Word downloads keep the candidate’s full name, including spaces, as in John Doe.docx.",
+    tags: ["Resumes"],
+    current: true,
+    changes: [
+      "Generate and History Word files use the full name as-is, such as John Doe.docx",
+    ],
+  },
+  {
     id: "resume-preview-draft",
     version: "0.13.0",
     title: "Resume draft in preview",
@@ -23,7 +38,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Keep the generated résumé in the live preview when a run fails after the model steps finish.",
     tags: ["Resumes"],
-    current: true,
     changes: [
       "Summary, Skills, and Experience land in the preview as each final step completes",
       "If saving the run fails, the draft stays visible instead of falling back to placeholder text",

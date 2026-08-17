@@ -3,6 +3,7 @@ import { AlertTriangle, Briefcase, CheckCircle2, ChevronLeft, ChevronRight, Cloc
 import { useApi } from "@/api/useApi";
 import { API_BASE } from "@/lib/api-base";
 import { deleteGenerationRun, downloadGenerationDocx } from "../../../../services/resumeApi";
+import { resumeDownloadFileName } from "../../lib/resumeFileName";
 import { templateById } from "../constants/templates";
 import { defaultConfig, defaultTheme } from "../constants/defaults";
 import { ResumePreview } from "../preview/resume-preview";
@@ -181,13 +182,12 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
     if (!selected?.sections || downloadingId) return;
     const id = idStr(selected._id);
     if (!id) return;
-    const fallback =
-      String(selected.identity?.fullName || applierName || "Resume")
-        .replace(/[^\w.\-()+ ]+/g, "_")
-        .trim() || "Resume";
+    const fallback = resumeDownloadFileName(
+      String(selected.identity?.fullName || applierName || "Resume"),
+    );
     setDownloadingId(id);
     try {
-      await downloadGenerationDocx(id, `${fallback}.docx`);
+      await downloadGenerationDocx(id, fallback);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Word download failed");
     } finally {
