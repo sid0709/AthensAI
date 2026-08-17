@@ -8,6 +8,7 @@ import {
 } from "docx";
 import { saveAs } from "file-saver";
 import type { ResumeDocument } from "../../../types/resume";
+import { formatResumePeriodLabel } from "./formatResumeDate";
 
 export async function exportDocumentToDocx(doc: ResumeDocument, fileName: string) {
   const { identity, summary, experiences, skills, education } = doc;
@@ -42,7 +43,7 @@ export async function exportDocumentToDocx(doc: ResumeDocument, fileName: string
         ],
       }),
       new Paragraph({
-        children: [new TextRun({ text: `${exp.startDate} – ${exp.endDate} · ${exp.location}`, italics: true, size: 20 })],
+        children: [new TextRun({ text: `${formatResumePeriodLabel(`${exp.startDate} – ${exp.endDate}`)} · ${exp.location}`, italics: true, size: 20 })],
       })
     );
     for (const bullet of exp.bullets) {
@@ -74,7 +75,7 @@ export async function exportDocumentToDocx(doc: ResumeDocument, fileName: string
           new TextRun({ text: ` — ${edu.school}`, size: 24 }),
         ],
       }),
-      new Paragraph({ children: [new TextRun({ text: `${edu.graduationDate} · ${edu.location}`, size: 20 })] })
+      new Paragraph({ children: [new TextRun({ text: `${formatResumePeriodLabel(edu.graduationDate)} · ${edu.location}`, size: 20 })] })
     );
   }
 

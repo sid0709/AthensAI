@@ -430,7 +430,7 @@ export function MailAiLabelDialog({
             AI Label
           </DialogTitle>
           <DialogDescription>
-            Select inbox emails without custom labels. AI checks a short preview first, reads more only when needed,
+            Select inbox emails without custom labels. AI classifies using sender, subject, and truncated body text,
             and uses your profile default model.
           </DialogDescription>
         </DialogHeader>

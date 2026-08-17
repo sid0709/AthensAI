@@ -10,6 +10,7 @@ import type {
 } from "../../../../types/resume";
 import { SECTION_LABEL } from "../../lib/generatorDefaults";
 import { fontStack } from "../../lib/buildResumeModel";
+import { formatResumePeriodLabel } from "../../lib/formatResumeDate";
 import {
   SAMPLE_EDUCATION,
   SAMPLE_PREVIEW_CAREERS,
@@ -50,7 +51,9 @@ function docToCareers(doc: ResumeDocument, identity?: GeneratorIdentity | null):
       title: e.role,
       company: e.company,
       location: e.location,
-      period: `${e.startDate} – ${e.endDate}`.replace(/^ – | – $/, "").trim() || e.startDate || e.endDate,
+      period: formatResumePeriodLabel(
+        `${e.startDate} – ${e.endDate}`.replace(/^ – | – $/, "").trim() || e.startDate || e.endDate,
+      ),
       bullets: e.bullets,
     }));
   }
@@ -59,7 +62,7 @@ function docToCareers(doc: ResumeDocument, identity?: GeneratorIdentity | null):
       title: c.title,
       company: c.company,
       location: "",
-      period: c.period,
+      period: formatResumePeriodLabel(c.period),
       bullets: [],
     }));
   }
@@ -71,11 +74,15 @@ function docToEducation(doc: ResumeDocument, identity?: GeneratorIdentity | null
     return doc.education.map((e) => ({
       school: e.school,
       degree: e.degree,
-      period: e.graduationDate,
+      period: formatResumePeriodLabel(e.graduationDate),
     }));
   }
   if (identity?.education.length) {
-    return identity.education.map((e) => ({ school: e.school, degree: e.degree, period: e.period }));
+    return identity.education.map((e) => ({
+      school: e.school,
+      degree: e.degree,
+      period: formatResumePeriodLabel(e.period),
+    }));
   }
   return SAMPLE_EDUCATION;
 }

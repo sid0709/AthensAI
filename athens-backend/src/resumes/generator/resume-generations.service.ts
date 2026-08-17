@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ResumeService } from '../resume.service';
 import { buildDocxModelFromGeneration } from './lib/build-docx-model';
 import { cleanString } from './lib/clean-string';
+import { resumeDownloadFileName } from './lib/resume-file-name';
 import { ResumeExportDocxService } from './resume-export-docx.service';
 
 const GENERATIONS_COLLECTION = 'resume_generations';
@@ -173,11 +174,11 @@ export class ResumeGenerationsService {
       marginInches: Number(theme.margin) || 0.6,
       font: cleanString(theme.font) || 'Georgia',
     });
-    const safeName =
+    const fileName = resumeDownloadFileName(
       cleanString(identity.fullName) ||
-      cleanString(run.applierName) ||
-      'Resume';
-    const fileName = `${safeName.replace(/[^\w.\-()+ ]+/g, '_').trim() || 'Resume'}.docx`;
+        cleanString(run.applierName) ||
+        'Resume',
+    );
     return { buffer, fileName };
   }
 

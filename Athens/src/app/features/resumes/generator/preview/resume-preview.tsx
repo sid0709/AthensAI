@@ -8,6 +8,7 @@ import {
   SAMPLE_SUMMARY,
 } from "../constants/samples";
 import { fontStack } from "../constants/defaults";
+import { formatResumePeriodLabel } from "../../lib/formatResumeDate";
 import type {
   GeneratedContent,
   Identity,
@@ -69,11 +70,20 @@ export function ResumePreview({
   const skillGroups = generated?.skills && generated.skills.length ? generated.skills : SAMPLE_SKILL_GROUPS;
   const careers: PreviewCareer[] =
     generated?.experience && generated.experience.length
-      ? generated.experience
+      ? generated.experience.map((c) => ({ ...c, period: formatResumePeriodLabel(c.period) }))
       : identity && identity.careers.length
-        ? identity.careers.map((c) => ({ title: c.title, company: c.company, location: "", period: c.period, bullets: SAMPLE_BULLETS }))
+        ? identity.careers.map((c) => ({
+            title: c.title,
+            company: c.company,
+            location: "",
+            period: formatResumePeriodLabel(c.period),
+            bullets: SAMPLE_BULLETS,
+          }))
         : SAMPLE_PREVIEW_CAREERS;
-  const education = identity && identity.education.length ? identity.education : SAMPLE_EDUCATION;
+  const education =
+    identity && identity.education.length
+      ? identity.education.map((e) => ({ ...e, period: formatResumePeriodLabel(e.period) }))
+      : SAMPLE_EDUCATION;
   const marginPx = Math.round(theme.margin * 96);
   const nameColor = template.nameColor === "accent" ? theme.accent : theme.text;
   const contactSize = pt(Math.max(8, theme.baseSize - 1.5));

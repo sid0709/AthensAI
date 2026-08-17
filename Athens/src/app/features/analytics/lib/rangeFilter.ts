@@ -1,4 +1,5 @@
 import type { DateRange } from "../../../hooks/useAnalyticsFilters";
+import { formatAnalyticsDayLabel, type AnalyticsRange } from "./analyticsFilters";
 
 const RANGE_MONTHS: Record<DateRange, number> = {
   "7d": 1,
@@ -23,6 +24,13 @@ export function scaleMetric(value: number, range: DateRange): number {
   return Math.round(value * RANGE_SCALE[range]);
 }
 
-export function rangeLabel(range: DateRange): string {
+export function rangeLabel(
+  range: DateRange | AnalyticsRange,
+  custom?: { from?: string; to?: string },
+): string {
+  if (range === "all") return "all time";
+  if (range === "custom") {
+    return `${formatAnalyticsDayLabel(custom?.from ?? "")} – ${formatAnalyticsDayLabel(custom?.to ?? "")}`;
+  }
   return { "7d": "last 7 days", "30d": "last 30 days", "90d": "last 90 days", ytd: "year to date" }[range];
 }

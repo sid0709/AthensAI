@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ResumeGenerationsService } from './resume-generations.service';
+import { contentDispositionAttachment } from './lib/resume-file-name';
 
 @Controller('personal/resume-generations')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
@@ -58,7 +59,7 @@ export class ResumeGenerationsController {
     );
     res.setHeader(
       'Content-Disposition',
-      `${asAttachment ? 'attachment' : 'inline'}; filename="${fileName}"`,
+      `${asAttachment ? contentDispositionAttachment(fileName) : `inline; filename="${fileName.replace(/["\\\r\n]/g, '_')}"`}`,
     );
     res.setHeader('Content-Length', buffer.length);
     return res.end(buffer);

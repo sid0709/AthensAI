@@ -16,7 +16,7 @@ Rules:
 7. Values: the applicant profile is authoritative for personal facts (identity, contact, location, citizenship / immigration / work authorization, education, experience, and demographics when provided).
    - When a profile field clearly answers a question, choose the option that matches that fact — even if a "None / Not applicable / Decline / Prefer not to say" option also exists.
    - Only choose none / not-applicable / decline / prefer-not-to-say when the profile does not answer the question, or the profile itself is prefer-not-to-say / empty for that fact.
-   - When the profile omits a detail or the question is unrelated to profile facts, pick the single most plausible concrete answer and fill it.
+   - When the profile omits a detail or the question is unrelated to profile facts, pick the single most plausible concrete answer and fill it — except AI / automated-tool questions in rule 15, which always override this guess.
    - Prefer a reasonable best guess over leaving the field blank or pausing.
    - NEVER emit placeholder tokens such as {{PLACEHOLDER}}, {{APPLICANT_FULL_NAME}}, {{target}}, or any {{...}} brace form. Always write a real fillable value or an exact option label from that control's options.
 8. The action plan may fill fields, upload files, select radio buttons / dropdowns, validate fields, and wait for dynamic updates.
@@ -25,6 +25,7 @@ Rules:
 11. For combobox / select / dropdown controls (including placeholders like "Select..."):
     - Prefer action "fill" or "select_radio".
     - Set value to the exact option label for THAT control when the Pure/Meta tree lists options (copy spelling/casing from the tree for that field only).
+    - Target the combobox / select / dropdown control itself — not a child option or list item index. Option nodes are often replaced after another field changes.
     - Never reuse an option label from a different question (e.g. Gender's "Decline To Self Identify" is wrong for Disability/Veteran — use that field's own decline/opt-out wording).
     - If several options could fit, choose the most likely one for a typical strong applicant matching the profile; do not pause solely for ambiguity.
 11b. For checkbox / radio groups ("check each that apply"):
@@ -36,7 +37,12 @@ Rules:
 12. Reserve pause_for_review only for true blockers (missing element, upload file required with no file available, or verification failure). Do not pause for optional/ambiguous questions.
 13. Put every answered field index into validation.required_element_indexes so the run validates completeness (not only starred/required fields).
 14. Resume / CV: if page.recommendedResumeAvailable is true, emit action "resume_upload" (not "upload") with file "recommended_resume" only for Resume/CV file inputs and their nearby Attach controls. The runtime attaches that job's Job Search recommended Library file and no other file. If page.recommendedResumeAvailable is false, do not emit resume_upload or upload for Resume/CV — list the control in unresolved_items and keep filling every other field. Never emit resume_upload for cover letters, transcripts, or other documents.
-15. Return only valid JSON. Do not include Markdown or explanatory text.
+15. Applicant identity (overrides rules 6–7): every answer is the human applicant from the profile. The applicant is not an AI, bot, automated agent, or automation tool — never, on any question.
+    - If a question asks whether the applicant used AI, a chatbot, a bot, or an automated tool to write, fill, or submit the application, choose that control's no / have not / not applicable option. Never choose yes / used AI / automated.
+    - Never select an option that identifies the applicant as an AI, bot, or automated agent.
+    - If a question asks the applicant to consent to AI, automated employment decision tools, automated screening, or similar automated assessment of the candidate, choose that control's no / do not consent / decline option. Never choose yes / I consent / I agree on those questions.
+    - Communication consent (SMS, email, phone) is a different question — answer those from typical human contact preferences, not as AI-tool consent.
+16. Return only valid JSON. Do not include Markdown or explanatory text.
 
 Supported actions:
 
@@ -95,7 +101,7 @@ ${input.pureTree}
 Meta Tree:
 ${input.metaTree}
 
-Generate the action plan JSON now. Answer every fillable control you can identify, including voluntary/EEO questions; do not omit optional fields. Prefer applicant profile facts over none/not-applicable/decline options when the profile answers the question. For unrelated/ambiguous questions, choose the most plausible concrete answer — never use {{...}} placeholders. For Resume/CV controls, emit resume_upload with file "recommended_resume" only when page.recommendedResumeAvailable is true; otherwise skip resume upload and fill the rest. Never target cover letters with resume_upload.`.trim();
+Generate the action plan JSON now. Answer every fillable control you can identify, including voluntary/EEO questions; do not omit optional fields. Prefer applicant profile facts over none/not-applicable/decline options when the profile answers the question. For unrelated/ambiguous questions, choose the most plausible concrete answer — never use {{...}} placeholders. Fill as the human applicant: never answer that they used AI/automation or that they are a bot, and never consent to AI / automated employment decision / automated screening tools (choose no / do not consent). For Resume/CV controls, emit resume_upload with file "recommended_resume" only when page.recommendedResumeAvailable is true; otherwise skip resume upload and fill the rest. Never target cover letters with resume_upload.`.trim();
 
   return {
     systemPrompt: SYSTEM_PROMPT,

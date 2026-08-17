@@ -1,6 +1,5 @@
 import type { ElementType } from "react";
 import {
-  LayoutDashboard,
   Briefcase,
   FileText,
   Mail,
@@ -22,14 +21,12 @@ export type NavItem = {
   id: View;
   label: string;
   icon: ElementType;
-  comingSoon?: boolean;
   beta?: boolean;
   /** Only shown when account_info.permission === "admin" */
   admin?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, comingSoon: true },
   { id: "job-board", label: "Job Search", icon: Briefcase },
   { id: "title-review", label: "Review Titles", icon: ListChecks, beta: true },
   { id: "resumes", label: "My Resumes", icon: FileText },
@@ -47,7 +44,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
-  { label: "WORKSPACE", ids: ["dashboard", "job-board", "title-review", "resumes"] },
+  { label: "WORKSPACE", ids: ["job-board", "title-review", "resumes"] },
   {
     label: "TOOLS",
     ids: ["mail", "calendar", "notion", "bid-management", "apps-plugins", "firebase"],
@@ -57,7 +54,6 @@ export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
 ];
 
 export const VIEW_TITLES: Record<View, string> = {
-  dashboard: "Dashboard",
   "job-board": "Job Search",
   "title-review": "Review Titles",
   resumes: "Resume Generator",

@@ -1,6 +1,5 @@
 import type { ComponentType } from "react";
 import type { View } from "../types";
-import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { JobSearchPage } from "../features/job-search/JobSearchPage";
 import { ResumesPage } from "../features/resumes/ResumesPage";
 import { MailPage } from "../features/mail/MailPage";
@@ -17,7 +16,6 @@ import { NotionPage } from "../features/notion/NotionPage";
 import { TitleReviewPage } from "../features/title-review/TitleReviewPage";
 
 export const VIEW_COMPONENTS: Record<View, ComponentType> = {
-  dashboard: DashboardPage,
   "job-board": JobSearchPage,
   "title-review": TitleReviewPage,
   resumes: ResumesPage,

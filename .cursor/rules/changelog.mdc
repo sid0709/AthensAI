@@ -1,0 +1,35 @@
+---
+description: Update the Athens Changelog for user-facing product work; never list Oak
+alwaysApply: true
+---
+
+# Changelog
+
+Whenever you ship a **user-facing Athens product change**, update the in-app Changelog in the same change. Do not leave `milestones.ts` stale after a feature, fix, or UX change users can see.
+
+## Where it lives
+
+| File | Role |
+|------|------|
+| `Athens/src/app/features/changelog/milestones.ts` | Source of truth. Newest milestone first. |
+| `Athens/src/app/features/changelog/ChangelogPage.tsx` | Renders those milestones. Do not duplicate copy here. |
+
+## When to update
+
+- New or changed Job Search, Mail, Resumes, Bid Management, Lens, Apps & Plugins, Settings, or other Athens UI/API behavior users can notice.
+- User-visible bug fixes and performance improvements.
+- Bump `version` (semver), set `date` to today (`YYYY-MM-DD`), move `current: true` to the new entry, and drop it from the previous one.
+- Prefer one milestone per release/theme (several related bullets), not one entry per commit.
+- Docs, comments, tests-only, CI, and internal refactors with no user-visible effect do not need a changelog entry.
+
+## Never list Oak
+
+**Do not reflect Oak updates on the Changelog.** Oak (`Oak/`, `athens-backend/src/oak/**`, oak-update work, form-fill/auto-apply internals) is internal. Leave it off titles, summaries, tags, and change bullets.
+
+- Oak-only changes: do not add or edit a changelog milestone.
+- Mixed changes (Oak + product): changelog the product part only. Do not mention Oak, Project Oak, or oak-update.
+- Do not use an Oak branch name as `merge` / `branch` on a milestone.
+
+## Shape
+
+Follow existing entries in `milestones.ts`: `id`, `version`, `title`, `date`, `merge`, `summary`, `tags`, `changes[]`. Write user-facing bullets, not implementation notes.

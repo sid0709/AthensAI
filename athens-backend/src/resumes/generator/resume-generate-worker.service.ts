@@ -145,12 +145,17 @@ export class ResumeGenerateWorkerService {
             ) + 1,
         };
       } catch (err) {
+        const previous =
+          items[inputId] && typeof items[inputId] === 'object'
+            ? (items[inputId] as Record<string, unknown>)
+            : {};
         if (isAbortError(err) || signal.aborted) {
           cancelled += 1;
-          items[inputId] = { status: 'cancelled', step: null };
+          items[inputId] = { ...previous, status: 'cancelled', step: null };
         } else {
           failed += 1;
           items[inputId] = {
+            ...previous,
             status: 'failed',
             step: null,
             error: err instanceof Error ? err.message : String(err),
