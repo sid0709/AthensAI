@@ -29,6 +29,7 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
       "Analyze classifies many emails per AI request, with concurrent batches instead of one-by-one calls",
       "Requests send sender, subject, and truncated plain-text body — not full MIME or attachments",
       "Gmail label writes are grouped by mailbox and label, and the dialog reports real AI and write metrics",
+      "Changelog uses the same Athens Lens chrome as Job Search — system sans, quiet cards, and a 1px border",
     ],
   },
   {

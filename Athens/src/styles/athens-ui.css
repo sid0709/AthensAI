@@ -1349,6 +1349,92 @@ span.athens-chip:hover {
   color: var(--athens-text);
 }
 
+/* Changelog — same chrome as Job Search list pages */
+.athens-changelog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--athens-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.athens-changelog > li {
+  margin: 0;
+  padding: 0;
+}
+
+.athens-changelog__intro {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 12rem;
+  color: var(--athens-text-secondary);
+  font-size: var(--athens-font-size-sm);
+  line-height: var(--athens-line-height-normal);
+}
+
+.athens-changelog__icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--athens-text-secondary);
+}
+
+.athens-changelog__icon svg {
+  display: block;
+}
+
+.athens-changelog__title {
+  margin: 0;
+  font-size: var(--athens-font-size-md);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: var(--athens-line-height-tight);
+}
+
+.athens-changelog__summary {
+  margin: 0;
+  color: var(--athens-text-secondary);
+  font-size: var(--athens-font-size-sm);
+  line-height: var(--athens-line-height-relaxed);
+}
+
+.athens-changelog__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.athens-changelog__changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--athens-space-2);
+  margin: 0;
+  padding: var(--athens-space-3) 0 0;
+  border-top: 1px solid var(--athens-border);
+  list-style: none;
+}
+
+.athens-changelog__change {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--athens-space-2);
+  font-size: var(--athens-font-size-sm);
+  line-height: var(--athens-line-height-relaxed);
+  color: var(--athens-text);
+}
+
+.athens-changelog__change-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  color: var(--athens-text-muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .athens-tab,
   .athens-chip,
