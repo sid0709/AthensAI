@@ -60,24 +60,31 @@ function DateRow({
   return (
     <div className="grid grid-cols-2 gap-2">
       <div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Start</p>
+        <p className="athens-eyebrow mb-1">Start</p>
         <div className="grid grid-cols-2 gap-1.5">
-          <AthensSelect size="sm" value={startMonth || ""} onChange={(v) => onChange({ startMonth: v })} options={[...MONTH_OPTIONS]} placeholder="Mo" />
+          <AthensSelect
+            size="sm"
+            tone="lens"
+            value={startMonth || ""}
+            onChange={(v) => onChange({ startMonth: v })}
+            options={[...MONTH_OPTIONS]}
+            placeholder="Mo"
+          />
           <AthensInput
             inputMode="numeric"
             placeholder="Yr"
             maxLength={4}
             value={startYear}
             onChange={(e) => onChange({ startYear: e.target.value.replace(/\D/g, "").slice(0, 4) })}
-            className="h-9 text-xs"
           />
         </div>
       </div>
       <div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">End</p>
+        <p className="athens-eyebrow mb-1">End</p>
         <div className="grid grid-cols-2 gap-1.5">
           <AthensSelect
             size="sm"
+            tone="lens"
             value={endMonthValue}
             onChange={(v) => {
               if (allowPresent && v === "present") onChange({ endPresent: true, endMonth: "", endYear: "" });
@@ -93,7 +100,7 @@ function DateRow({
             disabled={disabledEnd}
             value={disabledEnd ? "" : endYear}
             onChange={(e) => onChange({ endYear: e.target.value.replace(/\D/g, "").slice(0, 4), endPresent: false })}
-            className={cn("h-9 text-xs", disabledEnd && "opacity-45 cursor-not-allowed")}
+            className={cn(disabledEnd && "opacity-45 cursor-not-allowed")}
           />
         </div>
       </div>
@@ -129,44 +136,37 @@ function TimelineNode({
     : item.data.title.trim() || item.data.company.trim() || "Role";
 
   return (
-    <div className="relative flex gap-3">
-      <div className="flex flex-col items-center shrink-0 w-9">
-        <div
-          className={cn(
-            "w-9 h-9 rounded-full grid place-items-center z-10 shadow-sm",
-            isEducation ? "bg-violet-500/15 text-violet-600" : "bg-primary/15 text-primary",
-          )}
-        >
-          <Icon className="w-4 h-4" />
+    <div className="athens-settings__timeline-node">
+      <div className="athens-settings__timeline-rail">
+        <div className="athens-settings__timeline-dot">
+          <Icon size={16} aria-hidden="true" />
         </div>
-        {!isLast && <div className="w-px flex-1 min-h-[12px] bg-border mt-1" />}
+        {!isLast && <div className="athens-settings__timeline-line" />}
       </div>
 
-      <div className="flex-1 min-w-0 rounded-xl border border-border bg-secondary/20 p-3 mb-3">
+      <div className="athens-settings__timeline-item">
         <div className="flex items-start gap-2 mb-2 min-w-0">
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-foreground truncate">{headline}</p>
-            <p className="text-[10px] font-mono tabular-nums text-muted-foreground mt-0.5">{period}</p>
+            <p className="athens-card-title truncate">{headline}</p>
+            <p className="athens-card-meta mt-0.5" style={{ fontFamily: "var(--font-athens-mono)" }}>{period}</p>
           </div>
-          {isCurrent && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 font-medium shrink-0">
-              Current
-            </span>
-          )}
+          {isCurrent && <span className="athens-status shrink-0">Current</span>}
           <button
             type="button"
-            className="icon-btn text-muted-foreground hover:text-destructive w-7 h-7 shrink-0 disabled:opacity-30"
+            className="athens-icon-btn"
+            style={{ width: 32, height: 32, minHeight: 32 }}
             disabled={isEducation ? educationCount <= 1 : careerCount <= 1}
             onClick={() => (isEducation ? onRemoveEducation(item.index) : onRemoveCareer(item.index))}
+            aria-label={isEducation ? "Remove education" : "Remove role"}
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 size={14} aria-hidden="true" />
           </button>
         </div>
 
         {isEducation ? (
           <div className="space-y-2">
-            <AthensInput placeholder="School" value={item.data.school} onChange={(e) => onUpdateEducation(item.index, { school: e.target.value })} className="h-9 text-xs" />
-            <AthensInput placeholder="Degree" value={item.data.diploma} onChange={(e) => onUpdateEducation(item.index, { diploma: e.target.value })} className="h-9 text-xs" />
+            <AthensInput placeholder="School" value={item.data.school} onChange={(e) => onUpdateEducation(item.index, { school: e.target.value })} />
+            <AthensInput placeholder="Degree" value={item.data.diploma} onChange={(e) => onUpdateEducation(item.index, { diploma: e.target.value })} />
             <DateRow
               startMonth={item.data.startMonth}
               startYear={item.data.startYear}
@@ -177,14 +177,13 @@ function TimelineNode({
           </div>
         ) : (
           <div className="space-y-2">
-            <AthensInput placeholder="Company" value={item.data.company} onChange={(e) => onUpdateCareer(item.index, { company: e.target.value })} className="h-9 text-xs" />
-            <AthensInput placeholder="Title" value={item.data.title} onChange={(e) => onUpdateCareer(item.index, { title: e.target.value })} className="h-9 text-xs" />
+            <AthensInput placeholder="Company" value={item.data.company} onChange={(e) => onUpdateCareer(item.index, { company: e.target.value })} />
+            <AthensInput placeholder="Title" value={item.data.title} onChange={(e) => onUpdateCareer(item.index, { title: e.target.value })} />
             <AthensTextarea
               placeholder="Product, domain, project, or responsibilities…"
               value={item.data.description}
               onChange={(e) => onUpdateCareer(item.index, { description: e.target.value })}
               rows={3}
-              className="text-xs min-h-[72px]"
             />
             <DateRow
               startMonth={item.data.startMonth}
@@ -227,40 +226,32 @@ export function CareerTimeline({
   ].sort((a, b) => timelineSortKey(b.data) - timelineSortKey(a.data));
 
   return (
-    <section className="w-full rounded-xl border border-border bg-card overflow-hidden shadow-sm xl:sticky xl:top-6">
-      <div className="px-4 py-3 border-b border-border bg-gradient-to-r from-primary/5 via-violet-500/5 to-transparent">
-        <div className="flex items-center gap-2 min-w-0 mb-2">
-          <div className="w-8 h-8 rounded-xl bg-primary/10 grid place-items-center shrink-0">
-            <Sparkles className="w-4 h-4 text-primary" />
-          </div>
+    <section className="athens-card athens-settings__timeline xl:sticky xl:top-6">
+      <div className="athens-settings__timeline-head">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="athens-settings__timeline-dot">
+            <Sparkles size={16} aria-hidden="true" />
+          </span>
           <div className="min-w-0">
-            <h3 className="text-sm font-bold text-foreground">Career timeline</h3>
-            <p className="text-[10px] text-muted-foreground">Most recent first</p>
+            <h3 className="athens-card-title">Career timeline</h3>
+            <p className="athens-card-meta">Most recent first</p>
           </div>
         </div>
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onAddEducation}
-            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-violet-500/25 bg-violet-500/10 text-[11px] text-violet-700 dark:text-violet-300 font-semibold hover:bg-violet-500/15"
-          >
-            <Plus className="w-3 h-3" />
+          <button type="button" onClick={onAddEducation} className="athens-btn flex-1">
+            <Plus size={14} aria-hidden="true" />
             Education
           </button>
-          <button
-            type="button"
-            onClick={onAddCareer}
-            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-primary/25 bg-primary/10 text-[11px] text-primary font-semibold hover:bg-primary/15"
-          >
-            <Plus className="w-3 h-3" />
+          <button type="button" onClick={onAddCareer} className="athens-btn flex-1">
+            <Plus size={14} aria-hidden="true" />
             Role
           </button>
         </div>
       </div>
 
-      <div className="p-3 max-h-[calc(100vh-10rem)] overflow-y-auto subtle-scroll">
+      <div className="athens-settings__timeline-body subtle-scroll">
         {items.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-8 text-center">Add education or work history.</p>
+          <p className="athens-settings__empty">Add education or work history.</p>
         ) : (
           items.map((item, index) => (
             <TimelineNode

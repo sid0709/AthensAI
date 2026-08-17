@@ -32,10 +32,10 @@ const grid2 = "grid grid-cols-2 gap-2";
 
 function SectionCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
-      <div className="mb-3">
-        <h3 className="text-sm font-bold text-foreground">{title}</h3>
-        {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+    <div className="athens-card">
+      <div>
+        <h3 className="athens-card-title">{title}</h3>
+        {subtitle && <p className="athens-card-meta mt-0.5">{subtitle}</p>}
       </div>
       <div className="space-y-2">{children}</div>
     </div>
@@ -51,18 +51,18 @@ function KeyTestRow({ check, onTest }: { check: KeyCheck; onTest: () => void }) 
         type="button"
         onClick={onTest}
         disabled={check.state === "checking"}
-        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-xs font-semibold hover:bg-secondary disabled:opacity-50"
+        className="athens-btn"
       >
         {check.state === "checking" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
         Test key
       </button>
       {check.state === "ok" && (
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+        <span className="inline-flex items-center gap-1 athens-card-meta">
           <CheckCircle2 className="w-3.5 h-3.5" /> {check.message || "Valid"}
         </span>
       )}
       {check.state === "fail" && (
-        <span className="inline-flex items-center gap-1 text-xs text-destructive">
+        <span className="inline-flex items-center gap-1 athens-card-meta" style={{ color: "var(--athens-danger)" }}>
           <XCircle className="w-3.5 h-3.5 shrink-0" /> <span className="truncate max-w-[240px]">{check.message || "Invalid"}</span>
         </span>
       )}
@@ -99,6 +99,7 @@ export function ProfileIdentityCard({
         </FormField>
         <AthensSelect
           size="sm"
+          tone="lens"
           label="Gender"
           value={profile.gender}
           onChange={(v) => onChange({ gender: v as Gender })}
@@ -106,6 +107,7 @@ export function ProfileIdentityCard({
         />
         <AthensSelect
           size="sm"
+          tone="lens"
           label="Pronouns"
           value={profile.pronouns}
           onChange={(v) => onChange({ pronouns: v as Pronouns })}
@@ -113,6 +115,7 @@ export function ProfileIdentityCard({
         />
         <AthensSelect
           size="sm"
+          tone="lens"
           label="Orientation"
           value={profile.sexualOrientation}
           onChange={(v) => onChange({ sexualOrientation: v as SexualOrientation })}
@@ -135,7 +138,7 @@ export function ProfileIdentityCard({
         />
       </FormField>
 
-      <div className="border-t border-border pt-2 space-y-2">
+      <div className="athens-settings__split space-y-2">
         <FormField label="Street address">
           <AthensInput value={profile.address} onChange={(e) => onChange({ address: e.target.value })} autoComplete="street-address" className="h-9 text-sm" />
         </FormField>
@@ -160,7 +163,7 @@ export function ProfileIdentityCard({
         </div>
       </div>
 
-      <div className="border-t border-border pt-2">
+      <div className="athens-settings__split">
         <div className={grid2}>
           <FormField label="LinkedIn" className="col-span-2">
             <AthensInput type="url" value={profile.linkedin} onChange={(e) => onChange({ linkedin: e.target.value })} placeholder="https://linkedin.com/in/…" className="h-9 text-sm" />
@@ -189,6 +192,7 @@ export function ProfileDisclosuresCard({
       <div className={grid2}>
         <AthensSelect
           size="sm"
+          tone="lens"
           label="Hispanic / Latino"
           value={profile.demographicHispanic}
           onChange={(v) => onChange({ demographicHispanic: v as YesNoDecline })}
@@ -196,6 +200,7 @@ export function ProfileDisclosuresCard({
         />
         <AthensSelect
           size="sm"
+          tone="lens"
           label="Race / ethnicity"
           value={profile.demographicRaceEthnicity}
           onChange={(v) => onChange({ demographicRaceEthnicity: v as RaceEthnicity })}
@@ -203,6 +208,7 @@ export function ProfileDisclosuresCard({
         />
         <AthensSelect
           size="sm"
+          tone="lens"
           label="Visa / sponsorship"
           value={profile.sponsorship}
           onChange={(v) => onChange({ sponsorship: v as YesNoDecline })}
@@ -213,6 +219,7 @@ export function ProfileDisclosuresCard({
         />
         <AthensSelect
           size="sm"
+          tone="lens"
           label="Disability"
           value={profile.demographicDisability}
           onChange={(v) => onChange({ demographicDisability: v as YesNoDecline })}
@@ -223,6 +230,7 @@ export function ProfileDisclosuresCard({
         />
         <AthensSelect
           size="sm"
+          tone="lens"
           label="Veteran status"
           className="col-span-2"
           value={profile.demographicMilitaryStatus}

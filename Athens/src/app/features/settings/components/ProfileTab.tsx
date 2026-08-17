@@ -290,8 +290,8 @@ export function ProfileTab() {
 
   if (!applierReady) {
     return (
-      <div className="flex items-center justify-center py-16 text-muted-foreground">
-        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+      <div className="athens-settings__loading">
+        <Loader2 className="w-5 h-5 animate-spin" />
         Loading…
       </div>
     );
@@ -299,97 +299,99 @@ export function ProfileTab() {
 
   if (!applier?.name) {
     return (
-      <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground max-w-lg">
+      <div className="athens-callout max-w-lg">
         Sign in to edit and save your auto-bid profile.
       </div>
     );
   }
 
+  const refreshPct =
+    refreshProgress && refreshProgress.total > 0
+      ? Math.min(100, Math.round((refreshProgress.done / refreshProgress.total) * 100))
+      : 8;
+
   return (
     <div className="max-w-none w-full">
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-foreground">Auto-bid profile</h2>
-          <p className="text-sm text-muted-foreground">Identity, preferences, and career history</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <ThemeToggle />
-          {isBeta && (
-            <button
-              type="button"
-              onClick={() => void refreshResumes()}
-              disabled={refreshStopping || (refreshingResumes && !activeResumeRefreshTask) || saving || loading}
-              className={`inline-flex items-center gap-2 border px-4 py-2.5 rounded-xl text-sm font-bold min-h-10 disabled:opacity-50 ${
-						refreshingResumes
-							? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
-							: "border-border bg-secondary text-foreground hover:bg-muted"
-					}`}
-              title={refreshingResumes
-						? "Stop résumé updates immediately"
-						: "Save profile, then re-apply name, contact, and LinkedIn to all generated résumé PDFs"}
-            >
-              {refreshingResumes ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              {refreshStopping
-						? "Stopping…"
-						: refreshingResumes
-                ? refreshProgress && refreshProgress.total > 0
-                  ? `Update ${refreshProgress.done}/${refreshProgress.total} · Stop`
-                  : "Stop update"
-                : "Update generated résumés"}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={saving || loading || refreshingResumes}
-            className="bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10 disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
+      <div className="athens-toolbar mb-2">
+        <div className="athens-surface">
+          <div className="athens-toolbar-row">
+            <div className="min-w-0">
+              <h2 className="athens-settings__title">Auto-bid profile</h2>
+              <p className="athens-settings__lede">Identity, preferences, and career history</p>
+            </div>
+            <div className="athens-toolbar-actions ml-auto">
+              <ThemeToggle tone="lens" />
+              {isBeta && (
+                <button
+                  type="button"
+                  onClick={() => void refreshResumes()}
+                  disabled={refreshStopping || (refreshingResumes && !activeResumeRefreshTask) || saving || loading}
+                  className="athens-btn"
+                  title={refreshingResumes
+                    ? "Stop résumé updates immediately"
+                    : "Save profile, then re-apply name, contact, and LinkedIn to all generated résumé PDFs"}
+                >
+                  {refreshingResumes ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  {refreshStopping
+                    ? "Stopping…"
+                    : refreshingResumes
+                      ? refreshProgress && refreshProgress.total > 0
+                        ? `Update ${refreshProgress.done}/${refreshProgress.total} · Stop`
+                        : "Stop update"
+                      : "Update generated résumés"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void save()}
+                disabled={saving || loading || refreshingResumes}
+                className="athens-btn-primary"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
       {refreshingResumes && refreshProgress && (
-        <div className="mb-4 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-          <div className="flex items-center justify-between gap-3 mb-2">
-            <p className="text-sm font-bold text-foreground">
-              Updating outdated résumés
-              {refreshProgress.total > 0
-                ? ` · ${refreshProgress.done} of ${refreshProgress.total}`
-                : "…"}
-            </p>
-            <p className="text-xs text-muted-foreground tabular-nums">
-              {refreshProgress.total > 0
-                ? `${refreshProgress.left} left${refreshProgress.active ? ` · ${refreshProgress.active} active` : ""}`
-                : "Starting…"}
-            </p>
+        <div className="athens-card mb-4">
+          <div className="athens-progress">
+            <div className="athens-progress__meta">
+              <span>
+                Updating outdated résumés
+                {refreshProgress.total > 0
+                  ? ` · ${refreshProgress.done} of ${refreshProgress.total}`
+                  : "…"}
+              </span>
+              <span>
+                {refreshProgress.total > 0
+                  ? `${refreshProgress.left} left${refreshProgress.active ? ` · ${refreshProgress.active} active` : ""}`
+                  : "Starting…"}
+              </span>
+            </div>
+            <div className="athens-progress__track">
+              <div
+                className={`athens-progress__bar${refreshProgress.total > 0 ? "" : " is-indeterminate"}`}
+                style={{ width: `${refreshPct}%` }}
+              />
+            </div>
+            {refreshProgress.total > 0 && (
+              <p className="athens-card-meta">
+                {refreshProgress.updated} updated
+                {refreshProgress.pdfs ? ` · ${refreshProgress.pdfs} PDFs` : ""}
+                {refreshProgress.alreadyCurrent ? ` · ${refreshProgress.alreadyCurrent} already current` : ""}
+                {refreshProgress.failed ? ` · ${refreshProgress.failed} failed` : ""}
+              </p>
+            )}
           </div>
-          <div className="h-2 rounded-full bg-secondary overflow-hidden">
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
-              style={{
-                width:
-                  refreshProgress.total > 0
-                    ? `${Math.min(100, Math.round((refreshProgress.done / refreshProgress.total) * 100))}%`
-                    : "8%",
-              }}
-            />
-          </div>
-          {refreshProgress.total > 0 && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {refreshProgress.updated} updated
-              {refreshProgress.pdfs ? ` · ${refreshProgress.pdfs} PDFs` : ""}
-              {refreshProgress.alreadyCurrent ? ` · ${refreshProgress.alreadyCurrent} already current` : ""}
-              {refreshProgress.failed ? ` · ${refreshProgress.failed} failed` : ""}
-            </p>
-          )}
         </div>
       )}
 
       {isBeta && !loading && !refreshingResumes && (
-        <p className="mb-4 text-xs text-muted-foreground">
+        <p className="athens-card-meta mb-4">
           After changing LinkedIn or other contact details, use{" "}
-          <span className="font-semibold text-foreground">Update generated résumés</span> to refresh outdated
+          <span className="font-semibold" style={{ color: "var(--athens-text)" }}>Update generated résumés</span> to refresh outdated
           Job Search / Agent PDF headers (skips ones already synced).
           {profile.updatedAt && profile.resumeUpdatedAt && profile.resumeUpdatedAt >= profile.updatedAt
             ? " All résumés are currently in sync."
@@ -400,14 +402,13 @@ export function ProfileTab() {
       )}
 
       {accountMissing && (
-        <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
-          No <span className="font-medium">{applier.name}</span> row in account_info yet. Create this account before saving the profile.
+        <div className="athens-callout mb-4">
+          No <strong>{applier.name}</strong> row in account_info yet. Create this account before saving the profile.
         </div>
       )}
 
-
       {loading ? (
-        <div className="rounded-xl border border-border bg-card p-10 text-sm text-muted-foreground text-center flex items-center justify-center gap-2">
+        <div className="athens-card athens-settings__loading">
           <Loader2 className="w-4 h-4 animate-spin" />
           Loading profile…
         </div>

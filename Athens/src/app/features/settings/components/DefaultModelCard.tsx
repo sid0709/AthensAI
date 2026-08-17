@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
-import { Button } from "../../../components/ui/button";
 import { fetchLlmModels, setDefaultModel } from "../../../services/profileApi";
 
 type Provider = "openai" | "deepseek";
@@ -79,19 +78,19 @@ export function DefaultModelCard({
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+    <div className="athens-card">
       <div>
-        <h3 className="text-sm font-bold text-foreground">Default AI model</h3>
-        <p className="text-xs text-muted-foreground mt-1">
+        <h3 className="athens-card-title">Default AI model</h3>
+        <p className="athens-card-meta mt-1">
           Used by résumé analysis and generation, job-title review, skill extraction,
           mail AI, and agent work. Setting a default validates the matching API key first.
         </p>
         {currentProvider && currentModel ? (
-          <p className="text-xs text-muted-foreground mt-2">
-            Current: <span className="font-semibold text-foreground">{currentProvider} · {currentModel}</span>
+          <p className="athens-card-meta mt-2">
+            Current: <strong>{currentProvider} · {currentModel}</strong>
           </p>
         ) : (
-          <p className="text-xs text-amber-600 mt-2">No default set — AI features remain unavailable until you choose one.</p>
+          <p className="athens-card-meta mt-2">No default set — AI features remain unavailable until you choose one.</p>
         )}
       </div>
 
@@ -99,7 +98,6 @@ export function DefaultModelCard({
         <select
           value={provider}
           onChange={(e) => setProvider(e.target.value as Provider)}
-          className="h-9 rounded-md border border-border bg-secondary/60 px-2 text-sm text-foreground outline-none"
           aria-label="Model provider"
         >
           <option value="deepseek">DeepSeek</option>
@@ -110,7 +108,7 @@ export function DefaultModelCard({
           value={model}
           onChange={(e) => setModel(e.target.value)}
           disabled={loadingModels || models.length === 0}
-          className="h-9 min-w-[180px] flex-1 rounded-md border border-border bg-secondary/60 px-2 text-sm text-foreground outline-none disabled:opacity-60"
+          className="min-w-[180px] flex-1"
           aria-label="Model"
         >
           {loadingModels ? (
@@ -126,16 +124,19 @@ export function DefaultModelCard({
           )}
         </select>
 
-        <Button className="h-9" disabled={saving || !model || isCurrent} onClick={() => void save()}>
+        <button
+          type="button"
+          className="athens-btn-primary"
+          disabled={saving || !model || isCurrent}
+          onClick={() => void save()}
+        >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           {isCurrent ? "Current default" : "Set as default"}
-        </Button>
+        </button>
       </div>
 
       {result ? (
-        <div
-          className={`flex items-center gap-1.5 text-xs ${result.ok ? "text-emerald-600" : "text-rose-600"}`}
-        >
+        <div className="flex items-center gap-1.5 athens-card-meta">
           {result.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
           {result.msg}
         </div>

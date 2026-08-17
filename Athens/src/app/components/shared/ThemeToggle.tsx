@@ -12,16 +12,20 @@ const OPTIONS = [
 type ThemeToggleProps = {
   compact?: boolean;
   className?: string;
+  tone?: "default" | "lens";
 };
 
-export function ThemeToggle({ compact = false, className }: ThemeToggleProps) {
+export function ThemeToggle({ compact = false, className, tone = "default" }: ThemeToggleProps) {
   const { theme, setTheme } = useTheme();
   const active = theme ?? "light";
+  const lens = tone === "lens";
 
   return (
     <div
       className={cn(
-        "flex items-center gap-0.5 bg-secondary border border-border rounded-xl p-1",
+        lens
+          ? "athens-segment"
+          : "flex items-center gap-0.5 bg-secondary border border-border rounded-xl p-1",
         className,
       )}
       role="group"
@@ -34,15 +38,17 @@ export function ThemeToggle({ compact = false, className }: ThemeToggleProps) {
           onClick={() => setTheme(id)}
           title={label}
           className={cn(
-            "flex items-center justify-center gap-1.5 rounded-lg text-sm font-semibold transition-colors min-h-9",
-            compact ? "px-2.5" : "px-3",
-            active === id
+            !lens && "flex items-center justify-center gap-1.5 rounded-lg text-sm font-semibold transition-colors min-h-9",
+            !lens && (compact ? "px-2.5" : "px-3"),
+            !lens && (active === id
               ? "bg-card text-foreground shadow-sm border border-border"
-              : "text-muted-foreground hover:text-foreground hover:bg-card/50",
+              : "text-muted-foreground hover:text-foreground hover:bg-card/50"),
+            lens && active === id && "is-active",
+            lens && compact && "px-2.5",
           )}
         >
           <Icon className="w-4 h-4" />
-          {!compact && <span className="hidden sm:inline">{label}</span>}
+          {!compact && <span className={cn(lens ? "athens-segment__label" : "hidden sm:inline")}>{label}</span>}
         </button>
       ))}
     </div>

@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { PageShell } from "../../components/layout/PageShell";
 import { TabTransition } from "../../components/overlays";
-import { DEFAULT_TABS, normalizeTab, PATHS } from "../../config/routes";
+import { DEFAULT_TABS, normalizeTab, PATHS, type ReportsTab } from "../../config/routes";
 import { AnalyticsFilterPanel } from "./components/AnalyticsFilterPanel";
 import { AnalyticsLoading, AnalyticsProfileGate } from "./components/AnalyticsStates";
 import { ApplicationProgress } from "./components/ApplicationProgress";

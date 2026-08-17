@@ -28,7 +28,7 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
       "Analytics uses the Job Search toolbar, tabs, and filter sheet instead of pill tabs and colored KPI cards",
       "Time presets now include 7 days, 30 days, 90 days, year to date, all time, and a custom from/to range",
       "Source filters, shareable URL state, and previous-period deltas sit on the same metrics",
-      "Postings and applications charts stay neutral, with source conversion and Job Search drill-down from each row",
+      "Postings chart is a quiet daily total; click a source to overlay it in blue, with conversion and Job Search links in the list",
     ],
   },
   {

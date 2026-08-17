@@ -3,8 +3,9 @@ import { ArrowUpRight } from "lucide-react";
 import { Link } from "react-router";
 import {
   Area,
-  AreaChart,
   CartesianGrid,
+  ComposedChart,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -14,14 +15,14 @@ import { ChartTip } from "../../../components/ui";
 import type { JobAnalytics } from "../hooks/useJobAnalytics";
 import { analyticsJobSearchHref } from "../lib/analyticsJobSearch";
 import type { AnalyticsDateBounds } from "../lib/dateRange";
-import {
-  lensSeriesColor,
-  POSTINGS_CHART_TOP_N,
-  sourcePeriodTotals,
-  toTopNOtherSeries,
-} from "../lib/postingsAreaChart";
+import { sourcePeriodTotals } from "../lib/postingsAreaChart";
 import { AnalyticsEmpty } from "./AnalyticsStates";
 import { AnalyticsMetric, AnalyticsSurfaceCard } from "./AnalyticsMetric";
+
+const TOTAL_FILL = "var(--athens-selected)";
+const TOTAL_STROKE = "var(--athens-text-muted)";
+const FOCUS_FILL = "var(--athens-brand-subtle)";
+const FOCUS_STROKE = "var(--athens-brand)";
 
 function PostingsTip({
   active,
@@ -32,18 +33,12 @@ function PostingsTip({
   payload?: Array<{ name?: string; value?: number | string; color?: string; dataKey?: string | number }>;
   label?: string | number;
 }) {
-  const total =
-    payload?.reduce((sum, item) => sum + (Number(item.value) || 0), 0) ?? null;
   return (
     <ChartTip
       active={active}
       payload={payload}
       label={label}
-      scrollable
       hideZero
-      sortByValue
-      total={total}
-      maxHeight={280}
     />
   );
 }
@@ -66,17 +61,6 @@ export function JobPostingProgress({
   const ranked = useMemo(
     () => sourcePeriodTotals(analytics.postingsArea, analytics.postingSourceKeys),
     [analytics.postingsArea, analytics.postingSourceKeys],
-  );
-
-  const chart = useMemo(
-    () =>
-      toTopNOtherSeries(
-        analytics.postingsArea,
-        analytics.postingSourceKeys,
-        POSTINGS_CHART_TOP_N,
-        focusSource,
-      ),
-    [analytics.postingsArea, analytics.postingSourceKeys, focusSource],
   );
 
   const hasSeries = analytics.postingsArea.some((row) => Number(row.total) > 0);
@@ -118,18 +102,22 @@ export function JobPostingProgress({
       </div>
 
       <AnalyticsSurfaceCard
-        title="Postings by source"
-        subtitle="Top sources over time · full breakdown below"
+        title="Postings over time"
+        subtitle={
+          focusSource
+            ? `${focusSource} against all postings`
+            : "Daily volume · click a source below to overlay it"
+        }
       >
         {!hasSeries ? (
           <AnalyticsEmpty message="No job postings were recorded in this date range." />
         ) : (
           <div className="space-y-6">
             <div className="overflow-visible">
-              <ResponsiveContainer width="100%" height={320}>
-                <AreaChart
-                  data={chart.points}
-                  margin={{ top: 8, right: 8, bottom: 0, left: -12 }}
+              <ResponsiveContainer width="100%" height={280}>
+                <ComposedChart
+                  data={analytics.postingsArea}
+                  margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
                 >
                   <CartesianGrid
                     strokeDasharray="2 4"
@@ -148,6 +136,7 @@ export function JobPostingProgress({
                     tick={{ fill: "var(--athens-text-muted)", fontSize: 12 }}
                     axisLine={false}
                     tickLine={false}
+                    width={40}
                   />
                   <Tooltip
                     content={<PostingsTip />}
@@ -155,30 +144,70 @@ export function JobPostingProgress({
                     wrapperStyle={{ zIndex: 40, outline: "none" }}
                     cursor={{ stroke: "var(--athens-border-strong)", strokeWidth: 1 }}
                   />
-                  {chart.series.map((source, index) => {
-                    const color = lensSeriesColor(source, index, chart.series);
-                    const focused = focusSource != null && source === focusSource;
-                    const dimmed = focusSource != null && source !== focusSource;
-                    return (
-                      <Area
-                        key={source}
-                        type="monotone"
-                        dataKey={source}
-                        name={source}
-                        stackId="postings"
-                        stroke={color}
-                        fill={color}
-                        fillOpacity={
-                          focusSource == null ? 0.55 : focused ? 0.75 : dimmed ? 0.18 : 0.45
-                        }
-                        strokeWidth={focused ? 2 : 1.25}
-                        isAnimationActive={false}
-                      />
-                    );
-                  })}
-                </AreaChart>
+                  {focusSource ? (
+                    <Line
+                      type="monotone"
+                      dataKey="total"
+                      name="All postings"
+                      stroke={TOTAL_STROKE}
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  ) : (
+                    <Area
+                      type="monotone"
+                      dataKey="total"
+                      name="All postings"
+                      stroke={TOTAL_STROKE}
+                      strokeWidth={1.25}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      fill={TOTAL_FILL}
+                      fillOpacity={1}
+                      isAnimationActive={false}
+                    />
+                  )}
+                  {focusSource ? (
+                    <Area
+                      type="monotone"
+                      dataKey={focusSource}
+                      name={focusSource}
+                      stroke={FOCUS_STROKE}
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      fill={FOCUS_FILL}
+                      fillOpacity={1}
+                      isAnimationActive={false}
+                    />
+                  ) : null}
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
+
+            <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--athens-text-secondary)]">
+              <li className="inline-flex items-center gap-1.5">
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{ background: TOTAL_STROKE }}
+                  aria-hidden
+                />
+                All postings
+              </li>
+              {focusSource ? (
+                <li className="inline-flex items-center gap-1.5">
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: FOCUS_STROKE }}
+                    aria-hidden
+                  />
+                  {focusSource}
+                </li>
+              ) : null}
+            </ul>
 
             <div>
               <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -222,13 +251,7 @@ export function JobPostingProgress({
                             style={{
                               background: selected
                                 ? "var(--athens-brand)"
-                                : chart.series.includes(row.source)
-                                  ? lensSeriesColor(
-                                      row.source,
-                                      chart.series.indexOf(row.source),
-                                      chart.series,
-                                    )
-                                  : "var(--athens-border-strong)",
+                                : "var(--athens-border-strong)",
                             }}
                             aria-hidden
                           />
@@ -243,10 +266,10 @@ export function JobPostingProgress({
                           </span>
                           <span className="hidden sm:block w-24 h-1.5 rounded-full bg-[var(--athens-border)] overflow-hidden">
                             <span
-                              className="block h-full rounded-full bg-[var(--athens-brand)]"
+                              className="block h-full rounded-full bg-[var(--athens-text)]"
                               style={{
                                 width: `${Math.max(2, row.share * 100)}%`,
-                                opacity: selected ? 1 : 0.55,
+                                opacity: selected ? 1 : 0.35,
                               }}
                             />
                           </span>
@@ -268,7 +291,7 @@ export function JobPostingProgress({
               </ul>
               {focusSource ? (
                 <p className="mt-2 text-xs text-[var(--athens-text-muted)]">
-                  Focusing {focusSource}. Click again to clear.
+                  Showing {focusSource} on the chart. Click again to clear.
                 </p>
               ) : null}
             </div>
