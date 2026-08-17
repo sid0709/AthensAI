@@ -136,7 +136,7 @@ export function DefaultModelCard({
       </div>
 
       {result ? (
-        <div className="flex items-center gap-1.5 athens-card-meta">
+        <div className={result.ok ? "flex items-center gap-1.5 athens-card-meta" : "flex items-center gap-1.5 athens-card-meta athens-settings__danger"}>
           {result.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
           {result.msg}
         </div>

@@ -148,13 +148,12 @@ function TimelineNode({
         <div className="flex items-start gap-2 mb-2 min-w-0">
           <div className="flex-1 min-w-0">
             <p className="athens-card-title truncate">{headline}</p>
-            <p className="athens-card-meta mt-0.5" style={{ fontFamily: "var(--font-athens-mono)" }}>{period}</p>
+            <p className="athens-card-meta athens-settings__period mt-0.5">{period}</p>
           </div>
           {isCurrent && <span className="athens-status shrink-0">Current</span>}
           <button
             type="button"
             className="athens-icon-btn"
-            style={{ width: 32, height: 32, minHeight: 32 }}
             disabled={isEducation ? educationCount <= 1 : careerCount <= 1}
             onClick={() => (isEducation ? onRemoveEducation(item.index) : onRemoveCareer(item.index))}
             aria-label={isEducation ? "Remove education" : "Remove role"}

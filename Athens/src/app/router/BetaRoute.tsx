@@ -44,10 +44,10 @@ export function BetaRoute({ children }: { children: ReactNode }) {
               View profile
             </Link>
             <Link
-              to={PATHS.dashboard}
+              to={PATHS.jobs}
               className="inline-flex min-h-10 items-center rounded-xl border border-border bg-secondary px-4 py-2 text-sm font-bold text-foreground hover:bg-muted"
             >
-              Back to dashboard
+              Back to Job Search
             </Link>
           </div>
         </div>

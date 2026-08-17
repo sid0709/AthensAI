@@ -391,7 +391,7 @@ export function ProfileTab() {
       {isBeta && !loading && !refreshingResumes && (
         <p className="athens-card-meta mb-4">
           After changing LinkedIn or other contact details, use{" "}
-          <span className="font-semibold" style={{ color: "var(--athens-text)" }}>Update generated résumés</span> to refresh outdated
+          <strong>Update generated résumés</strong> to refresh outdated
           Job Search / Agent PDF headers (skips ones already synced).
           {profile.updatedAt && profile.resumeUpdatedAt && profile.resumeUpdatedAt >= profile.updatedAt
             ? " All résumés are currently in sync."

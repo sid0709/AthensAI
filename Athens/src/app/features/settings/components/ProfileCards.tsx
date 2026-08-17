@@ -62,7 +62,7 @@ function KeyTestRow({ check, onTest }: { check: KeyCheck; onTest: () => void }) 
         </span>
       )}
       {check.state === "fail" && (
-        <span className="inline-flex items-center gap-1 athens-card-meta" style={{ color: "var(--athens-danger)" }}>
+        <span className="inline-flex items-center gap-1 athens-card-meta athens-settings__danger">
           <XCircle className="w-3.5 h-3.5 shrink-0" /> <span className="truncate max-w-[240px]">{check.message || "Invalid"}</span>
         </span>
       )}
@@ -151,12 +151,20 @@ export function ProfileIdentityCard({
           </FormField>
           <AthensSelect
             size="sm"
+            tone="lens"
             label="Citizenship"
             value={profile.immigrationStatus}
             onChange={(v) => onChange({ immigrationStatus: v as ImmigrationStatus })}
             options={enumOptions(IMMIGRATION_STATUS_VALUES, IMMIGRATION_STATUS_LABEL)}
           />
-          <AthensSelect size="sm" label="Country" value={profile.country} onChange={(v) => onChange({ country: v })} options={[...COUNTRY_OPTIONS]} />
+          <AthensSelect
+            size="sm"
+            tone="lens"
+            label="Country"
+            value={profile.country}
+            onChange={(v) => onChange({ country: v })}
+            options={[...COUNTRY_OPTIONS]}
+          />
           <FormField label="ZIP / postal">
             <AthensInput value={profile.zipCode} onChange={(e) => onChange({ zipCode: e.target.value })} autoComplete="postal-code" className="h-9 text-sm max-w-[140px]" />
           </FormField>

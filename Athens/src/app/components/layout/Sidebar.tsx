@@ -33,7 +33,7 @@ export function Sidebar() {
   return (
     <aside className="athens-sidebar" aria-label="AthensAI navigation">
       <div className="athens-sidebar__brand">
-        <NavLink to="/" className="athens-sidebar__brand-link">
+        <NavLink to={PATHS.jobs} className="athens-sidebar__brand-link">
           <AppLogo size={40} />
           <div className="athens-sidebar__brand-copy">
             <span className="athens-sidebar__title">AthensAI</span>
@@ -53,14 +53,10 @@ export function Sidebar() {
                 <NavLink
                   key={item.id}
                   to={pathForView(item.id)}
-                  end={item.id === "dashboard"}
                   className="athens-sidebar__item"
                 >
                   <item.icon aria-hidden="true" />
                   <span className="athens-sidebar__item-label">{item.label}</span>
-                  {item.comingSoon && (
-                    <span className="athens-sidebar__badge">Coming Soon</span>
-                  )}
                 </NavLink>
               ))}
             </div>

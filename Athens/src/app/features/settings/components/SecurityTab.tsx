@@ -5,8 +5,6 @@ import { useAuth } from "@/context/auth-context";
 import { AthensInput, FormField } from "../../../components/forms";
 import {
   AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -152,12 +150,18 @@ export function SecurityTab() {
   const showProgress = deleting && deleteProgress != null;
 
   return (
-    <div className="max-w-md space-y-5">
-      <div>
-        <h2 className="text-lg font-bold text-foreground">Security</h2>
-        <p className="text-sm text-muted-foreground">Update your account password</p>
+    <div className="max-w-md space-y-4">
+      <div className="athens-toolbar mb-2">
+        <div className="athens-surface">
+          <div className="athens-toolbar-row">
+            <div className="min-w-0">
+              <h2 className="athens-settings__title">Security</h2>
+              <p className="athens-settings__lede">Update your account password</p>
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="bg-card border border-border rounded-xl p-5 shadow-sm space-y-4">
+      <div className="athens-card">
         <FormField label="Current password">
           <AthensInput
             type="password"
@@ -189,16 +193,16 @@ export function SecurityTab() {
           type="button"
           onClick={() => void save()}
           disabled={saving}
-          className="bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10 disabled:opacity-50"
+          className="athens-btn-primary"
         >
           {saving ? "Updating…" : "Update password"}
         </button>
       </div>
 
-      <div className="bg-card border border-destructive/30 rounded-xl p-5 shadow-sm space-y-3">
+      <div className="athens-card">
         <div>
-          <h3 className="text-sm font-bold text-destructive">Delete account</h3>
-          <p className="text-sm text-muted-foreground mt-1">
+          <h3 className="athens-card-title athens-settings__danger">Delete account</h3>
+          <p className="athens-card-meta mt-1">
             Permanently remove your account, profile, generated résumés, agent history, bid
             recordings, and related data. This cannot be undone.
           </p>
@@ -212,7 +216,7 @@ export function SecurityTab() {
             setDeleteOpen(true);
           }}
           disabled={!user?.name}
-          className="bg-destructive text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-destructive/90 min-h-10 disabled:opacity-50"
+          className="athens-btn-danger"
         >
           Delete account…
         </button>
@@ -226,72 +230,74 @@ export function SecurityTab() {
           if (!open) setDeleteProgress(null);
         }}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
+        <AlertDialogContent className="athens-ui athens-dialog flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <AlertDialogHeader className="athens-dialog-header">
+            <AlertDialogTitle className="athens-settings__title">
               {showProgress ? "Deleting account…" : "Delete account permanently?"}
             </AlertDialogTitle>
             {!showProgress ? (
-              <AlertDialogDescription>
+              <AlertDialogDescription className="athens-settings__lede">
                 This deletes profile information, résumés, templates, agent runs, bid queue data,
                 and mail sync for{" "}
-                <span className="font-semibold text-foreground">{user?.name}</span>. Type your
+                <strong>{user?.name}</strong>. Type your
                 account name and password to confirm.
               </AlertDialogDescription>
             ) : (
-              <AlertDialogDescription>
+              <AlertDialogDescription className="athens-settings__lede">
                 Please keep this window open while we remove Firebase files, bid history, résumés,
                 and your account.
               </AlertDialogDescription>
             )}
           </AlertDialogHeader>
 
-          {showProgress && deleteProgress ? (
-            <DeleteAccountProgressPanel progress={deleteProgress} />
-          ) : (
-            <div className="space-y-3 py-1">
-              <FormField label={`Type "${user?.name ?? ""}" to confirm`}>
-                <AthensInput
-                  value={deleteConfirmName}
-                  onChange={(e) => setDeleteConfirmName(e.target.value)}
-                  autoComplete="off"
-                  disabled={deleting}
-                />
-              </FormField>
-              <FormField label="Password">
-                <AthensInput
-                  type="password"
-                  value={deletePassword}
-                  onChange={(e) => setDeletePassword(e.target.value)}
-                  autoComplete="current-password"
-                  disabled={deleting}
-                />
-              </FormField>
-            </div>
-          )}
+          <div className="athens-dialog-body">
+            {showProgress && deleteProgress ? (
+              <DeleteAccountProgressPanel progress={deleteProgress} />
+            ) : (
+              <div className="space-y-3">
+                <FormField label={`Type "${user?.name ?? ""}" to confirm`}>
+                  <AthensInput
+                    value={deleteConfirmName}
+                    onChange={(e) => setDeleteConfirmName(e.target.value)}
+                    autoComplete="off"
+                    disabled={deleting}
+                  />
+                </FormField>
+                <FormField label="Password">
+                  <AthensInput
+                    type="password"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    autoComplete="current-password"
+                    disabled={deleting}
+                  />
+                </FormField>
+              </div>
+            )}
+          </div>
 
-          <AlertDialogFooter>
+          <AlertDialogFooter className="athens-dialog-footer">
             {!showProgress ? (
               <>
-                <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-                <AlertDialogAction
+                <button type="button" className="athens-btn" disabled={deleting} onClick={() => setDeleteOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
                   disabled={
                     deleting ||
                     !user?.name ||
                     deleteConfirmName !== user.name ||
                     !deletePassword
                   }
-                  className="bg-destructive text-white hover:bg-destructive/90"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    void confirmDelete();
-                  }}
+                  className="athens-btn-danger"
+                  onClick={() => void confirmDelete()}
                 >
                   Delete forever
-                </AlertDialogAction>
+                </button>
               </>
             ) : (
-              <p className="w-full text-center text-xs text-muted-foreground py-1">
+              <p className="w-full text-center athens-card-meta py-1">
                 This may take a minute for large accounts.
               </p>
             )}

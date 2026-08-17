@@ -37,10 +37,10 @@ export function AdminRoute({ children }: { children: ReactNode }) {
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             <Link
-              to={PATHS.dashboard}
+              to={PATHS.jobs}
               className="inline-flex min-h-10 items-center rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90"
             >
-              Back to dashboard
+              Back to Job Search
             </Link>
           </div>
         </div>

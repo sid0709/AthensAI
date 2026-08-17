@@ -14,6 +14,39 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "job-search-home",
+    version: "0.10.0",
+    title: "Job Search is home",
+    date: "2026-08-17",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Drop the unused Dashboard and open Job Search after sign-in, from the logo, and for unknown URLs.",
+    tags: ["Job Search", "Navigation"],
+    current: true,
+    changes: [
+      "Dashboard is gone from the sidebar; Job Search is the first workspace page",
+      "Signing in, the AthensAI logo, and unknown URLs now open Job Search",
+      "Beta and admin lock screens link back to Job Search instead of Dashboard",
+    ],
+  },
+  {
+    id: "settings-lens",
+    version: "0.9.0",
+    title: "Settings, Lens chrome",
+    date: "2026-08-17",
+    merge: "main · settings-ui",
+    branch: "main",
+    summary:
+      "Bring Settings onto the same quiet Lens chrome as Job Search — system sans, 1px borders, and flat cards instead of pill tabs and primary buttons.",
+    tags: ["Settings"],
+    changes: [
+      "Profile, Notifications, Integrations, and Security share the Job Search toolbar and tab chrome",
+      "Forms, switches, and dialogs use the same quiet cards and control styling as Job Search",
+      "Account deletion and vendor access stay in place with a calmer danger zone",
+    ],
+  },
+  {
     id: "analytics-lens",
     version: "0.8.0",
     title: "Analytics, Lens chrome",
@@ -23,7 +56,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Bring Job Search Analytics onto the same quiet Lens chrome as Job Search, with real time-range and source filters.",
     tags: ["Analytics", "Job Search"],
-    current: true,
     changes: [
       "Analytics uses the Job Search toolbar, tabs, and filter sheet instead of pill tabs and colored KPI cards",
       "Time presets now include 7 days, 30 days, 90 days, year to date, all time, and a custom from/to range",
