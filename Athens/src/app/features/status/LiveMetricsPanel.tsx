@@ -70,8 +70,8 @@ const ramSlices: Array<{
   warning: number;
   critical: number;
 }> = [
-  { key: "athensRssPercent", label: "Athens", helper: "App container — API and worker", color: "#3fb950", icon: Box, warning: 40, critical: 60 },
-  { key: "mongoRssPercent", label: "MongoDB", helper: "mongod RSS or mongo container", color: "#00ed64", icon: Database, warning: 55, critical: 70 },
+  { key: "athensRssPercent", label: "Athens", helper: "API and worker process RSS", color: "#3fb950", icon: Box, warning: 40, critical: 60 },
+  { key: "mongoRssPercent", label: "MongoDB", helper: "mongod process RSS", color: "#00ed64", icon: Database, warning: 55, critical: 70 },
   { key: "monitoringRssPercent", label: "Monitoring", helper: "Prometheus, Grafana, cAdvisor, exporters", color: "#f78166", icon: Radar, warning: 20, critical: 35 },
   { key: "otherRssPercent", label: "Other", helper: "OS and processes not in the groups above", color: "#8b949e", icon: Layers, warning: 40, critical: 60 },
 ];
@@ -356,7 +356,7 @@ export function LiveMetricsPanel({
 
       <div className="mt-10">
         <h2 className="text-xl font-bold tracking-tight text-slate-950">RAM consumers</h2>
-        <p className="mt-1 text-sm text-slate-600">Athens, MongoDB, and the monitoring stack as a share of host RAM. A slice stays at — until Prometheus can see that process.</p>
+        <p className="mt-1 text-sm text-slate-600">Athens, MongoDB, and the monitoring stack as process RSS. Other is leftover host RAM after those groups.</p>
       </div>
       <div className={`mt-4 grid gap-4 ${loading ? "opacity-70" : ""}`}>
         <RamCompositionBar point={current} />

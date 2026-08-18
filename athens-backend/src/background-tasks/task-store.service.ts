@@ -342,6 +342,69 @@ export class TaskStoreService {
         /* race */
       }
     }
+    const expired = await this.prisma.backgroundTask.findMany({
+      where: {
+        status: BACKGROUND_TASK_STATUSES.RUNNING,
+        leaseExpiresAt: { lt: now },
+        ...(type ? { type } : {}),
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 5,
+    });
+    for (const task of expired) {
+      try {
+        const claimed = await withReplicaSetFallback(
+          async () => {
+            const updated = await this.prisma.backgroundTask.updateMany({
+              where: {
+                id: task.id,
+                status: BACKGROUND_TASK_STATUSES.RUNNING,
+                leaseExpiresAt: { lt: now },
+              },
+              data: {
+                leaseOwner: workerId,
+                startedAt: now,
+                leaseExpiresAt: new Date(Date.now() + WORKER_LEASE_MS),
+                eventSequence: { increment: 1 },
+              },
+            });
+            return updated.count === 1;
+          },
+          async () => {
+            const result = await this.prisma.$runCommandRaw({
+              update: BACKGROUND_TASKS_COLLECTION,
+              updates: [
+                {
+                  q: {
+                    _id: { $oid: task.id },
+                    status: BACKGROUND_TASK_STATUSES.RUNNING,
+                    leaseExpiresAt: { $lt: { $date: now.toISOString() } },
+                  },
+                  u: {
+                    $set: {
+                      leaseOwner: workerId,
+                      startedAt: { $date: now.toISOString() },
+                      leaseExpiresAt: {
+                        $date: new Date(
+                          Date.now() + WORKER_LEASE_MS,
+                        ).toISOString(),
+                      },
+                      updatedAt: { $date: new Date().toISOString() },
+                    },
+                    $inc: { eventSequence: 1 },
+                  },
+                  multi: false,
+                },
+              ],
+            });
+            return Number((result as { n?: number }).n ?? 0) === 1;
+          },
+        );
+        if (claimed) return this.findById(task.id);
+      } catch {
+        /* race */
+      }
+    }
     return null;
   }
 
