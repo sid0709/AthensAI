@@ -95,7 +95,7 @@ services:
       - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
 
   process-exporter:
-    image: ncabatoff/process-exporter:0.8.4
+    image: ncabatoff/process-exporter:0.8.7
     restart: unless-stopped
     pid: host
     mem_limit: 64m
