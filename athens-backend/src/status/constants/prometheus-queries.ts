@@ -9,6 +9,47 @@ export const PROMETHEUS_REQUEST_TIMEOUT_MS = 5000;
 export const NODE_MEMORY_USED_RATIO =
   'max(1 - (node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"}))';
 
+const HOST_MEMORY_TOTAL_BYTES =
+  'max(node_memory_MemTotal_bytes{job="node"})';
+
+/** Docker working set, deduped per container id. Matches name or image. */
+function cadvisorWorkingSetBytes(pattern: string): string {
+  return `sum(max by (id) (
+  container_memory_working_set_bytes{name=~"${pattern}",name!="/"}
+  or
+  container_memory_working_set_bytes{image=~"${pattern}",name!="/"}
+))`;
+}
+
+/** App container (API + worker). */
+export const ATHENS_MEMORY_BYTES = cadvisorWorkingSetBytes('.*nextoffer.*');
+
+/**
+ * Host mongod RSS, else a mongo Docker container.
+ * `or` prefers process-exporter so a containerized mongod is not double-counted.
+ */
+export const MONGO_MEMORY_BYTES = `(
+  max(namedprocess_namegroup_memory_bytes{groupname="mongod",memtype="resident"})
+  or
+  ${cadvisorWorkingSetBytes('.*([Mm]ongo).*')}
+)`;
+
+export const MONITORING_MEMORY_BYTES = cadvisorWorkingSetBytes(
+  '.*(prometheus|grafana|cadvisor|alertmanager|node-exporter|blackbox-exporter|process-exporter).*',
+);
+
+function shareOfHost(bytesExpr: string): string {
+  return `(${bytesExpr}) / ${HOST_MEMORY_TOTAL_BYTES}`;
+}
+
+/** Host used minus the three measured groups. Missing groups count as 0. */
+export const OTHER_MEMORY_RATIO = `clamp_min(
+  ${NODE_MEMORY_USED_RATIO}
+  - ((${ATHENS_MEMORY_BYTES}) or on() vector(0)) / ${HOST_MEMORY_TOTAL_BYTES}
+  - ((${MONGO_MEMORY_BYTES}) or on() vector(0)) / ${HOST_MEMORY_TOTAL_BYTES}
+  - ((${MONITORING_MEMORY_BYTES}) or on() vector(0)) / ${HOST_MEMORY_TOTAL_BYTES}
+, 0)`;
+
 export const VPS_QUERIES = {
   cpuUtilization: 'max(athens:node_cpu_utilization:ratio)',
   memoryUtilization: NODE_MEMORY_USED_RATIO,
@@ -18,9 +59,16 @@ export const VPS_QUERIES = {
   scrapeAgeSeconds: 'time() - max(timestamp(node_uname_info{job="node"}))',
 } as const;
 
-export const LIVE_VPS_QUERIES = Object.fromEntries(
-  Object.entries(VPS_QUERIES).filter(([name]) => name !== 'scrapeAgeSeconds'),
-);
+export const LIVE_VPS_QUERIES = {
+  ...Object.fromEntries(
+    Object.entries(VPS_QUERIES).filter(([name]) => name !== 'scrapeAgeSeconds'),
+  ),
+  memoryTotalBytes: HOST_MEMORY_TOTAL_BYTES,
+  athensRssUtilization: shareOfHost(ATHENS_MEMORY_BYTES),
+  mongoRssUtilization: shareOfHost(MONGO_MEMORY_BYTES),
+  monitoringRssUtilization: shareOfHost(MONITORING_MEMORY_BYTES),
+  otherRssUtilization: OTHER_MEMORY_RATIO,
+};
 
 /** Dependency series after Algolia / Firestore removal. */
 export const DEPENDENCY_QUERIES = {

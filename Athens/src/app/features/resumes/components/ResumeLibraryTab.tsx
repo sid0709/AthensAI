@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Link } from "react-router";
-import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles, Eye, Eraser } from "lucide-react";
+import { Filter, Upload, Download, Star, Files, Trash2, Loader2, Sparkles, Eye, Eraser, Search, X } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import {
   startResumeAnalyze,
@@ -9,10 +8,7 @@ import {
   waitForResumeAnalyze,
   type ResumeAnalyzeSession,
 } from "@/app/api/resumeAnalyze";
-import { resolveProfileDefaultModel } from "../lib/resolveProfileDefaultModel";
-import { PATHS } from "../../../config/routes";
-import { SearchField } from "../../../components/shared/SearchField";
-import { Badge, Pill } from "../../../components/ui";
+import { AthensInput, FormField } from "../../../components/forms";
 import { cn } from "../../../lib/utils";
 import {
   deleteUserResume,
@@ -35,7 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../../components/ui/dialog";
-import { AthensInput, FormField } from "../../../components/forms";
+import { Checkbox } from "../../../components/ui/checkbox";
 import { downloadBlob } from "../lib/buildResumeModel";
 import { ResumePreviewDialog } from "./ResumePreviewDialog";
 import { GeneratedResumesSection } from "./GeneratedResumesSection";
@@ -49,7 +45,8 @@ type AnalyzeProgress = {
 };
 
 type ResumeLibraryTabProps = {
-  onOpenAnalysis?: () => void;
+  pageTabs?: ReactNode;
+  pageActions?: ReactNode;
   onLoadIntoEditor?: (run: FullRun) => void;
 };
 
@@ -57,7 +54,7 @@ type LibraryView = "uploaded" | "generated";
 
 type PendingFile = { file: File; techStack?: string; relativePath?: string };
 
-export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLibraryTabProps) {
+export function ResumeLibraryTab({ pageTabs, pageActions, onLoadIntoEditor }: ResumeLibraryTabProps) {
   const { applier, applierReady } = useApplier();
   const [libraryView, setLibraryView] = useState<LibraryView>("uploaded");
   const [q, setQ] = useState("");
@@ -121,7 +118,6 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
     useResumeSelection(selectableFiltered);
 
   const profile = applier?.autoBidProfile as Record<string, unknown> | undefined;
-  const defaultModel = resolveProfileDefaultModel(profile);
   const hasLlmKey = Boolean(
     profile?.openaiApiKey ||
     profile?.deepseekApiKey ||
@@ -402,20 +398,72 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
     }
   };
 
+  const librarySegment = (
+    <div className="athens-segment" role="group" aria-label="Resume source">
+      {(["uploaded", "generated"] as const).map((view) => {
+        const active = libraryView === view;
+        return (
+          <button
+            key={view}
+            type="button"
+            aria-pressed={active}
+            onClick={() => setLibraryView(view)}
+            className={cn(active && "is-active")}
+          >
+            <span className="athens-segment__label">{view === "uploaded" ? "Uploaded" : "Generated"}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (libraryView === "generated") {
+    return (
+      <GeneratedResumesSection
+        onLoadIntoEditor={onLoadIntoEditor}
+        pageTabs={pageTabs}
+        pageActions={pageActions}
+        librarySegment={librarySegment}
+      />
+    );
+  }
+
   if (!applierReady || loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm gap-2">
-        <Loader2 className="w-5 h-5 animate-spin" />
-        Loading resumes…
-      </div>
+      <>
+        <div className="athens-toolbar mb-2">
+          <div className="athens-surface">
+            {pageTabs}
+            <div className="athens-toolbar-row">
+              {librarySegment}
+              <div className="athens-toolbar-actions ml-auto">{pageActions}</div>
+            </div>
+          </div>
+        </div>
+        <div className="athens-settings__loading">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          Loading resumes…
+        </div>
+      </>
     );
   }
 
   if (!ownerName) {
     return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-        Select an applier to manage resumes.
-      </div>
+      <>
+        <div className="athens-toolbar mb-2">
+          <div className="athens-surface">
+            {pageTabs}
+            <div className="athens-toolbar-row">
+              {librarySegment}
+              <div className="athens-toolbar-actions ml-auto">{pageActions}</div>
+            </div>
+          </div>
+        </div>
+        <div className="athens-empty">
+          <p className="athens-empty__title">Select an applier to manage resumes.</p>
+        </div>
+      </>
     );
   }
 
@@ -427,222 +475,203 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
         }, {}),
       )
     : [];
+  const showSelectionDock = someFilteredSelected || analyzing || clearingAnalysis || bulkDeleting;
 
   return (
     <>
-      <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 mb-6 w-fit scroll-row">
-        <Pill active={libraryView === "uploaded"} onClick={() => setLibraryView("uploaded")}>
-          Uploaded
-        </Pill>
-        <Pill active={libraryView === "generated"} onClick={() => setLibraryView("generated")}>
-          Generated
-        </Pill>
+      <div className="athens-toolbar mb-2">
+        <div className="athens-surface">
+          {pageTabs}
+          <div className="athens-toolbar-row">
+            {librarySegment}
+            <div className="athens-field-group">
+              <div className="athens-field">
+                <Search className="athens-field__icon" aria-hidden="true" />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search resumes or tech stacks…"
+                  aria-label="Search resumes"
+                  className="athens-field__input"
+                />
+                {q ? (
+                  <button type="button" onClick={() => setQ("")} className="athens-field__clear" aria-label="Clear search">
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+              <div className="athens-field-divider" aria-hidden />
+              <label className="athens-field athens-field--company">
+                <Filter className="athens-field__icon" aria-hidden="true" />
+                <select
+                  value={stackFilter}
+                  onChange={(e) => setStackFilter(e.target.value)}
+                  aria-label="Filter by tech stack"
+                  className="athens-field__input"
+                >
+                  <option value="all">All stacks</option>
+                  {stacks.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="athens-toolbar-actions ml-auto">
+              <button type="button" disabled={uploading} onClick={() => bulkRef.current?.click()} className="athens-btn">
+                <Files size={16} aria-hidden="true" />
+                Bulk upload
+              </button>
+              <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()} className="athens-btn-primary">
+                <Upload size={16} aria-hidden="true" />
+                Upload
+              </button>
+              {pageActions}
+              <span className="athens-count">{filtered.length}</span>
+            </div>
+          </div>
+
+          {showSelectionDock ? (
+            <div className="athens-dock-row">
+              <label className="athens-select-label cursor-pointer">
+                <Checkbox
+                  checked={allFilteredSelected ? true : someFilteredSelected ? "indeterminate" : false}
+                  onCheckedChange={() =>
+                    selectAll(
+                      selectableFiltered.map((r) => r.id),
+                      allFilteredSelected,
+                    )
+                  }
+                  aria-label="Select all visible resumes"
+                />
+                <span>
+                  {selectedIds.size} selected
+                </span>
+              </label>
+              <button type="button" onClick={clearSelection} className="athens-text-btn">
+                Clear
+              </button>
+              <div className="athens-toolbar-actions ml-auto">
+                <button
+                  type="button"
+                  disabled={!hasLlmKey || (!analyzing && selectedIds.size === 0) || uploading || bulkDeleting}
+                  onClick={() => void (analyzing ? handleStopAnalysis() : handleBulkAnalyze())}
+                  className="athens-btn"
+                >
+                  {analyzing ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+                  {analyzing
+                    ? stoppingAnalysis ? "Stopping analysis…" : "Stop analysis"
+                    : `Analyze (${selectedIds.size})`}
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedAnalyzedCount === 0 || clearingAnalysis || analyzing || uploading || bulkDeleting}
+                  onClick={() => void handleBulkClearAnalysis()}
+                  className="athens-btn"
+                  title="Remove skill analysis only — keeps the resume file"
+                >
+                  {clearingAnalysis ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Eraser size={16} aria-hidden="true" />}
+                  Clear analysis
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedIds.size === 0 || bulkDeleting || analyzing || uploading || clearingAnalysis}
+                  onClick={() => void handleBulkDelete()}
+                  className="athens-btn-danger"
+                  title="Permanently delete selected resumes (file + analysis)"
+                >
+                  {bulkDeleting ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Trash2 size={16} aria-hidden="true" />}
+                  Delete
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {uploadProgress ? (
+            <div className="athens-dock-row" role="status" aria-live="polite">
+              <div className="athens-progress">
+                <div className="athens-progress__meta">
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                    Uploading resumes…
+                  </span>
+                  <span>{uploadProgress.current}/{uploadProgress.total}</span>
+                </div>
+                <div className="athens-progress__track">
+                  <div
+                    className="athens-progress__bar"
+                    style={{
+                      width: `${uploadProgress.total ? (uploadProgress.current / uploadProgress.total) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+                {uploadProgress.failed.length > 0 ? (
+                  <ul className="mt-2 max-h-24 space-y-0.5 overflow-y-auto text-xs text-[var(--athens-danger)]">
+                    {uploadProgress.failed.map((f) => (
+                      <li key={`${f.fileName}-${f.error}`}>
+                        {f.fileName}: {f.error}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {analyzeProgress ? (
+            <div className="athens-dock-row" role="status" aria-live="polite">
+              <div className="athens-progress">
+                <div className="athens-progress__meta">
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                    Analyzing resumes…
+                  </span>
+                  <span>{analyzeProgress.current}/{analyzeProgress.total}</span>
+                </div>
+                <div className="athens-progress__track">
+                  <div
+                    className="athens-progress__bar"
+                    style={{ width: `${(analyzeProgress.current / analyzeProgress.total) * 100}%` }}
+                  />
+                </div>
+                {analyzeProgress.failed.length > 0 ? (
+                  <ul className="mt-2 space-y-0.5 text-xs text-[var(--athens-danger)]">
+                    {analyzeProgress.failed.map((f) => (
+                      <li key={f.fileName}>
+                        {f.fileName}: {f.error}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="athens-dock-row">
+              <div className="athens-callout is-danger flex w-full items-center gap-2 text-sm">
+                {error}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
-
-      {libraryView === "generated" ? (
-        <GeneratedResumesSection onLoadIntoEditor={onLoadIntoEditor} />
-      ) : (
-        <>
-      <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <SearchField value={q} onChange={setQ} placeholder="Search resumes or tech stacks..." className="flex-1 max-w-md" />
-        <select
-          value={stackFilter}
-          onChange={(e) => setStackFilter(e.target.value)}
-          className="h-10 px-3 rounded-xl border border-border bg-card text-sm"
-        >
-          <option value="all">All stacks</option>
-          {stacks.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <button type="button" className="flex items-center gap-2 bg-secondary border border-border text-muted-foreground px-4 py-2.5 rounded-xl text-sm font-semibold min-h-10">
-          <Filter className="w-4 h-4" />{stacks.length} stacks
-        </button>
-        <button
-          type="button"
-          disabled={uploading}
-          onClick={() => bulkRef.current?.click()}
-          className="flex items-center gap-2 bg-secondary border border-border text-muted-foreground px-4 py-2.5 rounded-xl text-sm font-semibold hover:text-foreground min-h-10"
-        >
-          <Files className="w-4 h-4" />Bulk upload
-        </button>
-        <button
-          type="button"
-          disabled={uploading}
-          onClick={() => fileRef.current?.click()}
-          className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10"
-        >
-          <Upload className="w-4 h-4" />Upload Resume
-        </button>
-        <div className="flex flex-col items-start gap-0.5">
-          <button
-            type="button"
-            disabled={!hasLlmKey || (!analyzing && selectedIds.size === 0) || uploading || bulkDeleting}
-            onClick={() => void (analyzing ? handleStopAnalysis() : handleBulkAnalyze())}
-            className="flex items-center gap-2 bg-secondary border border-primary/30 text-primary px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/5 min-h-10 disabled:opacity-50"
-          >
-            {analyzing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Sparkles className="w-4 h-4" />
-            )}
-            {analyzing
-              ? stoppingAnalysis ? "Stopping analysis…" : "Stop analysis"
-              : `Analyze selected (${selectedIds.size})`}
-          </button>
-          {hasLlmKey && defaultModel ? (
-            <span className="text-[10px] text-muted-foreground px-1">Model: {defaultModel}</span>
-          ) : (
-            <Link to={`${PATHS.settings}/profile`} className="text-[10px] text-primary hover:underline px-1">
-              Add API key in Settings → Profile
-            </Link>
-          )}
-        </div>
-        <button
-          type="button"
-          disabled={selectedAnalyzedCount === 0 || clearingAnalysis || analyzing || uploading || bulkDeleting}
-          onClick={() => void handleBulkClearAnalysis()}
-          className="flex items-center gap-2 bg-secondary border border-border text-muted-foreground px-4 py-2.5 rounded-xl text-sm font-semibold hover:text-foreground min-h-10 disabled:opacity-50"
-          title="Remove skill analysis only — keeps the resume file"
-        >
-          {clearingAnalysis ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Eraser className="w-4 h-4" />
-          )}
-          Clear analysis ({selectedAnalyzedCount})
-        </button>
-        <button
-          type="button"
-          disabled={selectedIds.size === 0 || bulkDeleting || analyzing || uploading || clearingAnalysis}
-          onClick={() => void handleBulkDelete()}
-          className="flex items-center gap-2 bg-secondary border border-destructive/30 text-destructive px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-destructive/5 min-h-10 disabled:opacity-50"
-          title="Permanently delete selected resumes (file + analysis)"
-        >
-          {bulkDeleting ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Trash2 className="w-4 h-4" />
-          )}
-          Delete selected ({selectedIds.size})
-        </button>
-        {onOpenAnalysis && (
-          <button type="button" onClick={onOpenAnalysis} className="flex items-center gap-2 text-sm font-bold text-primary hover:underline">
-            <BarChart3 className="w-4 h-4" />Analysis
-          </button>
-        )}
-        <span className="text-sm text-muted-foreground ml-auto">{filtered.length} files</span>
-      </div>
-
-      {someFilteredSelected && (
-        <div className="flex items-center gap-3 mb-4 py-2 px-3 rounded-xl border border-border/60 bg-secondary/20 text-sm flex-wrap">
-          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={allFilteredSelected}
-              ref={(el) => {
-                if (el) el.indeterminate = someFilteredSelected && !allFilteredSelected;
-              }}
-              onChange={() =>
-                selectAll(
-                  selectableFiltered.map((r) => r.id),
-                  allFilteredSelected,
-                )
-              }
-              className="size-3.5 rounded border-border text-primary focus:ring-primary/30"
-            />
-            <span className="text-xs text-muted-foreground">
-              {selectedIds.size} selected · click cards to toggle · shift-click for range
-            </span>
-          </label>
-          <button
-            type="button"
-            onClick={clearSelection}
-            className="text-xs font-semibold text-muted-foreground hover:text-foreground"
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
-      {uploadProgress && (
-        <div className="mb-4 rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between gap-2 mb-2 text-sm">
-            <span className="font-semibold text-foreground flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-primary" />
-              Uploading resumes…
-            </span>
-            <span className="text-muted-foreground tabular-nums">
-              {uploadProgress.current}/{uploadProgress.total}
-            </span>
-          </div>
-          <div className="h-2 rounded-full bg-secondary overflow-hidden">
-            <div
-              className="h-full rounded-full bg-primary transition-all"
-              style={{
-                width: `${uploadProgress.total ? (uploadProgress.current / uploadProgress.total) * 100 : 0}%`,
-              }}
-            />
-          </div>
-          {uploadProgress.failed.length > 0 && (
-            <ul className="mt-2 text-xs text-destructive space-y-0.5 max-h-24 overflow-y-auto">
-              {uploadProgress.failed.map((f) => (
-                <li key={`${f.fileName}-${f.error}`}>
-                  {f.fileName}: {f.error}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {analyzeProgress && (
-        <div className="mb-4 rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between gap-2 mb-2 text-sm">
-            <span className="font-semibold text-foreground flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-primary" />
-              Analyzing resumes…
-            </span>
-            <span className="text-muted-foreground tabular-nums">
-              {analyzeProgress.current}/{analyzeProgress.total}
-            </span>
-          </div>
-          <div className="h-2 rounded-full bg-secondary overflow-hidden">
-            <div
-              className="h-full rounded-full bg-primary transition-all"
-              style={{ width: `${(analyzeProgress.current / analyzeProgress.total) * 100}%` }}
-            />
-          </div>
-          {analyzeProgress.failed.length > 0 && (
-            <ul className="mt-2 text-xs text-destructive space-y-0.5">
-              {analyzeProgress.failed.map((f) => (
-                <li key={f.fileName}>
-                  {f.fileName}: {f.error}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {error && <p className="text-sm text-destructive mb-4">{error}</p>}
 
       <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => handleSingleFilePick(e.target.files)} />
       <input ref={bulkRef} type="file" /* @ts-expect-error webkitdirectory */ webkitdirectory="" multiple className="hidden" onChange={(e) => handleBulkPick(e.target.files)} />
 
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-64 text-center px-4 border border-dashed border-border rounded-xl">
-          <Upload className="w-10 h-10 text-muted-foreground/40 mb-3" />
-          <p className="font-bold text-foreground">No resumes uploaded yet</p>
-          <p className="text-sm text-muted-foreground mt-1 max-w-md">Upload a PDF or DOCX, name its tech stack, or bulk-upload a folder of stack subfolders.</p>
+        <div className="athens-empty">
+          <Upload size={28} aria-hidden="true" />
+          <p className="athens-empty__title">No resumes uploaded yet</p>
+          <p className="athens-empty__copy">Upload a PDF or DOCX, name its tech stack, or bulk-upload a folder of stack subfolders.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="athens-card-grid">
           {filtered.map((r) => {
             const selectable = r.source !== "generated";
             const selected = selectable && selectedIds.has(r.id);
             return (
-            <div
+            <article
               key={r.id}
               role={selectable ? "button" : undefined}
               tabIndex={selectable ? 0 : undefined}
@@ -664,111 +693,117 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
                     }
                   : undefined
               }
-              className={cn(
-                "bg-card border rounded-xl p-5 hover:shadow-md transition-all group shadow-sm",
-                selected
-                  ? "border-primary ring-2 ring-primary/30 bg-primary/5"
-                  : "border-border",
-                selectable && "cursor-pointer",
-              )}
+              className={cn("athens-card", selected && "is-selected", selectable && "cursor-pointer")}
             >
-              <div className="flex items-start justify-between mb-4">
-                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <Star className="w-6 h-6 text-primary" />
-                </div>
-                <div className="flex items-center gap-2 flex-wrap justify-end">
-                  {selected && <Badge v="violet">Selected</Badge>}
-                  {r.isPrimary && <Badge v="violet">Primary</Badge>}
+              <div className="flex items-start justify-between gap-3">
+                <div className="athens-card-chips">
+                  {selected ? <span className="athens-status">Selected</span> : null}
+                  {r.isPrimary ? <span className="athens-status">Primary</span> : null}
                   {r.source === "generated" ? (
-                    <Badge v="violet">Generated</Badge>
+                    <span className="athens-status">Generated</span>
                   ) : r.analyzed ? (
-                    <Badge v="success">Analyzed</Badge>
+                    <span className="athens-status">Analyzed</span>
                   ) : (
-                    <Badge v="subtle">Not analyzed</Badge>
+                    <span className="athens-status">Not analyzed</span>
                   )}
-                  <Badge v="blue">{r.techStack}</Badge>
+                  <span className="athens-chip">{r.techStack}</span>
                 </div>
               </div>
-              <p className="text-base font-bold text-foreground mb-1 truncate" title={r.fileName}>{r.fileName}</p>
-              <p className="text-sm text-muted-foreground mb-4">
-                {(r.sizeBytes / 1024).toFixed(0)} KB · {formatDistanceToNow(new Date(r.uploadedAt), { addSuffix: true })}
-                {r.analyzed && r.skillCount != null ? ` · ${r.skillCount} skills` : ""}
+              <h3 className="athens-card-title truncate" title={r.fileName}>{r.fileName}</h3>
+              <p className="athens-card-meta">
+                {(r.sizeBytes / 1024).toFixed(0)} KB
+                <span aria-hidden="true">·</span>
+                {formatDistanceToNow(new Date(r.uploadedAt), { addSuffix: true })}
+                {r.analyzed && r.skillCount != null ? (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    {r.skillCount} skills
+                  </>
+                ) : null}
               </p>
-              <div className="flex items-center justify-end gap-1">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPreviewResume(r);
-                  }}
-                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-primary"
-                  title="Preview"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void handleDownload(r.id, r.fileName);
-                  }}
-                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-foreground"
-                  title="Download"
-                >
-                  <Download className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void handleSetPrimary(r.id);
-                  }}
-                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-amber-500"
-                  title="Set primary"
-                >
-                  <Star className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void handleDelete(r.id);
-                  }}
-                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-destructive"
-                  title="Delete"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+              <div className="athens-card-footer">
+                <div className="athens-card-tools">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPreviewResume(r);
+                    }}
+                    className="athens-icon-btn"
+                    title="Preview"
+                    aria-label="Preview"
+                  >
+                    <Eye size={16} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleDownload(r.id, r.fileName);
+                    }}
+                    className="athens-icon-btn"
+                    title="Download"
+                    aria-label="Download"
+                  >
+                    <Download size={16} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleSetPrimary(r.id);
+                    }}
+                    className="athens-icon-btn"
+                    title="Set primary"
+                    aria-label="Set primary"
+                  >
+                    <Star size={16} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleDelete(r.id);
+                    }}
+                    className="athens-icon-btn"
+                    title="Delete"
+                    aria-label="Delete"
+                  >
+                    <Trash2 size={16} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-            </div>
+            </article>
             );
           })}
         </div>
       )}
 
       <Dialog open={Boolean(pendingFile)} onOpenChange={(open) => !open && setPendingFile(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Name this resume&apos;s tech stack</DialogTitle>
+        <DialogContent className="athens-ui athens-dialog flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <DialogHeader className="athens-dialog-header">
+            <DialogTitle className="athens-settings__title">Name this resume&apos;s tech stack</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            File: <strong>{pendingFile?.file.name}</strong>
-          </p>
-          <FormField label="Tech stack name">
-            <AthensInput
-              value={techStackInput}
-              onChange={(e) => setTechStackInput(e.target.value)}
-              placeholder="e.g. React + TypeScript"
-              autoFocus
-            />
-          </FormField>
-          <DialogFooter>
-            <button type="button" onClick={() => setPendingFile(null)} className="px-4 py-2 rounded-xl border border-border text-sm font-semibold">Cancel</button>
+          <div className="athens-dialog-body space-y-4">
+            <p className="athens-settings__lede">
+              File: <strong>{pendingFile?.file.name}</strong>
+            </p>
+            <FormField label="Tech stack name">
+              <AthensInput
+                value={techStackInput}
+                onChange={(e) => setTechStackInput(e.target.value)}
+                placeholder="e.g. React + TypeScript"
+                autoFocus
+              />
+            </FormField>
+          </div>
+          <DialogFooter className="athens-dialog-footer">
+            <button type="button" onClick={() => setPendingFile(null)} className="athens-btn">Cancel</button>
             <button
               type="button"
               disabled={!techStackInput.trim() || uploading}
               onClick={() => void confirmSingleUpload()}
-              className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50"
+              className="athens-btn-primary"
             >
               {uploading ? "Uploading…" : "Upload"}
             </button>
@@ -777,21 +812,23 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
       </Dialog>
 
       <Dialog open={Boolean(bulkPending)} onOpenChange={(open) => !open && setBulkPending(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm bulk upload</DialogTitle>
+        <DialogContent className="athens-ui athens-dialog flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <DialogHeader className="athens-dialog-header">
+            <DialogTitle className="athens-settings__title">Confirm bulk upload</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground mb-3">
-            {bulkPending?.length} files across {bulkSummary.length} tech stack(s):
-          </p>
-          <ul className="text-sm space-y-1 max-h-48 overflow-y-auto">
-            {bulkSummary.map(([stack, count]) => (
-              <li key={stack}><strong>{stack}</strong> — {count} file(s)</li>
-            ))}
-          </ul>
-          <DialogFooter>
-            <button type="button" onClick={() => setBulkPending(null)} className="px-4 py-2 rounded-xl border border-border text-sm font-semibold">Cancel</button>
-            <button type="button" disabled={uploading} onClick={() => void confirmBulkUpload()} className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50">
+          <div className="athens-dialog-body space-y-3">
+            <p className="athens-settings__lede">
+              {bulkPending?.length} files across {bulkSummary.length} tech stack(s):
+            </p>
+            <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
+              {bulkSummary.map(([stack, count]) => (
+                <li key={stack}><strong>{stack}</strong> — {count} file(s)</li>
+              ))}
+            </ul>
+          </div>
+          <DialogFooter className="athens-dialog-footer">
+            <button type="button" onClick={() => setBulkPending(null)} className="athens-btn">Cancel</button>
+            <button type="button" disabled={uploading} onClick={() => void confirmBulkUpload()} className="athens-btn-primary">
               {uploading ? "Uploading…" : "Upload all"}
             </button>
           </DialogFooter>
@@ -805,9 +842,6 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
         open={Boolean(previewResume)}
         onOpenChange={(open) => !open && setPreviewResume(null)}
       />
-
-        </>
-      )}
     </>
   );
 }

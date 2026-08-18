@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Wand2, Loader2 } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { FileText, Wand2, Loader2 } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { GenerationHistory } from "./history/generation-history";
 import { useGeneratorPage } from "./hooks/use-generator-page";
@@ -15,6 +15,8 @@ type ResumeGeneratorPanelProps = {
   pendingRun?: FullRun | null;
   onPendingRunConsumed?: () => void;
   onGenerated?: () => void;
+  pageTabs?: ReactNode;
+  pageActions?: ReactNode;
   /**
    * Delegate "Load into editor" from the History view up to the parent. Needed
    * when editor and history are separate mounts (Athens top-level tabs) that
@@ -31,6 +33,8 @@ export function ResumeGeneratorPanel({
   pendingRun,
   onPendingRunConsumed,
   onGenerated,
+  pageTabs,
+  pageActions,
   onLoadIntoEditor,
 }: ResumeGeneratorPanelProps) {
   const vm = useGeneratorPage();
@@ -49,6 +53,7 @@ export function ResumeGeneratorPanel({
     applyRun,
   } = vm;
 
+  const [systemInstructionOpen, setSystemInstructionOpen] = useState(false);
   const effectiveView = activeView ?? view;
 
   useEffect(() => {
@@ -71,27 +76,71 @@ export function ResumeGeneratorPanel({
     if (completed) onGenerated?.();
   };
 
+  const generateButton = (
+    <button
+      type="button"
+      onClick={() => void (generating ? handleCancelGeneration() : onGenerate())}
+      disabled={analyzingCoverage || stopping || (!generating && (validation.length > 0 || !applier?.name))}
+      className={generating ? "athens-btn" : "athens-btn-primary"}
+    >
+      {generating || analyzingCoverage ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Wand2 size={16} aria-hidden="true" />}
+      {stopping ? "Stopping…" : generating ? "Stop" : analyzingCoverage ? "Analyzing skills…" : "Generate"}
+    </button>
+  );
+
   return (
     <div className="min-h-0">
       <style>{printCss(theme.paper)}</style>
 
-      {effectiveView === "editor" && (
-        <div className="flex justify-end mb-4">
-          <button
-            type="button"
-            onClick={() => void (generating ? handleCancelGeneration() : onGenerate())}
-            disabled={analyzingCoverage || stopping || (!generating && (validation.length > 0 || !applier?.name))}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 min-h-10 ${
-              generating
-                ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-                : "bg-primary text-white hover:bg-primary/90"
-            }`}
-          >
-            {generating || analyzingCoverage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-            {stopping ? "Stopping…" : generating ? "Stop" : analyzingCoverage ? "Analyzing skills…" : "Generate"}
-          </button>
+      {pageTabs ? (
+        <div className="athens-toolbar mb-2">
+          <div className="athens-surface">
+            {pageTabs}
+            <div className="athens-toolbar-row">
+              <div className="athens-toolbar-actions ml-auto">
+                {effectiveView === "editor" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setSystemInstructionOpen(true)}
+                      aria-haspopup="dialog"
+                      aria-expanded={systemInstructionOpen}
+                      className="athens-btn"
+                    >
+                      <FileText size={16} aria-hidden="true" />
+                      System instruction
+                    </button>
+                    {generateButton}
+                  </>
+                ) : (
+                  pageActions
+                )}
+              </div>
+            </div>
+          </div>
         </div>
-      )}
+      ) : effectiveView === "editor" ? (
+        <div className="athens-toolbar mb-3">
+          <div className="athens-surface">
+            <div className="athens-toolbar-row">
+              <p className="athens-changelog__intro">Generate a tailored resume from the job description and saved profile.</p>
+              <div className="athens-toolbar-actions ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setSystemInstructionOpen(true)}
+                  aria-haspopup="dialog"
+                  aria-expanded={systemInstructionOpen}
+                  className="athens-btn"
+                >
+                  <FileText size={16} aria-hidden="true" />
+                  System instruction
+                </button>
+                {generateButton}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {effectiveView === "history" ? (
         <GenerationHistory
@@ -99,7 +148,11 @@ export function ResumeGeneratorPanel({
           onLoad={onLoadIntoEditor ?? ((run) => applyRun(run))}
         />
       ) : (
-        <GeneratorEditorView vm={vm} />
+        <GeneratorEditorView
+          vm={vm}
+          systemInstructionOpen={systemInstructionOpen}
+          onSystemInstructionOpenChange={setSystemInstructionOpen}
+        />
       )}
     </div>
   );

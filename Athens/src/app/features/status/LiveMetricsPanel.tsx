@@ -1,4 +1,4 @@
-import { Activity, Clock3, Cpu, HardDrive, MemoryStick, Server, TimerReset } from "lucide-react";
+import { Activity, Box, Clock3, Cpu, Database, HardDrive, Layers, MemoryStick, Radar, Server, TimerReset } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 export type LiveRange = 15 | 60 | 360 | 1440;
@@ -10,6 +10,11 @@ export type LiveMetricPoint = {
   diskPercent: number | null;
   loadPercent: number | null;
   uptimeSeconds: number | null;
+  memoryTotalBytes?: number | null;
+  athensRssPercent?: number | null;
+  mongoRssPercent?: number | null;
+  monitoringRssPercent?: number | null;
+  otherRssPercent?: number | null;
 };
 
 export type VpsStatus = {
@@ -32,7 +37,8 @@ export type TodayHealthSegment = {
   sampleCount: number;
 };
 
-type MetricKey = "cpuPercent" | "memoryPercent" | "diskPercent";
+type HostMetricKey = "cpuPercent" | "memoryPercent" | "diskPercent";
+type RamSliceKey = "athensRssPercent" | "mongoRssPercent" | "monitoringRssPercent" | "otherRssPercent";
 
 const ranges: Array<{ value: LiveRange; label: string }> = [
   { value: 15, label: "15m" },
@@ -41,8 +47,8 @@ const ranges: Array<{ value: LiveRange; label: string }> = [
   { value: 1440, label: "24h" },
 ];
 
-const metrics: Array<{
-  key: MetricKey;
+const hostMetrics: Array<{
+  key: HostMetricKey;
   label: string;
   helper: string;
   color: string;
@@ -51,8 +57,23 @@ const metrics: Array<{
   critical: number;
 }> = [
   { key: "cpuPercent", label: "CPU", helper: "5-minute host utilization", color: "#2f81f7", icon: Cpu, warning: 85, critical: 95 },
-  { key: "memoryPercent", label: "Memory", helper: "Host memory used (available-aware)", color: "#a371f7", icon: MemoryStick, warning: 90, critical: 95 },
+  { key: "memoryPercent", label: "Host memory", helper: "Whole VPS used (MemAvailable)", color: "#a371f7", icon: MemoryStick, warning: 90, critical: 95 },
   { key: "diskPercent", label: "Disk", helper: "VPS root filesystem used", color: "#d29922", icon: HardDrive, warning: 85, critical: 90 },
+];
+
+const ramSlices: Array<{
+  key: RamSliceKey;
+  label: string;
+  helper: string;
+  color: string;
+  icon: typeof Cpu;
+  warning: number;
+  critical: number;
+}> = [
+  { key: "athensRssPercent", label: "Athens", helper: "App container — API and worker", color: "#3fb950", icon: Box, warning: 40, critical: 60 },
+  { key: "mongoRssPercent", label: "MongoDB", helper: "mongod RSS or mongo container", color: "#00ed64", icon: Database, warning: 55, critical: 70 },
+  { key: "monitoringRssPercent", label: "Monitoring", helper: "Prometheus, Grafana, cAdvisor, exporters", color: "#f78166", icon: Radar, warning: 20, critical: 35 },
+  { key: "otherRssPercent", label: "Other", helper: "OS and processes not in the groups above", color: "#8b949e", icon: Layers, warning: 40, critical: 60 },
 ];
 
 function formatUptime(seconds: number | null | undefined) {
@@ -61,6 +82,16 @@ function formatUptime(seconds: number | null | undefined) {
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return days > 0 ? `${days}d ${hours}h` : `${hours}h ${minutes}m`;
+}
+
+function formatShare(percent: number | null | undefined, totalBytes: number | null | undefined) {
+  if (percent == null) return { headline: "—", detail: "Waiting for samples" };
+  const pct = `${percent.toFixed(1)}%`;
+  if (totalBytes == null || !Number.isFinite(totalBytes) || totalBytes <= 0) {
+    return { headline: pct, detail: "of host RAM" };
+  }
+  const gib = (totalBytes * (percent / 100)) / 1024 ** 3;
+  return { headline: pct, detail: `${gib.toFixed(2)} GiB of host RAM` };
 }
 
 function statusPresentation(status: NonNullable<VpsStatus>["status"]) {
@@ -77,10 +108,19 @@ function metricHealth(value: number | null | undefined, warning: number, critica
   return { label: "Healthy", text: "text-blue-700", bar: "bg-blue-600" };
 }
 
-function MetricChart({ metric, points }: { metric: (typeof metrics)[number]; points: LiveMetricPoint[] }) {
+function MetricChart({
+  metric,
+  points,
+}: {
+  metric: (typeof hostMetrics)[number] | (typeof ramSlices)[number];
+  points: LiveMetricPoint[];
+}) {
   const current = points.at(-1)?.[metric.key];
+  const totalBytes = points.at(-1)?.memoryTotalBytes;
   const health = metricHealth(current, metric.warning, metric.critical);
+  const share = formatShare(current, totalBytes);
   const Icon = metric.icon;
+  const showBytes = metric.key !== "cpuPercent" && metric.key !== "diskPercent" && metric.key !== "memoryPercent";
   return (
     <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.06)]">
       <div className="flex items-start justify-between gap-3 px-5 pt-5">
@@ -94,8 +134,9 @@ function MetricChart({ metric, points }: { metric: (typeof metrics)[number]; poi
           </div>
         </div>
         <div className="text-right">
-          <p className="text-2xl font-bold tabular-nums text-slate-950">{current == null ? "—" : `${current.toFixed(1)}%`}</p>
+          <p className="text-2xl font-bold tabular-nums text-slate-950">{showBytes ? share.headline : current == null ? "—" : `${current.toFixed(1)}%`}</p>
           <p className={`text-xs font-semibold ${health.text}`}>{health.label}</p>
+          {showBytes && <p className="mt-0.5 text-[11px] text-slate-500">{share.detail}</p>}
         </div>
       </div>
 
@@ -120,6 +161,88 @@ function MetricChart({ metric, points }: { metric: (typeof metrics)[number]; poi
               <YAxis width={42} domain={[0, 100]} ticks={[0, 50, 100]} tickMargin={8} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value: number) => `${value}%`} />
               <Tooltip contentStyle={{ borderRadius: 12, borderColor: "#cbd5e1", boxShadow: "0 12px 30px rgba(15,23,42,.12)", fontSize: 12 }} labelFormatter={(value) => new Date(String(value)).toLocaleString()} formatter={(value) => [`${Number(value).toFixed(1)}%`, metric.label]} />
               <Area connectNulls type="monotone" dataKey={metric.key} stroke={metric.color} fill={`url(#fill-${metric.key})`} strokeWidth={2.5} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function RamCompositionBar({ point }: { point: LiveMetricPoint | undefined }) {
+  const parts = ramSlices.map((slice) => ({ ...slice, value: Math.max(point?.[slice.key] ?? 0, 0) }));
+  const available = point?.memoryPercent == null ? 0 : Math.max(0, 100 - point.memoryPercent);
+  const measured = parts.reduce((sum, part) => sum + part.value, 0);
+  const scale = measured + available > 100 ? 100 / (measured + available) : 1;
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.06)]">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-slate-950">How host RAM is split</h3>
+          <p className="mt-0.5 text-xs text-slate-500">Each slice is a share of the whole VPS, not of the 93% used band. Idle traffic does not empty these caches.</p>
+        </div>
+        <p className="text-sm font-bold tabular-nums text-slate-950">{point?.memoryPercent == null ? "—" : `${point.memoryPercent.toFixed(1)}% host used`}</p>
+      </div>
+      <div className="mt-4 flex h-4 overflow-hidden rounded-full bg-slate-100" role="img" aria-label="Host RAM composition">
+        {parts.map((part) => (
+          part.value > 0 ? (
+            <span key={part.key} title={`${part.label} ${part.value.toFixed(1)}%`} style={{ width: `${part.value * scale}%`, backgroundColor: part.color }} />
+          ) : null
+        ))}
+        {available > 0 ? <span title={`Available ${available.toFixed(1)}%`} style={{ width: `${available * scale}%` }} className="bg-slate-200" /> : null}
+      </div>
+      <ul className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs font-medium text-slate-600">
+        {ramSlices.map((slice) => {
+          const value = point?.[slice.key];
+          const share = formatShare(value, point?.memoryTotalBytes);
+          return (
+            <li key={slice.key} className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: slice.color }} />
+              {slice.label}
+              <span className="tabular-nums text-slate-950">{value == null ? "—" : share.headline}</span>
+              {value != null && share.detail !== "of host RAM" ? <span className="text-slate-400">{share.detail.replace(" of host RAM", "")}</span> : null}
+            </li>
+          );
+        })}
+        <li className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm bg-slate-200" />
+          Available
+          <span className="tabular-nums text-slate-950">{point?.memoryPercent == null ? "—" : `${Math.max(0, 100 - point.memoryPercent).toFixed(1)}%`}</span>
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+function RamStackChart({ points }: { points: LiveMetricPoint[] }) {
+  const stacked = points.map((point) => ({
+    timestamp: point.timestamp,
+    memoryPercent: point.memoryPercent,
+    athensRssPercent: point.athensRssPercent ?? 0,
+    mongoRssPercent: point.mongoRssPercent ?? 0,
+    monitoringRssPercent: point.monitoringRssPercent ?? 0,
+    otherRssPercent: point.otherRssPercent ?? 0,
+  }));
+  return (
+    <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.06)]">
+      <div className="px-5 pt-5">
+        <h3 className="font-semibold text-slate-950">RAM consumers over time</h3>
+        <p className="mt-0.5 text-xs text-slate-500">Stacked working set / RSS. The dashed line is whole-VPS used.</p>
+      </div>
+      <div className="mt-2 h-56 px-2 pb-2" aria-label="Stacked RAM consumer chart">
+        {points.length === 0 ? (
+          <div className="mx-3 flex h-40 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-xs font-medium text-slate-500">Waiting for the first VPS sample</div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={stacked} margin={{ top: 8, right: 10, bottom: 8, left: 0 }}>
+              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 5" vertical={false} />
+              <XAxis dataKey="timestamp" height={28} minTickGap={44} tickMargin={8} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value: string) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} />
+              <YAxis width={42} domain={[0, 100]} ticks={[0, 50, 100]} tickMargin={8} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value: number) => `${value}%`} />
+              <Tooltip contentStyle={{ borderRadius: 12, borderColor: "#cbd5e1", boxShadow: "0 12px 30px rgba(15,23,42,.12)", fontSize: 12 }} labelFormatter={(value) => new Date(String(value)).toLocaleString()} formatter={(value, name) => [`${Number(value).toFixed(1)}%`, String(name)]} />
+              {ramSlices.map((slice) => (
+                <Area key={slice.key} stackId="ram" connectNulls type="monotone" dataKey={slice.key} name={slice.label} stroke={slice.color} fill={slice.color} fillOpacity={0.35} strokeWidth={1.5} isAnimationActive={false} />
+              ))}
+              <Area type="monotone" dataKey="memoryPercent" name="Host used" stroke="#a371f7" fill="none" strokeWidth={2} strokeDasharray="5 4" isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         )}
@@ -218,7 +341,7 @@ export function LiveMetricsPanel({
       </div>
 
       <div className="mt-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div><h2 className="text-xl font-bold tracking-tight text-slate-950">Live resource telemetry</h2><p className="mt-1 text-sm text-slate-600">Near-real-time CPU, memory, and storage utilization from the VPS.</p></div>
+        <div><h2 className="text-xl font-bold tracking-tight text-slate-950">Live resource telemetry</h2><p className="mt-1 text-sm text-slate-600">Host memory is the whole VPS. The RAM breakdown below shows which process groups hold it.</p></div>
         <div className="inline-flex w-fit rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Live metrics time range">
           {ranges.map((item) => (
             <button key={item.value} type="button" onClick={() => onRangeChange(item.value)} aria-pressed={range === item.value} className={`min-w-12 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${range === item.value ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}`}>{item.label}</button>
@@ -228,7 +351,19 @@ export function LiveMetricsPanel({
 
       {error && <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">Live metrics are temporarily unavailable. The page will keep retrying.</div>}
       <div className={`mt-4 grid gap-4 lg:grid-cols-3 ${loading ? "opacity-70" : ""}`} aria-busy={loading} aria-live="polite">
-        {metrics.map((metric) => <MetricChart key={metric.key} metric={metric} points={points} />)}
+        {hostMetrics.map((metric) => <MetricChart key={metric.key} metric={metric} points={points} />)}
+      </div>
+
+      <div className="mt-10">
+        <h2 className="text-xl font-bold tracking-tight text-slate-950">RAM consumers</h2>
+        <p className="mt-1 text-sm text-slate-600">Athens, MongoDB, and the monitoring stack as a share of host RAM. A slice stays at — until Prometheus can see that process.</p>
+      </div>
+      <div className={`mt-4 grid gap-4 ${loading ? "opacity-70" : ""}`}>
+        <RamCompositionBar point={current} />
+        <RamStackChart points={points} />
+        <div className="grid gap-4 lg:grid-cols-2">
+          {ramSlices.map((metric) => <MetricChart key={metric.key} metric={metric} points={points} />)}
+        </div>
       </div>
     </section>
   );

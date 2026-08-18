@@ -14,10 +14,8 @@ import {
   Loader2,
   Palette,
   Plus,
-  RefreshCw,
   Sparkles,
 } from "lucide-react";
-import { Field, Dropdown } from "../adapters/ui";
 import { useNotify } from "../adapters/notify";
 import { Checkbox } from "@/app/components/ui/checkbox";
 import {
@@ -37,16 +35,23 @@ import { ResumePreview } from "../preview/resume-preview";
 import { UploadedTemplatePreview } from "../preview/uploaded-template-preview";
 import { PAGE } from "../preview/utils";
 import { JOB_DESC_TOKEN } from "../constants/tokens";
-import { FALLBACK_MODELS, PROVIDER_OPTIONS, REASONING_OPTIONS } from "../constants/defaults";
-import { areaCls, cardCls, inputCls } from "../styles";
+import { areaCls, cardCls } from "../styles";
 import { fmtCost, fmtTokens, stepOutputText } from "../utils/format";
 import { resolvePromptTokens } from "../utils/prompt-tokens";
 import { usageTokenLabels } from "../../../../lib/runUsage";
 import type { GeneratorPageVm } from "../hooks/use-generator-page";
-import type { ProviderId, Purpose, ReasoningEffort } from "../types";
+import type { Purpose } from "../types";
 import { PURPOSES, SECTION_LABEL } from "../types";
 
-export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
+export function GeneratorEditorView({
+  vm,
+  systemInstructionOpen,
+  onSystemInstructionOpenChange,
+}: {
+  vm: GeneratorPageVm;
+  systemInstructionOpen?: boolean;
+  onSystemInstructionOpenChange?: (open: boolean) => void;
+}) {
   const { notify } = useNotify();
   const {
     applier,
@@ -69,10 +74,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     previewStep,
     setPreviewStep,
     tokenValues,
-    modelOptions,
-    modelsLoading,
-    modelsNote,
-    loadingProfile,
     finalCountByPurpose,
     plan,
     requestPayload,
@@ -92,19 +93,17 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     moveStep,
     removeStep,
     addFineTune,
-    setIdentityField,
-    loadIdentity,
-    loadModels,
     exportResume,
     handleDownloadLog,
     handlePreviewEdit,
     generationError,
-    configHydrated,
   } = vm;
 
   const [designPanel, setDesignPanel] = useState<DesignPanel | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
-  const [systemInstructionOpen, setSystemInstructionOpen] = useState(false);
+  const [internalInstructionOpen, setInternalInstructionOpen] = useState(false);
+  const instructionOpen = systemInstructionOpen ?? internalInstructionOpen;
+  const setInstructionOpen = onSystemInstructionOpenChange ?? setInternalInstructionOpen;
   const resolvedSystemInstruction = resolvePromptTokens(config.systemInstruction, tokenValues);
   const resolvedPlan = plan.map((step) => ({
     ...step,
@@ -120,23 +119,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
 
   return (
     <>
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="max-w-3xl text-sm text-neutral-500 dark:text-white/50">
-          The live preview stays fixed while you scroll the generation pipeline. Use the preview toolbar to open template,
-          theme, and layout settings.
-        </p>
-        <button
-          type="button"
-          onClick={() => setSystemInstructionOpen(true)}
-          aria-haspopup="dialog"
-          aria-expanded={systemInstructionOpen}
-          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-medium shadow-sm transition hover:bg-neutral-50 dark:border-white/10 dark:bg-neutral-900 dark:hover:bg-white/5"
-        >
-          <FileText className="h-3.5 w-3.5 text-sky-500" />
-          System instruction
-        </button>
-      </div>
-
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-5 items-start">
         {/* Sticky live preview */}
         <div className="xl:sticky xl:top-6 xl:self-start xl:z-10">
@@ -154,15 +136,29 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                   )}
                 </div>
               </div>
-              <PreviewToolbar
-                activePanel={designPanel}
-                onOpenPanel={openDesignPanel}
-                showDownloadLog={Boolean(genProgress)}
-                onDownloadLog={handleDownloadLog}
-                exporting={exporting}
-                onExportDocx={() => void exportResume("docx")}
-                disableThemeLayout={usingUploadedTemplate}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <PreviewToolbar
+                  activePanel={designPanel}
+                  onOpenPanel={openDesignPanel}
+                  showDownloadLog={Boolean(genProgress)}
+                  onDownloadLog={handleDownloadLog}
+                  exporting={exporting}
+                  onExportDocx={() => void exportResume("docx")}
+                  disableThemeLayout={usingUploadedTemplate}
+                />
+                {onSystemInstructionOpenChange ? null : (
+                  <button
+                    type="button"
+                    onClick={() => setInstructionOpen(true)}
+                    aria-haspopup="dialog"
+                    aria-expanded={instructionOpen}
+                    className="athens-btn"
+                  >
+                    <FileText size={16} aria-hidden="true" />
+                    System instruction
+                  </button>
+                )}
+              </div>
             </div>
 
             {usingUploadedTemplate && uploadedTemplate && (
@@ -211,90 +207,6 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
 
         {/* Generation pipeline */}
         <div className="space-y-5 min-w-0">
-          <div className={cardCls}>
-            <SectionTitle icon={Sparkles}>Automated workflow</SectionTitle>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
-              {[
-                { label: "Career profile", ready: Boolean(identity), running: false, detail: identity ? `${identity.careers.length} roles loaded` : "Waiting for profile" },
-                { label: "Resume config", ready: configHydrated, running: false, detail: configHydrated ? "v4 loaded & autosaved" : "Loading saved config" },
-              ].map((item) => (
-                <div key={item.label} className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
-                  <div className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-white/75">
-                    {item.running
-                      ? <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-500" />
-                      : item.ready
-                        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                        : <Circle className="h-3.5 w-3.5 text-neutral-300 dark:text-white/20" />}
-                    {item.label}
-                  </div>
-                  <div className="mt-1 text-neutral-400 dark:text-white/40">{item.detail}</div>
-                </div>
-              ))}
-            </div>
-            <p className="mt-3 text-[11px] leading-relaxed text-neutral-500 dark:text-white/50">
-              Paste a job description and choose Generate. Athens runs your configured prompts for Summary, Skills, and Experience in parallel and saves each final section.
-            </p>
-          </div>
-
-          <div className={cardCls}>
-            <SectionTitle icon={Sparkles}>Generation &amp; identity</SectionTitle>
-            <p className="text-[11px] text-neutral-400 dark:text-white/40 mb-3">
-              The model comes from your default in Settings → Profile.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {config.provider === "openai" && (
-                <Field label="Reasoning effort">
-                  <Dropdown<ReasoningEffort>
-                    value={config.reasoningEffort}
-                    onChange={(reasoningEffort) => setConfig((c) => ({ ...c, reasoningEffort }))}
-                    options={REASONING_OPTIONS}
-                  />
-                </Field>
-              )}
-            </div>
-            {modelsNote && <p className="text-[11px] text-amber-500 mt-1.5">{modelsNote}</p>}
-            {config.provider === "openai" && (
-              <p className="text-[11px] text-neutral-400 dark:text-white/40 mt-1.5">
-                Only sent to OpenAI reasoning models (gpt-5*, o-series). <strong>low/medium/high</strong> work across models;{" "}
-                <span className="font-mono">minimal</span> is nano-only and <span className="font-mono">xhigh</span> is newer-models-only.
-              </p>
-            )}
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={() => void loadIdentity()}
-                disabled={loadingProfile || !applier?.name}
-                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-neutral-200 dark:border-white/10 text-sm hover:bg-neutral-100 dark:hover:bg-white/5 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loadingProfile ? "animate-spin" : ""}`} />
-                Reload profile
-              </button>
-            </div>
-            {applier?.name ? (
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Full name">
-                  <input className={inputCls} value={identity?.fullName ?? ""} onChange={(e) => setIdentityField("fullName", e.target.value)} />
-                </Field>
-                <Field label="Location">
-                  <input className={inputCls} value={identity?.location ?? ""} onChange={(e) => setIdentityField("location", e.target.value)} />
-                </Field>
-                <Field label="Email">
-                  <input className={inputCls} value={identity?.email ?? ""} onChange={(e) => setIdentityField("email", e.target.value)} />
-                </Field>
-                <Field label="Phone">
-                  <input className={inputCls} value={identity?.phone ?? ""} onChange={(e) => setIdentityField("phone", e.target.value)} />
-                </Field>
-                <Field label="LinkedIn" cls="sm:col-span-2">
-                  <input className={inputCls} value={identity?.linkedin ?? ""} onChange={(e) => setIdentityField("linkedin", e.target.value)} />
-                </Field>
-              </div>
-            ) : (
-              <div className="mt-4 rounded-xl border border-dashed border-neutral-300 dark:border-white/15 p-5 text-center text-sm text-neutral-500 dark:text-white/50">
-                Select an applier in the sidebar to auto-fill identity & career history.
-              </div>
-            )}
-          </div>
-
           {genProgress && (
             <div className={cardCls}>
               <SectionTitle
@@ -597,7 +509,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
         </div>
       </div>
 
-      <Sheet open={systemInstructionOpen} onOpenChange={setSystemInstructionOpen}>
+      <Sheet open={instructionOpen} onOpenChange={setInstructionOpen}>
         <SheetContent
           side="right"
           className="w-full gap-0 overflow-hidden border-l border-neutral-200 bg-white p-0 sm:max-w-xl dark:border-white/10 dark:bg-neutral-900"
