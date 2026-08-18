@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { BarChart3, Loader2 } from "lucide-react";
+import { BarChart3, Loader2, Search, X } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { fetchUserResumes } from "../../../services/resumeApi";
 import type { UserResumeSummary } from "../../../types/resume";
@@ -65,8 +65,8 @@ export function ResumeAnalysisTab({ onOpenLibrary }: ResumeAnalysisTabProps) {
 
   if (!applierReady || loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm gap-2">
-        <Loader2 className="w-5 h-5 animate-spin" />
+      <div className="athens-settings__loading">
+        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
         Loading analysis…
       </div>
     );
@@ -74,52 +74,59 @@ export function ResumeAnalysisTab({ onOpenLibrary }: ResumeAnalysisTabProps) {
 
   if (!ownerName) {
     return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-        Select an applier to view resume analysis.
+      <div className="athens-empty">
+        <p className="athens-empty__title">Select an applier to view resume analysis.</p>
       </div>
     );
   }
 
   if (!analyzedResumes.length) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-center px-4 border border-dashed border-border rounded-xl">
-        <BarChart3 className="w-10 h-10 text-muted-foreground/40 mb-3" />
-        <p className="font-bold text-foreground">No analyzed resumes yet</p>
-        <p className="text-sm text-muted-foreground mt-1 max-w-md">
+      <div className="athens-empty">
+        <BarChart3 size={28} aria-hidden="true" />
+        <p className="athens-empty__title">No analyzed resumes yet</p>
+        <p className="athens-empty__copy">
           Go to the Library tab, select uploaded resumes, and run Analyze to see skill radar charts here.
         </p>
-        {onOpenLibrary && (
-          <button
-            type="button"
-            onClick={onOpenLibrary}
-            className="mt-4 px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90"
-          >
+        {onOpenLibrary ? (
+          <button type="button" onClick={onOpenLibrary} className="athens-btn-primary mt-4">
             Open Library
           </button>
-        )}
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5 min-h-[520px]">
-      <aside className="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-        <div className="px-4 py-3 border-b border-border space-y-2">
+    <div className="grid min-h-[520px] grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+      <aside className="athens-surface flex min-h-[520px] flex-col overflow-hidden">
+        <div className="space-y-2 border-b border-[var(--athens-border)] px-4 py-3">
           <div>
-            <h3 className="text-sm font-bold text-foreground">Analyzed resumes</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">{analyzedResumes.length} available</p>
+            <h3 className="athens-settings__title">Analyzed resumes</h3>
+            <p className="athens-settings__lede">{analyzedResumes.length} available</p>
           </div>
           {analyzedResumes.length > 8 ? (
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search stack or file"
-              className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground"
-            />
+            <div className="athens-field-group">
+              <div className="athens-field min-w-0">
+                <Search className="athens-field__icon" aria-hidden="true" />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search stack or file"
+                  aria-label="Search analyzed resumes"
+                  className="athens-field__input"
+                />
+                {query ? (
+                  <button type="button" onClick={() => setQuery("")} className="athens-field__clear" aria-label="Clear search">
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            </div>
           ) : null}
         </div>
-        <ul className="flex-1 overflow-y-auto subtle-scroll p-2 space-y-1">
+        <ul className="subtle-scroll flex-1 space-y-1 overflow-y-auto p-2">
           {visibleResumes.map((r) => {
             const active = r.id === selectedResumeId;
             const skillCount = r.skillCount ?? r.skillProfile?.length;
@@ -128,28 +135,26 @@ export function ResumeAnalysisTab({ onOpenLibrary }: ResumeAnalysisTabProps) {
                 <button
                   type="button"
                   onClick={() => setSelectedResumeId(r.id)}
-                  className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors ${
-                    active
-                      ? "bg-primary/10 border border-primary/30"
-                      : "hover:bg-secondary border border-transparent"
-                  }`}
+                  className={`athens-queue-row w-full text-left ${active ? "is-selected" : ""}`}
                 >
-                  <div className="text-xs font-bold text-foreground truncate">{r.techStack}</div>
-                  <div className="text-[11px] text-muted-foreground truncate mt-0.5">{r.fileName}</div>
-                  {skillCount != null ? (
-                    <div className="text-[10px] text-primary font-semibold mt-1">{skillCount} skills</div>
-                  ) : null}
+                  <div>
+                    <div className="athens-card-title truncate">{r.techStack}</div>
+                    <div className="mt-0.5 truncate text-xs text-[var(--athens-text-secondary)]">{r.fileName}</div>
+                    {skillCount != null ? (
+                      <div className="athens-card-meta mt-1">{skillCount} skills</div>
+                    ) : null}
+                  </div>
                 </button>
               </li>
             );
           })}
           {!visibleResumes.length ? (
-            <li className="px-3 py-6 text-center text-xs text-muted-foreground">No matches</li>
+            <li className="px-3 py-6 text-center text-xs text-[var(--athens-text-muted)]">No matches</li>
           ) : null}
         </ul>
       </aside>
 
-      <div className="rounded-xl border border-border bg-card overflow-hidden min-h-[520px]">
+      <div className="athens-surface min-h-[520px] overflow-hidden">
         <ResumeSkillProfilePanel
           key={selectedResumeId ?? "none"}
           skills={selectedSkills}

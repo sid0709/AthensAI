@@ -3,13 +3,16 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertTriangle,
   CheckCircle2,
+  ClipboardList,
   ExternalLink,
+  Inbox,
   Loader2,
   Play,
   RefreshCw,
   Search,
   Square,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
@@ -30,12 +33,9 @@ import {
 import { PageShell } from "@/app/components/layout/PageShell";
 import { PaginationBar } from "@/app/components/shared/PaginationBar";
 import { AthensSelect } from "@/app/components/forms";
-import { Button } from "@/app/components/ui/button";
 import { Checkbox } from "@/app/components/ui/checkbox";
 import {
   AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -114,41 +114,37 @@ function TitleReviewRow({
           onSelect(job.id, event.shiftKey);
         }
       }}
-      className={cn(
-        "grid cursor-pointer gap-2 border-b border-border/60 px-3 py-2 transition-colors lg:items-center",
-        "lg:grid-cols-[auto_minmax(12rem,1.2fr)_minmax(15rem,2fr)_auto]",
-        selected ? "bg-primary/[0.05]" : "hover:bg-muted/30",
-      )}
+      className={cn("athens-queue-row athens-queue-row--review", selected && "is-selected")}
     >
       <Checkbox checked={selected} className="pointer-events-none mt-1 lg:mt-0" aria-label={`Select ${job.title}`} />
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <h2 className="truncate text-xs font-semibold leading-4 text-foreground"><ExtensionSafeText value={job.title} /></h2>
+          <h2 className="athens-card-title truncate"><ExtensionSafeText value={job.title} /></h2>
           {job.applyUrl ? (
-            <a href={job.applyUrl} target="_blank" rel="noreferrer" className="shrink-0 text-muted-foreground hover:text-primary" title="Open job">
-              <ExternalLink className="size-3" />
+            <a href={job.applyUrl} target="_blank" rel="noreferrer" className="athens-link shrink-0" title="Open job">
+              <ExternalLink className="size-3.5" aria-hidden="true" />
             </a>
           ) : null}
         </div>
-        <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-[10px] leading-3.5 text-muted-foreground">
-          <ExtensionSafeText value={job.company} /><span>·</span><ExtensionSafeText value={job.source} /><span>·</span><ExtensionSafeText value={formatDate(job.postedAt)} />
+        <div className="athens-card-meta mt-1">
+          <ExtensionSafeText value={job.company} /><span aria-hidden="true">·</span><ExtensionSafeText value={job.source} /><span aria-hidden="true">·</span><ExtensionSafeText value={formatDate(job.postedAt)} />
         </div>
       </div>
-      <div className="min-w-0 rounded-md bg-muted/40 px-2.5 py-1 text-[11px] leading-4">
+      <div className="athens-callout min-w-0 px-3 py-2 text-xs leading-4 text-[var(--athens-text-secondary)]">
         {tab === "failed" ? (
-          <><ExtensionSafeText className="font-semibold text-destructive" value={job.titleReview?.error?.code || "FAILED"} /><ExtensionSafeText className="ml-2 text-muted-foreground" value={job.titleReview?.error?.message || "Classification failed."} /></>
+          <><ExtensionSafeText className="font-semibold text-[var(--athens-danger)]" value={job.titleReview?.error?.code || "FAILED"} /><ExtensionSafeText className="ml-2" value={job.titleReview?.error?.message || "Classification failed."} /></>
         ) : tab === "unreviewed" ? (
-          <span className="flex items-center gap-1.5 text-muted-foreground">
-            {scanning ? <Loader2 className="size-3 animate-spin" /> : null}
+          <span className="flex items-center gap-1.5">
+            {scanning ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
             <ExtensionSafeText value={scanning ? "AI review in progress" : "Waiting for AI review"} />
           </span>
         ) : (
-          <ExtensionSafeText className="text-muted-foreground" value={job.titleReview?.reason || "No reason returned."} />
+          <ExtensionSafeText value={job.titleReview?.reason || "No reason returned."} />
         )}
       </div>
       <div className="text-left lg:text-right">
-        <div className="text-[9px] uppercase tracking-wide text-muted-foreground"><ExtensionSafeText value={tab === "unreviewed" ? "Status" : "Confidence"} /></div>
-        <div className={cn("text-[11px] font-bold tabular-nums", tab !== "unreviewed" && "font-mono")}><ExtensionSafeText value={tab === "unreviewed" ? (scanning ? "Reviewing" : "Waiting") : confidenceLabel(job.titleReview?.confidence)} /></div>
+        <div className="athens-eyebrow"><ExtensionSafeText value={tab === "unreviewed" ? "Status" : "Confidence"} /></div>
+        <div className="mt-0.5 text-xs font-semibold tabular-nums"><ExtensionSafeText value={tab === "unreviewed" ? (scanning ? "Reviewing" : "Waiting") : confidenceLabel(job.titleReview?.confidence)} /></div>
       </div>
     </article>
   );
@@ -191,14 +187,14 @@ function TitleReviewRows({
     count: virtualized ? jobs.length : 0,
     getScrollElement: () => scrollElement,
     getItemKey: (index) => jobs[index]?.id || index,
-    estimateSize: () => 64,
+    estimateSize: () => 76,
     overscan: 10,
     scrollMargin,
   });
 
   if (!virtualized) {
     return (
-      <div>
+      <div className="athens-queue">
         {jobs.map((job) => (
           <TitleReviewRow key={job.id} job={job} tab={tab} selected={selectedIds.has(job.id)} onSelect={onSelect} />
         ))}
@@ -225,6 +221,12 @@ function TitleReviewRows({
     </div>
   );
 }
+
+const REVIEW_TABS: { id: ReviewTab; label: string; icon: typeof Inbox }[] = [
+  { id: "unreviewed", label: "Unreviewed", icon: Inbox },
+  { id: "review_required", label: "Review required", icon: ClipboardList },
+  { id: "failed", label: "Failed", icon: AlertTriangle },
+];
 
 export function TitleReviewPage() {
   const { applier } = useApplier();
@@ -539,107 +541,61 @@ export function TitleReviewPage() {
     }
   };
 
+  const tabCount = (id: ReviewTab) => {
+    if (id === "unreviewed") return session.unreviewedCount;
+    if (id === "review_required") return session.reviewRequiredCount;
+    return session.failedCount;
+  };
+  const showBulk = selectedIds.size > 0 || mutation !== null;
+
   return (
-    <PageShell>
-      <div className="space-y-4">
-        <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h1 className="text-xl font-bold text-foreground">Review titles</h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                <ExtensionSafeText value="Unreviewed jobs stay hidden from Job Search. Only AI- or manually approved titles appear there." />
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void refreshAll()} disabled={loading}>
-                <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
-              </Button>
-              {session.running ? (
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void stop()} disabled={sessionLoading}>
-                  <Square className="size-3.5" /> Stop
-                </Button>
-              ) : (
-                <Button size="sm" className="gap-1.5" onClick={() => void startReview()} disabled={sessionLoading || session.pending === 0}>
-                  {sessionLoading ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
-                  <ExtensionSafeText value={(session.failedCount ?? 0) > 0 && session.pending === session.failedCount ? "Retry failed" : "Start review"} />
-                  <span className="rounded-full bg-primary-foreground/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">
-                    <ExtensionSafeText value={(session.pending ?? 0).toLocaleString()} />
+    <PageShell className="athens-ui">
+      <div className="athens-toolbar sticky top-0 z-20 mb-3">
+        <div className="athens-surface">
+          <div className="athens-tabs scroll-x-only" role="tablist" aria-label="Title review queue">
+            {REVIEW_TABS.map((item) => {
+              const active = tab === item.id;
+              const Icon = item.icon;
+              const count = tabCount(item.id);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  aria-current={active ? "true" : undefined}
+                  onClick={() => changeTab(item.id)}
+                  className={cn("athens-tab", active && "is-active")}
+                >
+                  <span className="athens-tab-icon">
+                    <Icon size={16} aria-hidden="true" />
                   </span>
-                </Button>
-              )}
-            </div>
+                  {item.label}
+                  <span className="athens-count">
+                    {count == null ? "—" : Number(count).toLocaleString()}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[
-              ["Unreviewed", session.unreviewedCount ?? 0],
-              ["Approved this run", session.approved ?? 0],
-              ["Needs review", session.reviewRequiredCount ?? 0],
-              ["Failed", session.failedCount ?? 0],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
-                <div className="text-xs text-muted-foreground"><ExtensionSafeText value={String(label)} /></div>
-                <div className="mt-0.5 text-lg font-bold tabular-nums"><ExtensionSafeText value={Number(value).toLocaleString()} /></div>
-              </div>
-            ))}
-          </div>
-
-          {session.running ? (
-            <div className="mt-4" aria-live="polite">
-              <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                <ExtensionSafeText
-                  value={session.phase === "preparing"
-                    ? "Preparing the indexed review queue…"
-                    : session.phase === "finalizing"
-                      ? "Refreshing the completed review queue…"
-                      : `Processing ${session.concurrency ?? 10} concurrent batches of up to ${session.batchSize ?? 10}`}
+          <div className="athens-toolbar-row">
+            <div className="athens-field-group">
+              <div className="athens-field">
+                <Search className="athens-field__icon" aria-hidden="true" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search titles…"
+                  aria-label="Search titles"
+                  className="athens-field__input"
                 />
-                <ExtensionSafeText className="font-mono tabular-nums" value={`${session.processed ?? 0}/${session.total ?? 0}`} />
+                {query ? (
+                  <button type="button" onClick={() => setQuery("")} className="athens-field__clear" aria-label="Clear search">
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                ) : null}
               </div>
-              <div className="h-2 overflow-hidden rounded-full bg-secondary">
-                <div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${progress}%` }} />
-              </div>
-            </div>
-          ) : session.error ? (
-            <div className="mt-4 flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              <AlertTriangle className="size-4 shrink-0" /> <ExtensionSafeText value={session.error} />
-            </div>
-          ) : null}
-        </section>
-
-        <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-border p-3 sm:flex-row sm:items-center">
-            <div className="flex max-w-full overflow-x-auto rounded-lg bg-muted p-1">
-              <button
-                type="button"
-                onClick={() => changeTab("unreviewed")}
-                className={cn("whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold", tab === "unreviewed" ? "bg-background shadow-sm" : "text-muted-foreground")}
-              >
-                Unreviewed <ExtensionSafeText className="ml-1 tabular-nums" value={session.unreviewedCount ?? "—"} />
-              </button>
-              <button
-                type="button"
-                onClick={() => changeTab("review_required")}
-                className={cn("whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold", tab === "review_required" ? "bg-background shadow-sm" : "text-muted-foreground")}
-              >
-                Review Required <ExtensionSafeText className="ml-1 tabular-nums" value={session.reviewRequiredCount ?? "—"} />
-              </button>
-              <button
-                type="button"
-                onClick={() => changeTab("failed")}
-                className={cn("whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold", tab === "failed" ? "bg-background shadow-sm" : "text-muted-foreground")}
-              >
-                <ExtensionSafeText value="Failed" /> <ExtensionSafeText className="ml-1 tabular-nums" value={session.failedCount ?? "—"} />
-              </button>
-            </div>
-            <div className="relative min-w-0 flex-1 sm:max-w-sm">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search titles…"
-                className="h-9 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
-              />
             </div>
             {tab !== "unreviewed" ? (
               <AthensSelect
@@ -654,156 +610,236 @@ export function TitleReviewPage() {
                     ]
                   : [{ value: "newest", label: "Newest" }, { value: "oldest", label: "Oldest" }]}
                 size="sm"
-                className="w-full sm:w-48"
+                className="w-full sm:w-52"
+                tone="lens"
               />
             ) : null}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 border-b border-border/60 bg-muted/20 px-3 py-2.5">
-            {tab === "unreviewed" ? (
-              <span className="text-xs text-muted-foreground">
-                Hidden from Job Search until approved. Approve manually or wait for AI review.
-              </span>
-            ) : null}
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <Checkbox
-                checked={allOnPageSelected ? true : selectedOnPage > 0 ? "indeterminate" : false}
-                onCheckedChange={() => selectAllOnPage(pageIds, allOnPageSelected)}
-                disabled={loading || jobs.length === 0}
-              />
-              <ExtensionSafeText value={selectedIds.size ? `${selectedIds.size} selected` : "Select page"} />
-            </label>
-            <div className="ml-auto flex items-center gap-2">
-              {tab === "failed" ? null : (
-                <Button size="sm" className="h-8 gap-1.5" onClick={() => void approveSelected()} disabled={!selectedIds.size || mutation !== null}>
-                  {mutation === "approve" ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                  Approve
-                </Button>
+            <div className="athens-toolbar-actions ml-auto">
+              {(session.approved ?? 0) > 0 ? (
+                <span className="athens-status">Approved this run {Number(session.approved).toLocaleString()}</span>
+              ) : null}
+              <button type="button" className="athens-btn" onClick={() => void refreshAll()} disabled={loading}>
+                <RefreshCw size={16} aria-hidden="true" className={cn(loading && "animate-spin")} />
+                Refresh
+              </button>
+              {session.running ? (
+                <button type="button" className="athens-btn" onClick={() => void stop()} disabled={sessionLoading}>
+                  <Square size={16} aria-hidden="true" />
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="athens-btn-primary"
+                  onClick={() => void startReview()}
+                  disabled={sessionLoading || session.pending === 0}
+                >
+                  {sessionLoading ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
+                  <ExtensionSafeText value={(session.failedCount ?? 0) > 0 && session.pending === session.failedCount ? "Retry failed" : "Start review"} />
+                  <span className="athens-badge">
+                    <ExtensionSafeText value={(session.pending ?? 0).toLocaleString()} />
+                  </span>
+                </button>
               )}
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-destructive" onClick={() => setDeleteOpen(true)} disabled={!selectedIds.size || mutation !== null}>
-                {mutation === "remove" ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                Remove
-              </Button>
             </div>
           </div>
 
-          {deletionProgress ? (
-            <div className="border-b border-border/60 bg-destructive/[0.035] px-3 py-3" role="status" aria-live="polite">
-              <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                {deletionProgress.phase === "deleting" || deletionProgress.phase === "refreshing" ? (
-                  <Loader2 className="size-4 shrink-0 animate-spin text-destructive" />
-                ) : deletionProgress.phase === "complete" ? (
-                  <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-                ) : (
-                  <AlertTriangle className="size-4 shrink-0 text-amber-600" />
+          {session.running ? (
+            <div className="athens-dock-row" aria-live="polite">
+              <div className="athens-progress">
+                <div className="athens-progress__meta">
+                  <ExtensionSafeText
+                    value={session.phase === "preparing"
+                      ? "Preparing the indexed review queue…"
+                      : session.phase === "finalizing"
+                        ? "Refreshing the completed review queue…"
+                        : `Processing ${session.concurrency ?? 10} concurrent batches of up to ${session.batchSize ?? 10}`}
+                  />
+                  <ExtensionSafeText value={`${session.processed ?? 0}/${session.total ?? 0}`} />
+                </div>
+                <div className="athens-progress__track">
+                  <div className="athens-progress__bar" style={{ width: `${progress}%` }} />
+                </div>
+              </div>
+            </div>
+          ) : session.error ? (
+            <div className="athens-dock-row">
+              <div className="athens-callout is-danger flex w-full items-center gap-2 text-sm">
+                <AlertTriangle size={16} className="shrink-0" aria-hidden="true" />
+                <ExtensionSafeText value={session.error} />
+              </div>
+            </div>
+          ) : null}
+
+          {showBulk ? (
+            <div className="athens-dock-row">
+              <div className="athens-toolbar-actions ml-auto">
+                {tab === "failed" ? null : (
+                  <button
+                    type="button"
+                    className="athens-btn-primary"
+                    onClick={() => void approveSelected()}
+                    disabled={!selectedIds.size || mutation !== null}
+                  >
+                    {mutation === "approve" ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <CheckCircle2 size={16} aria-hidden="true" />}
+                    Approve
+                  </button>
                 )}
-                <ExtensionSafeText
-                  value={deletionProgress.phase === "deleting"
-                    ? `Removing ${deletionProgress.processed.toLocaleString()} of ${deletionProgress.total.toLocaleString()} jobs…`
-                    : deletionProgress.phase === "refreshing"
-                      ? "Deletion finished. Refreshing review counts…"
-                      : deletionProgress.phase === "complete"
-                        ? deletionProgress.alreadyAbsent > 0
-                          ? `Removed ${deletionProgress.removed.toLocaleString()} titles from the review queue.`
-                          : `Removed ${deletionProgress.deleted.toLocaleString()} jobs permanently.`
-                        : `Deletion finished with ${deletionProgress.failed.toLocaleString()} failed items.`}
-                />
-                <ExtensionSafeText className="ml-auto font-mono text-xs tabular-nums text-muted-foreground" value={`${deletionPercent}%`} />
+                <button
+                  type="button"
+                  className="athens-btn-danger"
+                  onClick={() => setDeleteOpen(true)}
+                  disabled={!selectedIds.size || mutation !== null}
+                >
+                  {mutation === "remove" ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Trash2 size={16} aria-hidden="true" />}
+                  Remove
+                </button>
               </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
-                <div
-                  className={cn(
-                    "h-full transition-[width] duration-300",
-                    deletionProgress.phase === "partial"
-                      ? "bg-amber-500"
-                      : deletionProgress.phase === "complete"
-                        ? "bg-emerald-500"
-                        : "bg-destructive",
-                  )}
-                  style={{ width: `${deletionPercent}%` }}
-                />
-              </div>
-              <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                <ExtensionSafeText value={`${deletionProgress.removed.toLocaleString()} removed · ${deletionProgress.deleted.toLocaleString()} permanently deleted${deletionProgress.alreadyAbsent ? ` · ${deletionProgress.alreadyAbsent.toLocaleString()} already absent` : ""}${deletionProgress.failed ? ` · ${deletionProgress.failed.toLocaleString()} failed` : ""}`} />
-                <ExtensionSafeText
-                  value={deletionProgress.phase === "deleting"
-                    ? `${deletionProgress.activeBatches} active · ${deletionProgress.completedBatches}/${deletionProgress.batchCount} batches complete`
-                    : "The review list and counts are synchronized after cleanup."}
-                />
+            </div>
+          ) : null}
+
+          {deletionProgress ? (
+            <div className="athens-dock-row" role="status" aria-live="polite">
+              <div className={cn("athens-progress", deletionProgress.phase === "complete" ? "athens-progress--complete" : "athens-progress--danger")}>
+                <div className="athens-progress__meta">
+                  <span className="inline-flex items-center gap-2">
+                    {deletionProgress.phase === "deleting" || deletionProgress.phase === "refreshing" ? (
+                      <Loader2 size={16} className="shrink-0 animate-spin" aria-hidden="true" />
+                    ) : deletionProgress.phase === "complete" ? (
+                      <CheckCircle2 size={16} className="shrink-0" aria-hidden="true" />
+                    ) : (
+                      <AlertTriangle size={16} className="shrink-0" aria-hidden="true" />
+                    )}
+                    <ExtensionSafeText
+                      value={deletionProgress.phase === "deleting"
+                        ? `Removing ${deletionProgress.processed.toLocaleString()} of ${deletionProgress.total.toLocaleString()} jobs…`
+                        : deletionProgress.phase === "refreshing"
+                          ? "Deletion finished. Refreshing review counts…"
+                          : deletionProgress.phase === "complete"
+                            ? deletionProgress.alreadyAbsent > 0
+                              ? `Removed ${deletionProgress.removed.toLocaleString()} titles from the review queue.`
+                              : `Removed ${deletionProgress.deleted.toLocaleString()} jobs permanently.`
+                            : `Deletion finished with ${deletionProgress.failed.toLocaleString()} failed items.`}
+                    />
+                  </span>
+                  <ExtensionSafeText value={`${deletionPercent}%`} />
+                </div>
+                <div className="athens-progress__track">
+                  <div className="athens-progress__bar" style={{ width: `${deletionPercent}%` }} />
+                </div>
+                <div className="athens-progress__meta">
+                  <ExtensionSafeText value={`${deletionProgress.removed.toLocaleString()} removed · ${deletionProgress.deleted.toLocaleString()} permanently deleted${deletionProgress.alreadyAbsent ? ` · ${deletionProgress.alreadyAbsent.toLocaleString()} already absent` : ""}${deletionProgress.failed ? ` · ${deletionProgress.failed.toLocaleString()} failed` : ""}`} />
+                  <ExtensionSafeText
+                    value={deletionProgress.phase === "deleting"
+                      ? `${deletionProgress.activeBatches} active · ${deletionProgress.completedBatches}/${deletionProgress.batchCount} batches complete`
+                      : "The review list and counts are synchronized after cleanup."}
+                  />
+                </div>
               </div>
             </div>
           ) : null}
 
           {error && jobs.length > 0 ? (
-            <div className="flex items-center gap-2 border-b border-destructive/20 bg-destructive/[0.06] px-3 py-2 text-xs text-destructive">
-              <AlertTriangle className="size-3.5 shrink-0" />
-              <ExtensionSafeText value={`${error} Showing the last successful results.`} />
+            <div className="athens-dock-row">
+              <div className="athens-callout is-danger flex w-full items-center gap-2 text-xs">
+                <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />
+                <ExtensionSafeText value={`${error} Showing the last successful results.`} />
+              </div>
             </div>
           ) : null}
 
-          {loading && jobs.length === 0 ? (
-            <div className="animate-pulse" aria-label="Loading title reviews">
-              {Array.from({ length: 6 }, (_, index) => (
-                <div key={index} className="grid grid-cols-[1fr_1.5fr_5rem] gap-4 border-b border-border/60 px-3 py-3">
-                  <div className="h-3 rounded bg-muted" />
-                  <div className="h-3 rounded bg-muted/80" />
-                  <div className="h-3 rounded bg-muted/70" />
-                </div>
-              ))}
-            </div>
-          ) : error && jobs.length === 0 ? (
-            <div className="m-4 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-              <ExtensionSafeText value={error} />
-            </div>
-          ) : jobs.length === 0 ? (
-            <div className="flex min-h-64 flex-col items-center justify-center px-4 text-center">
-              <CheckCircle2 className="mb-3 size-9 text-emerald-500" />
-              <p className="font-semibold">
-                <ExtensionSafeText value={tab === "unreviewed"
-                  ? "All titles have been reviewed"
-                  : tab === "review_required"
-                    ? "No titles require review"
-                    : "No failed title checks"}
+          <div className="athens-pager-row">
+            <div className="athens-pager-select">
+              <label className={cn("athens-select-label", loading || jobs.length === 0 ? "cursor-wait" : "cursor-pointer")}>
+                <Checkbox
+                  checked={allOnPageSelected ? true : selectedOnPage > 0 ? "indeterminate" : false}
+                  onCheckedChange={() => selectAllOnPage(pageIds, allOnPageSelected)}
+                  disabled={loading || jobs.length === 0}
+                  aria-label="Select all titles on this page"
                 />
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground"><ExtensionSafeText value={query ? "Try a different search." : "This queue is clear."} /></p>
+                <span>
+                  Select page <strong>{loading ? "—/—" : `${selectedOnPage}/${jobs.length}`}</strong>
+                </span>
+              </label>
             </div>
-          ) : (
-            <TitleReviewRows jobs={jobs} tab={tab} selectedIds={selectedIds} onSelect={selectJob} />
-          )}
-
-          <PaginationBar
-            page={page}
-            pageSize={pageSize}
-            total={total}
-            itemCount={jobs.length}
-            onPageChange={setPage}
-            onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
-            pageSizeOptions={[10, 25, 50, 100, 250, 500]}
-            loading={loading}
-            unitLabel="titles"
-            className="border-t border-border px-3"
-          />
-        </section>
+            <PaginationBar
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              itemCount={jobs.length}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+              pageSizeOptions={[10, 25, 50, 100, 250, 500]}
+              loading={loading}
+              unitLabel="titles"
+              detailed
+              tone="lens"
+              className="py-1 px-0 flex-1 min-w-0"
+            />
+          </div>
+        </div>
       </div>
 
+      {loading && jobs.length === 0 ? (
+        <div className="athens-queue" aria-label="Loading title reviews">
+          {Array.from({ length: 6 }, (_, index) => (
+            <div key={index} className="athens-queue-row athens-queue-row--review" aria-hidden>
+              <div className="h-3 w-3 rounded bg-[var(--athens-surface-subtle)]" />
+              <div className="h-3 rounded bg-[var(--athens-surface-subtle)]" />
+              <div className="h-3 rounded bg-[var(--athens-surface-subtle)]" />
+              <div className="h-3 w-16 rounded bg-[var(--athens-surface-subtle)]" />
+            </div>
+          ))}
+        </div>
+      ) : error && jobs.length === 0 ? (
+        <div className="athens-callout is-danger text-sm">
+          <ExtensionSafeText value={error} />
+        </div>
+      ) : jobs.length === 0 ? (
+        <div className="athens-empty">
+          <CheckCircle2 size={28} aria-hidden="true" />
+          <p className="athens-empty__title">
+            <ExtensionSafeText value={tab === "unreviewed"
+              ? "All titles have been reviewed"
+              : tab === "review_required"
+                ? "No titles require review"
+                : "No failed title checks"}
+            />
+          </p>
+          <p className="athens-empty__copy">
+            <ExtensionSafeText
+              value={query
+                ? "Try a different search."
+                : tab === "unreviewed"
+                  ? "Unreviewed jobs stay hidden from Job Search until they are approved."
+                  : "This queue is clear."}
+            />
+          </p>
+        </div>
+      ) : (
+        <TitleReviewRows jobs={jobs} tab={tab} selectedIds={selectedIds} onSelect={selectJob} />
+      )}
+
       <AlertDialog open={deleteOpen} onOpenChange={(open) => mutation === null && setDeleteOpen(open)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {selectedIds.size} job{selectedIds.size === 1 ? "" : "s"} permanently?</AlertDialogTitle>
-            <AlertDialogDescription>
+        <AlertDialogContent className="athens-ui athens-dialog flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <AlertDialogHeader className="athens-dialog-header">
+            <AlertDialogTitle className="athens-settings__title">Remove {selectedIds.size} job{selectedIds.size === 1 ? "" : "s"} permanently?</AlertDialogTitle>
+            <AlertDialogDescription className="athens-settings__lede">
               This deletes the selected job documents and their search, ranking, score, and cached records. This action can’t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={mutation !== null}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 text-white hover:bg-red-700"
+          <AlertDialogFooter className="athens-dialog-footer">
+            <button type="button" className="athens-btn" disabled={mutation !== null} onClick={() => setDeleteOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="athens-btn-danger"
               disabled={mutation !== null}
-              onClick={(event) => { event.preventDefault(); void removeSelected(); }}
+              onClick={() => { void removeSelected(); }}
             >
               Remove permanently
-            </AlertDialogAction>
+            </button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

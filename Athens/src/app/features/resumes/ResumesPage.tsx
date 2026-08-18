@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { Wand2 } from "lucide-react";
+import { BarChart3, Clock, FileStack, Library, Wand2 } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
-import { Pill } from "../../components/ui";
 import { TabTransition } from "../../components/overlays";
 import { DEFAULT_TABS, normalizeTab, PATHS, type ResumesTab } from "../../config/routes";
 import { useResumeNavigationOptional } from "../../context/ResumeNavigationContext";
@@ -11,8 +10,16 @@ import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
 import { ResumeAnalysisTab } from "./components/ResumeAnalysisTab";
 import { ResumeGeneratorPanel } from "./generator/ResumeGeneratorPanel";
 import type { FullRun } from "./generator/history/history-types";
+import { cn } from "../../lib/utils";
 
 const TABS = ["library", "editor", "history", "analysis"] as const satisfies readonly ResumesTab[];
+
+const TAB_META: Record<ResumesTab, { label: string; icon: typeof Library }> = {
+  library: { label: "Library", icon: Library },
+  editor: { label: "Editor", icon: FileStack },
+  history: { label: "History", icon: Clock },
+  analysis: { label: "Analysis", icon: BarChart3 },
+};
 
 export function ResumesPage() {
   const { tab: tabParam } = useParams<{ tab?: string }>();
@@ -52,69 +59,90 @@ export function ResumesPage() {
     [navigate],
   );
 
+  const pageTabs = (
+    <div className="athens-tabs scroll-x-only" role="tablist" aria-label="Resumes">
+      {TABS.map((t) => {
+        const active = tab === t;
+        const { label, icon: Icon } = TAB_META[t];
+        return (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            aria-current={active ? "true" : undefined}
+            onClick={() => setTab(t)}
+            className={cn("athens-tab", active && "is-active")}
+          >
+            <span className="athens-tab-icon">
+              <Icon size={16} aria-hidden="true" />
+            </span>
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const generateNav = (primary = false) => (
+    <button type="button" onClick={() => setTab("editor")} className={primary ? "athens-btn-primary" : "athens-btn"}>
+      <Wand2 size={16} aria-hidden="true" />
+      Generate
+    </button>
+  );
+
   if (!ready) {
     return (
-      <PageShell>
-        <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">Loading resume data…</div>
+      <PageShell className="athens-ui">
+        <div className="athens-settings__loading">Loading resume data…</div>
       </PageShell>
     );
   }
 
-  const tabPills = (
-    <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 scroll-row">
-      {TABS.map((t) => (
-        <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
-          {t.charAt(0).toUpperCase() + t.slice(1)}
-        </Pill>
-      ))}
-    </div>
-  );
-
   return (
-    <PageShell>
-      <div className="page-container">
-        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-          {tabPills}
-          {tab !== "editor" && (
-            <button
-              type="button"
-              onClick={() => setTab("editor")}
-              className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10"
-            >
-              <Wand2 className="w-4 h-4" />Generate
-            </button>
-          )}
-        </div>
-
-        <TabTransition tabKey={tab}>
-          {tab === "library" && (
-            <ResumeLibraryTab
-              onOpenAnalysis={() => setTab("analysis")}
-              onLoadIntoEditor={handleLoadFromHistory}
-            />
-          )}
-          {tab === "history" && (
-            <ResumeGeneratorPanel
-              key={historyKey}
-              activeView="history"
-              onLoadIntoEditor={handleLoadFromHistory}
-              onGenerated={() => setHistoryKey((k) => k + 1)}
-            />
-          )}
-          {tab === "editor" && (
-            <ResumeGeneratorPanel
-              activeView="editor"
-              initialJd={editorJd}
-              pendingRun={pendingRun}
-              onPendingRunConsumed={() => setPendingRun(null)}
-              onGenerated={() => setHistoryKey((k) => k + 1)}
-            />
-          )}
-          {tab === "analysis" && (
+    <PageShell className="athens-ui">
+      <TabTransition tabKey={tab}>
+        {tab === "library" && (
+          <ResumeLibraryTab
+            pageTabs={pageTabs}
+            pageActions={generateNav()}
+            onLoadIntoEditor={handleLoadFromHistory}
+          />
+        )}
+        {tab === "history" && (
+          <ResumeGeneratorPanel
+            key={historyKey}
+            pageTabs={pageTabs}
+            pageActions={generateNav(true)}
+            activeView="history"
+            onLoadIntoEditor={handleLoadFromHistory}
+            onGenerated={() => setHistoryKey((k) => k + 1)}
+          />
+        )}
+        {tab === "editor" && (
+          <ResumeGeneratorPanel
+            pageTabs={pageTabs}
+            activeView="editor"
+            initialJd={editorJd}
+            pendingRun={pendingRun}
+            onPendingRunConsumed={() => setPendingRun(null)}
+            onGenerated={() => setHistoryKey((k) => k + 1)}
+          />
+        )}
+        {tab === "analysis" && (
+          <>
+            <div className="athens-toolbar mb-2">
+              <div className="athens-surface">
+                {pageTabs}
+                <div className="athens-toolbar-row">
+                  <div className="athens-toolbar-actions ml-auto">{generateNav(true)}</div>
+                </div>
+              </div>
+            </div>
             <ResumeAnalysisTab onOpenLibrary={() => setTab("library")} />
-          )}
-        </TabTransition>
-      </div>
+          </>
+        )}
+      </TabTransition>
     </PageShell>
   );
 }

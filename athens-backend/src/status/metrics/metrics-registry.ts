@@ -52,6 +52,14 @@ export function setHealthMetric(component: string, healthy: boolean): void {
   setGauge('athens_health_status', { component }, healthy ? 1 : 0);
 }
 
+function emitProcessMemory(): void {
+  const mem = process.memoryUsage();
+  setGauge('athens_process_resident_memory_bytes', {}, mem.rss);
+  setGauge('athens_process_heap_used_bytes', {}, mem.heapUsed);
+  setGauge('athens_process_heap_total_bytes', {}, mem.heapTotal);
+  setGauge('athens_process_external_bytes', {}, mem.external);
+}
+
 export function setHealthStateMetrics(
   component: string,
   status: string,
@@ -89,6 +97,7 @@ export function setHealthStateMetrics(
 }
 
 export function renderMetrics(service = 'athens-backend'): string {
+  emitProcessMemory();
   const lines = [
     '# HELP athens_metrics_exporter_info Athens application metrics exporter.',
     '# TYPE athens_metrics_exporter_info gauge',

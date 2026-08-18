@@ -14,6 +14,24 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "lens-chrome-titles-resumes",
+    version: "0.17.0",
+    title: "Review Titles and Resumes chrome",
+    date: "2026-08-18",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Review Titles and My Resumes use the same quiet toolbar, tabs, and black actions as Job Search.",
+    tags: ["Review Titles", "Resumes"],
+    current: true,
+    changes: [
+      "Review Titles uses one Lens toolbar: tabs, search, and black Start review / Approve actions",
+      "My Resumes keeps Library, Editor, History, and Analysis on one toolbar with Generate",
+      "The resume editor puts System instruction next to Generate and hides the workflow and identity cards",
+      "The resume library puts Uploaded/Generated next to search and upload, and selection tools only when needed",
+    ],
+  },
+  {
     id: "status-process-memory",
     version: "0.16.0",
     title: "Host vs app memory",
@@ -23,7 +41,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "The status page splits whole-VPS memory into Athens, MongoDB, monitoring, and other so idle RAM can be attributed.",
     tags: ["Status"],
-    current: true,
     changes: [
       "Live telemetry keeps host CPU, memory, and disk, then adds a RAM breakdown for Athens, MongoDB, monitoring, and everything else",
       "Each slice is a share of host RAM, with size in GiB when the host total is known",

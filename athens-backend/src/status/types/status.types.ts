@@ -38,6 +38,11 @@ export type LiveMetricPoint = {
   diskPercent: number | null;
   loadPercent: number | null;
   uptimeSeconds: number | null;
+  memoryTotalBytes: number | null;
+  athensRssPercent: number | null;
+  mongoRssPercent: number | null;
+  monitoringRssPercent: number | null;
+  otherRssPercent: number | null;
 };
 
 export type IncidentUpdate = {
