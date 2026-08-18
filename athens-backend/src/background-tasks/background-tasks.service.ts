@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -17,6 +18,7 @@ import { TaskStoreService } from './task-store.service';
 
 @Injectable()
 export class BackgroundTasksService {
+  private readonly logger = new Logger(BackgroundTasksService.name);
   private workerHealthy = false;
   private probe: { at: number; ok: boolean } | null = null;
 
@@ -160,20 +162,31 @@ export class BackgroundTasksService {
     if (this.probe && now - this.probe.at < WORKER_HEALTH_PROBE_TTL_MS) {
       return this.probe.ok;
     }
-    const url = String(
-      process.env.WORKER_HEALTH_URL || 'http://127.0.0.1:8981/readyz',
-    ).trim();
-    try {
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(2000),
-        headers: { 'user-agent': 'athens-worker-health/1.0' },
-      });
-      const ok = response.ok;
-      this.probe = { at: now, ok };
-      return ok;
-    } catch {
-      this.probe = { at: now, ok: false };
-      return false;
+    const urls = [
+      String(
+        process.env.WORKER_HEALTH_URL || 'http://127.0.0.1:8981/readyz',
+      ).trim(),
+      'http://127.0.0.1:8981/readyz',
+      'http://127.0.0.1:8981/healthz',
+    ].filter((url, index, list) => url && list.indexOf(url) === index);
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(2000),
+          headers: { 'user-agent': 'athens-worker-health/1.0' },
+        });
+        if (response.ok) {
+          this.probe = { at: now, ok: true };
+          return true;
+        }
+      } catch {
+        /* try next */
+      }
     }
+    this.logger.warn(
+      `Worker health probe failed (${urls.join(', ')}). Background tasks stay degraded until :8981 answers.`,
+    );
+    this.probe = { at: now, ok: false };
+    return false;
   }
 }

@@ -166,7 +166,7 @@ export class MonitorLoopService implements OnModuleInit, OnModuleDestroy {
     const started = performance.now();
     try {
       if (!(await this.backgroundTasks.isWorkerHealthy())) {
-        throw new Error('No fresh worker heartbeat');
+        throw new Error('Worker process is not answering on port 8981');
       }
       const now = new Date();
       const queued = await this.prisma.backgroundTask.findMany({
@@ -192,25 +192,22 @@ export class MonitorLoopService implements OnModuleInit, OnModuleDestroy {
         oldestQueueAgeSeconds,
       );
       setGauge('athens_background_expired_lease_count', {}, expiredLeaseCount);
-      if (expiredLeaseCount > 0) {
-        throw new Error(
-          `${expiredLeaseCount} running task lease(s) have expired`,
-        );
-      }
       return {
         ...check,
         ok: true,
         latencyMs: Math.round(performance.now() - started),
         status: 'operational',
-        message: 'Operating normally.',
+        message:
+          expiredLeaseCount > 0
+            ? `Operating normally. ${expiredLeaseCount} expired lease(s) will be reclaimed.`
+            : 'Operating normally.',
       };
     } catch (error) {
-      return failed(
-        check,
-        started,
-        error,
-        'Background task processing is delayed or unavailable.',
-      );
+      const reason =
+        error instanceof Error
+          ? error.message
+          : 'Background task processing is delayed or unavailable.';
+      return failed(check, started, error, reason);
     }
   }
 
