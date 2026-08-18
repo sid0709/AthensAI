@@ -1,12 +1,11 @@
 import { formatDistanceToNow } from "date-fns";
-import { Eye, Loader2, Sparkles, Wand2 } from "lucide-react";
-import { Badge } from "../../../components/ui";
-import { SearchField } from "../../../components/shared/SearchField";
+import { Eye, Loader2, Sparkles, Wand2, Search, X } from "lucide-react";
 import { BUILTIN_TEMPLATES, DEFAULT_SECTIONS, DEFAULT_THEME } from "../../../data/resumes/seedDocument";
 import { fetchGenerationDetail, fetchGenerationHistory } from "../../../services/resumeApi";
 import type { HistoryRunSummary } from "../../../types/resume";
 import { detailToFullRun } from "../generator/detail-to-full-run";
-import { useCallback, useEffect, useState } from "react";
+import type { FullRun } from "../generator/history/history-types";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useApplier } from "@/context/applier-context";
 import { ResumePreview } from "./preview/ResumePreview";
 import { sectionsToDocument } from "../lib/sectionsToDocument";
@@ -15,9 +14,17 @@ import { resolveTemplateId } from "../lib/templates";
 
 type GeneratedResumesSectionProps = {
   onLoadIntoEditor?: (run: FullRun) => void;
+  pageTabs?: ReactNode;
+  pageActions?: ReactNode;
+  librarySegment?: ReactNode;
 };
 
-export function GeneratedResumesSection({ onLoadIntoEditor }: GeneratedResumesSectionProps) {
+export function GeneratedResumesSection({
+  onLoadIntoEditor,
+  pageTabs,
+  pageActions,
+  librarySegment,
+}: GeneratedResumesSectionProps) {
   const { applier, applierReady } = useApplier();
   const [q, setQ] = useState("");
   const [runs, setRuns] = useState<HistoryRunSummary[]>([]);
@@ -80,18 +87,38 @@ export function GeneratedResumesSection({ onLoadIntoEditor }: GeneratedResumesSe
 
   if (!applierReady || loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm gap-2">
-        <Loader2 className="w-5 h-5 animate-spin" />
-        Loading generated resumes…
+      <div className="athens-toolbar mb-2">
+        <div className="athens-surface">
+          {pageTabs}
+          <div className="athens-toolbar-row">
+            {librarySegment}
+            <div className="athens-toolbar-actions ml-auto">{pageActions}</div>
+          </div>
+          <div className="athens-settings__loading">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            Loading generated resumes…
+          </div>
+        </div>
       </div>
     );
   }
 
   if (!ownerName) {
     return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-        Select an applier to view generated resumes.
-      </div>
+      <>
+        <div className="athens-toolbar mb-2">
+          <div className="athens-surface">
+            {pageTabs}
+            <div className="athens-toolbar-row">
+              {librarySegment}
+              <div className="athens-toolbar-actions ml-auto">{pageActions}</div>
+            </div>
+          </div>
+        </div>
+        <div className="athens-empty">
+          <p className="athens-empty__title">Select an applier to view generated resumes.</p>
+        </div>
+      </>
     );
   }
 
@@ -109,64 +136,94 @@ export function GeneratedResumesSection({ onLoadIntoEditor }: GeneratedResumesSe
 
   return (
     <>
-      <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <SearchField value={q} onChange={setQ} placeholder="Search job descriptions…" className="flex-1 max-w-md" />
-        <span className="text-sm text-muted-foreground ml-auto">{runs.length} generated</span>
+      <div className="athens-toolbar mb-2">
+        <div className="athens-surface">
+          {pageTabs}
+          <div className="athens-toolbar-row">
+            {librarySegment}
+            <div className="athens-field-group">
+              <div className="athens-field">
+                <Search className="athens-field__icon" aria-hidden="true" />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search job descriptions…"
+                  aria-label="Search generated resumes"
+                  className="athens-field__input"
+                />
+                {q ? (
+                  <button type="button" onClick={() => setQ("")} className="athens-field__clear" aria-label="Clear search">
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div className="athens-toolbar-actions ml-auto">
+              {pageActions}
+              <span className="athens-count">{runs.length}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {runs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-64 text-center px-4 border border-dashed border-border rounded-xl">
-          <Wand2 className="w-10 h-10 text-muted-foreground/40 mb-3" />
-          <p className="font-bold text-foreground">No generated resumes yet</p>
-          <p className="text-sm text-muted-foreground mt-1 max-w-md">
+        <div className="athens-empty">
+          <Wand2 size={28} aria-hidden="true" />
+          <p className="athens-empty__title">No generated resumes yet</p>
+          <p className="athens-empty__copy">
             Use the Editor to generate a tailored resume. Skills are extracted automatically — no separate analysis step needed.
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="athens-card-grid">
           {runs.map((run) => (
-            <div key={run.id} className="bg-card border border-border rounded-xl p-5 hover:shadow-md transition-all shadow-sm">
-              <div className="flex items-start justify-between mb-4">
-                <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                  <Sparkles className="w-6 h-6 text-violet-600" />
-                </div>
-                <div className="flex items-center gap-2 flex-wrap justify-end">
-                  <Badge v="success">Skills extracted</Badge>
-                  {run.templateId && (
-                    <Badge v="blue">
-                      {BUILTIN_TEMPLATES.find((t) => t.id === resolveTemplateId(run.templateId))?.name ?? run.templateId}
-                    </Badge>
-                  )}
-                </div>
+            <article key={run.id} className="athens-card">
+              <div className="athens-card-chips">
+                <span className="athens-status">
+                  <Sparkles size={12} aria-hidden="true" />
+                  Skills extracted
+                </span>
+                {run.templateId ? (
+                  <span className="athens-chip">
+                    {BUILTIN_TEMPLATES.find((t) => t.id === resolveTemplateId(run.templateId))?.name ?? run.templateId}
+                  </span>
+                ) : null}
               </div>
-              <p className="text-base font-bold text-foreground mb-1 truncate" title={run.jobTitle ?? "Generated resume"}>
+              <h3 className="athens-card-title truncate" title={run.jobTitle ?? "Generated resume"}>
                 {run.jobTitle ?? "Generated resume"}
+              </h3>
+              <p className="line-clamp-2 min-h-[2.5rem] text-sm text-[var(--athens-text-secondary)]">{run.jobDescription}</p>
+              <p className="athens-card-meta">
+                {formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })}
+                <span aria-hidden="true">·</span>
+                {run.model}
+                <span aria-hidden="true">·</span>
+                {run.tokens.toLocaleString()} tok
               </p>
-              <p className="text-sm text-muted-foreground line-clamp-2 mb-3 min-h-[2.5rem]">{run.jobDescription}</p>
-              <p className="text-xs text-muted-foreground mb-4">
-                {formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })} · {run.model} · {run.tokens.toLocaleString()} tok
-              </p>
-              <div className="flex items-center justify-between gap-2">
-                {onLoadIntoEditor && (
+              <div className="athens-card-footer">
+                {onLoadIntoEditor ? (
                   <button
                     type="button"
                     onClick={() => void handleLoad(run.id)}
-                    className="flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
+                    className="athens-btn"
                   >
-                    <Wand2 className="w-3.5 h-3.5" />
+                    <Wand2 size={16} aria-hidden="true" />
                     Open in editor
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void openPreview(run.id)}
-                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-primary ml-auto"
-                  title="Preview"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
+                ) : <span />}
+                <div className="athens-card-actions">
+                  <button
+                    type="button"
+                    onClick={() => void openPreview(run.id)}
+                    className="athens-icon-btn"
+                    title="Preview"
+                    aria-label="Preview"
+                  >
+                    <Eye size={16} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-            </div>
+            </article>
           ))}
         </div>
       )}
@@ -174,19 +231,19 @@ export function GeneratedResumesSection({ onLoadIntoEditor }: GeneratedResumesSe
       {previewOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setPreviewOpen(false)}>
           <div
-            className="bg-card border border-border rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-xl"
+            className="athens-ui athens-dialog flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-4 border-b border-border flex items-center justify-between">
-              <h3 className="font-bold text-foreground">Generated resume preview</h3>
-              <button type="button" onClick={() => setPreviewOpen(false)} className="text-sm font-semibold text-muted-foreground hover:text-foreground">
+            <div className="athens-dialog-header flex items-center justify-between">
+              <h3 className="athens-settings__title">Generated resume preview</h3>
+              <button type="button" onClick={() => setPreviewOpen(false)} className="athens-btn">
                 Close
               </button>
             </div>
-            <div className="flex-1 overflow-auto p-4 bg-secondary/20">
+            <div className="athens-dialog-body bg-[var(--athens-surface-subtle)]">
               {loadingPreview ? (
-                <div className="flex justify-center py-16">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                <div className="athens-settings__loading py-16">
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                 </div>
               ) : previewDoc ? (
                 <ResumePreview
@@ -198,7 +255,7 @@ export function GeneratedResumesSection({ onLoadIntoEditor }: GeneratedResumesSe
                   fitToColumn
                 />
               ) : (
-                <p className="text-center text-sm text-muted-foreground py-16">Preview unavailable.</p>
+                <p className="athens-empty__copy py-16 text-center">Preview unavailable.</p>
               )}
             </div>
           </div>

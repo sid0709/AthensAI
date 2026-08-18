@@ -241,11 +241,16 @@ export class PrometheusClientService {
         return [name, data.result?.[0] || null] as const;
       }),
     );
+    const toPercent = (v: number) => Math.round(v * 1000) / 10;
     return this.mergeRangeSeries(Object.fromEntries(entries), {
-      cpuUtilization: (v) => Math.round(v * 1000) / 10,
-      memoryUtilization: (v) => Math.round(v * 1000) / 10,
-      diskUtilization: (v) => Math.round(v * 1000) / 10,
-      loadRatio: (v) => Math.round(v * 1000) / 10,
+      cpuUtilization: toPercent,
+      memoryUtilization: toPercent,
+      diskUtilization: toPercent,
+      loadRatio: toPercent,
+      athensRssUtilization: toPercent,
+      mongoRssUtilization: toPercent,
+      monitoringRssUtilization: toPercent,
+      otherRssUtilization: toPercent,
     }).map((point) => ({
       timestamp: String(point.timestamp),
       cpuPercent: (point.cpuUtilization as number) ?? null,
@@ -253,6 +258,11 @@ export class PrometheusClientService {
       diskPercent: (point.diskUtilization as number) ?? null,
       loadPercent: (point.loadRatio as number) ?? null,
       uptimeSeconds: (point.uptimeSeconds as number) ?? null,
+      memoryTotalBytes: (point.memoryTotalBytes as number) ?? null,
+      athensRssPercent: (point.athensRssUtilization as number) ?? null,
+      mongoRssPercent: (point.mongoRssUtilization as number) ?? null,
+      monitoringRssPercent: (point.monitoringRssUtilization as number) ?? null,
+      otherRssPercent: (point.otherRssUtilization as number) ?? null,
     }));
   }
 
