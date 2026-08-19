@@ -38,7 +38,7 @@ export function backgroundWorkersMode(
   const mode = String(env.BACKGROUND_WORKERS_MODE || 'embedded')
     .trim()
     .toLowerCase();
-  if (mode === 'off' || mode === 'disabled') return 'off';
+  if (mode === 'off' || mode === 'disabled' || mode === 'split') return 'off';
   if (mode === 'worker' || mode === 'split-worker') return 'worker';
   return 'embedded';
 }

@@ -3,6 +3,7 @@ import { ProfileLlmAuthService } from '../../ai/auth/profile-llm-auth.service';
 import { OpenAiChatService } from '../../ai/openai/openai-chat.service';
 import { AI_USAGE_FEATURES } from '../../ai-usage/constants/ai-usage.constants';
 import { AiUsageRecorderService } from '../../ai-usage/ai-usage-recorder.service';
+import { OakFillPolicyService } from '../policy/oak-fill-policy.service';
 import { applyApplicantIdentityToPlan } from './applicant-identity';
 import { buildAnalyzePrompt } from './oak-prompt';
 import { OakProfilePromptService } from './oak-profile-prompt.service';
@@ -18,6 +19,7 @@ export class OakAnalyzeService {
     private readonly responses: OakResponsesService,
     private readonly chat: OpenAiChatService,
     private readonly usage: AiUsageRecorderService,
+    private readonly fillPolicy: OakFillPolicyService,
   ) {}
 
   async analyze(input: {
@@ -27,6 +29,10 @@ export class OakAnalyzeService {
     metaTree: string;
     page?: unknown;
   }) {
+    const policy = await this.fillPolicy.resolveForAnalyze({
+      applierName: input.applierName,
+      page: input.page,
+    });
     const auth = await this.llmAuth.resolve({
       profileId: input.profileId,
       applierName: input.applierName,
@@ -38,7 +44,7 @@ export class OakAnalyzeService {
       applicantProfile,
       pureTree: input.pureTree,
       metaTree: input.metaTree,
-      page: input.page,
+      page: policy.page,
     });
 
     const startedAt = new Date();
@@ -72,9 +78,13 @@ export class OakAnalyzeService {
         success: true,
       });
 
+      const plan = this.fillPolicy.applyPlanPolicy(
+        applyApplicantIdentityToPlan(result.plan),
+        policy.isAdmin,
+      );
       return {
         ok: true as const,
-        plan: applyApplicantIdentityToPlan(result.plan),
+        plan,
         model: result.model,
         responseId: result.responseId ?? null,
         usage: result.usage,

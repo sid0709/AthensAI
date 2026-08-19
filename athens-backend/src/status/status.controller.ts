@@ -56,7 +56,10 @@ export class StatusController {
     if (!(LIVE_MINUTES as readonly number[]).includes(minutes)) {
       throw new BadRequestException('Unsupported live metrics range.');
     }
-    const points = await this.store.readLiveMetrics(minutes);
+    const [points, processes] = await Promise.all([
+      this.store.readLiveMetrics(minutes),
+      this.store.readRamProcesses(),
+    ]);
     const current = points.at(-1) || null;
     return {
       ok: true,
@@ -64,6 +67,7 @@ export class StatusController {
       updatedAt: current?.timestamp || null,
       current,
       points,
+      processes,
     };
   }
 

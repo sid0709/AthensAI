@@ -5,11 +5,16 @@ import {
   LIVE_VPS_QUERIES,
   PROMETHEUS_REQUEST_TIMEOUT_MS,
   SEVERITY_STATUS,
+  TOP_PROCESS_MEMORY_BYTES,
   VPS_QUERIES,
   stepForMinutes,
 } from './constants/prometheus-queries';
 import type { StatusComponentDef } from './constants/status-components';
-import type { LiveMetricPoint, VpsMetrics } from './types/status.types';
+import type {
+  LiveMetricPoint,
+  RamProcessShare,
+  VpsMetrics,
+} from './types/status.types';
 
 type PromOptions = { baseUrl?: string; fetchImpl?: typeof fetch };
 
@@ -264,6 +269,38 @@ export class PrometheusClientService {
       monitoringRssPercent: (point.monitoringRssUtilization as number) ?? null,
       otherRssPercent: (point.otherRssUtilization as number) ?? null,
     }));
+  }
+
+  async readRamProcesses(
+    options: PromOptions = {},
+  ): Promise<RamProcessShare[]> {
+    try {
+      const [processData, totalData] = await Promise.all([
+        this.query(TOP_PROCESS_MEMORY_BYTES, options),
+        this.query(
+          'max(node_memory_MemTotal_bytes{job="node"})',
+          options,
+        ),
+      ]);
+      const total = Number(totalData.result?.[0]?.value?.[1]);
+      const host = Number.isFinite(total) && total > 0 ? total : null;
+      return (processData.result || [])
+        .flatMap((row) => {
+          const name = row.metric?.groupname;
+          const bytes = Number(row.value?.[1]);
+          if (!name || !Number.isFinite(bytes)) return [];
+          return [
+            {
+              name,
+              bytes,
+              percent: host ? Math.round((bytes / host) * 1000) / 10 : 0,
+            },
+          ];
+        })
+        .sort((a, b) => b.bytes - a.bytes);
+    } catch {
+      return [];
+    }
   }
 
   private healthRangeByComponent(

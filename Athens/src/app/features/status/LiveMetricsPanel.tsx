@@ -3,6 +3,12 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 
 export type LiveRange = 15 | 60 | 360 | 1440;
 
+export type RamProcessShare = {
+  name: string;
+  bytes: number;
+  percent: number;
+};
+
 export type LiveMetricPoint = {
   timestamp: string;
   cpuPercent: number | null;
@@ -70,8 +76,8 @@ const ramSlices: Array<{
   warning: number;
   critical: number;
 }> = [
-  { key: "athensRssPercent", label: "Athens", helper: "App container — API and worker", color: "#3fb950", icon: Box, warning: 40, critical: 60 },
-  { key: "mongoRssPercent", label: "MongoDB", helper: "mongod RSS or mongo container", color: "#00ed64", icon: Database, warning: 55, critical: 70 },
+  { key: "athensRssPercent", label: "Athens", helper: "All Node processes on the VPS", color: "#3fb950", icon: Box, warning: 40, critical: 60 },
+  { key: "mongoRssPercent", label: "MongoDB", helper: "mongod process RSS", color: "#00ed64", icon: Database, warning: 55, critical: 70 },
   { key: "monitoringRssPercent", label: "Monitoring", helper: "Prometheus, Grafana, cAdvisor, exporters", color: "#f78166", icon: Radar, warning: 20, critical: 35 },
   { key: "otherRssPercent", label: "Other", helper: "OS and processes not in the groups above", color: "#8b949e", icon: Layers, warning: 40, critical: 60 },
 ];
@@ -214,6 +220,49 @@ function RamCompositionBar({ point }: { point: LiveMetricPoint | undefined }) {
   );
 }
 
+function processSlice(name: string) {
+  if (name === "athens") return { label: "Athens", color: "#3fb950" };
+  if (name === "mongod") return { label: "MongoDB", color: "#00ed64" };
+  if (["prometheus", "grafana", "cadvisor", "alertmanager", "node-exporter", "blackbox-exporter", "process-exporter"].includes(name)) {
+    return { label: "Monitoring", color: "#f78166" };
+  }
+  if (name === "docker") return { label: "Docker", color: "#58a6ff" };
+  return { label: "Other", color: "#8b949e" };
+}
+
+function formatGiB(bytes: number) {
+  return `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+}
+
+function RamProcessTable({ processes }: { processes: RamProcessShare[] }) {
+  return (
+    <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.06)]">
+      <div className="px-5 pt-5">
+        <h3 className="font-semibold text-slate-950">Largest processes right now</h3>
+        <p className="mt-0.5 text-xs text-slate-500">Resident set size. The sawtooth is whoever climbs toward 100% then disappears after an OOM kill.</p>
+      </div>
+      {processes.length === 0 ? (
+        <div className="mx-5 my-4 flex h-24 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-xs font-medium text-slate-500">Waiting for process samples</div>
+      ) : (
+        <ol className="mt-3 divide-y divide-slate-100">
+          {processes.map((process) => {
+            const slice = processSlice(process.name);
+            return (
+              <li key={process.name} className="flex items-center gap-3 px-5 py-2.5">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: slice.color }} />
+                <span className="min-w-0 flex-1 truncate font-mono text-sm text-slate-900">{process.name}</span>
+                <span className="text-[11px] font-medium text-slate-500">{slice.label}</span>
+                <span className="w-20 text-right text-xs tabular-nums text-slate-600">{formatGiB(process.bytes)}</span>
+                <span className="w-14 text-right text-sm font-semibold tabular-nums text-slate-950">{process.percent.toFixed(1)}%</span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </article>
+  );
+}
+
 function RamStackChart({ points }: { points: LiveMetricPoint[] }) {
   const stacked = points.map((point) => ({
     timestamp: point.timestamp,
@@ -253,6 +302,7 @@ function RamStackChart({ points }: { points: LiveMetricPoint[] }) {
 
 export function LiveMetricsPanel({
   points,
+  processes,
   range,
   onRangeChange,
   updatedAt,
@@ -263,6 +313,7 @@ export function LiveMetricsPanel({
   todaySegments,
 }: {
   points: LiveMetricPoint[];
+  processes: RamProcessShare[];
   range: LiveRange;
   onRangeChange: (range: LiveRange) => void;
   updatedAt: string | null;
@@ -356,11 +407,12 @@ export function LiveMetricsPanel({
 
       <div className="mt-10">
         <h2 className="text-xl font-bold tracking-tight text-slate-950">RAM consumers</h2>
-        <p className="mt-1 text-sm text-slate-600">Athens, MongoDB, and the monitoring stack as a share of host RAM. A slice stays at — until Prometheus can see that process.</p>
+        <p className="mt-1 text-sm text-slate-600">Athens, MongoDB, and the monitoring stack as process RSS. Other is leftover host RAM after those groups.</p>
       </div>
       <div className={`mt-4 grid gap-4 ${loading ? "opacity-70" : ""}`}>
         <RamCompositionBar point={current} />
         <RamStackChart points={points} />
+        <RamProcessTable processes={processes} />
         <div className="grid gap-4 lg:grid-cols-2">
           {ramSlices.map((metric) => <MetricChart key={metric.key} metric={metric} points={points} />)}
         </div>

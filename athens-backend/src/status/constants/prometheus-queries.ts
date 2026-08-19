@@ -12,30 +12,57 @@ export const NODE_MEMORY_USED_RATIO =
 const HOST_MEMORY_TOTAL_BYTES =
   'max(node_memory_MemTotal_bytes{job="node"})';
 
-/** Docker working set, deduped per container id. Matches name or image. */
+const MONITORING_PROCESS_GROUPS =
+  'prometheus|grafana|cadvisor|alertmanager|node-exporter|blackbox-exporter|process-exporter';
+
+/** Docker working set, deduped per container id. Matches name, image, or id. */
 function cadvisorWorkingSetBytes(pattern: string): string {
   return `sum(max by (id) (
   container_memory_working_set_bytes{name=~"${pattern}",name!="/"}
   or
   container_memory_working_set_bytes{image=~"${pattern}",name!="/"}
+  or
+  container_memory_working_set_bytes{id=~"${pattern}",id!="/",name!="/"}
 ))`;
 }
 
-/** App container (API + worker). */
-export const ATHENS_MEMORY_BYTES = cadvisorWorkingSetBytes('.*nextoffer.*');
+function processRssBytes(groupPattern: string): string {
+  return `sum(namedprocess_namegroup_memory_bytes{groupname=~"${groupPattern}",memtype="resident"})`;
+}
+
+/**
+ * Prefer process-exporter RSS (same source as MongoDB).
+ * cAdvisor is a fallback when names/images happen to match.
+ */
+function attributedMemoryBytes(
+  processGroup: string,
+  cadvisorPattern: string,
+): string {
+  return `(
+  ${processRssBytes(processGroup)}
+  or
+  ${cadvisorWorkingSetBytes(cadvisorPattern)}
+)`;
+}
+
+/** App Node processes (API + worker). */
+export const ATHENS_MEMORY_BYTES = attributedMemoryBytes(
+  'athens',
+  '.*nextoffer.*',
+);
 
 /**
  * Host mongod RSS, else a mongo Docker container.
  * `or` prefers process-exporter so a containerized mongod is not double-counted.
  */
-export const MONGO_MEMORY_BYTES = `(
-  max(namedprocess_namegroup_memory_bytes{groupname="mongod",memtype="resident"})
-  or
-  ${cadvisorWorkingSetBytes('.*([Mm]ongo).*')}
-)`;
+export const MONGO_MEMORY_BYTES = attributedMemoryBytes(
+  'mongod',
+  '.*([Mm]ongo).*',
+);
 
-export const MONITORING_MEMORY_BYTES = cadvisorWorkingSetBytes(
-  '.*(prometheus|grafana|cadvisor|alertmanager|node-exporter|blackbox-exporter|process-exporter).*',
+export const MONITORING_MEMORY_BYTES = attributedMemoryBytes(
+  MONITORING_PROCESS_GROUPS,
+  `.*(${MONITORING_PROCESS_GROUPS}).*`,
 );
 
 function shareOfHost(bytesExpr: string): string {
@@ -58,6 +85,9 @@ export const VPS_QUERIES = {
   uptimeSeconds: 'max(athens:node_uptime_seconds)',
   scrapeAgeSeconds: 'time() - max(timestamp(node_uname_info{job="node"}))',
 } as const;
+
+export const TOP_PROCESS_MEMORY_BYTES =
+  'topk(12, namedprocess_namegroup_memory_bytes{memtype="resident"})';
 
 export const LIVE_VPS_QUERIES = {
   ...Object.fromEntries(

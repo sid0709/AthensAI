@@ -69,8 +69,8 @@ services:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     restart: unless-stopped
     privileged: true
-    mem_limit: 256m
-    memswap_limit: 256m
+    mem_limit: 384m
+    memswap_limit: 384m
     command:
       - --docker_only=true
       - --housekeeping_interval=30s
@@ -95,7 +95,7 @@ services:
       - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
 
   process-exporter:
-    image: ncabatoff/process-exporter:0.8.4
+    image: ncabatoff/process-exporter:0.8.7
     restart: unless-stopped
     pid: host
     mem_limit: 64m

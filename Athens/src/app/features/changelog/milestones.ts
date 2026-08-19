@@ -14,6 +14,37 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "status-ram-processes",
+    version: "0.19.0",
+    title: "Status RAM processes",
+    date: "2026-08-19",
+    merge: "main",
+    branch: "main",
+    summary:
+      "The status page lists the largest processes on the VPS so a RAM sawtooth can be named instead of sitting in Other.",
+    tags: ["Status"],
+    current: true,
+    changes: [
+      "RAM consumers adds a live list of the largest process groups by resident memory",
+      "Athens RAM counts every Node process on the host, not only a matching container name",
+    ],
+  },
+  {
+    id: "status-ram-workers",
+    version: "0.18.0",
+    title: "Status workers and RAM",
+    date: "2026-08-18",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Background workers recover after a restart, and the status RAM split attributes Athens and monitoring instead of dumping them into Other.",
+    tags: ["Status"],
+    changes: [
+      "Background task workers stay up through container start instead of sitting degraded all day",
+      "RAM consumers chart Athens, MongoDB, and monitoring from process RSS; Other is only the leftover",
+    ],
+  },
+  {
     id: "lens-chrome-titles-resumes",
     version: "0.17.0",
     title: "Review Titles and Resumes chrome",
@@ -23,7 +54,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Review Titles and My Resumes use the same quiet toolbar, tabs, and black actions as Job Search.",
     tags: ["Review Titles", "Resumes"],
-    current: true,
     changes: [
       "Review Titles uses one Lens toolbar: tabs, search, and black Start review / Approve actions",
       "My Resumes keeps Library, Editor, History, and Analysis on one toolbar with Generate",
