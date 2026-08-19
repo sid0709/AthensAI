@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 import { API_BASE } from "@/lib/api-base";
-import { LiveMetricsPanel, type LiveMetricPoint, type LiveRange, type TodayHealthSegment, type VpsAvailabilityPoint } from "./LiveMetricsPanel";
+import { LiveMetricsPanel, type LiveMetricPoint, type LiveRange, type RamProcessShare, type TodayHealthSegment, type VpsAvailabilityPoint } from "./LiveMetricsPanel";
 import { DependencyMetricsPanel, type DependencyMetrics } from "./DependencyMetricsPanel";
 
 type StatusValue = "operational" | "degraded" | "partial_outage" | "major_outage" | "maintenance" | "unknown";
@@ -9,7 +9,7 @@ type ComponentStatus = { component: string; name: string; status: StatusValue; m
 type CurrentResponse = { status: StatusValue; updatedAt: string | null; components: ComponentStatus[] };
 type Rollup = { date: string; component: string; name: string; availabilityPercent: number; avgLatencyMs: number | null; maxLatencyMs: number | null; sampleCount: number; healthStatus?: StatusValue };
 type Incident = { component: string; name: string; status: StatusValue; severity: string; title: string; description: string; startedAt: string; resolvedAt: string | null };
-type LiveResponse = { updatedAt: string | null; points: LiveMetricPoint[] };
+type LiveResponse = { updatedAt: string | null; points: LiveMetricPoint[]; processes?: RamProcessShare[] };
 type TodayComponent = { component: string; name: string; segments: TodayHealthSegment[] };
 type TodayResponse = { startAt: string; endAt: string; bucketMinutes: number; components: TodayComponent[] };
 type DependenciesResponse = { dependencies: DependencyMetrics };
@@ -116,6 +116,7 @@ export function StatusPage() {
   const [todayComponents, setTodayComponents] = useState<TodayComponent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [livePoints, setLivePoints] = useState<LiveMetricPoint[]>([]);
+  const [liveProcesses, setLiveProcesses] = useState<RamProcessShare[]>([]);
   const [liveRange, setLiveRange] = useState<LiveRange>(60);
   const [liveUpdatedAt, setLiveUpdatedAt] = useState<string | null>(null);
   const [dependencies, setDependencies] = useState<DependencyMetrics | null>(null);
@@ -144,7 +145,7 @@ export function StatusPage() {
     setLiveLoading(true);
     try {
       const next = await getJson<LiveResponse>(`/status/live?minutes=${liveRange}`);
-      setLivePoints(next.points); setLiveUpdatedAt(next.updatedAt); setLiveError(null);
+      setLivePoints(next.points); setLiveProcesses(next.processes || []); setLiveUpdatedAt(next.updatedAt); setLiveError(null);
     } catch (cause) { setLiveError(cause instanceof Error ? cause.message : "Unable to load live metrics"); }
     finally { setLiveLoading(false); }
   }, [liveRange]);
@@ -204,7 +205,7 @@ export function StatusPage() {
         </section>
         {error && <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">{error}. The page will retry automatically.</div>}
 
-        <LiveMetricsPanel points={livePoints} range={liveRange} onRangeChange={setLiveRange} updatedAt={liveUpdatedAt} loading={liveLoading} error={liveError} vpsStatus={vpsStatus} availability={vpsAvailability} todaySegments={todayByComponent.get("vps") || []} />
+        <LiveMetricsPanel points={livePoints} processes={liveProcesses} range={liveRange} onRangeChange={setLiveRange} updatedAt={liveUpdatedAt} loading={liveLoading} error={liveError} vpsStatus={vpsStatus} availability={vpsAvailability} todaySegments={todayByComponent.get("vps") || []} />
 
         <DependencyMetricsPanel dependencies={dependencies} range={liveRange} loading={dependencyLoading} error={dependencyError} />
 

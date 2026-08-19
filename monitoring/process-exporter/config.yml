@@ -3,8 +3,8 @@ process_names:
     comm:
       - mongod
   - name: athens
-    cmdline:
-      - '.*dist/main\.js.*'
+    comm:
+      - node
   - name: prometheus
     comm:
       - prometheus
@@ -27,3 +27,13 @@ process_names:
   - name: process-exporter
     comm:
       - process-exporter
+  - name: docker
+    comm:
+      - dockerd
+      - containerd
+      - containerd-shim
+      - containerd-shim-runc-v2
+  # Last: every other process, named by executable, so /status can list Other.
+  - name: "{{.Comm}}"
+    cmdline:
+      - '.+'
