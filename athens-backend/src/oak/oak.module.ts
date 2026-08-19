@@ -20,9 +20,18 @@ import { OakJobsService } from './http/oak-jobs.service';
 import { OakRecommendedResumeLookup } from './http/oak-recommended-resume.lookup';
 import { OakRecommendedResumeService } from './http/oak-recommended-resume.service';
 import { OakRuntimeFileService } from './http/oak-runtime-file.service';
+import { OakAdminPrivilegesService } from './policy/oak-admin-privileges.service';
+import { OakFillPolicyService } from './policy/oak-fill-policy.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, AiModule, AiUsageModule, JobsModule, ResumesModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    AiModule,
+    AiUsageModule,
+    JobsModule,
+    ResumesModule,
+  ],
   controllers: [OakAuthController, OakController],
   providers: [
     OakSessionService,
@@ -37,6 +46,8 @@ import { OakRuntimeFileService } from './http/oak-runtime-file.service';
     OakRecommendedResumeLookup,
     OakRecommendedResumeService,
     OakRuntimeFileService,
+    OakAdminPrivilegesService,
+    OakFillPolicyService,
     OakGatewayBootstrap,
   ],
   exports: [OakGatewayBootstrap, OakSessionService],

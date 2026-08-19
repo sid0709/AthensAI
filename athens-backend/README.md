@@ -110,6 +110,11 @@ Socket.io: path `/oak`, handshake `auth.token` = Oak access token. Query: `type`
 
 See `Oak/README.md` for client setup. Distinct from Jobs **`/api/jobs/ai-analyze`** (temp_jobs skill pipeline).
 
+Admin Fill privileges (`account_info.permission === "admin"`, same gate as Firebase Atlas):
+
+- Fill without a recommended Library resume is admin-only. Non-admin `POST /api/oak/ai-analyze` returns `403` (`OAK_FILL_RESUME_REQUIRED`) when the bound Worker-pool job has no recommended resume, or no job is bound. Resume availability is resolved on the server; client `page.recommendedResumeAvailable` is not trusted.
+- Non-admin action plans keep each step with probability `OAK_NON_ADMIN_ACTION_TEMPERATURE` (0.8 ≈ 80% run). Skipped steps are listed in `unresolved_items`. Admins receive the full plan.
+
 ## Bid Management + Athens Lens
 
 Mongo owns metadata (`vendor_tasks`, `job_statuses`, `bid_review_events`, `athens_lens_sessions`, `oak_sessions`, `upload_sessions`). Firebase Storage holds video bytes only under `bid-recordings/{applier}/{session}/{uploadId}.{ext}`.
