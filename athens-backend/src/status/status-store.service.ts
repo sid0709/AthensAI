@@ -164,6 +164,10 @@ export class StatusStoreService {
     return this.prometheus.readLiveMetrics(minutes);
   }
 
+  async readRamProcesses() {
+    return this.prometheus.readRamProcesses();
+  }
+
   async readTodayTimelines() {
     return this.prometheus.readTodayTimeline(getComponentDefinitions());
   }

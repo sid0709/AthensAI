@@ -31,6 +31,12 @@ export type VpsMetrics = {
   uptimeSeconds: number;
 };
 
+export type RamProcessShare = {
+  name: string;
+  bytes: number;
+  percent: number;
+};
+
 export type LiveMetricPoint = {
   timestamp: string;
   cpuPercent: number | null;

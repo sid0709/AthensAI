@@ -86,6 +86,9 @@ export const VPS_QUERIES = {
   scrapeAgeSeconds: 'time() - max(timestamp(node_uname_info{job="node"}))',
 } as const;
 
+export const TOP_PROCESS_MEMORY_BYTES =
+  'topk(12, namedprocess_namegroup_memory_bytes{memtype="resident"})';
+
 export const LIVE_VPS_QUERIES = {
   ...Object.fromEntries(
     Object.entries(VPS_QUERIES).filter(([name]) => name !== 'scrapeAgeSeconds'),
