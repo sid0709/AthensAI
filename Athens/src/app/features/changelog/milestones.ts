@@ -14,6 +14,37 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "settings-username-bid-resume-name",
+    version: "0.24.0",
+    title: "Rename your username; bids use your full name",
+    date: "2026-08-20",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Settings → Security can change the account username you sign in with. Bid résumé uploads are named with the autobid profile full name instead of that username.",
+    tags: ["Settings", "Bid Management"],
+    current: true,
+    changes: [
+      "Security includes Account username so you can rename the login name without changing your autobid full name",
+      "When a bid attaches a résumé, the file is renamed to your autobid profile full name",
+    ],
+  },
+  {
+    id: "job-search-filter-counts",
+    version: "0.23.0",
+    title: "Job Search filters match every tab",
+    date: "2026-08-20",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Job Search tab counts and the job list both follow the same source, date, and search filters, so New no longer stays at a larger number than the rows on screen.",
+    tags: ["Job Search"],
+    changes: [
+      "All, New, Bid ready, Worker pool, Applied, and the other status tabs count only jobs that match the active filters",
+      "The list total for the open tab matches that tab's badge after filtering by source, posted date, role, or company",
+    ],
+  },
+  {
     id: "lens-skip-refresh-recording",
     version: "0.22.0",
     title: "Lens skip, refresh, and recordings",
@@ -23,7 +54,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Athens Lens can mark a Bid Ready job as Skipped, refresh an empty list after jobs are added, and keep application recordings when bidding from a proxy browser.",
     tags: ["Lens"],
-    current: true,
     changes: [
       "Each job in Athens Lens has Skip, which marks it Skipped in Bid Management instead of only hiding it",
       "An empty Bid Ready list can be refreshed after jobs are added, without waiting for a live connection",

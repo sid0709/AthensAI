@@ -1,4 +1,8 @@
-import { toMongoDate } from '../../prisma/mongo-standalone';
+import {
+  mongoFieldIdIn,
+  mongoFieldIdNin,
+  toMongoDate,
+} from '../../prisma/mongo-standalone';
 import type { ListJobsQueryDto } from '../dto/list-jobs.query.dto';
 
 function escapeRegex(text: string): string {
@@ -36,7 +40,7 @@ function parseDayEnd(isoDate: string): Date | null {
 export type JobsIdConstraint =
   { includeIds: string[] } | { excludeIds: string[] } | null;
 
-/** Mongo $match for filtered company grouping (mirrors JobsQueryService.buildWhere). */
+/** Mongo $match for filtered company grouping and status-tab counts. */
 export function buildJobsMongoMatch(
   query: ListJobsQueryDto,
   idConstraint: JobsIdConstraint = null,
@@ -46,15 +50,13 @@ export function buildJobsMongoMatch(
   };
 
   if (idConstraint && 'includeIds' in idConstraint) {
-    match._id = {
-      $in: idConstraint.includeIds.map((id) => ({ $oid: id })),
-    };
-  } else if (idConstraint && 'excludeIds' in idConstraint) {
-    if (idConstraint.excludeIds.length) {
-      match._id = {
-        $nin: idConstraint.excludeIds.map((id) => ({ $oid: id })),
-      };
-    }
+    Object.assign(match, mongoFieldIdIn('_id', idConstraint.includeIds));
+  } else if (
+    idConstraint &&
+    'excludeIds' in idConstraint &&
+    idConstraint.excludeIds.length
+  ) {
+    Object.assign(match, mongoFieldIdNin('_id', idConstraint.excludeIds));
   }
 
   const q = String(query.q ?? '').trim();
@@ -90,6 +92,18 @@ export function buildJobsMongoMatch(
   }
 
   return match;
+}
+
+/** Source, posted date, title/company text, or AI-extracted flag. */
+export function hasAttributeFilters(query: ListJobsQueryDto): boolean {
+  return (
+    parseSources(query.source).length > 0 ||
+    Boolean(String(query.q ?? '').trim()) ||
+    Boolean(String(query.company ?? '').trim()) ||
+    Boolean(String(query.postedFrom ?? '').trim()) ||
+    Boolean(String(query.postedTo ?? '').trim()) ||
+    Boolean(query.aiExtracted)
+  );
 }
 
 /** Source filter only — no title/company text, dates, or AI-extracted flag. */

@@ -15,6 +15,7 @@ import {
   resolveResumeOriginalName,
   resumeExtFromName,
 } from './lib/resume-audit';
+import { autoBidFullName } from '../personal/lib/auto-bid-full-name';
 import { matchUploadToRecommended } from './lib/resume-catalog';
 import { mapTaskToBidResult } from './mappers/bid-result.mapper';
 import { VendorTaskService } from './vendor-task.service';
@@ -269,7 +270,10 @@ export class BidLifecycleService {
     const ext = resumeExtFromName(originalName);
     const expectedName =
       String(input.expectedName || '').trim() ||
-      buildProfileResumeFileName(account.name, ext);
+      buildProfileResumeFileName(
+        autoBidFullName(account.autoBidProfile, account.name),
+        ext,
+      );
     const cleanedName = String(input.cleanedName || '').trim() || originalName;
     const renamed = cleanedName !== originalName;
     const mismatch = isResumeNameMismatch(cleanedName, expectedName);
@@ -491,7 +495,7 @@ export class BidLifecycleService {
     }
     const account = await this.prisma.accountInfo.findUnique({
       where: { name },
-      select: { id: true, name: true },
+      select: { id: true, name: true, autoBidProfile: true },
     });
     if (!account) {
       throw new NotFoundException({

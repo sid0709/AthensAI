@@ -18,6 +18,7 @@ type AuthContextValue = {
   signin: (name: string, password: string) => Promise<AuthResult>;
   signup: (name: string, password: string) => Promise<AuthResult>;
   signout: () => void;
+  replaceUser: (user: AuthUser) => void;
 };
 
 const AuthContext = createContext<AuthContextValue>({
@@ -27,6 +28,7 @@ const AuthContext = createContext<AuthContextValue>({
   signin: async () => ({ success: false }),
   signup: async () => ({ success: false }),
   signout: () => {},
+  replaceUser: () => {},
 });
 
 const AUTH_USER_KEY = "athens_auth_user";
@@ -135,6 +137,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     invalidateCachedGet("/account_info");
   }, []);
 
+  const replaceUser = useCallback((next: AuthUser) => {
+    setUser(next);
+    persistAuth(next);
+    invalidateCachedGet("/account_info");
+  }, []);
+
   const value = useMemo(() => ({
     user,
     isAuthenticated: Boolean(user),
@@ -142,7 +150,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signin,
     signup,
     signout,
-  }), [user, signin, signup, signout]);
+    replaceUser,
+  }), [user, signin, signup, signout, replaceUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
