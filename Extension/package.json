@@ -1,7 +1,8 @@
 {
 	"name": "avalon-scrapper",
 	"private": true,
-	"version": "2.1.3",
+	"version": "2.1.5",
+	"releaseDate": "2026-08-20",
 	"type": "module",
 	"scripts": {
 		"dev": "vite",

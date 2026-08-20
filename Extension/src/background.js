@@ -297,6 +297,9 @@ async function processScrapeBatch(batch) {
 		});
 	} catch (error) {
 		console.warn('[scrapeQueue] fetch failed', error);
+		// #region agent log
+		fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H4',location:'background.js:processScrapeBatch',message:'bulk fetch threw',data:{batchSize:batch.length,errMsg:String(error?.message||error).slice(0,160),apiHost:(()=>{try{return new URL(baseUrl).host;}catch{return 'invalid';}})()},timestamp:Date.now()})}).catch(()=>{});
+		// #endregion
 		await requeueScrapeBatch(batch, error instanceof Error ? error.message : String(error));
 		return;
 	}
@@ -304,6 +307,9 @@ async function processScrapeBatch(batch) {
 	let body = null;
 	try { body = await response.json(); } catch { /* handled below */ }
 	console.log('[scrapeQueue] response', response.status, body?.summary || body?.error || body);
+	// #region agent log
+	fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H4',location:'background.js:processScrapeBatch',message:'bulk response',data:{status:response.status,ok:response.ok,hasResults:Array.isArray(body?.results),summary:body?.summary||null,error:typeof body?.error==='string'?body.error.slice(0,160):null,apiHost:(()=>{try{return new URL(baseUrl).host;}catch{return 'invalid';}})()},timestamp:Date.now()})}).catch(()=>{});
+	// #endregion
 	if (!response.ok || !Array.isArray(body?.results)) {
 		await requeueScrapeBatch(
 			batch,
@@ -768,6 +774,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 			const targetTab = await resolveTargetTab(message);
 			if (!targetTab?.id) {
 				console.warn('No target tab found for action', message.action);
+				// #region agent log
+				fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H2',location:'background.js:forward',message:'no target tab',data:{action:message.action,explicitTabId:message?.tabId??message?.payload?.tabId??null},timestamp:Date.now()})}).catch(()=>{});
+				// #endregion
 				if (message.action === 'highlightByPattern' || message.action === 'clearHighlight') {
 					safeSendMessage({
 						action: 'highlightResult',
@@ -780,6 +789,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 			chrome.tabs.sendMessage(targetTabId, message, { frameId: 0 }, () => {
 				if (!chrome.runtime.lastError) return;
 				const lastErrorMessage = chrome.runtime.lastError?.message || '';
+				// #region agent log
+				fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H1',location:'background.js:forward',message:'tabs.sendMessage error',data:{action:message.action,tabId:targetTabId,tabHost:(()=>{try{return targetTab.url?new URL(targetTab.url).host:'';}catch{return 'invalid';}})(),lastError:String(lastErrorMessage).slice(0,160)},timestamp:Date.now()})}).catch(()=>{});
+				// #endregion
 				// Only attempt the guarded injection if the receiver is missing (navigation/new page).
 				if (!/Receiving end does not exist|Could not establish connection/i.test(lastErrorMessage)) return;
 

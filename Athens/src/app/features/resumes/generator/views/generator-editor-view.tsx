@@ -338,7 +338,7 @@ export function GeneratorEditorView({
             />
             <p className="text-[11px] text-neutral-400 dark:text-white/40 mt-1">
               Reference it in any prompt with{" "}
-              <code className="rounded bg-sky-500/15 text-sky-600 dark:text-sky-300 px-1">{JOB_DESC_TOKEN}</code> — it is
+              <code className="athens-prompt-token">{JOB_DESC_TOKEN}</code> — it is
               substituted with this text at generation time.
             </p>
             <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
@@ -529,7 +529,7 @@ export function GeneratorEditorView({
               onChange={(value) => setConfig((current) => ({ ...current, systemInstruction: value }))}
               tokenValues={tokenValues}
               rows={24}
-              className="[&>textarea]:min-h-[calc(100vh-13rem)] [&>div]:min-h-[calc(100vh-13rem)]"
+              className="[&_.athens-prompt-field__input]:min-h-[calc(100vh-13rem)] [&_.athens-prompt-field__overlay]:min-h-[calc(100vh-13rem)]"
               ariaLabel="System instruction"
               placeholder="System instruction… use {job_description}, {career}, {company1}…"
             />

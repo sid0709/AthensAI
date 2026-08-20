@@ -315,6 +315,9 @@ export const messageHandler = (request, sender, sendResponse) => {
 							if (!elements || elements.length === 0) {
 								elements = await waitForElements(componentType, propertyName, pattern, 2000, 100);
 							}
+							// #region agent log
+							fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H3',location:'messageHandler.js:executeAction',message:'content fetch',data:{action,pattern:String(pattern||'').slice(0,80),found:elements?.length||0,idKind:String(identifier||'').split('_').slice(0,3).join('_'),host:location.host},timestamp:Date.now()})}).catch(()=>{});
+							// #endregion
 							if (!elements || elements.length === 0) {
 								chrome.runtime.sendMessage({ action: 'fetchResult', payload: { identifier, success: false, error: 'No elements found' } });
 								break;

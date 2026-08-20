@@ -11,7 +11,9 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import { AccountRenameService } from './account-rename.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { ChangeUsernameDto } from './dto/change-username.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import {
   beginAccountDeleteSse,
@@ -24,7 +26,10 @@ import { VendorPasswordDto } from './dto/vendor-password.dto';
 @Controller('auth')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly accountRename: AccountRenameService,
+  ) {}
 
   @Post('signin')
   @HttpCode(200)
@@ -42,6 +47,12 @@ export class AuthController {
   @HttpCode(200)
   changePassword(@Body() dto: ChangePasswordDto) {
     return this.authService.changePassword(dto);
+  }
+
+  @Post('change-username')
+  @HttpCode(200)
+  changeUsername(@Body() dto: ChangeUsernameDto) {
+    return this.accountRename.rename(dto);
   }
 
   @Post('delete-account')

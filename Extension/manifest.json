@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
 	"name": "Avalon Scrapper",
-	"version": "2.1.3",
+	"version": "2.1.5",
 	"description": "AI based assistant to help freelancers apply and manage job postings more efficiently.",
 	"permissions": [
 		"sidePanel",

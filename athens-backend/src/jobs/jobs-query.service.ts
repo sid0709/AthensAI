@@ -6,13 +6,15 @@ import {
   PAGE_SIZE_MAX,
   type JobStatusTab,
 } from './constants/job-list.constants';
-import { JOB_STATUS_STATES } from './constants/job-status-states.constants';
 import { CompanyCatalogTotalService } from './company-catalog-total.service';
 import { JobCatalogTotalService } from './job-catalog-total.service';
 import { JobStatusService } from './job-status.service';
 import { JobsCompanyListService } from './jobs-company-list.service';
-import type { JobsIdConstraint } from './lib/jobs-mongo-match';
-import { buildJobsPrismaWhere, isEmptyWhere } from './lib/jobs-where';
+import { applyListTotalToTabCounts } from './lib/apply-list-total-to-tab-counts';
+import {
+  hasAttributeFilters,
+  type JobsIdConstraint,
+} from './lib/jobs-mongo-match';
 
 @Injectable()
 export class JobsQueryService {
@@ -34,9 +36,7 @@ export class JobsQueryService {
       query.profileId || '',
       query.applierName || '',
     );
-
-    const where = buildJobsPrismaWhere(query);
-    const unfiltered = isEmptyWhere(where);
+    const unfiltered = !hasAttributeFilters(query);
     const peekJobs = unfiltered ? (this.catalogTotal.peek() ?? 0) : 0;
 
     const idConstraint = await this.statusIdConstraint(status, profileId);
@@ -45,10 +45,17 @@ export class JobsQueryService {
       'includeIds' in idConstraint &&
       !idConstraint.includeIds.length
     ) {
-      const tabCounts = unfiltered
-        ? await this.jobStatuses.tabCounts(profileId, peekJobs)
-        : await this.jobStatuses.filteredTabCounts(profileId, query);
-      return this.emptyPage(page, pageSize, tabCounts);
+      const tabCounts = await this.tabCountsForQuery(
+        query,
+        profileId,
+        peekJobs,
+        unfiltered,
+      );
+      return this.emptyPage(
+        page,
+        pageSize,
+        applyListTotalToTabCounts(tabCounts, status, 0),
+      );
     }
 
     const needsStatusFilter = status !== 'all';
@@ -65,28 +72,14 @@ export class JobsQueryService {
         ),
         this.jobStatuses.tabCounts(profileId, peekJobs),
       ]);
-
-      if (tabCounts.all !== jobTotal) {
-        tabCounts.all = jobTotal;
-      }
-
-      const totalPages =
-        companyTotal === 0 ? 0 : Math.ceil(companyTotal / pageSize);
-      return {
-        success: true as const,
+      return this.pageResult(
         data,
-        pagination: {
-          total: companyTotal,
-          totalJobs: jobTotal,
-          unit: 'companies' as const,
-          page,
-          limit: pageSize,
-          totalPages,
-        },
-        statusCounts: tabCounts,
-        hasMore: page * pageSize < companyTotal,
-        nextCursor: null,
-      };
+        page,
+        pageSize,
+        companyTotal,
+        jobTotal,
+        applyListTotalToTabCounts(tabCounts, status, jobTotal),
+      );
     }
 
     const catalogForCounts = unfiltered
@@ -102,48 +95,28 @@ export class JobsQueryService {
         idConstraint,
         query.applierName || '',
       ),
-      unfiltered
-        ? this.jobStatuses.tabCounts(profileId, catalogForCounts)
-        : this.jobStatuses.filteredTabCounts(
-            profileId,
-            query,
-            status === 'all' ? { allTotal: 0 } : undefined,
-          ),
+      this.tabCountsForQuery(query, profileId, catalogForCounts, unfiltered),
     ]);
 
-    if (unfiltered && tabCounts.all !== catalogForCounts) {
-      tabCounts.all = catalogForCounts;
-    } else if (!unfiltered && status === 'all') {
-      // Align All/New with the attribute-filtered list total only when the
-      // active tab is All. Status-scoped jobTotal must not rewrite badges —
-      // e.g. New would become max(0, newTotal - tracked) → 0.
-      const tracked = JOB_STATUS_STATES.filter((state) => state !== 'posted').reduce(
-        (sum, state) => sum + (tabCounts[state] ?? 0),
-        0,
-      );
-      tabCounts.all = filtered.jobTotal;
-      tabCounts.posted = Math.max(0, filtered.jobTotal - tracked);
-    }
+    return this.pageResult(
+      filtered.data,
+      page,
+      pageSize,
+      filtered.companyTotal,
+      filtered.jobTotal,
+      applyListTotalToTabCounts(tabCounts, status, filtered.jobTotal),
+    );
+  }
 
-    const totalPages =
-      filtered.companyTotal === 0
-        ? 0
-        : Math.ceil(filtered.companyTotal / pageSize);
-    return {
-      success: true as const,
-      data: filtered.data,
-      pagination: {
-        total: filtered.companyTotal,
-        totalJobs: filtered.jobTotal,
-        unit: 'companies' as const,
-        page,
-        limit: pageSize,
-        totalPages,
-      },
-      statusCounts: tabCounts,
-      hasMore: page * pageSize < filtered.companyTotal,
-      nextCursor: null,
-    };
+  private async tabCountsForQuery(
+    query: ListJobsQueryDto,
+    profileId: string,
+    catalogTotal: number,
+    unfiltered: boolean,
+  ) {
+    return unfiltered
+      ? this.jobStatuses.tabCounts(profileId, catalogTotal)
+      : this.jobStatuses.filteredTabCounts(profileId, query);
   }
 
   private async statusIdConstraint(
@@ -162,25 +135,38 @@ export class JobsQueryService {
     return { includeIds };
   }
 
+  private pageResult(
+    data: Record<string, unknown>[],
+    page: number,
+    pageSize: number,
+    companyTotal: number,
+    jobTotal: number,
+    statusCounts: Record<JobStatusTab, number>,
+  ) {
+    const totalPages =
+      companyTotal === 0 ? 0 : Math.ceil(companyTotal / pageSize);
+    return {
+      success: true as const,
+      data,
+      pagination: {
+        total: companyTotal,
+        totalJobs: jobTotal,
+        unit: 'companies' as const,
+        page,
+        limit: pageSize,
+        totalPages,
+      },
+      statusCounts,
+      hasMore: page * pageSize < companyTotal,
+      nextCursor: null,
+    };
+  }
+
   private emptyPage(
     page: number,
     pageSize: number,
     statusCounts: Record<JobStatusTab, number> = EMPTY_STATUS_COUNTS,
   ) {
-    return {
-      success: true as const,
-      data: [] as Record<string, unknown>[],
-      pagination: {
-        total: 0,
-        totalJobs: 0,
-        unit: 'companies' as const,
-        page,
-        limit: pageSize,
-        totalPages: 0,
-      },
-      statusCounts,
-      hasMore: false,
-      nextCursor: null,
-    };
+    return this.pageResult([], page, pageSize, 0, 0, statusCounts);
   }
 }

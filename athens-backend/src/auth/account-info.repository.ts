@@ -91,6 +91,14 @@ export class AccountInfoRepository {
     await this.updateFields(id, { vendorPassword });
   }
 
+  async updateName(
+    id: string,
+    name: string,
+    usernameKey: string,
+  ): Promise<void> {
+    await this.updateFields(id, { name, usernameKey });
+  }
+
   async deleteById(id: string): Promise<void> {
     const trimmed = String(id || '').trim();
     if (!trimmed) return;

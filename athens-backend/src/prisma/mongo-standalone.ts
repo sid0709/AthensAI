@@ -215,11 +215,7 @@ export function mongoFieldIdQuery(
   return { $or: [{ [field]: { $oid: trimmed } }, { [field]: trimmed }] };
 }
 
-/** `$in` that matches both string and ObjectId encodings of each hex id. */
-export function mongoFieldIdIn(
-  field: string,
-  ids: string[],
-): Prisma.InputJsonValue {
+function mongoIdValues(ids: string[]): Prisma.InputJsonValue[] {
   const unique = [
     ...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)),
   ];
@@ -228,7 +224,23 @@ export function mongoFieldIdIn(
     values.push(id);
     if (OBJECT_ID_HEX.test(id)) values.push({ $oid: id });
   }
-  return { [field]: { $in: values } };
+  return values;
+}
+
+/** `$in` that matches both string and ObjectId encodings of each hex id. */
+export function mongoFieldIdIn(
+  field: string,
+  ids: string[],
+): Prisma.InputJsonValue {
+  return { [field]: { $in: mongoIdValues(ids) } };
+}
+
+/** `$nin` that matches both string and ObjectId encodings of each hex id. */
+export function mongoFieldIdNin(
+  field: string,
+  ids: string[],
+): Prisma.InputJsonValue {
+  return { [field]: { $nin: mongoIdValues(ids) } };
 }
 
 /**

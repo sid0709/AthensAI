@@ -18,6 +18,7 @@ import {
 } from "../../../services/profileApi";
 import { clearResumeStorage } from "../../../services/resumeStorage";
 import { DeleteAccountProgressPanel } from "./DeleteAccountProgressPanel";
+import { SecurityUsernameCard } from "./SecurityUsernameCard";
 
 /** Client keys tied to the signed-in applier — clear on account wipe. */
 async function clearApplierLocalData(applierName: string) {
@@ -154,10 +155,17 @@ export function SecurityTab() {
       <div className="athens-settings__head">
         <div className="min-w-0">
           <h2 className="athens-settings__title">Security</h2>
-          <p className="athens-settings__lede">Update your account password</p>
+          <p className="athens-settings__lede">Update your username and password</p>
         </div>
       </div>
+      <SecurityUsernameCard />
       <div className="athens-card">
+        <div>
+          <h3 className="athens-card-title">Password</h3>
+          <p className="athens-card-meta mt-1">
+            Used to sign in to Athens. This does not change your vendor access password.
+          </p>
+        </div>
         <FormField label="Current password">
           <AthensInput
             type="password"

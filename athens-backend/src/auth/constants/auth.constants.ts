@@ -16,6 +16,12 @@ export const AuthMessages = {
   accountNotFound: 'Account not found',
   currentPasswordIncorrect: 'Current password is incorrect',
   passwordUpdated: 'Password updated successfully',
+  changeUsernameRequired:
+    'Current username, new username, and password are required',
+  usernameInvalid:
+    'Username must be 2–64 characters and use only letters, numbers, dots, hyphens, or underscores',
+  usernameUnchanged: 'Username is already that value',
+  usernameUpdated: 'Username updated successfully',
   nameRequired: 'Name is required',
   vendorPasswordRequired:
     'Provide vendorPassword (min 8 characters) or clear: true',

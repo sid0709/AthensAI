@@ -91,7 +91,7 @@ export function Dropdown<T extends string>({
 export function Field({ label, cls = "", children }: { label: string; cls?: string; children: ReactNode }) {
   return (
     <div className={cls}>
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</div>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--athens-text-muted)]">{label}</div>
       {children}
     </div>
   );

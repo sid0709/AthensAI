@@ -60,6 +60,19 @@ const TabInfo = [
 	},
 ];
 
+function formatReleaseDate(isoDate) {
+	if (typeof isoDate !== 'string' || !isoDate) return null;
+	const parsed = new Date(`${isoDate}T00:00:00`);
+	if (Number.isNaN(parsed.getTime())) return isoDate;
+	return parsed.toLocaleDateString('en-US', {
+		month: 'short',
+		day: 'numeric',
+		year: 'numeric',
+	});
+}
+
+const releaseDateLabel = formatReleaseDate(packageJson.releaseDate);
+
 export default function LayoutPage() {
 	const [value, setValue] = React.useState(0);
 
@@ -113,6 +126,30 @@ export default function LayoutPage() {
 						>
 							Extension · v{packageJson.version}
 						</Typography>
+						{releaseDateLabel && (
+							<Box
+								component="span"
+								sx={{
+									display: 'inline-flex',
+									alignItems: 'center',
+									mt: 0.5,
+									px: 0.85,
+									py: 0.2,
+									borderRadius: 1.5,
+									bgcolor: 'rgba(124, 110, 245, 0.18)',
+									border: '1px solid',
+									borderColor: 'rgba(155, 135, 247, 0.45)',
+									color: 'primary.light',
+									fontSize: '0.65rem',
+									fontWeight: 800,
+									letterSpacing: '0.04em',
+									lineHeight: 1.3,
+									textTransform: 'uppercase',
+								}}
+							>
+								{releaseDateLabel}
+							</Box>
+						)}
 					</Box>
 				</Box>
 				<BackendTrafficLight />
