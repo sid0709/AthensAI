@@ -12,10 +12,12 @@ import { CompanyLogo } from "./CompanyLogo";
 interface JobDetailProps {
   job: Job;
   isRecording: boolean;
+  skipping?: boolean;
   onBack(): void;
   onApply(job: Job): void;
   onRecord(job: Job): void;
   onAskAi(job: Job): void;
+  onSkip(job: Job): void;
 }
 
 const DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
@@ -30,7 +32,16 @@ function formatPostedAt(value: string): string {
   return value && !Number.isNaN(date.getTime()) ? DATE_FORMAT.format(date) : "Not listed";
 }
 
-export function JobDetail({ job, isRecording, onBack, onApply, onRecord, onAskAi }: JobDetailProps) {
+export function JobDetail({
+  job,
+  isRecording,
+  skipping = false,
+  onBack,
+  onApply,
+  onRecord,
+  onAskAi,
+  onSkip
+}: JobDetailProps) {
   const hasRecommendation = Boolean(job.recommendedResumeStack) || Boolean(job.useCustomizedResume);
 
   return (
@@ -41,6 +52,14 @@ export function JobDetail({ job, isRecording, onBack, onApply, onRecord, onAskAi
           <span>All jobs</span>
         </button>
         <div className="detail-toolbar-actions">
+          <button
+            className="text-button"
+            type="button"
+            disabled={isRecording || skipping}
+            onClick={() => onSkip(job)}
+          >
+            Skip
+          </button>
           <button
             className="record-header-button"
             type="button"

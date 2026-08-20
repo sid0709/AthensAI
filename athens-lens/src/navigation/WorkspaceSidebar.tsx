@@ -1,4 +1,4 @@
-import { BriefcaseBusiness, Inbox, LogOut } from "lucide-react";
+import { BriefcaseBusiness, Inbox, LogOut, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Session } from "../types";
 import type { WorkspaceView } from "./routes";
@@ -12,6 +12,8 @@ interface WorkspaceSidebarProps {
   inboxUnreadCount: number;
   session: Session;
   children: ReactNode;
+  refreshing?: boolean;
+  onRefresh?(): void;
   onNavigate(view: WorkspaceView): void;
   onLogout(): void;
 }
@@ -34,6 +36,8 @@ export function WorkspaceSidebar({
   inboxUnreadCount,
   session,
   children,
+  refreshing = false,
+  onRefresh,
   onNavigate,
   onLogout
 }: WorkspaceSidebarProps) {
@@ -65,7 +69,20 @@ export function WorkspaceSidebar({
           <p className="eyebrow">Your workspace</p>
           <h1>{title}</h1>
         </div>
-        <span className="job-count" aria-label={countLabel}>{count}</span>
+        <div className="job-list-heading-actions">
+          {onRefresh ? (
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Refresh jobs"
+              disabled={refreshing}
+              onClick={onRefresh}
+            >
+              <RefreshCw size={16} aria-hidden="true" className={refreshing ? "spin" : undefined} />
+            </button>
+          ) : null}
+          <span className="job-count" aria-label={countLabel}>{count}</span>
+        </div>
       </div>
 
       {children}

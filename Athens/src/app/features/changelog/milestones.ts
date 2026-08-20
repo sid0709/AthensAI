@@ -14,6 +14,23 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "lens-skip-refresh-recording",
+    version: "0.22.0",
+    title: "Lens skip, refresh, and recordings",
+    date: "2026-08-20",
+    merge: "main",
+    branch: "main",
+    summary:
+      "Athens Lens can mark a Bid Ready job as Skipped, refresh an empty list after jobs are added, and keep application recordings when bidding from a proxy browser.",
+    tags: ["Lens"],
+    current: true,
+    changes: [
+      "Each job in Athens Lens has Skip, which marks it Skipped in Bid Management instead of only hiding it",
+      "An empty Bid Ready list can be refreshed after jobs are added, without waiting for a live connection",
+      "Application recordings still upload when bidding from a proxy browser such as Dolphin or MoreLogin",
+    ],
+  },
+  {
     id: "public-site-seo",
     version: "0.21.0",
     title: "Find AthensAI on the web",
@@ -23,7 +40,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "A public home page introduces AthensAI, and search engines can list the site instead of being told to skip it.",
     tags: ["Home"],
-    current: true,
     changes: [
       "The home page explains the career galaxy and how to sign in or create an account",
       "Search engines can index the public site, with workspace pages kept out of results",
