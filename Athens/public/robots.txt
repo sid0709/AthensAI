@@ -1,0 +1,24 @@
+User-agent: *
+Allow: /
+Disallow: /jobs
+Disallow: /title-review
+Disallow: /resumes
+Disallow: /mail
+Disallow: /calendar
+Disallow: /notion
+Disallow: /reports
+Disallow: /ai-usage
+Disallow: /api-usage-monitor
+Disallow: /firebase
+Disallow: /bid-management
+Disallow: /apps
+Disallow: /changelog
+Disallow: /settings
+Disallow: /status
+Disallow: /api/
+Disallow: /personal/
+Disallow: /downloads/
+Disallow: /healthz
+Disallow: /readyz
+
+Sitemap: https://athensai.remotepairnet.net/sitemap.xml

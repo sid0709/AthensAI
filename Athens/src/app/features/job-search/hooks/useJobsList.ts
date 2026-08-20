@@ -54,7 +54,13 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
 const JOB_LIST_REQUEST_TIMEOUT_MS = 30_000;
 const JOB_LIST_ENDPOINT = "/jobs";
 
-const listRequests = new Map<string, Promise<ListResponse>>();
+type ListRequestEntry = {
+  promise: Promise<ListResponse>;
+  consumers: number;
+  controller: AbortController;
+};
+
+const listRequests = new Map<string, ListRequestEntry>();
 
 function requestJobsPage(
   requestKey: string,
@@ -62,10 +68,11 @@ function requestJobsPage(
   request: ApiRequest,
 ): Promise<ListResponse> {
   const existing = listRequests.get(requestKey);
-  if (existing) return existing;
+  if (existing) {
+    existing.consumers += 1;
+    return existing.promise;
+  }
 
-  // This request belongs to the query key, not to any one React effect. A
-  // rerender may stop consuming it, but must not abort it for another consumer.
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -88,21 +95,39 @@ function requestJobsPage(
     throw error;
   }).finally(() => {
     clearTimeout(timeout);
-    if (listRequests.get(requestKey) === pending) listRequests.delete(requestKey);
+    const entry = listRequests.get(requestKey);
+    if (entry?.promise === pending) listRequests.delete(requestKey);
   });
 
-  listRequests.set(requestKey, pending);
+  listRequests.set(requestKey, { promise: pending, consumers: 1, controller });
   return pending;
+}
+
+function releaseJobsPage(requestKey: string) {
+  const entry = listRequests.get(requestKey);
+  if (!entry) return;
+  entry.consumers -= 1;
+  if (entry.consumers > 0) return;
+  listRequests.delete(requestKey);
+  entry.controller.abort();
 }
 
 function statusTabToQuery(statusTab: JobStatusTab): string {
   return statusTab;
 }
 
-/** Debounce only free-text search fields; other filters apply immediately. */
-function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
+function sourceFilterKey(source: string[]): string {
+  return source.join("\0");
+}
+
+/** Debounce text, source, and posted-date filters; URL still updates immediately. */
+function useDebouncedListFilters(filters: JobSearchFilterState, delayMs = 400) {
   const [debouncedJobQuery, setDebouncedJobQuery] = useState(filters.jobQuery);
   const [debouncedCompanyQuery, setDebouncedCompanyQuery] = useState(filters.companyQuery);
+  const [debouncedSource, setDebouncedSource] = useState(filters.source);
+  const [debouncedPostedFrom, setDebouncedPostedFrom] = useState(filters.postedFrom);
+  const [debouncedPostedTo, setDebouncedPostedTo] = useState(filters.postedTo);
+  const sourceKey = sourceFilterKey(filters.source);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedJobQuery(filters.jobQuery), delayMs);
@@ -114,20 +139,42 @@ function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
     return () => clearTimeout(t);
   }, [filters.companyQuery, delayMs]);
 
+  useEffect(() => {
+    const next = sourceKey.length ? sourceKey.split("\0") : [];
+    const t = setTimeout(() => setDebouncedSource(next), delayMs);
+    return () => clearTimeout(t);
+  }, [sourceKey, delayMs]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPostedFrom(filters.postedFrom), delayMs);
+    return () => clearTimeout(t);
+  }, [filters.postedFrom, delayMs]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPostedTo(filters.postedTo), delayMs);
+    return () => clearTimeout(t);
+  }, [filters.postedTo, delayMs]);
+
   const effectiveFilters = useMemo(
     () => ({
       ...filters,
       jobQuery: debouncedJobQuery,
       companyQuery: debouncedCompanyQuery,
+      source: debouncedSource,
+      postedFrom: debouncedPostedFrom,
+      postedTo: debouncedPostedTo,
     }),
-    [filters, debouncedJobQuery, debouncedCompanyQuery],
+    [filters, debouncedJobQuery, debouncedCompanyQuery, debouncedSource, debouncedPostedFrom, debouncedPostedTo],
   );
 
   return {
     filters: effectiveFilters,
     isDebouncing:
       filters.jobQuery !== debouncedJobQuery ||
-      filters.companyQuery !== debouncedCompanyQuery,
+      filters.companyQuery !== debouncedCompanyQuery ||
+      sourceFilterKey(filters.source) !== sourceFilterKey(debouncedSource) ||
+      filters.postedFrom !== debouncedPostedFrom ||
+      filters.postedTo !== debouncedPostedTo,
   };
 }
 
@@ -277,7 +324,7 @@ export function useJobsList(
   const {
     filters: debouncedFilters,
     isDebouncing,
-  } = useDebouncedTextFilters(filters);
+  } = useDebouncedListFilters(filters);
   const groups = useMemo(
     () => rawGroups
       .map((group) => ({ ...group, jobs: group.jobs.filter((job) => !excludeIds.has(job.id)) }))
@@ -392,6 +439,7 @@ export function useJobsList(
     })();
     return () => {
       cancelled = true;
+      releaseJobsPage(currentQueryKey);
     };
   }, [currentQueryKey, retryRevision, request, applierReady, isDebouncing, listQueryPath, page, pageSize, debouncedFilters.statusTab]);
   const patchJob = useCallback(

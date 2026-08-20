@@ -7,6 +7,16 @@ import {
 } from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeCompanyKey } from './lib/company-key';
+import {
+  attachToSourceBuckets,
+  cloneSourceBuckets,
+  removeFromSourceBuckets,
+  type SourceBucket,
+} from './lib/company-source-buckets';
+import {
+  refreshSourceBucketHeads,
+  saveCompanyMembership,
+} from './lib/company-membership-write';
 
 const COMPANIES_COLLECTION = 'companies';
 
@@ -19,6 +29,7 @@ export type CompanyProfileInput = {
 export type CompanyMembershipInput = CompanyProfileInput & {
   jobId: string;
   postedAt: Date;
+  source: string;
 };
 
 function asOptionalUrl(value: string | null | undefined): string | null {
@@ -36,6 +47,12 @@ export function preferExistingText(
   incoming: string | null | undefined,
 ): string | null {
   return asOptionalUrl(existing) ?? asOptionalUrl(incoming);
+}
+
+function asSourceBuckets(
+  buckets: SourceBucket[] | null | undefined,
+): SourceBucket[] {
+  return cloneSourceBuckets(buckets);
 }
 
 /**
@@ -81,6 +98,7 @@ export class CompanyMembershipService {
               jobIds: [],
               lastPostedAt: new Date(0),
               jobCount: 0,
+              sourceBuckets: [],
             },
           });
           return created.id;
@@ -94,6 +112,7 @@ export class CompanyMembershipService {
             jobIds: [],
             lastPostedAt: new Date(0),
             jobCount: 0,
+            sourceBuckets: [],
             createdAt: now,
             updatedAt: now,
           });
@@ -143,6 +162,7 @@ export class CompanyMembershipService {
     companyId: string;
     jobId: string;
     postedAt: Date;
+    source: string;
   }): Promise<void> {
     const existing = await this.prisma.company.findUnique({
       where: { id: input.companyId },
@@ -159,32 +179,15 @@ export class CompanyMembershipService {
       input.postedAt > existing.lastPostedAt
         ? input.postedAt
         : existing.lastPostedAt;
-
-    await withReplicaSetFallback(
-      () =>
-        this.prisma.company.update({
-          where: { id: existing.id },
-          data: {
-            jobIds,
-            jobCount: jobIds.length,
-            lastPostedAt,
-          },
-        }),
-      async () => {
-        await rawUpdateMany(
-          this.prisma,
-          COMPANIES_COLLECTION,
-          { _id: { $oid: existing.id } },
-          {
-            jobIds: jobIds.map((id) => ({ $oid: id })),
-            jobCount: jobIds.length,
-            lastPostedAt,
-            updatedAt: new Date(),
-          },
-        );
-        return null;
-      },
+    const sourceBuckets = attachToSourceBuckets(
+      asSourceBuckets(existing.sourceBuckets),
+      input,
     );
+    await saveCompanyMembership(this.prisma, existing.id, {
+      jobIds,
+      lastPostedAt,
+      sourceBuckets,
+    });
   }
 
   /** Upsert profile then attach job id (used by register / promote). */
@@ -194,13 +197,14 @@ export class CompanyMembershipService {
       companyId,
       jobId: input.jobId,
       postedAt: input.postedAt,
+      source: input.source,
     });
     return companyId;
   }
 
   /** Remove job ids from company membership; delete empty company rows. */
   async detachJobs(
-    jobs: Array<{ id: string; companyId: string | null }>,
+    jobs: Array<{ id: string; companyId: string | null; source?: string }>,
   ): Promise<void> {
     const byCompany = new Map<string, string[]>();
     for (const job of jobs) {
@@ -230,26 +234,18 @@ export class CompanyMembershipService {
         );
         continue;
       }
-      await withReplicaSetFallback(
-        () =>
-          this.prisma.company.update({
-            where: { id: companyId },
-            data: { jobIds, jobCount: jobIds.length },
-          }),
-        async () => {
-          await rawUpdateMany(
-            this.prisma,
-            COMPANIES_COLLECTION,
-            { _id: { $oid: companyId } },
-            {
-              jobIds: jobIds.map((id) => ({ $oid: id })),
-              jobCount: jobIds.length,
-              updatedAt: new Date(),
-            },
-          );
-          return null;
-        },
+      const removed = removeFromSourceBuckets(
+        asSourceBuckets(existing.sourceBuckets),
+        removeSet,
       );
+      const sourceBuckets = await refreshSourceBucketHeads(
+        this.prisma,
+        removed,
+      );
+      await saveCompanyMembership(this.prisma, companyId, {
+        jobIds,
+        sourceBuckets,
+      });
     }
   }
 }

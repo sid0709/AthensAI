@@ -40,9 +40,6 @@ export class JobsQueryService {
     const peekJobs = unfiltered ? (this.catalogTotal.peek() ?? 0) : 0;
 
     const idConstraint = await this.statusIdConstraint(status, profileId);
-    const countWhere = unfiltered
-      ? where
-      : { ...where, companyId: { not: null } };
     if (
       idConstraint &&
       'includeIds' in idConstraint &&
@@ -50,7 +47,7 @@ export class JobsQueryService {
     ) {
       const tabCounts = unfiltered
         ? await this.jobStatuses.tabCounts(profileId, peekJobs)
-        : await this.jobStatuses.filteredTabCounts(profileId, countWhere);
+        : await this.jobStatuses.filteredTabCounts(profileId, query);
       return this.emptyPage(page, pageSize, tabCounts);
     }
 
@@ -107,7 +104,11 @@ export class JobsQueryService {
       ),
       unfiltered
         ? this.jobStatuses.tabCounts(profileId, catalogForCounts)
-        : this.jobStatuses.filteredTabCounts(profileId, countWhere),
+        : this.jobStatuses.filteredTabCounts(
+            profileId,
+            query,
+            status === 'all' ? { allTotal: 0 } : undefined,
+          ),
     ]);
 
     if (unfiltered && tabCounts.all !== catalogForCounts) {

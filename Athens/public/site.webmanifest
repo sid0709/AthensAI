@@ -1,0 +1,16 @@
+{
+  "name": "AthensAI",
+  "short_name": "AthensAI",
+  "description": "AthensAI maps the job market, your skills, and the route to the next role worth chasing.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07070d",
+  "theme_color": "#07070d",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

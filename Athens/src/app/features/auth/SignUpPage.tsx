@@ -48,11 +48,13 @@ export function SignUpPage() {
   return (
     <AuthSplitLayout>
       <div className="flex items-center gap-3 mb-8 lg:hidden">
-        <AppLogo size={40} className="rounded-md" />
-        <div>
-          <p className="font-bold text-foreground" style={display}>AthensAI</p>
-          <p className="text-xs text-muted-foreground">Begin your career journey</p>
-        </div>
+        <Link to={PATHS.home} className="flex items-center gap-3">
+          <AppLogo size={40} className="rounded-md" />
+          <div>
+            <p className="font-bold text-foreground" style={display}>AthensAI</p>
+            <p className="text-xs text-muted-foreground">Begin your career journey</p>
+          </div>
+        </Link>
       </div>
 
       <div className="hidden lg:block mb-9">

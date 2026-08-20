@@ -26,6 +26,7 @@ import { JobWorkerPoolService } from './job-worker-pool.service';
 import { JobWorkerPoolTaskService } from './job-worker-pool-task.service';
 import { JobsBulkController } from './jobs-bulk.controller';
 import { JobsCompanyListService } from './jobs-company-list.service';
+import { JobsCompanySourceListService } from './jobs-company-source-list.service';
 import { JobsController } from './jobs.controller';
 import { JobsDetailService } from './jobs-detail.service';
 import { JobsQueryService } from './jobs-query.service';
@@ -79,6 +80,7 @@ import { TitleReviewSessionService } from './title-review/title-review-session.s
     JobCatalogTotalService,
     CompanyCatalogTotalService,
     CompanyMembershipService,
+    JobsCompanySourceListService,
     JobStatusService,
     JobStatusMutateService,
     JobStatusApplyBulkService,

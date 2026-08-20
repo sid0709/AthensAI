@@ -18,6 +18,7 @@
     "migrate:temp-jobs": "node scripts/reshape-jobs-and-split-temp.mjs",
     "migrate:temp-ingest": "node scripts/align-temp-jobs-ingest-schema.mjs",
     "backfill:companies": "node scripts/backfill-companies.mjs",
+    "backfill:company-source-buckets": "node scripts/backfill-company-source-buckets.mjs",
     "backfill:job-source": "node scripts/backfill-job-source.mjs",
     "backfill:orphan-vendor-tasks": "node scripts/backfill-orphan-vendor-tasks.mjs",
     "review:temp-jobs": "node scripts/review-temp-jobs-status.mjs",

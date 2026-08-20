@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
+import { Link } from "react-router";
 import { ArrowDown, Volume2, VolumeX } from "lucide-react";
 import { display } from "../../../lib/utils";
 import { nextAuthScene } from "./authScene";
 import { useAuthExperience } from "../experience/AuthExperienceContext";
 import { AUTH_NARRATIVE_SCENES } from "./authNarrative";
+import { PATHS } from "../../../config/routes";
 
 export function AuthHeroPanel() {
   const experience = useAuthExperience();
@@ -29,9 +31,9 @@ export function AuthHeroPanel() {
       <div className="auth-hero-grid" aria-hidden="true" />
 
       <header className="auth-world-header">
-        <div className="auth-wordmark" style={display}>
+        <Link to={PATHS.home} className="auth-wordmark" style={display}>
           ATHENS<span>AI</span>
-        </div>
+        </Link>
         <div className="auth-coordinate" aria-hidden="true">
           NODE 37.9838° N<br />23.7275° E
         </div>

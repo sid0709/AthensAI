@@ -187,15 +187,15 @@ Persistent config + Skill Coverage + background section generation. Collections:
 
 Background worker also claims `resume_generation` (in addition to `mail_ai_label`).
 
-- Job Search reads **`jobs` only**. Incomplete title-review / AI Analyze rows live in **`temp_jobs`** and are invisible to search.
+- Job Search lists **companies**, then hydrates matching jobs. Unfiltered pages `companies` (`lastPostedAt`, `jobIds`). Source-only All-tab filters use denormalized `companies.sourceBuckets` (run `npm run backfill:company-source-buckets` once after deploy). Title, company, posted-date, AI-extracted, and status-tab filters still aggregate projected `jobs` fields. Incomplete title-review / AI Analyze rows live in **`temp_jobs`** and are invisible to search.
 - **Ingest dedupe** (`SaveJobService`): before insert, check `temp_jobs` **and** `jobs`. Duplicate when `metadata.legacyId` matches, or `applyLink` matches within `JOB_DEDUP_WINDOW_DAYS` (default 14), or normalized `companyName`+`title` match within that window. Response stays Extension/LI-compatible: `{ success: true, created: false, duplicate: true, reason, code }` (HTTP 200) — row is **not** added.
 - New rows stamp `model_schema_code` from `JOB_MODEL_SCHEMA_CODE` (default `mongodb-athens-2026-08-06`).
 - Queue membership is derived from `temp_jobs` (`titleReviewLabel` / `aiSkillStatus` / `metadata.titleReview`) — there is no `athens_metadata` collection.
 - Review Title must approve a title before AI Analyze (`titleReviewLabel=APPROVED` + open `aiSkillStatus`). AI Analyze writes `metadata.details` + `aiSkills`, then `promoteIfReady`.
 - LLM calls use the signed-in profile’s encrypted API key + default model (OpenAI or DeepSeek V4). DeepSeek requests disable thinking for fast JSON batch work. Throughput knobs: `LLM_*` / `JOB_TITLE_REVIEW_*` / `JOB_AI_ANALYZE_*` / `RESUME_ANALYZE_BATCH_CONCURRENCY` / `RECOMMEND_RESUME_CONCURRENCY` in `.env.example`.
 - Status tabs filter via `job_statuses` for the given `profileId` (`posted` = jobs with no status row).
-- List responses **omit** `description` (lean `select` + `@@index([postedAt])`). Unfiltered totals are cached in-process (~60s); filtered lists still `count`.
-- Filters and offset pagination (`page` / `pageSize`) hit Prisma against `AthensDB.jobs`.
+- List responses **omit** `description` (lean `select` + `@@index([postedAt])`). Unfiltered totals are cached in-process (~60s). Filtered lists page a projected jobs aggregate (or `companies.sourceBuckets` for source-only All). Status badges count from `job_statuses` intersected with the same attribute match.
+- Filters and offset pagination (`page` / `pageSize`) hit Prisma / Mongo against `AthensDB`.
 - With `profileId` (`account_info._id`): badge counts aggregate from `job_statuses`; page rows hydrate `viewerStatus` from the same collection (one doc per profile × job). Absence of a row means New (`posted`).
 - Response: `{ success, data, pagination, statusCounts, hasMore }`.
 
@@ -289,7 +289,7 @@ Legacy keys `companyTags`, `details.position`, `details.money`, and `details.dat
 | `jobs` | Searchable catalog. Rows are title-approved **and** skill-pipeline done (`extracted` or `skipped_duplicate`). Strict Prisma `Job` shape. |
 | `temp_jobs` | Staging ingest queue (shape ≠ Job). LI-scrapper / Extension land here via prenorm + `saveJob`. Title Review + AI Analyze filter this collection. Promote via `registerJob` / `TempJobPromotionService.promoteIfReady` (move, not copy). |
 
-One-shot reshape + move incomplete catalog rows: `npm run migrate:temp-jobs`. Ingest-schema align: `npm run migrate:temp-ingest`.
+One-shot reshape + move incomplete catalog rows: `npm run migrate:temp-jobs`. Ingest-schema align: `npm run migrate:temp-ingest`. After adding `sourceBuckets`, stamp existing companies with `npm run backfill:company-source-buckets` (`-- --dry-run` to preview). Indexes come from `prisma:push`.
 
 ### Profile-owned status collections
 

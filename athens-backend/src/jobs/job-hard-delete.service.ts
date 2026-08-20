@@ -49,7 +49,7 @@ export class JobHardDeleteService {
 
     const existing = await this.prisma.job.findMany({
       where: { id: { in: ids } },
-      select: { id: true, companyId: true },
+      select: { id: true, companyId: true, source: true },
     });
     const deletedIds = existing.map((row) => row.id);
     if (!deletedIds.length) {
