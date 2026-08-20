@@ -14,6 +14,21 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "resume-prompt-field-caret",
+    version: "0.25.0",
+    title: "Resume prompts keep the caret on the text",
+    date: "2026-08-20",
+    merge: "main",
+    summary:
+      "Prompt fields in Resume Generator line the caret and selection up with the visible text, and the step chrome uses the same Athens field language as Job Search and Settings.",
+    tags: ["Resumes"],
+    current: true,
+    changes: [
+      "Clicking and selecting in a prompt places the caret on the same characters as the highlighted tokens",
+      "Fine-tune / Final, token chips, and prompt focus use Athens field tokens instead of a separate sky-blue editor skin",
+    ],
+  },
+  {
     id: "settings-username-bid-resume-name",
     version: "0.24.0",
     title: "Rename your username; bids use your full name",
@@ -23,7 +38,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Settings → Security can change the account username you sign in with. Bid résumé uploads are named with the autobid profile full name instead of that username.",
     tags: ["Settings", "Bid Management"],
-    current: true,
     changes: [
       "Security includes Account username so you can rename the login name without changing your autobid full name",
       "When a bid attaches a résumé, the file is renamed to your autobid profile full name",

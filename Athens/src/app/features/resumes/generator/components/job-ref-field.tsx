@@ -1,5 +1,17 @@
-import { useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { TOKEN_RE } from "../constants/tokens";
+
+function tokenAtCaret(value: string, caret: number, tokenValues: Record<string, string>): string | null {
+  for (const m of value.matchAll(TOKEN_RE)) {
+    const start = m.index ?? 0;
+    const end = start + m[0].length;
+    if (caret >= start && caret <= end) {
+      const name = m[0].slice(1, -1).toLowerCase();
+      if (name in tokenValues) return m[0];
+    }
+  }
+  return null;
+}
 
 export function JobRefField({
   value,
@@ -21,13 +33,21 @@ export function JobRefField({
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const ovRef = useRef<HTMLDivElement>(null);
-  // Identical box metrics on both layers so wrapping lines up exactly.
-  const shared = "px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words font-sans";
-  const syncScroll = () => {
-    if (ovRef.current && taRef.current) ovRef.current.scrollTop = taRef.current.scrollTop;
-  };
+  const [caret, setCaret] = useState(0);
 
-  // Split into plain runs and {token} chips, preserving order and exact text.
+  const syncScroll = useCallback(() => {
+    if (ovRef.current && taRef.current) ovRef.current.scrollTop = taRef.current.scrollTop;
+  }, []);
+
+  const syncCaret = useCallback(() => {
+    const el = taRef.current;
+    if (el) setCaret(el.selectionStart);
+  }, []);
+
+  useLayoutEffect(() => {
+    syncScroll();
+  }, [value, syncScroll]);
+
   const pieces: { text: string; token: boolean }[] = [];
   let last = 0;
   for (const m of value.matchAll(TOKEN_RE)) {
@@ -45,48 +65,46 @@ export function JobRefField({
     return v.trim() ? (v.length > 600 ? `${v.slice(0, 600)}…` : v) : `(${name} is empty in the profile)`;
   };
 
+  const activeToken = tokenAtCaret(value, caret, tokenValues);
+  const activePreview = activeToken ? previewFor(activeToken) : "";
+
   return (
-    <div className={`relative overflow-hidden rounded-xl border border-neutral-200 bg-white focus-within:border-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:focus-within:border-white/30 ${className}`}>
-      <div
-        ref={ovRef}
-        aria-hidden
-        // Same scrollbar gutter as the textarea so line wrapping (and therefore
-        // the caret position) stays identical whether or not it overflows.
-        style={{ scrollbarGutter: "stable" }}
-        className={`absolute inset-0 overflow-y-auto overflow-x-hidden pointer-events-none text-neutral-800 dark:text-white/85 ${shared}`}
-      >
-        {value.length === 0 && <span className="text-neutral-400 dark:text-white/30">{placeholder}</span>}
-        {pieces.map((p, i) => {
-          // Only chip tokens we actually know how to resolve; leave unknown
-          // {…} as plain text so we don't mislead.
-          const known = p.token && p.text.slice(1, -1).toLowerCase() in tokenValues;
-          if (!known) return <span key={i}>{p.text}</span>;
-          return (
-            <span
-              key={i}
-              className="group relative pointer-events-auto rounded-sm bg-sky-500/20 text-sky-600 dark:text-sky-300 cursor-help"
-            >
-              {p.text}
-              <span className="invisible group-hover:visible absolute left-0 top-full mt-1 z-30 w-72 max-h-48 overflow-auto rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-neutral-800 p-2 text-[11px] leading-snug text-neutral-600 dark:text-white/70 shadow-xl whitespace-pre-wrap normal-case">
-                {previewFor(p.text)}
+    <div>
+      <div className={`athens-prompt-field ${className}`.trim()}>
+        <div ref={ovRef} aria-hidden className="athens-prompt-field__overlay">
+          {value.length === 0 && <span className="athens-prompt-field__placeholder">{placeholder}</span>}
+          {pieces.map((p, i) => {
+            const known = p.token && p.text.slice(1, -1).toLowerCase() in tokenValues;
+            if (!known) return <span key={i}>{p.text}</span>;
+            return (
+              <span key={i} className="athens-prompt-field__token">
+                {p.text}
               </span>
-            </span>
-          );
-        })}
-        {/* trailing space so the last line's height matches the textarea */}
-        {"\n"}
+            );
+          })}
+          {"\n"}
+        </div>
+        <textarea
+          ref={taRef}
+          aria-label={ariaLabel}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onScroll={syncScroll}
+          onSelect={syncCaret}
+          onKeyUp={syncCaret}
+          onClick={syncCaret}
+          rows={rows}
+          spellCheck={false}
+          className="athens-prompt-field__input"
+        />
       </div>
-      <textarea
-        ref={taRef}
-        aria-label={ariaLabel}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onScroll={syncScroll}
-        rows={rows}
-        spellCheck={false}
-        style={{ scrollbarGutter: "stable" }}
-        className={`relative block w-full bg-transparent text-transparent caret-neutral-900 dark:caret-white outline-none resize-y overflow-y-auto ${shared}`}
-      />
+      {activeToken && activePreview ? (
+        <p className="athens-prompt-field__hint">
+          <strong>{activeToken}</strong>
+          {"\n"}
+          {activePreview}
+        </p>
+      ) : null}
     </div>
   );
 }
