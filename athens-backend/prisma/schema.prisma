@@ -35,6 +35,14 @@ model AccountInfo {
   @@map("account_info")
 }
 
+/// Per-source membership on a company (newest-first jobIds).
+type CompanySourceBucket {
+  source       String
+  lastPostedAt DateTime
+  count        Int
+  jobIds       String[] @db.ObjectId
+}
+
 /// Employer identity for Job Search grouping. jobIds are catalog `jobs` ids, newest-first.
 model Company {
   id           String   @id @default(auto()) @map("_id") @db.ObjectId
@@ -47,10 +55,12 @@ model Company {
   lastPostedAt DateTime
   /// Denormalized jobIds.length for cheap unfiltered counts.
   jobCount     Int
+  sourceBuckets CompanySourceBucket[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([lastPostedAt(sort: Desc)])
+  @@index([sourceBuckets.source])
   @@map("companies")
 }
 
@@ -88,6 +98,8 @@ model Job {
   @@index([sourceCatalog, titleReviewLabel, postedAt(sort: Desc)])
   @@index([createdBy, postedAt(sort: Desc)])
   @@index([companyId, postedAt(sort: Desc)])
+  @@index([source, postedAt(sort: Desc)])
+  @@index([source, companyId, postedAt(sort: Desc)])
   @@map("jobs")
 }
 

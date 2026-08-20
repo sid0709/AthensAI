@@ -141,6 +141,7 @@ export class RegisterJobService {
       companyId,
       jobId: row.id,
       postedAt: row.postedAt,
+      source: data.source,
     });
     this.companyTotals.invalidate();
     return true;

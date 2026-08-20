@@ -92,4 +92,23 @@ export function buildJobsMongoMatch(
   return match;
 }
 
+/** Source filter only — no title/company text, dates, or AI-extracted flag. */
+export function isSourceOnlyAttributeQuery(query: ListJobsQueryDto): boolean {
+  return (
+    parseSources(query.source).length > 0 &&
+    !String(query.q ?? '').trim() &&
+    !String(query.company ?? '').trim() &&
+    !String(query.postedFrom ?? '').trim() &&
+    !String(query.postedTo ?? '').trim() &&
+    !query.aiExtracted
+  );
+}
+
+export function canListBySourceBuckets(
+  query: ListJobsQueryDto,
+  idConstraint: JobsIdConstraint,
+): boolean {
+  return isSourceOnlyAttributeQuery(query) && idConstraint == null;
+}
+
 export { parseSources, parseDayStart, parseDayEnd };

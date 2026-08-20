@@ -27,7 +27,7 @@ export function Sidebar() {
 
   const handleSignOut = () => {
     signout();
-    navigate(PATHS.signin, { replace: true });
+    navigate(PATHS.home, { replace: true });
   };
 
   return (
