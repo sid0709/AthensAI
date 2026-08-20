@@ -11,18 +11,8 @@ import {
   DEFAULT_MAX_RECORDING_BYTES,
 } from '../constants/bid-status.constants';
 import { BidLifecycleService } from '../bid-lifecycle.service';
+import { bidStorageSlug } from '../../resumes/lib/storage-slug';
 import { UploadSessionService } from './upload-session.service';
-
-function slugify(value: string): string {
-  return (
-    String(value || 'unknown')
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 64) || 'unknown'
-  );
-}
 
 function extFromContentType(contentType: string, fileName = ''): string {
   const name = String(fileName || '').toLowerCase();
@@ -83,7 +73,7 @@ export class BidRecordingUploadService {
     const uploadId = randomUUID();
     const contentType = input.contentType || 'video/webm';
     const ext = extFromContentType(contentType, input.fileName);
-    const storagePath = `${BID_RECORDINGS_PREFIX}${slugify(input.applierName)}/${slugify(input.sessionId)}/${uploadId}.${ext}`;
+    const storagePath = `${BID_RECORDINGS_PREFIX}${bidStorageSlug(input.applierName)}/${bidStorageSlug(input.sessionId)}/${uploadId}.${ext}`;
     const bucket = this.firebase.storageBucket();
     const file = bucket.file(storagePath);
     const [uploadUrl] = await file.createResumableUpload({

@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
-import { asObjectIdHex } from '../prisma/mongo-standalone';
+import { asObjectIdHex, mongoFieldIdIn } from '../prisma/mongo-standalone';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   EMPTY_STATUS_COUNTS,
@@ -14,10 +13,10 @@ import type { ListJobsQueryDto } from './dto/list-jobs.query.dto';
 import {
   extractFirstBatch,
   jobsAggregateCommand,
+  jobsFilteredCountPipeline,
   jobsMatchingIdsPipeline,
 } from './lib/jobs-list-pipelines';
 import { buildJobsMongoMatch } from './lib/jobs-mongo-match';
-import { buildJobsPrismaWhere } from './lib/jobs-where';
 
 const TRACKED_TABS = JOB_STATUS_STATES.filter(
   (state): state is Exclude<JobStatusState, 'posted'> => state !== 'posted',
@@ -78,9 +77,10 @@ export class JobStatusService {
   }
 
   /**
-   * Status-tab badges scoped to jobs matching attribute filters (source,
-   * posted date, title/company query, etc.). Independent of the active status tab.
-   * Pass `allTotal` when the list query already counted matching jobs.
+   * Status-tab badges scoped to the same Mongo `$match` as the filtered list
+   * (source, posted date, title/company query, etc.). Independent of the
+   * active status tab. Pass `allTotal` when the list query already counted
+   * matching jobs.
    */
   async filteredTabCounts(
     profileId: string,
@@ -89,14 +89,10 @@ export class JobStatusService {
   ): Promise<Record<JobStatusTab, number>> {
     const counts: Record<JobStatusTab, number> = { ...EMPTY_STATUS_COUNTS };
     const id = String(profileId || '').trim();
-    const jobWhere: Prisma.JobWhereInput = {
-      ...buildJobsPrismaWhere(query),
-      companyId: { not: null },
-    };
     const all =
       opts?.allTotal !== undefined
         ? opts.allTotal
-        : await this.prisma.job.count({ where: jobWhere });
+        : await this.countMatchingJobs(query);
     counts.all = all;
     if (!id) {
       counts.posted = all;
@@ -121,7 +117,8 @@ export class JobStatusService {
 
     let tracked = 0;
     for (const row of statusRows) {
-      if (!matchingSet.has(row.jobId)) continue;
+      const jobId = (asObjectIdHex(row.jobId) || row.jobId).toLowerCase();
+      if (!matchingSet.has(jobId)) continue;
       const state = row.state as JobStatusState;
       if (!(TRACKED_TABS as readonly string[]).includes(state)) continue;
       counts[state] += 1;
@@ -129,6 +126,17 @@ export class JobStatusService {
     }
     counts.posted = Math.max(0, all - tracked);
     return counts;
+  }
+
+  private async countMatchingJobs(query: ListJobsQueryDto): Promise<number> {
+    const raw = await this.prisma.$runCommandRaw(
+      jobsAggregateCommand(
+        jobsFilteredCountPipeline(buildJobsMongoMatch(query)),
+      ),
+    );
+    const row = extractFirstBatch(raw)[0];
+    if (!row || typeof row !== 'object') return 0;
+    return Number((row as { jobs?: number }).jobs || 0);
   }
 
   private async matchingTrackedJobIds(
@@ -139,7 +147,7 @@ export class JobStatusService {
     if (!trackedIds.length) return out;
     const match = {
       ...buildJobsMongoMatch(query),
-      _id: { $in: trackedIds.map((jobId) => ({ $oid: jobId })) },
+      ...(mongoFieldIdIn('_id', trackedIds) as Record<string, unknown>),
     };
     const raw = await this.prisma.$runCommandRaw(
       jobsAggregateCommand(jobsMatchingIdsPipeline(match)),
@@ -147,7 +155,7 @@ export class JobStatusService {
     for (const row of extractFirstBatch(raw)) {
       if (!row || typeof row !== 'object') continue;
       const id = asObjectIdHex((row as { _id?: unknown })._id);
-      if (id) out.add(id);
+      if (id) out.add(id.toLowerCase());
     }
     return out;
   }

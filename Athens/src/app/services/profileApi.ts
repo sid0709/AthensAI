@@ -347,6 +347,39 @@ export async function changePassword(
   return { success: Boolean(data?.success), message: data?.message };
 }
 
+export async function changeUsername(
+  name: string,
+  newName: string,
+  currentPassword: string,
+): Promise<{
+  success: boolean;
+  message?: string;
+  user?: { _id: unknown; name: string; tier?: string | null; permission?: string | null };
+}> {
+  const url = `${API_BASE.replace(/\/$/, "")}/auth/change-username`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, newName, currentPassword }),
+  });
+  const data = (await parseJson(res)) as {
+    success?: boolean;
+    message?: string | string[];
+    user?: { _id: unknown; name: string; tier?: string | null; permission?: string | null };
+  } | null;
+  const message = Array.isArray(data?.message)
+    ? data.message.join("; ")
+    : data?.message;
+  if (!res.ok || !data?.success) {
+    return { success: false, message: message || "Could not update username" };
+  }
+  return {
+    success: true,
+    message,
+    user: data.user,
+  };
+}
+
 export type DeleteAccountProgress = {
   phase: "verifying" | "preparing" | "firebase" | "database" | "account" | "done" | string;
   message: string;

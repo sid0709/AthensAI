@@ -416,6 +416,132 @@
   background: var(--athens-hover);
 }
 
+/*
+ * Highlighted prompt field: a transparent textarea over a token overlay.
+ * Both layers must share identical box + type metrics. `.athens-ui textarea`
+ * otherwise wins on line-height (1.5 vs leading-relaxed), which walks the
+ * caret and selection off the visible glyphs after a few wrapped lines.
+ */
+.athens-prompt-field {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--athens-border);
+  border-radius: var(--athens-radius-sm);
+  background: var(--athens-canvas);
+  box-shadow: var(--athens-shadow-control);
+  transition: border-color var(--athens-transition-fast), box-shadow var(--athens-transition-fast);
+}
+
+.athens-prompt-field:focus-within {
+  border-color: var(--athens-focus);
+  box-shadow: 0 0 0 2px var(--athens-brand-subtle);
+}
+
+.athens-prompt-field__overlay,
+.athens-ui .athens-prompt-field__input,
+.athens-prompt-field__input {
+  box-sizing: border-box;
+  margin: 0;
+  border: 0;
+  padding: var(--athens-space-3);
+  font-family: var(--font-athens);
+  font-size: var(--athens-font-size-sm);
+  font-weight: 400;
+  font-style: normal;
+  font-variant-ligatures: none;
+  font-kerning: none;
+  line-height: calc(var(--athens-font-size-sm) * var(--athens-line-height-normal));
+  letter-spacing: 0;
+  tab-size: 4;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: normal;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.athens-prompt-field__overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--athens-text);
+}
+
+.athens-prompt-field__placeholder {
+  color: var(--athens-text-muted);
+}
+
+.athens-ui .athens-prompt-field__input,
+.athens-prompt-field__input {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 88px;
+  appearance: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--athens-text);
+  -webkit-text-fill-color: transparent;
+  outline: none;
+  box-shadow: none;
+  resize: vertical;
+  field-sizing: fixed;
+}
+
+.athens-ui .athens-prompt-field__input::placeholder,
+.athens-prompt-field__input::placeholder {
+  color: transparent;
+}
+
+.athens-ui .athens-prompt-field__input::selection,
+.athens-prompt-field__input::selection {
+  background: color-mix(in srgb, var(--athens-brand) 28%, transparent);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.athens-prompt-field__token {
+  background: var(--athens-brand-subtle);
+  color: var(--athens-brand);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.athens-prompt-field__hint {
+  margin: var(--athens-space-2) 0 0;
+  padding: var(--athens-space-2) var(--athens-space-3);
+  border: 1px solid var(--athens-brand-border);
+  border-radius: var(--athens-radius-sm);
+  background: var(--athens-brand-subtle);
+  color: var(--athens-text-secondary);
+  font-size: var(--athens-font-size-xs);
+  line-height: var(--athens-line-height-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.athens-prompt-field__hint strong {
+  color: var(--athens-brand);
+  font-weight: 600;
+}
+
+.athens-prompt-token {
+  color: var(--athens-brand);
+  background: var(--athens-brand-subtle);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.athens-prompt-step--invalid {
+  border-color: var(--athens-danger);
+}
+
 .athens-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -1925,6 +2051,7 @@ span.athens-chip:hover {
 @media (prefers-reduced-motion: reduce) {
   .athens-tab,
   .athens-chip,
+  .athens-prompt-field,
   .athens-btn,
   .athens-btn-danger,
   .athens-btn-primary,

@@ -2,23 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { File } from '@google-cloud/storage';
 import { BID_RECORDINGS_PREFIX } from '../bids/constants/bid-status.constants';
 import { FirebaseAdminService } from '../firebase/firebase-admin.service';
-import { storageSlug } from '../resumes/lib/storage-slug';
+import { bidStorageSlug, storageSlug } from '../resumes/lib/storage-slug';
 import type { AccountDeleteProgressFn } from './lib/account-delete-progress';
 import { accountDeletePercent } from './lib/account-delete-progress';
 
 const FILE_DELETE_BATCH = 8;
-
-/** Match bid-recording-upload slugify (folder segment under bid-recordings/). */
-function bidApplierSlug(value: string): string {
-  return (
-    String(value || 'unknown')
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 64) || 'unknown'
-  );
-}
 
 type StoragePrefix = {
   prefix: string;
@@ -28,7 +16,7 @@ type StoragePrefix = {
 /**
  * Firebase Storage cleanup for account wipe.
  * Resumes: `{storageSlug(name)}_{profileId}/`
- * Bid videos: `bid-recordings/{bidApplierSlug(name)}/`
+ * Bid videos: `bid-recordings/{bidStorageSlug(name)}/`
  */
 @Injectable()
 export class AccountStorageCleanupService {
@@ -46,7 +34,7 @@ export class AccountStorageCleanupService {
         label: 'Removing Firebase résumé files',
       },
       {
-        prefix: `${BID_RECORDINGS_PREFIX}${bidApplierSlug(name)}/`,
+        prefix: `${BID_RECORDINGS_PREFIX}${bidStorageSlug(name)}/`,
         label: 'Removing Firebase bid recordings',
       },
     ];

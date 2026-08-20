@@ -255,6 +255,14 @@ const ScrapComponent = () => {
 	const pendingResolvers = useRef(new Map());
 	const runStartedAt = useRef(null);
 	const runIdRef = useRef(null);
+	const scrapActiveRef = useRef(false);
+
+	const fetchFromPage = useCallback((tag, property, pattern) => {
+		const id = `scrap_wait_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+		const promise = new Promise((resolve) => pendingResolvers.current.set(id, resolve));
+		handleAction(tag, property, pattern, 0, 'fetch', null, 'content', id);
+		return promise;
+	}, []);
 
 	const sendRuntimeMessage = useCallback((message) => new Promise((resolve, reject) => {
 		chrome.runtime.sendMessage(message, (response) => {
@@ -289,8 +297,11 @@ const ScrapComponent = () => {
 		const listener = (message) => {
 			if (message?.action === 'fetchResult') {
 				const id = message.payload?.identifier;
+				const resolver = id ? pendingResolvers.current.get(id) : null;
+				// #region agent log
+				fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H1',location:'Scrap/index.jsx:fetchResult',message:'side panel got fetchResult',data:{idKind:String(id||'').split('_').slice(0,3).join('_'),success:message.payload?.success===true,hasResolver:Boolean(resolver),err:message.payload?.error||null,pending:pendingResolvers.current.size},timestamp:Date.now()})}).catch(()=>{});
+				// #endregion
 				if (id) {
-					const resolver = pendingResolvers.current.get(id);
 					if (resolver) {
 						resolver(message.payload);
 						pendingResolvers.current.delete(id);
@@ -524,31 +535,6 @@ const ScrapComponent = () => {
 		await delay(250);
 		setProgress(75);
 
-		handleHighlight("button", "id", "index_not-interest-button__?");
-		handleAction("button", "id", "index_not-interest-button__?", 0, "click", "");
-		await delay(250);
-		setProgress(80);
-
-		handleHighlight("li", "class", "ant-dropdown-menu-item ant-dropdown-menu-item-only-child");
-		handleAction("li", "class", "ant-dropdown-menu-item ant-dropdown-menu-item-only-child", 0, "click", "");
-		await delay(250);
-		setProgress(90);
-
-		let success_wait_for_job_list = false;
-
-		while (!success_wait_for_job_list) {
-			id = `scrap_wait_for_list_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-			const promise_waitfor_joblist = new Promise((resolve) => pendingResolvers.current.set(id, resolve));
-			handleAction("div", "class", "?index_jobdetail-leave?", 0, "fetch", null, "content", id);
-			const object_waitfor_joblist = await promise_waitfor_joblist;
-
-			success_wait_for_job_list = object_waitfor_joblist?.success;
-
-			if (!success_wait_for_job_list) {
-				await delay(600);
-			}
-		}
-
 		const resultData = {
 			applyLink: ApplyLink || "",
 			id: Date.now(),
@@ -576,6 +562,34 @@ const ScrapComponent = () => {
 			action: 'scrapeQueue:enqueue',
 			payload: { runId: runIdRef.current, job: resultData },
 		});
+		setProgress(80);
+
+		handleHighlight("button", "id", "index_not-interest-button__?");
+		handleAction("button", "id", "index_not-interest-button__?", 0, "click", "");
+		await delay(250);
+		setProgress(85);
+
+		handleHighlight("li", "class", "ant-dropdown-menu-item ant-dropdown-menu-item-only-child");
+		handleAction("li", "class", "ant-dropdown-menu-item ant-dropdown-menu-item-only-child", 0, "click", "");
+		await delay(250);
+		setProgress(90);
+
+		const detailCloseDeadline = Date.now() + 8000;
+		let detailCloseReason = 'timeout';
+		while (scrapActiveRef.current && Date.now() < detailCloseDeadline) {
+			const detailOpen = await fetchFromPage("div", "class", "?index_jobdetail-enter?");
+			if (!detailOpen?.success) {
+				detailCloseReason = 'closed';
+				break;
+			}
+			await delay(400);
+		}
+		if (!scrapActiveRef.current) detailCloseReason = 'stopped';
+		// #region agent log
+		fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',runId:'post-fix',hypothesisId:'H3',location:'Scrap/index.jsx:detailClose',message:'detail close wait done',data:{reason:detailCloseReason},timestamp:Date.now()})}).catch(()=>{});
+		// #endregion
+		if (!scrapActiveRef.current) return;
+
 		setProgress(100);
 		handleClear();
 		await delay(100);
@@ -591,6 +605,9 @@ const ScrapComponent = () => {
 				try {
 					await onClickListItem();
 				} catch (err) {
+					// #region agent log
+					fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H3',location:'Scrap/index.jsx:scrapeLoop',message:'scrape loop error',data:{kind:err instanceof IncompleteJobDataError?'validation':'failed',issues:err?.issues||null,errMsg:String(err?.message||err).slice(0,160),progress},timestamp:Date.now()})}).catch(()=>{});
+					// #endregion
 					if (err instanceof IncompleteJobDataError) {
 						recordOutcome(SCRAPE_OUTCOMES.VALIDATION);
 						console.warn('Skipping job with invalid data', err.issues);
@@ -625,8 +642,12 @@ const ScrapComponent = () => {
 			return;
 		}
 		setStarting(true);
+		scrapActiveRef.current = true;
 		try {
 			const rememberedTab = await rememberActivePageTab();
+			// #region agent log
+			fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H2',location:'Scrap/index.jsx:onScrapStart',message:'start scrape',data:{hasApi:Boolean(API_URL),dupDays:DUPLICATE_WINDOW_DAYS,tabId:rememberedTab?.id||null,tabHost:(()=>{try{return rememberedTab?.url?new URL(rememberedTab.url).host:null;}catch{return 'invalid';}})()},timestamp:Date.now()})}).catch(()=>{});
+			// #endregion
 			if (!rememberedTab) {
 				throw new Error('Focus the job scraping website, then click Start again.');
 			}
@@ -643,6 +664,7 @@ const ScrapComponent = () => {
 			runStartedAt.current = Date.now();
 			setScrapFlag(true);
 		} catch (error) {
+			scrapActiveRef.current = false;
 			clearRememberedPageTab();
 			notifyFailure(error, 'Unable to remember the scraping tab');
 		} finally {
@@ -651,6 +673,7 @@ const ScrapComponent = () => {
 	};
 
 	const onScrapStop = () => {
+		scrapActiveRef.current = false;
 		if (runStartedAt.current) {
 			setElapsedMs(Date.now() - runStartedAt.current);
 			runStartedAt.current = null;

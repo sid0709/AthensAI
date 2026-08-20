@@ -46,4 +46,8 @@ export class AccountInfoService {
   ): Promise<void> {
     return this.accounts.updateVendorPassword(id, vendorPassword);
   }
+
+  updateName(id: string, name: string, usernameKey: string): Promise<void> {
+    return this.accounts.updateName(id, name, usernameKey);
+  }
 }

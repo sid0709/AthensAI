@@ -1,4 +1,5 @@
 import type { EducationEntry, CareerEntry } from './normalize-auto-bid-profile';
+import { autoBidFullName } from '../lib/auto-bid-full-name';
 import { asText } from './as-text';
 
 function defaultEducationEntry(): EducationEntry {
@@ -81,13 +82,9 @@ export function buildAutoBidProfileResponse(
     ? (careersRaw as CareerEntry[])
     : [defaultCareerEntry()];
 
-  const storedFullName = asText(p.fullName).trim();
   const storedFirstName = asText(p.firstName).trim();
   const storedLastName = asText(p.lastName).trim();
-  const fullName =
-    storedFullName ||
-    [storedFirstName, storedLastName].filter(Boolean).join(' ') ||
-    accountName.trim();
+  const fullName = autoBidFullName(p, accountName);
   const nameParts = fullName.split(/\s+/).filter(Boolean);
   const firstName = storedFirstName || nameParts[0] || '';
   const lastName = storedLastName || nameParts.slice(1).join(' ');

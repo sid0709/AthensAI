@@ -46,10 +46,16 @@ export function BackendHealthProvider({ children }) {
 					setServerInfo(data);
 					setStatus('connected');
 				}
+				// #region agent log
+				fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H5',location:'backendHealth.jsx:checkHealth',message:'health check ok',data:{ok:data?.ok===true,status:response.status,healthHost:(()=>{try{return new URL(healthUrl).host;}catch{return 'invalid';}})()},timestamp:Date.now()})}).catch(()=>{});
+				// #endregion
 			} catch (error) {
 				if (!cancelled && error?.name !== 'AbortError') {
 					setServerInfo(null);
 					setStatus('disconnected');
+					// #region agent log
+					fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'352573'},body:JSON.stringify({sessionId:'352573',hypothesisId:'H5',location:'backendHealth.jsx:checkHealth',message:'health check failed',data:{errName:error?.name||null,errMsg:String(error?.message||error).slice(0,120),healthHost:(()=>{try{return new URL(healthUrl).host;}catch{return 'invalid';}})()},timestamp:Date.now()})}).catch(()=>{});
+					// #endregion
 				}
 			}
 		};

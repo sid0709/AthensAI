@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { autoBidFullName } from '../personal/lib/auto-bid-full-name';
 import { PrismaService } from '../prisma/prisma.service';
 import { LensSessionService } from './lens-session.service';
 
@@ -72,7 +73,7 @@ export class LensAuthService {
       success: true as const,
       session: {
         username: result.session.username,
-        displayName: account.name,
+        displayName: autoBidFullName(account.autoBidProfile, account.name),
         profileId: result.session.accountId,
         authenticatedAt: result.session.authenticatedAt,
         expiresAt: result.session.expiresAt,
@@ -94,6 +95,7 @@ export class LensAuthService {
         name: true,
         vendorAllowed: true,
         vendorPassword: true,
+        autoBidProfile: true,
       },
     });
     if (exact) return exact;
@@ -103,6 +105,7 @@ export class LensAuthService {
         name: true,
         vendorAllowed: true,
         vendorPassword: true,
+        autoBidProfile: true,
       },
       take: 500,
     });

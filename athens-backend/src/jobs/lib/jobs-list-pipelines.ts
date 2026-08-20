@@ -112,5 +112,15 @@ export function jobsMemberIdsPipeline(
 export function jobsMatchingIdsPipeline(
   match: Record<string, unknown>,
 ): Prisma.InputJsonValue[] {
-  return [{ $match: match }, { $project: { _id: 1 } }] as Prisma.InputJsonValue[];
+  return [
+    { $match: match },
+    { $project: { _id: 1 } },
+  ] as Prisma.InputJsonValue[];
+}
+
+/** Job count for the same `$match` the company-grouped list uses. */
+export function jobsFilteredCountPipeline(
+  match: Record<string, unknown>,
+): Prisma.InputJsonValue[] {
+  return [{ $match: match }, { $count: 'jobs' }] as Prisma.InputJsonValue[];
 }
