@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router";
 import { SignInPage } from "../features/auth/SignInPage";
 import { SignUpPage } from "../features/auth/SignUpPage";
+import { GuestHome } from "../features/landing/GuestHome";
 import { PATHS } from "../config/routes";
 import { VIEW_COMPONENTS } from "../config/views";
 import { AppLayout } from "./AppLayout";
@@ -29,6 +30,7 @@ const {
 export function AppRoutes() {
   return (
     <Routes>
+      <Route path={PATHS.home} element={<GuestHome />} />
       <Route path={PATHS.signin} element={<SignInPage />} />
       <Route path={PATHS.signup} element={<SignUpPage />} />
       <Route path="/status" element={<StatusPage />} />
@@ -39,7 +41,6 @@ export function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to={PATHS.jobs} replace />} />
         <Route path={PATHS.jobs.slice(1)} element={<JobSearchPage />} />
         <Route path={PATHS.titleReview.slice(1)} element={<BetaRoute><TitleReviewPage /></BetaRoute>} />
         <Route path={`${PATHS.resumes.slice(1)}/:tab?`} element={<ResumesPage />} />

@@ -5,6 +5,7 @@ import type { View } from "../types";
  * View ids (used in types/config) are decoupled from paths where it improves readability.
  */
 export const PATHS = {
+  home: "/",
   jobs: "/jobs",
   titleReview: "/title-review",
   resumes: "/resumes",

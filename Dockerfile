@@ -29,7 +29,9 @@ RUN npm ci \
 
 WORKDIR /app/Athens
 ARG VITE_API_URL=/api
+ARG PUBLIC_ORIGIN=
 ENV VITE_API_URL=${VITE_API_URL}
+ENV VITE_PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
 RUN npm run build
 
 # Chrome extension zips → /downloads/ (served by nginx; linked from Apps & Plugins).

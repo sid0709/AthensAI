@@ -1,10 +1,17 @@
 import {
+  deleteRecordingBlob,
+  getRecordingBlob,
+  putRecordingBlob,
+} from "../../src/recording/recordingBlobStore";
+import {
   pickRecordingMimeType,
   recordingCaptureMandatory,
   recordingFileExtension,
   RECORDING_VIDEO_BITS_PER_SECOND,
   fitRecordingFrame,
 } from "../../src/recording/recordingCapture";
+import { putResumable } from "../../src/recording/recordingUpload";
+import { EMPTY_RECORDING_ERROR } from "../../src/recording/sidePanelRecorder";
 
 type StartMessage = {
   type: "OFFSCREEN_START_RECORDING";
@@ -39,6 +46,10 @@ type PutMessage = {
 type DiscardMessage = {
   type: "OFFSCREEN_DISCARD_RECORDING";
   sessionId: string;
+};
+
+type PingMessage = {
+  type: "OFFSCREEN_PING";
 };
 
 type RecorderState = {
@@ -96,26 +107,6 @@ async function clampTrackToRecordingFrame(stream: MediaStream) {
 
 function stopStream(stream: MediaStream | null | undefined) {
   stream?.getTracks().forEach((track) => track.stop());
-}
-
-async function putResumable(uploadUrl: string, blob: Blob) {
-  const chunkSize = 8 * 1024 * 1024;
-  let offset = 0;
-  while (offset < blob.size) {
-    const end = Math.min(offset + chunkSize, blob.size);
-    const response = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Length": String(end - offset),
-        "Content-Range": `bytes ${offset}-${end - 1}/${blob.size}`,
-      },
-      body: blob.slice(offset, end),
-    });
-    if (response.status !== 308 && !response.ok) {
-      throw new Error(`Storage upload failed (${response.status})`);
-    }
-    offset = end;
-  }
 }
 
 async function startRecording(
@@ -226,12 +217,23 @@ async function stopRecording(sessionId: string, filename?: string) {
   relayPeers.get(sessionId)?.close();
   relayPeers.delete(sessionId);
 
+  if (!blob.size) {
+    throw new Error(EMPTY_RECORDING_ERROR);
+  }
+
   const extension = recordingFileExtension(recorder.mimeType);
   const downloadName = filename || `athens-lens-recording-${Date.now()}.${extension}`;
   pendingRecordings.set(sessionId, {
     blob,
     mimeType: recorder.mimeType,
     filename: downloadName,
+  });
+  await putRecordingBlob({
+    sessionId,
+    blob,
+    mimeType: recorder.mimeType,
+    filename: downloadName,
+    byteLength: blob.size,
   });
 
   // Quiet local backup — Bid Management plays the uploaded Storage copy.
@@ -256,7 +258,7 @@ async function stopRecording(sessionId: string, filename?: string) {
 }
 
 async function recordingDigest(sessionId: string) {
-  const pending = pendingRecordings.get(sessionId);
+  const pending = pendingRecordings.get(sessionId) ?? await getRecordingBlob(sessionId);
   if (!pending?.blob?.size) throw new Error("No pending recording found.");
   return {
     mimeType: pending.mimeType,
@@ -266,7 +268,7 @@ async function recordingDigest(sessionId: string) {
 }
 
 async function putRecording(sessionId: string, uploadUrl: string) {
-  const pending = pendingRecordings.get(sessionId);
+  const pending = pendingRecordings.get(sessionId) ?? await getRecordingBlob(sessionId);
   if (!pending?.blob?.size) throw new Error("No pending recording found.");
   await putResumable(uploadUrl, pending.blob);
 }
@@ -275,10 +277,11 @@ function discardRecording(sessionId: string) {
   pendingRecordings.delete(sessionId);
   relayPeers.get(sessionId)?.close();
   relayPeers.delete(sessionId);
+  void deleteRecordingBlob(sessionId);
 }
 
 chrome.runtime.onMessage.addListener((
-  message: StartMessage | RelayStartMessage | StopMessage | DigestMessage | PutMessage | DiscardMessage,
+  message: StartMessage | RelayStartMessage | StopMessage | DigestMessage | PutMessage | DiscardMessage | PingMessage,
   _sender: unknown,
   sendResponse: (response?: unknown) => void,
 ) => {
@@ -344,6 +347,11 @@ chrome.runtime.onMessage.addListener((
 
   if (message?.type === "OFFSCREEN_DISCARD_RECORDING") {
     discardRecording(message.sessionId);
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (message?.type === "OFFSCREEN_PING") {
     sendResponse({ ok: true });
     return false;
   }

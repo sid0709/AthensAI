@@ -15,6 +15,12 @@ import {
 } from "../src/recording/resume/resumeAuditPersist";
 import type { RenameAuditPayload } from "../src/recording/resume/resumeFileTracking";
 import { RESUME_AUDIT_OUTBOX_PREFIX } from "../src/recording/resume/resumeFileTracking";
+import {
+  deleteRecordingBlob,
+  getRecordingBlob,
+} from "../src/recording/recordingBlobStore";
+import { putResumable } from "../src/recording/recordingUpload";
+import { ensureOffscreenDocument, tryOffscreenMessage } from "../src/recording/offscreenDocument";
 
 type JobSnapshot = {
   id: string;
@@ -83,6 +89,17 @@ type DiscardRecordingMessage = {
   sessionId: string;
 };
 
+type RegisterRecordingMessage = {
+  type: "ATHENS_LENS_REGISTER_RECORDING";
+  sessionId: string;
+  tabId: number;
+  applyUrl?: string;
+  job?: JobSnapshot | null;
+  expectedResumeName?: string | null;
+  resumeSetFolder?: string | null;
+  bidderName?: string | null;
+};
+
 type ResumeSelectedMessage = {
   type: "ATHENS_LENS_RESUME_SELECTED";
   payload: RenameAuditPayload;
@@ -118,6 +135,7 @@ type RuntimeMessage =
   | RecordingDigestMessage
   | PutRecordingMessage
   | DiscardRecordingMessage
+  | RegisterRecordingMessage
   | ResumeSelectedMessage
   | GetResumeSessionMessage
   | ShowToastMessage
@@ -332,16 +350,6 @@ function getMediaStreamIdSync(
       return;
     }
     callback({ streamId });
-  });
-}
-
-async function ensureOffscreenDocument() {
-  const hasDocument = await chrome.offscreen.hasDocument?.();
-  if (hasDocument) return;
-  await chrome.offscreen.createDocument({
-    url: "offscreen.html",
-    reasons: [chrome.offscreen.Reason.USER_MEDIA],
-    justification: "Record the application tab while bidding from Athens Lens.",
   });
 }
 
@@ -1186,6 +1194,44 @@ export default defineBackground(() => {
       return false;
     }
 
+    if (message?.type === "ATHENS_LENS_REGISTER_RECORDING") {
+      const tabId = asTabId(message.tabId);
+      if (tabId == null || !message.sessionId) {
+        sendResponse({ ok: false, error: "Missing tab for recording." });
+        return false;
+      }
+      const existing = sessionIdForTab(tabId);
+      if (existing && existing !== message.sessionId) {
+        sendResponse({
+          ok: false,
+          tabId,
+          error: "This tab is already recording. Complete that bid first.",
+        });
+        return false;
+      }
+      if (pendingRecord?.tabId === tabId) pendingRecord = null;
+      recordingTabs.set(message.sessionId, tabId);
+      rememberLiveSession(
+        message.sessionId,
+        tabId,
+        message.job,
+        message.expectedResumeName,
+        message.resumeSetFolder,
+      );
+      const live = liveSessions.get(message.sessionId);
+      void (async () => {
+        if (live) await armLiveSession(live);
+        sendResponse({ ok: true, tabId });
+      })().catch((error: unknown) => {
+        sendResponse({
+          ok: false,
+          tabId,
+          error: error instanceof Error ? error.message : "Could not start recording.",
+        });
+      });
+      return true;
+    }
+
     if (message?.type === "ATHENS_LENS_START_RECORDING") {
       const providedStreamId = typeof message.streamId === "string" ? message.streamId.trim() : "";
       const providedTabId = asTabId(message.tabId);
@@ -1340,24 +1386,50 @@ export default defineBackground(() => {
           await disarmResumeSessionOnTab(live.tabId).catch(() => undefined);
         }
         await flushResumeAuditOutbox().catch(() => undefined);
-        await ensureOffscreenDocument();
-        const response = await sendOffscreenMessage({
-          type: "OFFSCREEN_STOP_RECORDING",
-          sessionId: message.sessionId,
-        });
         const tabId = recordingTabs.get(message.sessionId) ?? null;
         recordingTabs.delete(message.sessionId);
         liveSessions.delete(message.sessionId);
-        if (!response?.ok) {
-          sendResponse({ ok: false, tabId, error: response?.error || "Could not stop recording." });
+
+        let response: Record<string, unknown> | null = null;
+        try {
+          await ensureOffscreenDocument();
+          response = await sendOffscreenMessage({
+            type: "OFFSCREEN_STOP_RECORDING",
+            sessionId: message.sessionId,
+          });
+        } catch {
+          response = await tryOffscreenMessage({
+            type: "OFFSCREEN_STOP_RECORDING",
+            sessionId: message.sessionId,
+          });
+        }
+
+        const stored = await getRecordingBlob(message.sessionId);
+        if (stored?.blob?.size) {
+          sendResponse({
+            ok: true,
+            tabId,
+            mimeType: stored.mimeType,
+            byteLength: stored.byteLength,
+            filename: stored.filename,
+          });
+          return;
+        }
+        if (response?.ok) {
+          sendResponse({
+            ok: true,
+            tabId,
+            mimeType: response.mimeType,
+            byteLength: response.byteLength,
+            filename: response.filename,
+          });
           return;
         }
         sendResponse({
-          ok: true,
+          ok: false,
           tabId,
-          mimeType: response.mimeType,
-          byteLength: response.byteLength,
-          filename: response.filename,
+          error: (typeof response?.error === "string" && response.error)
+            || "Could not stop recording.",
         });
       })().catch((error: unknown) => {
         sendResponse({
@@ -1370,20 +1442,33 @@ export default defineBackground(() => {
 
     if (message?.type === "ATHENS_LENS_RECORDING_DIGEST") {
       void (async () => {
-        await ensureOffscreenDocument();
-        const response = await sendOffscreenMessage({
+        const stored = await getRecordingBlob(message.sessionId);
+        if (stored?.blob?.size) {
+          sendResponse({
+            ok: true,
+            mimeType: stored.mimeType,
+            byteLength: stored.byteLength,
+            filename: stored.filename,
+          });
+          return;
+        }
+        const response = await tryOffscreenMessage({
           type: "OFFSCREEN_RECORDING_DIGEST",
           sessionId: message.sessionId,
         });
-        if (!response?.ok) {
-          sendResponse({ ok: false, error: response?.error || "Could not read recording." });
+        if (response?.ok) {
+          sendResponse({
+            ok: true,
+            mimeType: response.mimeType,
+            byteLength: response.byteLength,
+            filename: response.filename,
+          });
           return;
         }
         sendResponse({
-          ok: true,
-          mimeType: response.mimeType,
-          byteLength: response.byteLength,
-          filename: response.filename,
+          ok: false,
+          error: (typeof response?.error === "string" && response.error)
+            || "No pending recording found.",
         });
       })().catch((error: unknown) => {
         sendResponse({
@@ -1396,17 +1481,26 @@ export default defineBackground(() => {
 
     if (message?.type === "ATHENS_LENS_PUT_RECORDING") {
       void (async () => {
-        await ensureOffscreenDocument();
-        const response = await sendOffscreenMessage({
+        const stored = await getRecordingBlob(message.sessionId);
+        if (stored?.blob?.size) {
+          await putResumable(message.uploadUrl, stored.blob);
+          sendResponse({ ok: true });
+          return;
+        }
+        const response = await tryOffscreenMessage({
           type: "OFFSCREEN_PUT_RECORDING",
           sessionId: message.sessionId,
           uploadUrl: message.uploadUrl,
         });
-        if (!response?.ok) {
-          sendResponse({ ok: false, error: response?.error || "Could not upload recording." });
+        if (response?.ok) {
+          sendResponse({ ok: true });
           return;
         }
-        sendResponse({ ok: true });
+        sendResponse({
+          ok: false,
+          error: (typeof response?.error === "string" && response.error)
+            || "No pending recording found.",
+        });
       })().catch((error: unknown) => {
         sendResponse({
           ok: false,
@@ -1418,8 +1512,8 @@ export default defineBackground(() => {
 
     if (message?.type === "ATHENS_LENS_DISCARD_RECORDING") {
       void (async () => {
-        await ensureOffscreenDocument();
-        await sendOffscreenMessage({
+        await deleteRecordingBlob(message.sessionId);
+        await tryOffscreenMessage({
           type: "OFFSCREEN_DISCARD_RECORDING",
           sessionId: message.sessionId,
         });

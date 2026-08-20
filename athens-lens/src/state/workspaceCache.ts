@@ -23,6 +23,7 @@ interface WorkspaceCacheState {
   bodiesByProfile: BodyCache;
   hydrated: boolean;
   setJobs(profileId: string, jobs: readonly Job[], refreshedAt?: number): void;
+  removeJob(profileId: string, jobId: string, refreshedAt?: number): void;
   setInbox(profileId: string, snapshot: InboxSnapshot, refreshedAt?: number): void;
   appendInbox(profileId: string, page: InboxSnapshot, refreshedAt?: number): void;
   setMessageBodies(profileId: string, messages: readonly InboxMessage[], refreshedAt?: number): void;
@@ -104,6 +105,22 @@ export const useWorkspaceCache = create<WorkspaceCacheState>()(
             [profileId]: { data: jobs, refreshedAt }
           }
         }));
+      },
+      removeJob: (profileId, jobId, refreshedAt = Date.now()) => {
+        runtimeJobWrites.add(profileId);
+        set((state) => {
+          const current = state.jobsByProfile[profileId];
+          if (!current) return state;
+          return {
+            jobsByProfile: {
+              ...state.jobsByProfile,
+              [profileId]: {
+                data: current.data.filter((job) => job.id !== jobId),
+                refreshedAt
+              }
+            }
+          };
+        });
       },
       setInbox: (profileId, snapshot, refreshedAt = Date.now()) => {
         runtimeInboxWrites.add(profileId);

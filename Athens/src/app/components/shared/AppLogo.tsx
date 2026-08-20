@@ -9,7 +9,7 @@ export function AppLogo({ size = 40, className }: AppLogoProps) {
   return (
     <img
       src="/logo.png"
-      alt="AthenAI"
+      alt="AthensAI"
       width={size}
       height={size}
       className={cn("rounded-xl object-cover flex-shrink-0", className)}

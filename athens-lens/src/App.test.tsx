@@ -82,6 +82,9 @@ function installChromeStub(overrides?: {
     if (message?.type === "ATHENS_LENS_LIST_SESSIONS") {
       return { ok: true, sessions: [] };
     }
+    if (message?.type === "ATHENS_LENS_REGISTER_RECORDING") {
+      return { ok: true, tabId: message.tabId ?? 42 };
+    }
     if (message?.type === "ATHENS_LENS_RECORDING_DIGEST") {
       return { ok: false, error: "No pending recording in tests." };
     }
@@ -179,7 +182,10 @@ function installChromeStub(overrides?: {
 
 function installMediaRelayStub() {
   const track = { stop: vi.fn() };
-  const stream = { getTracks: () => [track] } as unknown as MediaStream;
+  const stream = {
+    getTracks: () => [track],
+    getVideoTracks: () => [track],
+  } as unknown as MediaStream;
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true,
     value: { getUserMedia: vi.fn(async () => stream) },
@@ -202,7 +208,29 @@ function installMediaRelayStub() {
     async setRemoteDescription() {}
   }
 
+  class MockMediaRecorder {
+    static isTypeSupported() {
+      return true;
+    }
+
+    state: RecordingState = "inactive";
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    start() {
+      this.state = "recording";
+      this.ondataavailable?.({ data: new Blob(["rec"], { type: "video/webm" }) });
+    }
+
+    stop() {
+      this.state = "inactive";
+      this.onstop?.();
+    }
+  }
+
   vi.stubGlobal("RTCPeerConnection", MockPeerConnection);
+  vi.stubGlobal("MediaRecorder", MockMediaRecorder);
 }
 
 describe("Athens Lens app", () => {
@@ -231,9 +259,9 @@ describe("Athens Lens app", () => {
 
     expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();
     expect(screen.getByText("8", { selector: ".job-count" })).toBeInTheDocument();
-    expect(screen.getByText("Product design")).toBeInTheDocument();
-    expect(screen.getByText("Hybrid")).toBeInTheDocument();
-    expect(screen.getByText("Senior level")).toBeInTheDocument();
+    expect(screen.getByText("About the role")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Skip" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
     expect(screen.getByText("Posted Aug 3, 2026")).toBeInTheDocument();
     expect(container.querySelector('.company-logo--detail img')).toHaveAttribute(
       "src",
@@ -335,9 +363,17 @@ describe("Athens Lens app", () => {
         total: envelopes.length,
         unreadCount: MOCK_UNREAD_COUNT
       })),
-      loadMessageBodies: vi.fn((_session, messageIds) => messageIds.length === 1
-        ? selectedBody
-        : new Promise<never>(() => undefined))
+      loadMessageBodies: vi.fn(async (_session, messageIds: readonly string[]) => {
+        const selectedId = envelopes[0]!.id;
+        if (!messageIds.includes(selectedId)) {
+          return envelopes.filter((message) => messageIds.includes(message.id));
+        }
+        const loaded = await selectedBody;
+        const selected = loaded[0]!;
+        return messageIds.map((id) => (
+          id === selectedId ? selected : envelopes.find((message) => message.id === id)!
+        ));
+      })
     };
 
     render(
@@ -350,11 +386,17 @@ describe("Athens Lens app", () => {
 
     await screen.findByRole("heading", { name: MOCK_JOBS[0].title });
     await user.click(screen.getByRole("button", { name: /Gmail inbox/ }));
+    await user.click(screen.getByRole("button", { name: /Your verification code is 482917/ }));
     expect(await screen.findByRole("heading", { name: MOCK_INBOX_MESSAGES[0].subject })).toBeInTheDocument();
     expect(screen.getByText("Loading message…")).toBeInTheDocument();
     resolveSelectedBody?.([MOCK_INBOX_MESSAGES[0]]);
     expect(await screen.findByText(MOCK_INBOX_MESSAGES[0].body[0])).toBeInTheDocument();
-    expect(inboxRepository.loadMessageBodies).toHaveBeenCalledWith(expect.anything(), [MOCK_INBOX_MESSAGES[0].id]);
+    expect(inboxRepository.loadMessageBodies).toHaveBeenCalled();
+    expect(
+      vi.mocked(inboxRepository.loadMessageBodies).mock.calls.some(
+        ([, messageIds]) => messageIds.includes(MOCK_INBOX_MESSAGES[0].id),
+      ),
+    ).toBe(true);
   });
 
   it("starts, restarts, completes, and reviews a live bid recording", async () => {
@@ -409,7 +451,7 @@ describe("Athens Lens app", () => {
     await user.click(screen.getAllByRole("button", { name: "Ask AI" })[0]!);
     expect(screen.getByRole("dialog", { name: "Form answers" })).toBeInTheDocument();
     expect(screen.getByLabelText("AI response")).toBeInTheDocument();
-    expect(await screen.findByText(/\d+ answers ready to copy/)).toBeInTheDocument();
+    expect(await screen.findByText(/\d+ answers? ready to copy/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Focused tab innerText")).not.toBeInTheDocument();
     expect(screen.getByText("I am interested because the work matches my background.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close AI answers" }));
@@ -606,8 +648,66 @@ describe("Athens Lens app", () => {
     );
 
     expect(await screen.findByText("Jobs couldn't be loaded.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(listJobs).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText("No jobs to show yet.")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing in Bid Ready yet. Refresh after jobs are added.")).toBeInTheDocument();
+  });
+
+  it("refreshes an empty Bid Ready list when jobs become available", async () => {
+    const user = userEvent.setup();
+    const listJobs = vi.fn<JobsRepository["listJobs"]>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(MOCK_JOBS);
+
+    render(
+      <App
+        authStore={makeAuthStore(makeSession())}
+        jobsRepository={{ listJobs }}
+      />
+    );
+
+    expect(await screen.findByText("Nothing in Bid Ready yet. Refresh after jobs are added.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();
+    expect(listJobs).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks a job as skipped in Bid Management and removes it from Bid Ready", async () => {
+    const user = userEvent.setup();
+    const skippedIds = new Set<string>();
+    const listJobs = vi.fn(async () => MOCK_JOBS.filter((job) => !skippedIds.has(job.id)));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/athens-lens/bids/skip")) {
+        const body = JSON.parse(String(init?.body || "{}")) as { jobId?: string };
+        if (body.jobId) skippedIds.add(body.jobId);
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ success: false }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <App
+        authStore={makeAuthStore(makeSession())}
+        jobsRepository={{ listJobs }}
+        inboxRepository={mockInboxRepository}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Skip" })[0]!);
+    expect(screen.getByRole("dialog", { name: "Mark this job as Skipped?" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Skip job" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/athens-lens/bids/skip"))).toBe(true);
+    });
+    expect(await screen.findByRole("heading", { name: MOCK_JOBS[1].title })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: MOCK_JOBS[0].title })).not.toBeInTheDocument();
+    expect(listJobs.mock.calls.length).toBeGreaterThan(1);
   });
 });
