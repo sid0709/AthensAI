@@ -155,6 +155,12 @@ export class BidLifecycleService {
         ?.bidReadyDate ??
       now;
 
+    await this.bidQueue.setBidCompleted({
+      profileId: account.id,
+      job,
+      existingBidReadyAt: readyAt,
+    });
+
     const doc = await this.vendorTasks.upsertFields(account.name, job.id, {
       status: 'skipped',
       completedAt: now,

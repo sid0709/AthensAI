@@ -2,6 +2,7 @@ import { recordingCaptureMandatory } from "./recordingCapture";
 
 export type DesktopCaptureRelay = {
   offer: RTCSessionDescriptionInit;
+  stream: MediaStream;
   connect(answer: RTCSessionDescriptionInit): Promise<void>;
   close(): void;
 };
@@ -56,6 +57,7 @@ export async function createDesktopCaptureRelay(
 
     return {
       offer: localDescription(peer),
+      stream,
       async connect(answer) {
         if (closed) throw new Error("The selected tab stream is no longer available.");
         await peer.setRemoteDescription(answer);

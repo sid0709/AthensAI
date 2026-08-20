@@ -35,6 +35,7 @@ export class LensJobsService {
       where: { applierName: account.name, jobId: { in: jobIds } },
       select: {
         jobId: true,
+        status: true,
         recommendedResumeStack: true,
         recommendedResumeReason: true,
         useCustomizedResume: true,
@@ -42,12 +43,18 @@ export class LensJobsService {
         recommendedAt: true,
       },
     });
+    const skippedJobIds = new Set(
+      tasks.filter((t) => t.status === 'skipped').map((t) => String(t.jobId)),
+    );
     const recommendByJob = new Map(tasks.map((t) => [t.jobId, t]));
 
     const mapped = [];
     for (const status of statuses) {
       const job = jobById.get(status.jobId);
       if (!job) continue;
+      if (skippedJobIds.has(String(status.jobId)) || skippedJobIds.has(String(job.id))) {
+        continue;
+      }
       const recommend = recommendByJob.get(status.jobId);
       mapped.push(mapAthensLensJob(job, status, recommend));
     }
