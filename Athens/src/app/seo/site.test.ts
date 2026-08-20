@@ -6,6 +6,8 @@ import test from "node:test";
 import {
   DEFAULT_PUBLIC_ORIGIN,
   GOOGLE_SITE_VERIFICATION,
+  GTM_CONTAINER_ID,
+  GA_MEASUREMENT_ID,
   LANDING_DESCRIPTION,
   LANDING_TITLE,
   PRIVATE_ROBOTS,
@@ -75,6 +77,11 @@ test("index.html no longer tells crawlers to stay away", () => {
   assert.match(html, /og-image\.jpg/);
   assert.match(html, /<html lang="en">/);
   assert.match(html, new RegExp(`name="google-site-verification" content="${GOOGLE_SITE_VERIFICATION}"`));
+  assert.match(html, new RegExp(`googletagmanager\\.com/gtm\\.js\\?id='\\+i\\+dl`));
+  assert.match(html, new RegExp(`'${GTM_CONTAINER_ID}'`));
+  assert.match(html, new RegExp(`googletagmanager\\.com/ns\\.html\\?id=${GTM_CONTAINER_ID}`));
+  assert.match(html, new RegExp(`gtag/js\\?id=${GA_MEASUREMENT_ID}`));
+  assert.match(html, new RegExp(`gtag\\('config', '${GA_MEASUREMENT_ID}'\\)`));
   const jsonLdMatch = html.match(/id="athens-jsonld">([^<]+)<\/script>/);
   assert.ok(jsonLdMatch);
   assert.deepEqual(JSON.parse(jsonLdMatch[1]), landingJsonLd(DEFAULT_PUBLIC_ORIGIN));

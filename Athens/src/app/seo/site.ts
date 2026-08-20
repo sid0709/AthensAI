@@ -7,6 +7,8 @@ export const OG_IMAGE_PATH = "/og-image.jpg";
 export const OG_IMAGE_WIDTH = 1200;
 export const OG_IMAGE_HEIGHT = 630;
 export const GOOGLE_SITE_VERIFICATION = "sYNrrjrVzwFpXv7SaJdYVuqWtdKLDwDlDWOrx6H4nZ8";
+export const GTM_CONTAINER_ID = "GTM-PV6F744Q";
+export const GA_MEASUREMENT_ID = "G-KBD0LLZGH1";
 
 export const LANDING_TITLE = "AthensAI — Your career galaxy";
 export const LANDING_DESCRIPTION =
