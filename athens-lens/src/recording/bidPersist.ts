@@ -111,12 +111,17 @@ export async function saveAthensLensAnalysis(
   });
 }
 
-export async function skipAthensLensBid(session: Session, jobId: string) {
+export async function skipAthensLensBid(
+  session: Session,
+  jobId: string,
+  skipReason: string,
+) {
   return requestAthensApi("/athens-lens/bids/skip", {
     method: "POST",
     accessToken: session.accessToken,
     body: JSON.stringify({
       jobId,
+      skipReason,
       bidderName: session.displayName || session.username,
     }),
   });

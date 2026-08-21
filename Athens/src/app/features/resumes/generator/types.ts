@@ -164,10 +164,12 @@ export type GeneratorConfig = {
 export type TemplateSlot = {
   index: number;
   paragraphIndex: number;
-  section: Purpose;
+  section: Purpose | string;
   companyHint?: string;
   isBullet: boolean;
   experienceIndex?: number;
+  token?: string;
+  kind?: string;
 };
 
 export type UploadedTemplateManifest = {

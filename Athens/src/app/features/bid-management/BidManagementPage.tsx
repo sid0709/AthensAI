@@ -121,6 +121,11 @@ function TicketCard({
         {result.recording ? <Film className="w-3 h-3 bm-ticket-rec" /> : null}
       </div>
       <div className="bm-ticket-title">{result.job.title}</div>
+      {result.status === "skipped" && result.skipReason ? (
+        <div className="bm-ticket-skip-reason" title={result.skipReason}>
+          {result.skipReason}
+        </div>
+      ) : null}
       <ResumeFileNames
         original={result.resumeOriginalName}
         uploaded={result.resumeCleanedName}
@@ -323,6 +328,11 @@ function ListBoard({
                     <div className="bm-list-sub">
                       {r.job.company} · {r.status === "pending" ? "Bid ready" : r.bidder.name} · {r.job.source}
                     </div>
+                    {r.status === "skipped" && r.skipReason ? (
+                      <div className="bm-list-skip-reason" title={r.skipReason}>
+                        {r.skipReason}
+                      </div>
+                    ) : null}
                     <ResumeFileNames
                       original={r.resumeOriginalName}
                       uploaded={r.resumeCleanedName}

@@ -446,6 +446,9 @@ export function BackgroundTaskProvider({ children }: { children: ReactNode }) {
   }, [applierName, mergeTask, profileId]);
 
   const cancelTask = useCallback(async (taskId: string) => {
+		// #region agent log
+		fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'M',location:'BackgroundTaskContext.tsx:cancelTask',message:'frontend cancelTask invoked',data:{taskId,prevStatus:tasksRef.current[taskId]?.status||null,type:tasksRef.current[taskId]?.type||null},timestamp:Date.now()})}).catch(()=>{});
+		// #endregion
 		const previous = tasksRef.current[taskId];
     setById((current) => current[taskId]
       ? { ...current, [taskId]: { ...current[taskId], status: 'cancelling' } }

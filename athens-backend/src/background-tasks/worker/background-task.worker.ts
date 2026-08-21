@@ -99,6 +99,9 @@ export class BackgroundTaskWorker implements OnModuleInit {
       void store.heartbeat(taskId, this.workerId);
       void store.findById(taskId).then((fresh) => {
         if (fresh?.status === BACKGROUND_TASK_STATUSES.CANCELLING) {
+          // #region agent log
+          fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'M',location:'background-task.worker.ts:heartbeatAbort',message:'aborting resume generation because task is cancelling',data:{taskId,freshStatus:fresh.status,cancelRequestedAt:fresh.cancelRequestedAt??null},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
           abort.abort();
         }
       });

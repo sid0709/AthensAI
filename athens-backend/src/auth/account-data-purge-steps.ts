@@ -11,6 +11,7 @@ const COLLECTIONS = {
   oakSessions: 'oak_sessions',
   uploadSessions: 'upload_sessions',
   resumes: 'resumes',
+  resumeTemplates: 'resume_templates',
   resumeGeneratorConfig: 'resume_generator_config',
   resumeGenerations: 'resume_generations',
   backgroundTaskInputs: 'background_task_inputs',
@@ -204,6 +205,20 @@ export async function buildAccountPurgeSteps(
         }),
       () =>
         prisma.resume.deleteMany({
+          where: { OR: [{ profileId }, { ownerName: applierName }] },
+        }),
+    ),
+    step(
+      prisma,
+      'Removing résumé templates',
+      COLLECTIONS.resumeTemplates,
+      resumeRaw,
+      () =>
+        prisma.resumeTemplate.count({
+          where: { OR: [{ profileId }, { ownerName: applierName }] },
+        }),
+      () =>
+        prisma.resumeTemplate.deleteMany({
           where: { OR: [{ profileId }, { ownerName: applierName }] },
         }),
     ),

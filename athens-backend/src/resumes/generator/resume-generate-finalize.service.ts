@@ -103,6 +103,9 @@ export class ResumeGenerateFinalizeService {
     };
 
     throwIfAborted(input.signal);
+    // #region agent log
+    fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'L',location:'resume-generate-finalize.service.ts:beforeCreate',message:'finalize about to persist generation',data:{aborted:Boolean(input.signal?.aborted),hasSections:Boolean(result.sections)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     const created = await withReplicaSetFallback(
       () => this.prisma.resumeGeneration.create({ data }),
       async () => {

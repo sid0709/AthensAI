@@ -18,6 +18,7 @@ import {
 import { autoBidFullName } from '../personal/lib/auto-bid-full-name';
 import { matchUploadToRecommended } from './lib/resume-catalog';
 import { mapTaskToBidResult } from './mappers/bid-result.mapper';
+import { SKIP_REASON_MAX_LENGTH } from './constants/bid-status.constants';
 import { VendorTaskService } from './vendor-task.service';
 
 const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
@@ -144,6 +145,7 @@ export class BidLifecycleService {
     applierName: string;
     jobId: string;
     bidderName?: string;
+    skipReason?: string;
   }) {
     const { account, job } = await this.requireAccountAndJob(
       input.applierName,
@@ -162,6 +164,11 @@ export class BidLifecycleService {
       existingBidReadyAt: readyAt,
     });
 
+    const skipReason =
+      String(input.skipReason || '')
+        .trim()
+        .slice(0, SKIP_REASON_MAX_LENGTH) || null;
+
     const doc = await this.vendorTasks.upsertFields(account.name, job.id, {
       status: 'skipped',
       completedAt: now,
@@ -170,6 +177,7 @@ export class BidLifecycleService {
       biddingDurationSec: null,
       bidderName: input.bidderName?.trim() || null,
       bidReadyDate: readyAt,
+      skipReason,
     });
 
     await this.events.append({
@@ -177,6 +185,7 @@ export class BidLifecycleService {
       jobId: job.id,
       vendorTaskId: doc.id,
       eventType: 'skip',
+      meta: { skipReason },
     });
 
     const task = this.vendorTasks.serialize(doc);

@@ -21,12 +21,17 @@ import {
 export class AiAnalyzeClaimService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async claimWave(sessionId: string, limit: number): Promise<ClaimedTempJob[]> {
+  async claimWave(
+    sessionId: string,
+    limit: number,
+    excludeIds: string[] = [],
+  ): Promise<ClaimedTempJob[]> {
     await this.releaseStaleLeases();
     const candidates = await this.prisma.tempJob.findMany({
       where: {
         titleReviewLabel: JOB_TITLE_REVIEW_LABELS.APPROVED,
         aiSkillStatus: { in: [...JOB_SKILL_EXTRACT_OPEN_STATUSES] },
+        ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
       },
       orderBy: { postedAt: 'desc' },
       take: limit,
@@ -88,6 +93,10 @@ export class AiAnalyzeClaimService {
     return modifiedCount(result) > 0;
   }
 
+  /**
+   * AI/parse failures return the job to pending (unanalyzed).
+   * The current session skips it via excludeIds; the next run can retry.
+   */
   async persistFailure(input: {
     id: string;
     sessionId: string;
@@ -106,14 +115,17 @@ export class AiAnalyzeClaimService {
     }
 
     const meta = asMetaObject(row.metadata);
-    meta.aiAnalyze = {
-      processingState: 'failed',
-      error: {
-        code: input.code.slice(0, 80),
-        message: input.message.slice(0, 500),
-        failedAt: new Date().toISOString(),
-      },
+    const aa = asMetaObject(meta.aiAnalyze);
+    delete aa.lease;
+    delete aa.error;
+    aa.processingState = 'pending';
+    aa.lastAttempt = {
+      sessionId: input.sessionId,
+      code: input.code.slice(0, 80),
+      message: input.message.slice(0, 500),
+      failedAt: new Date().toISOString(),
     };
+    meta.aiAnalyze = aa;
 
     const result = await this.prisma.$runCommandRaw({
       update: TEMP_JOBS_COLLECTION,
@@ -125,7 +137,7 @@ export class AiAnalyzeClaimService {
           },
           u: {
             $set: {
-              aiSkillStatus: JOB_AI_SKILL_STATUSES.FAILED,
+              aiSkillStatus: JOB_AI_SKILL_STATUSES.PENDING,
               metadata: asInputJson(meta),
               updatedAt: { $date: new Date().toISOString() },
             },

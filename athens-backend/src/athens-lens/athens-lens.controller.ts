@@ -75,6 +75,7 @@ export class AthensLensController {
       bidderName: body.bidderName
         ? String(body.bidderName)
         : req.athensLensSession!.applierName,
+      skipReason: body.skipReason ? String(body.skipReason) : undefined,
     });
   }
 
