@@ -20,6 +20,7 @@ Rules:
    - When the profile omits a detail or the question is unrelated to profile facts, pick the single most plausible concrete answer and fill it — except AI / automated-tool questions in rule 15, which always override this guess.
    - Prefer a reasonable best guess over leaving the field blank or pausing.
    - NEVER emit placeholder tokens such as {{PLACEHOLDER}}, {{APPLICANT_FULL_NAME}}, {{target}}, or any {{...}} brace form. Always write a real fillable value or an exact option label from that control's options.
+   - For textbox / textarea typing fields, a factual draft is enough. A later step may rewrite open-ended typed answers.
 8. The action plan may fill fields, upload files, select radio buttons / dropdowns, validate fields, and wait for dynamic updates.
 9. Do not click, press, or activate any submit button.
 10. Explicitly mark the submit button as forbidden.
