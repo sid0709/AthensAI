@@ -47,6 +47,23 @@ export function oakProseTimeoutMs(): number {
   return Number.isFinite(n) && n > 0 ? n : 20000;
 }
 
+/** Short JSON classify of question meaning (application vs workplace AI). */
+export function oakIdentityMaxOutputTokens(): number {
+  const n = Number.parseInt(
+    String(process.env.OAK_IDENTITY_MAX_OUTPUT_TOKENS || '2500'),
+    10,
+  );
+  return Number.isFinite(n) && n > 0 ? n : 2500;
+}
+
+export function oakIdentityTimeoutMs(): number {
+  const n = Number.parseInt(
+    String(process.env.OAK_IDENTITY_TIMEOUT_MS || '8000'),
+    10,
+  );
+  return Number.isFinite(n) && n > 0 ? n : 8000;
+}
+
 /** Slightly warmer than the planner so typed answers sound less templated. */
 export function oakProseTemperature(): number {
   const n = Number.parseFloat(String(process.env.OAK_PROSE_TEMPERATURE || '0.4'));

@@ -64,4 +64,5 @@ export const AI_USAGE_FEATURES = {
   oakAiAnalyze: 'oak-ai-analyze',
   oakMatchOption: 'oak-match-option',
   oakAiProse: 'oak-ai-prose',
+  oakAiIdentity: 'oak-ai-identity',
 } as const;

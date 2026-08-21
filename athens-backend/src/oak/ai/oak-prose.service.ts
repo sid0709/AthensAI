@@ -37,6 +37,37 @@ export class OakProseService {
     page?: unknown;
   }): Promise<unknown> {
     const fields = selectTypingFillActions(input.plan);
+    // #region agent log
+    fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Debug-Session-Id': 'fdabab',
+      },
+      body: JSON.stringify({
+        sessionId: 'fdabab',
+        runId: 'pre-fix',
+        hypothesisId: 'B',
+        location: 'oak-prose.service.ts:select',
+        message: 'Typing fields selected for writer',
+        data: {
+          typingCount: fields.length,
+          promptDeniesAiTools: /answer no/i.test(PROSE_SYSTEM_PROMPT),
+          aiFields: fields
+            .filter((field) =>
+              /\bai\b|llm|artificial intelligence/i.test(field.question),
+            )
+            .map((field) => ({
+              index: field.elementIndex,
+              role: field.role,
+              question: field.question.slice(0, 90),
+              draft: field.draft.slice(0, 160),
+            })),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (!fields.length) return input.plan;
 
     const startedAt = new Date();
@@ -66,10 +97,38 @@ export class OakProseService {
           : await this.writeViaChat(input.auth, userPrompt, controller.signal);
 
       const allowed = new Set(fields.map((field) => field.elementIndex));
-      const next = overlayTypingFillValues(
-        input.plan,
-        parseProseAnswerMap(raw.text, allowed),
-      );
+      const parsed = parseProseAnswerMap(raw.text, allowed);
+      // #region agent log
+      fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Debug-Session-Id': 'fdabab',
+        },
+        body: JSON.stringify({
+          sessionId: 'fdabab',
+          runId: 'pre-fix',
+          hypothesisId: 'D',
+          location: 'oak-prose.service.ts:writer',
+          message: 'Writer output for AI-related typing fields',
+          data: {
+            parsedCount: parsed.size,
+            aiAnswers: fields
+              .filter((field) =>
+                /\bai\b|llm|artificial intelligence/i.test(field.question),
+              )
+              .map((field) => ({
+                index: field.elementIndex,
+                draft: field.draft.slice(0, 120),
+                written: (parsed.get(field.elementIndex) || '').slice(0, 160),
+                overlaid: parsed.has(field.elementIndex),
+              })),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      const next = overlayTypingFillValues(input.plan, parsed);
       await this.usage.record({
         feature: AI_USAGE_FEATURES.oakAiProse,
         applierName: input.applierName,
@@ -91,6 +150,26 @@ export class OakProseService {
       });
       return next;
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Debug-Session-Id': 'fdabab',
+        },
+        body: JSON.stringify({
+          sessionId: 'fdabab',
+          runId: 'pre-fix',
+          hypothesisId: 'C',
+          location: 'oak-prose.service.ts:catch',
+          message: 'Writer failed; keeping planner drafts',
+          data: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       this.logger.warn(
         `Typing-field rewrite skipped for ${input.applierName}: ${
           error instanceof Error ? error.message : String(error)
