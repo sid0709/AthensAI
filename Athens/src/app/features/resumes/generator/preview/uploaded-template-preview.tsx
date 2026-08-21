@@ -29,6 +29,7 @@ export function UploadedTemplatePreview({
   const sections = useMemo(() => {
     if (!generated) return {};
     return {
+      headline: generated.experience?.[0]?.title || "",
       summary: { summary: generated.summary },
       skills: { skills: generated.skills },
       experience: { experiences: generated.experience },

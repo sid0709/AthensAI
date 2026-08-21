@@ -700,11 +700,16 @@ describe("Athens Lens app", () => {
 
     expect(await screen.findByRole("heading", { name: MOCK_JOBS[0].title })).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "Skip" })[0]!);
-    expect(screen.getByRole("dialog", { name: "Mark this job as Skipped?" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Why skip this job?" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skip job" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Skip reason"), "Role is a duplicate of another Bid Ready job.");
     await user.click(screen.getByRole("button", { name: "Skip job" }));
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/athens-lens/bids/skip"))).toBe(true);
+      const skipCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/athens-lens/bids/skip"));
+      expect(skipCall).toBeTruthy();
+      const body = JSON.parse(String(skipCall?.[1]?.body || "{}")) as { skipReason?: string };
+      expect(body.skipReason).toBe("Role is a duplicate of another Bid Ready job.");
     });
     expect(await screen.findByRole("heading", { name: MOCK_JOBS[1].title })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: MOCK_JOBS[0].title })).not.toBeInTheDocument();

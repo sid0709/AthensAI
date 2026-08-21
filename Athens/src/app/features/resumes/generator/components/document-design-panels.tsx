@@ -41,7 +41,7 @@ export function TemplatePanel({
       <p className="text-[11px] text-neutral-400 dark:text-white/40 mb-4">
         The <strong className="text-neutral-600 dark:text-white/70">template</strong> sets the layout (columns, header &amp; heading
         alignment, heading style). Upload a Word <code className="text-[10px]">.docx</code> with{" "}
-        <code className="text-[10px]">{"{}"}</code> placeholders for AI content. Use <strong className="text-neutral-600 dark:text-white/70">Theme</strong> to restyle built-in templates.
+        <code className="text-[10px]">{"{summary}"}</code>-style tokens for AI content; name, companies, dates, and education stay as written. Use <strong className="text-neutral-600 dark:text-white/70">Theme</strong> to restyle built-in templates.
       </p>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -54,7 +54,7 @@ export function TemplatePanel({
             <Upload className="w-5 h-5 text-sky-500" />
           </div>
           <div className="text-xs font-medium mt-2">Upload template</div>
-          <div className="text-[10px] text-neutral-400 dark:text-white/40 leading-tight mt-0.5">DOCX with {"{}"} placeholders</div>
+          <div className="text-[10px] text-neutral-400 dark:text-white/40 leading-tight mt-0.5">DOCX with {"{placeholder}"} tokens</div>
         </button>
         <input
           ref={inputRef}

@@ -67,6 +67,7 @@ export async function runStoredResumeGeneration(
     backgroundTaskInputId: inputId,
   };
 
+  let phase = 'prepare';
   try {
     const prep = await prepare.prepare(body);
     throwIfAborted(signal);
@@ -78,6 +79,7 @@ export async function runStoredResumeGeneration(
 
     const startedAt = new Date();
     let partialWrite = Promise.resolve();
+    phase = 'pipeline';
     const generated = await pipeline.runGeneration(
       prep,
       {
@@ -126,9 +128,15 @@ export async function runStoredResumeGeneration(
         });
       },
     );
+    phase = 'after-pipeline';
     throwIfAborted(signal);
+    phase = 'partial-write';
     await partialWrite;
+    // #region agent log
+    fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'L',location:'run-stored-generation.ts:afterPartialWrite',message:'pipeline+partialWrite done, starting finalize',data:{inputId,aborted:signal.aborted,stepCount:Array.isArray(generated.perStep)?generated.perStep.length:null,hasSections:Boolean(generated.sections)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
+    phase = 'finalize';
     const finalized = await finalize.finalize({
       prep,
       body,
@@ -156,6 +164,7 @@ export async function runStoredResumeGeneration(
       titlePolicyVersion: finalized.titlePolicyVersion,
     };
 
+    phase = 'patch-completed';
     await patchInput(prisma, inputId, {
       status: 'completed',
       result: storedResult,
@@ -163,8 +172,14 @@ export async function runStoredResumeGeneration(
       finishedAt: new Date(),
     });
 
+    // #region agent log
+    fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'K',location:'run-stored-generation.ts:success',message:'stored generation completed',data:{inputId,aborted:signal.aborted,generationId:storedResult.generationId},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     return { generationId: storedResult.generationId, recovered: false };
   } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'L',location:'run-stored-generation.ts:catch',message:'stored generation threw',data:{inputId,phase,aborted:signal.aborted,isAbort:isAbortError(error),errName:error instanceof Error?error.name:typeof error,errMsg:error instanceof Error?error.message.slice(0,180):String(error).slice(0,180)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     await patchInput(prisma, inputId, {
       status: isAbortError(error) || signal.aborted ? 'cancelled' : 'failed',
       error:

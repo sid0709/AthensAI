@@ -66,6 +66,7 @@ export type VendorTaskUpsertFields = Partial<{
   completedAt: Date | null;
   bidReadyDate: Date | null;
   biddingDurationSec: number | null;
+  skipReason: string | null;
   rejectReason: string | null;
   rejectSource: string | null;
   lastRejectedAt: Date | null;

@@ -13,6 +13,7 @@ const C = {
   oakSessions: 'oak_sessions',
   uploadSessions: 'upload_sessions',
   resumes: 'resumes',
+  resumeTemplates: 'resume_templates',
   resumeGeneratorConfig: 'resume_generator_config',
   resumeGenerations: 'resume_generations',
   backgroundTaskInputs: 'background_task_inputs',
@@ -140,6 +141,16 @@ export class AccountRenameMongoService {
         where: { ownerName: from },
         data: { ownerName: to },
       }),
+    );
+    await this.run(
+      C.resumeTemplates,
+      { ownerName: from },
+      { ownerName: to },
+      () =>
+        this.prisma.resumeTemplate.updateMany({
+          where: { ownerName: from },
+          data: { ownerName: to },
+        }),
     );
     await this.renameSessions(C.athensLensSessions, from, to, () =>
       this.prisma.athensLensSession.updateMany({

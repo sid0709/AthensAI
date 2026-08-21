@@ -14,6 +14,49 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "apps-refresh-ai-queue",
+    version: "0.28.0",
+    title: "Apps refresh and AI queue retries",
+    date: "2026-08-21",
+    merge: "main",
+    summary:
+      "Refreshing Apps & Plugins stays in the workspace, and jobs whose title review or AI analyze hit an AI error remain in the queue to retry.",
+    tags: ["Apps & Plugins", "Job Search"],
+    current: true,
+    changes: [
+      "Refreshing Apps & Plugins loads the page instead of a server forbidden error",
+      "When title review or AI analyze fails for a job, it stays unreviewed or unanalyzed so the next run can retry it",
+    ],
+  },
+  {
+    id: "lens-skip-reason",
+    version: "0.27.0",
+    title: "Skip a job with a reason",
+    date: "2026-08-21",
+    merge: "main",
+    summary:
+      "Athens Lens asks why a Bid Ready job is skipped, stores that note, and shows it on the skipped item in Bid Management.",
+    tags: ["Lens", "Bid Management"],
+    changes: [
+      "Skip in Athens Lens opens a note so the bidder can record why the job was skipped",
+      "Skipped jobs in Bid Management show that reason on the ticket and in the preview pane",
+    ],
+  },
+  {
+    id: "resume-upload-word-template",
+    version: "0.26.0",
+    title: "Upload a Word resume template",
+    date: "2026-08-21",
+    merge: "main",
+    summary:
+      "Resume Generator can store a Word .docx and fill only its {placeholder} tokens, leaving the rest of the layout as written.",
+    tags: ["Resumes"],
+    changes: [
+      "Template → Upload template saves a .docx for the selected applier and lists it with the built-in layouts",
+      "Named tokens such as {summary}, {title1}, and {experience1} are filled on generate and Word export; name, companies, dates, and education stay unchanged",
+    ],
+  },
+  {
     id: "resume-prompt-field-caret",
     version: "0.25.0",
     title: "Resume prompts keep the caret on the text",
@@ -22,7 +65,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Prompt fields in Resume Generator line the caret and selection up with the visible text, and the step chrome uses the same Athens field language as Job Search and Settings.",
     tags: ["Resumes"],
-    current: true,
     changes: [
       "Clicking and selecting in a prompt places the caret on the same characters as the highlighted tokens",
       "Fine-tune / Final, token chips, and prompt focus use Athens field tokens instead of a separate sky-blue editor skin",

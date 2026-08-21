@@ -160,6 +160,7 @@ export function mapTaskToBidResult(
     sessionId: recording?.storagePath
       ? ((task.recording as { sessionId?: string | null })?.sessionId ?? null)
       : null,
+    skipReason: task.skipReason ?? null,
     rejectReason: task.rejectReason ?? null,
     rejectSource: task.rejectSource ?? null,
     rejectCount: Number(task.rejectCount || 0),

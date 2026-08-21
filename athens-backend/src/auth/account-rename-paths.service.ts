@@ -11,6 +11,7 @@ import {
 } from './lib/rewrite-storage-prefix';
 
 const RESUMES = 'resumes';
+const RESUME_TEMPLATES = 'resume_templates';
 const UPLOAD_SESSIONS = 'upload_sessions';
 
 /** Rewrites stored blob paths after a username storage copy. */
@@ -24,6 +25,7 @@ export class AccountRenamePathsService {
   ): Promise<void> {
     if (!oldPrefix || oldPrefix === newPrefix) return;
     await this.rewriteResumePaths(oldPrefix, newPrefix);
+    await this.rewriteTemplatePaths(oldPrefix, newPrefix);
     await this.rewriteUploadPaths(oldPrefix, newPrefix);
   }
 
@@ -78,6 +80,30 @@ export class AccountRenamePathsService {
           where: { id: row.id },
           data: { storagePath: next },
         }),
+      );
+    }
+  }
+
+  private async rewriteTemplatePaths(
+    oldPrefix: string,
+    newPrefix: string,
+  ): Promise<void> {
+    const rows = await this.prisma.resumeTemplate.findMany({
+      where: { storagePath: { startsWith: oldPrefix } },
+      select: { id: true, storagePath: true },
+    });
+    for (const row of rows) {
+      const next = rewriteStringPath(row.storagePath, oldPrefix, newPrefix);
+      if (!next || next === row.storagePath) continue;
+      await this.run(
+        RESUME_TEMPLATES,
+        { _id: row.id },
+        { storagePath: next },
+        () =>
+          this.prisma.resumeTemplate.update({
+            where: { id: row.id },
+            data: { storagePath: next },
+          }),
       );
     }
   }

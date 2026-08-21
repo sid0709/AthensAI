@@ -12,9 +12,8 @@ import {
  * Queue membership for title review / AI analyze is derived from temp_jobs
  * fields (no athens_metadata join).
  *
- * Failed title-review rows are keyed by nested metadata, so counts/lists that
- * need that filter use aggregateRaw / findRaw (Prisma Mongo Json path filters
- * are not reliable here).
+ * The Failed tab is keyed by nested metadata, so that filter uses
+ * aggregateRaw / findRaw (Prisma Mongo JSON path filters are not reliable).
  */
 @Injectable()
 export class TempJobQueueService {
@@ -49,9 +48,9 @@ export class TempJobQueueService {
         'metadata.titleReview.processingState': { $ne: 'failed' },
       };
     }
+    // Include AI-failed rows so they stay in Unreviewed and can be retried.
     return {
       titleReviewLabel: JOB_TITLE_REVIEW_LABELS.PENDING,
-      'metadata.titleReview.processingState': { $ne: 'failed' },
     };
   }
 

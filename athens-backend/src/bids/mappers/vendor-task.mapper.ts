@@ -220,6 +220,7 @@ export function serializeVendorTask(doc: VendorTask): Record<string, unknown> {
         ? doc.flagAnalysisRequestId
         : null,
     flagAnalyzedAt: isoOrNull(doc.flagAnalyzedAt),
+    skipReason: typeof doc.skipReason === 'string' ? doc.skipReason : null,
     rejectReason: doc.rejectReason ?? null,
     rejectSource:
       doc.rejectSource === 'submitted' || doc.rejectSource === 'skipped'

@@ -127,6 +127,7 @@ export type BidResult = {
     uploadedAt?: string | null;
   }>;
   notes: string | null;
+  skipReason?: string | null;
   rejectReason?: string | null;
   rejectSource?: RejectSource | null;
   rejectCount?: number;

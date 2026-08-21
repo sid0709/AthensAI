@@ -176,6 +176,10 @@ export class ResumeGenerateWorkerService {
         ? BACKGROUND_TASK_STATUSES.COMPLETED_WITH_ERRORS
         : BACKGROUND_TASK_STATUSES.COMPLETED;
 
+    // #region agent log
+    fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'K',location:'resume-generate-worker.service.ts:complete',message:'worker finishing task',data:{taskId:task.id,status,aborted:signal.aborted,completed,failed,cancelled,resultCount:resultRecordIds.length,itemStatuses:Object.fromEntries(Object.entries(items).map(([id,item])=>[id,(item as {status?:string})?.status||null]))},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
     await store.complete(
       task.id,
       { completedJobIds: [], failedJobIds: [], resultRecordIds },

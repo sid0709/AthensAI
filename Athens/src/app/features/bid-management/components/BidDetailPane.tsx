@@ -124,6 +124,7 @@ function eventMetaLine(ev: BidReviewEvent): string | null {
   if (typeof meta.recommendWarning === "string" && meta.recommendWarning) {
     bits.push(meta.recommendWarning);
   }
+  if (typeof meta.skipReason === "string" && meta.skipReason) bits.push(meta.skipReason);
   if (typeof meta.reason === "string" && meta.reason) bits.push(meta.reason);
   if (typeof meta.resumeStackMatch === "string" && meta.resumeStackMatch) {
     bits.push(`upload vs stack: ${meta.resumeStackMatch}`);
@@ -512,6 +513,13 @@ export function BidDetailPane({
               </div>
 
               <div className="bm-detail-scroll subtle-scroll">
+                {result.skipReason ? (
+                  <div className="bm-skip-reason-box">
+                    <strong>Skip reason</strong>
+                    <p>{result.skipReason}</p>
+                  </div>
+                ) : null}
+
                 {result.analysisSummary ? (
                   <Section title="Analyze summary">
                     <div className="bm-notes-box">{result.analysisSummary}</div>

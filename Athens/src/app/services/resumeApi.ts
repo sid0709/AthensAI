@@ -25,7 +25,12 @@ async function parseJson(res: Response) {
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${base()}${path.startsWith("/") ? path : `/${path}`}`;
   const res = await fetch(url, init);
-  const data = (await parseJson(res)) as T & { success?: boolean; error?: string };
+  const data = (await parseJson(res)) as T & { success?: boolean; error?: string; message?: string };
+  // #region agent log
+  if (path.includes("resume-template")) {
+    fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'pre-fix',hypothesisId:'A',location:'resumeApi.ts:apiFetch',message:'resume-template apiFetch result',data:{url,method:init?.method||'GET',status:res.status,ok:res.ok,success:data?.success,error:(data as {error?:string})?.error,message:(data as {message?:string})?.message,hasTemplate:Boolean((data as {template?:unknown})?.template),templateCount:Array.isArray((data as {templates?:unknown[]})?.templates)?(data as {templates:unknown[]}).templates.length:undefined},timestamp:Date.now(),hypothesisIds:['A','B','C']})}).catch(()=>{});
+  }
+  // #endregion
   if (!res.ok || data?.success === false) {
     throw new Error((data as { error?: string })?.error || `Request failed (${res.status})`);
   }
@@ -393,10 +398,12 @@ export type { GeneratorIdentity, ResumeSkillEntry };
 export type ResumeTemplateSlot = {
   index: number;
   paragraphIndex: number;
-  section: "summary" | "skills" | "experience";
+  section: "summary" | "skills" | "experience" | string;
   companyHint?: string;
   isBullet: boolean;
   experienceIndex?: number;
+  token?: string;
+  kind?: string;
 };
 
 export type UploadedResumeTemplate = {

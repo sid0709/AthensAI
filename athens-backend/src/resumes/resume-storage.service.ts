@@ -13,7 +13,7 @@ export type StoredResumeObject = {
 
 /**
  * Firebase Storage for resume binaries.
- * Path: `{slug(ownerName)}_{profileId}/resumes/{sha256}`
+ * Path: `{slug(ownerName)}_{profileId}/{folder}/{sha256}`
  */
 @Injectable()
 export class ResumeStorageService {
@@ -25,8 +25,9 @@ export class ResumeStorageService {
     ownerName: string,
     profileId: string,
     contentSha256: string,
+    folder = 'resumes',
   ): string {
-    return `${storageSlug(ownerName)}_${profileId}/resumes/${contentSha256}`;
+    return `${storageSlug(ownerName)}_${profileId}/${folder}/${contentSha256}`;
   }
 
   sha256(buffer: Buffer): string {
@@ -39,12 +40,14 @@ export class ResumeStorageService {
     fileName: string;
     mimeType: string;
     buffer: Buffer;
+    folder?: string;
   }): Promise<StoredResumeObject> {
     const contentSha256 = this.sha256(input.buffer);
     const storagePath = this.buildPath(
       input.ownerName,
       input.profileId,
       contentSha256,
+      input.folder,
     );
     const bucket = this.admin.storageBucket();
     const file = bucket.file(storagePath);

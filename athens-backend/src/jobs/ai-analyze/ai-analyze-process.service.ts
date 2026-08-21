@@ -113,6 +113,12 @@ export class AiAnalyzeProcessService {
         applyLink: job.applyLink,
       });
       if (!ok) {
+        await this.claims.persistFailure({
+          id: job.id,
+          sessionId: input.sessionId,
+          code: 'PERSIST_FAILED',
+          message: 'Could not save the AI analyze result.',
+        });
         stats.failed += 1;
         stats.processed += 1;
         continue;

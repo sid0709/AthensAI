@@ -119,10 +119,16 @@ export class TitleReviewSessionService {
 
   private async runLoop(state: SessionState) {
     const waveSize = TITLE_REVIEW_BATCH_SIZE * TITLE_REVIEW_BATCH_CONCURRENCY;
+    const attemptedIds = new Set<string>();
     try {
       while (state.status === 'running' && !state.controller.signal.aborted) {
-        const claimed = await this.claims.claimWave(state.sessionId, waveSize);
+        const claimed = await this.claims.claimWave(
+          state.sessionId,
+          waveSize,
+          [...attemptedIds],
+        );
         if (!claimed.length) break;
+        for (const job of claimed) attemptedIds.add(job.id);
 
         const results = await this.waves.runBatches({
           items: claimed,
