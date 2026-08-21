@@ -95,6 +95,12 @@ export class TitleReviewProcessService {
           reason: row.reason,
         });
         if (!ok) {
+          await this.claims.persistFailure({
+            id: item.id,
+            sessionId: input.sessionId,
+            code: 'PERSIST_FAILED',
+            message: 'Could not save the title review result.',
+          });
           stats.failed += 1;
         } else if (row.label === JOB_TITLE_REVIEW_LABELS.APPROVED) {
           stats.approved += 1;

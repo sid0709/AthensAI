@@ -632,7 +632,7 @@ export function TitleReviewPage() {
                   type="button"
                   className="athens-btn-primary"
                   onClick={() => void startReview()}
-                  disabled={sessionLoading || session.pending === 0}
+                  disabled={sessionLoading || ((session.pending ?? 0) === 0 && (session.failedCount ?? 0) === 0)}
                 >
                   {sessionLoading ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
                   <ExtensionSafeText value={(session.failedCount ?? 0) > 0 && session.pending === session.failedCount ? "Retry failed" : "Start review"} />

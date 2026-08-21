@@ -14,6 +14,21 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "apps-refresh-ai-queue",
+    version: "0.28.0",
+    title: "Apps refresh and AI queue retries",
+    date: "2026-08-21",
+    merge: "main",
+    summary:
+      "Refreshing Apps & Plugins stays in the workspace, and jobs whose title review or AI analyze hit an AI error remain in the queue to retry.",
+    tags: ["Apps & Plugins", "Job Search"],
+    current: true,
+    changes: [
+      "Refreshing Apps & Plugins loads the page instead of a server forbidden error",
+      "When title review or AI analyze fails for a job, it stays unreviewed or unanalyzed so the next run can retry it",
+    ],
+  },
+  {
     id: "lens-skip-reason",
     version: "0.27.0",
     title: "Skip a job with a reason",
@@ -22,7 +37,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Athens Lens asks why a Bid Ready job is skipped, stores that note, and shows it on the skipped item in Bid Management.",
     tags: ["Lens", "Bid Management"],
-    current: true,
     changes: [
       "Skip in Athens Lens opens a note so the bidder can record why the job was skipped",
       "Skipped jobs in Bid Management show that reason on the ticket and in the preview pane",

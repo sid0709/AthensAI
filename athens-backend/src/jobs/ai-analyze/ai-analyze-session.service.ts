@@ -120,6 +120,7 @@ export class AiAnalyzeSessionService {
 
   private async runLoop(state: SessionState) {
     const waveSize = AI_ANALYZE_BATCH_SIZE * AI_ANALYZE_BATCH_CONCURRENCY;
+    const attemptedIds = new Set<string>();
     try {
       while (state.status === 'running' && !state.controller.signal.aborted) {
         // Promote-ready stuck rows (extracted / skipped_duplicate) — no LLM.
@@ -127,11 +128,16 @@ export class AiAnalyzeSessionService {
         state.promoted += promoteWave.promoted;
         state.processed += promoteWave.promoted;
 
-        const claimed = await this.claims.claimWave(state.sessionId, waveSize);
+        const claimed = await this.claims.claimWave(
+          state.sessionId,
+          waveSize,
+          [...attemptedIds],
+        );
         if (!claimed.length) {
           if (promoteWave.attempted === 0) break;
           continue;
         }
+        for (const job of claimed) attemptedIds.add(job.id);
 
         const results = await this.waves.runBatches({
           items: claimed,

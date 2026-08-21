@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { AI_STALE_CLAIM_MS } from '../../ai/constants/ai-concurrency.constants';
+import { mongoFieldIdNin } from '../../prisma/mongo-standalone';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   JOB_TITLE_REVIEW_LABELS,
@@ -22,9 +23,13 @@ import {
 export class TitleReviewClaimService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async claimWave(sessionId: string, limit: number): Promise<ClaimedTempJob[]> {
+  async claimWave(
+    sessionId: string,
+    limit: number,
+    excludeIds: string[] = [],
+  ): Promise<ClaimedTempJob[]> {
     await this.releaseStaleLeases();
-    const ids = await this.findCandidateIds(limit);
+    const ids = await this.findCandidateIds(limit, excludeIds);
     const claimed: ClaimedTempJob[] = [];
     const now = new Date().toISOString();
 
@@ -106,6 +111,10 @@ export class TitleReviewClaimService {
     return modifiedCount(result) > 0;
   }
 
+  /**
+   * AI/parse failures return the job to pending so it stays Unreviewed.
+   * The current session skips it via excludeIds; the next run can retry.
+   */
   async persistFailure(input: {
     id: string;
     sessionId: string;
@@ -124,14 +133,17 @@ export class TitleReviewClaimService {
     }
 
     const meta = asMetaObject(row.metadata);
-    meta.titleReview = {
-      processingState: TITLE_REVIEW_PROCESSING_STATES.FAILED,
-      error: {
-        code: input.code.slice(0, 80),
-        message: input.message.slice(0, 500),
-        failedAt: new Date().toISOString(),
-      },
+    const tr = asMetaObject(meta.titleReview);
+    delete tr.lease;
+    delete tr.error;
+    tr.processingState = TITLE_REVIEW_PROCESSING_STATES.PENDING;
+    tr.lastAttempt = {
+      sessionId: input.sessionId,
+      code: input.code.slice(0, 80),
+      message: input.message.slice(0, 500),
+      failedAt: new Date().toISOString(),
     };
+    meta.titleReview = tr;
 
     const result = await this.prisma.$runCommandRaw({
       update: TEMP_JOBS_COLLECTION,
@@ -243,10 +255,16 @@ export class TitleReviewClaimService {
     return modifiedCount(result) > 0;
   }
 
-  private async findCandidateIds(limit: number): Promise<string[]> {
+  private async findCandidateIds(
+    limit: number,
+    excludeIds: string[],
+  ): Promise<string[]> {
     const raw = await this.prisma.tempJob.findRaw({
       filter: {
         titleReviewLabel: JOB_TITLE_REVIEW_LABELS.PENDING,
+        ...(excludeIds.length
+          ? (mongoFieldIdNin('_id', excludeIds) as Record<string, unknown>)
+          : {}),
         $or: [
           {
             'metadata.titleReview.processingState': {
