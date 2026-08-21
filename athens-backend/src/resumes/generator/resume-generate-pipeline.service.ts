@@ -140,6 +140,12 @@ export class ResumeGeneratePipelineService {
               : JSON.stringify(step.schema)
           }`;
         }
+        // #region agent log
+        if (purpose === 'skills' || purpose === 'summary') {
+          const jd = String(opts.jobDescription || '');
+          fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'post-fix',hypothesisId:'J',location:'resume-generate-pipeline.service.ts',message:'generation step prompt facts',data:{purpose,promptLen:promptTemplate.length,promptHasJobDesc:promptTemplate.includes('{job_description}'),userHasJobDesc:userContent.includes(jd)&&jd.length>0,jdLen:jd.length,userHasJava:/java/i.test(userContent),userHasReact:/react/i.test(userContent),systemHasJava:/java/i.test(systemContent),systemHasReact:/react/i.test(systemContent)},timestamp:Date.now()})}).catch(()=>{});
+        }
+        // #endregion
         onStep?.({
           phase: 'step-start',
           index,

@@ -14,6 +14,21 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "lens-skip-reason",
+    version: "0.27.0",
+    title: "Skip a job with a reason",
+    date: "2026-08-21",
+    merge: "main",
+    summary:
+      "Athens Lens asks why a Bid Ready job is skipped, stores that note, and shows it on the skipped item in Bid Management.",
+    tags: ["Lens", "Bid Management"],
+    current: true,
+    changes: [
+      "Skip in Athens Lens opens a note so the bidder can record why the job was skipped",
+      "Skipped jobs in Bid Management show that reason on the ticket and in the preview pane",
+    ],
+  },
+  {
     id: "resume-upload-word-template",
     version: "0.26.0",
     title: "Upload a Word resume template",
@@ -22,7 +37,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Resume Generator can store a Word .docx and fill only its {placeholder} tokens, leaving the rest of the layout as written.",
     tags: ["Resumes"],
-    current: true,
     changes: [
       "Template → Upload template saves a .docx for the selected applier and lists it with the built-in layouts",
       "Named tokens such as {summary}, {title1}, and {experience1} are filled on generate and Word export; name, companies, dates, and education stay unchanged",

@@ -1,5 +1,5 @@
 import { AlertCircle, BriefcaseBusiness, ClipboardCheck, Loader2, RefreshCw } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { AthensApiError } from "../api/athensApi";
 import type { WorkspaceRoute, WorkspaceView } from "../navigation/routes";
 import { skipAthensLensBid } from "../recording/bidPersist";
@@ -85,13 +85,14 @@ export function JobsWorkspace({
     }
   }
 
-  async function confirmSkip() {
+  async function confirmSkip(skipReason: string) {
     const job = skipTarget;
-    if (!job) return;
+    const reason = skipReason.trim();
+    if (!job || !reason) return;
     setSkipError(null);
     setSkippingJobId(job.id);
     try {
-      await skipAthensLensBid(session, job.id);
+      await skipAthensLensBid(session, job.id, reason);
       useWorkspaceCache.getState().removeJob(session.profileId, job.id);
       setSkipTarget(null);
       invalidateWorkspaceRequests(session.profileId);
@@ -188,6 +189,7 @@ export function JobsWorkspace({
       ) : null}
       {skipTarget ? (
         <SkipConfirmDialog
+          key={skipTarget.id}
           job={skipTarget}
           error={skipError}
           saving={skippingJobId === skipTarget.id}
@@ -195,7 +197,7 @@ export function JobsWorkspace({
             setSkipTarget(null);
             setSkipError(null);
           }}
-          onConfirm={() => void confirmSkip()}
+          onConfirm={(reason) => void confirmSkip(reason)}
         />
       ) : null}
     </main>
@@ -218,23 +220,47 @@ function AppStatus({ label, icon, action }: AppStatusProps) {
   );
 }
 
+const SKIP_REASON_MAX_LENGTH = 2000;
+
 interface SkipConfirmDialogProps {
   job: Job;
   error: string | null;
   saving: boolean;
   onCancel(): void;
-  onConfirm(): void;
+  onConfirm(reason: string): void;
 }
 
 function SkipConfirmDialog({ job, error, saving, onCancel, onConfirm }: SkipConfirmDialogProps) {
+  const reasonId = useId();
+  const [reason, setReason] = useState("");
+  const trimmed = reason.trim();
+
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="skip-title">
+      <section
+        className="confirmation-dialog confirmation-dialog--form"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skip-title"
+      >
         <span className="dialog-icon" aria-hidden="true"><ClipboardCheck size={22} /></span>
-        <h2 id="skip-title">Mark this job as Skipped?</h2>
+        <h2 id="skip-title">Why skip this job?</h2>
         <p>
           {job.title} will leave Bid Ready and show as Skipped in Bid Management.
         </p>
+        <div className="field-group">
+          <label htmlFor={reasonId}>Skip reason</label>
+          <textarea
+            id={reasonId}
+            value={reason}
+            maxLength={SKIP_REASON_MAX_LENGTH}
+            rows={4}
+            disabled={saving}
+            autoFocus
+            placeholder="Note why this job is being skipped…"
+            onChange={(event) => setReason(event.target.value)}
+          />
+        </div>
         {error ? <p className="dialog-error" role="alert">{error}</p> : null}
         {saving ? (
           <p className="ai-loading" role="status">
@@ -243,7 +269,12 @@ function SkipConfirmDialog({ job, error, saving, onCancel, onConfirm }: SkipConf
           </p>
         ) : null}
         <div className="dialog-actions">
-          <button className="primary-button" type="button" disabled={saving} onClick={onConfirm}>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={saving || !trimmed}
+            onClick={() => onConfirm(trimmed)}
+          >
             Skip job
           </button>
           <button className="secondary-button" type="button" disabled={saving} onClick={onCancel}>

@@ -19,6 +19,7 @@ export type BidUiStatus = (typeof BID_UI_STATUSES)[number];
 
 export const BID_RECORDINGS_PREFIX = 'bid-recordings/';
 export const BID_RESULT_ID_PREFIX = 'bid-';
+export const SKIP_REASON_MAX_LENGTH = 2000;
 
 export const MAX_RECOMMEND_JOBS = 40;
 export const BID_QUEUE_LIMIT = 1000;

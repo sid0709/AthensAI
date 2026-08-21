@@ -137,10 +137,21 @@ export function replacePlaceholderWithRichText(
   if (!paraXml) return paraXml;
   const needle = placeholder || '{}';
   let xml = paraXml;
-  if (!concatT(xml).includes(needle)) {
+  const runHasNeedle = (): boolean => {
+    RUN_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = RUN_RE.exec(xml)) !== null) {
+      if (runText(m[0]).includes(needle)) return true;
+    }
+    return false;
+  };
+  if (concatT(xml).includes(needle) && !runHasNeedle()) {
     xml = coalescePlaceholder(xml, needle);
   }
   if (!concatT(xml).includes(needle)) return paraXml;
+  if (!runHasNeedle()) {
+    xml = coalescePlaceholder(xml, needle);
+  }
 
   RUN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;

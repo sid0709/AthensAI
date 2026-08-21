@@ -155,6 +155,7 @@ export function fillTemplateDocx(
   }
   const paraIndexes = [...byPara.keys()].sort((a, b) => b - a);
   const filledTokens: string[] = [];
+  const tokenReplace: { token: string; valueLen: number; stillPresent: boolean }[] = [];
 
   for (const idx of paraIndexes) {
     const paraSlots = byPara.get(idx) || [];
@@ -174,6 +175,14 @@ export function fillTemplateDocx(
         }
         xml = applyToken(xml, placeholder, value);
         filledTokens.push(placeholder);
+        const plain = [...xml.matchAll(/<w:t\b[^>]*>([^<]*)<\/w:t>/g)]
+          .map((m) => m[1])
+          .join('');
+        tokenReplace.push({
+          token: placeholder,
+          valueLen: value.length,
+          stillPresent: plain.includes(placeholder),
+        });
       }
       paragraphs[idx] = xml;
       const bulletSlot = named.find((s) => s.kind === 'bullets' && s.isBullet);
@@ -191,7 +200,7 @@ export function fillTemplateDocx(
         (s) => s.kind === 'category' || s.kind === 'items',
       );
       if (skillSlots.length && normalized.skills.length > 1) {
-        const inserts = normalized.skills.slice(1).map((group, gi) => {
+        const inserts = normalized.skills.slice(1).map((group) => {
           let clone = original;
           for (const slot of skillSlots) {
             const placeholder = slot.token ? `{${slot.token}}` : '{}';
@@ -199,7 +208,6 @@ export function fillTemplateDocx(
               slot.kind === 'category' ? group.category : group.items.join(', ');
             clone = applyToken(clone, placeholder, value);
           }
-          void gi;
           return clone;
         });
         paragraphs.splice(idx + 1, 0, ...inserts);
@@ -234,7 +242,7 @@ export function fillTemplateDocx(
   }
 
   // #region agent log
-  fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'post-fix',hypothesisId:'F',location:'fill-template-docx.ts',message:'filled named tokens',data:{paraCount:paragraphs.length,filledTokens,warningCount:warnings.length},timestamp:Date.now()})}).catch(()=>{});
+  fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'post-fix',hypothesisId:'F',location:'fill-template-docx.ts',message:'filled named tokens',data:{paraCount:paragraphs.length,filledTokens,warningCount:warnings.length,tokenReplace,skillCount:normalized.skills.length,skillCategories:normalized.skills.map((g)=>g.category),skillsHasJava:normalized.skills.some((g)=>`${g.category} ${g.items.join(' ')}`.toLowerCase().includes('java')),skillsHasReact:normalized.skills.some((g)=>`${g.category} ${g.items.join(' ')}`.toLowerCase().includes('react')),summaryHasJava:normalized.summary.toLowerCase().includes('java'),summaryHasReact:normalized.summary.toLowerCase().includes('react')},timestamp:Date.now()})}).catch(()=>{});
   // #endregion
 
   zip.file('word/document.xml', rebuildBodyFromParagraphs(originalXml, paragraphs));

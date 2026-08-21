@@ -1181,6 +1181,9 @@ export function useGeneratorPage() {
       terminalTask = await waitForTask(queued.task.id);
       terminalHandled.current.add(queued.task.id);
       const terminalItem = terminalTask.progress?.items?.[queued.inputId];
+      // #region agent log
+      fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'N',location:'use-generator-page.ts:waitForTask',message:'generation waitForTask resolved',data:{taskId:queued.task.id,inputId:queued.inputId,taskStatus:terminalTask.status,itemStatus:terminalItem?.status||null,cancelRequestedAt:terminalTask.cancelRequestedAt||null,taskError:terminalTask.error||null,itemError:terminalItem?.error||null,stepCount:Array.isArray(terminalItem?.generationSteps)?terminalItem.generationSteps.length:null},timestamp:Date.now(),hypothesisIds:['K','N','O']})}).catch(()=>{});
+      // #endregion
       if (terminalTask.status === "failed" || terminalTask.status === "completed_with_errors") {
         throw new Error(
           String(terminalItem?.error || terminalTask.error || "Resume generation failed"),
@@ -1209,6 +1212,9 @@ export function useGeneratorPage() {
       const terminalItem = queuedInputId
         ? terminalTask?.progress?.items?.[queuedInputId]
         : undefined;
+      // #region agent log
+      fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'cancel-debug',hypothesisId:'O',location:'use-generator-page.ts:handleGenerateCatch',message:'generation catch',data:{message,taskStatus:terminalTask?.status||null,itemStatus:terminalItem?.status||null,errName:error instanceof Error?error.name:'non-error'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       const streamedEvents = [
         ...(Array.isArray(terminalItem?.generationSteps) ? terminalItem.generationSteps : []),
         terminalItem?.stepEvent,

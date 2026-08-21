@@ -116,6 +116,7 @@ function normalizeBidResult(row: BidResult): BidResult {
         : null,
     recordings: Array.isArray(row.recordings) ? row.recordings : undefined,
     resumeAudits: Array.isArray(row.resumeAudits) ? row.resumeAudits : undefined,
+    skipReason: typeof row.skipReason === "string" ? row.skipReason : null,
   };
 }
 
