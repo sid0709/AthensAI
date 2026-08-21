@@ -23,6 +23,9 @@ import { ResumeCoverageAnalyzeService } from './generator/resume-coverage-analyz
 import { ResumeGeneratorConfigService } from './generator/resume-generator-config.service';
 import { ResumeExportController } from './generator/resume-export.controller';
 import { ResumeExportDocxService } from './generator/resume-export-docx.service';
+import { ResumeTemplateController } from './templates/resume-template.controller';
+import { ResumeTemplateService } from './templates/resume-template.service';
+import { ResumeTemplateWriteService } from './templates/resume-template-write.service';
 import { ResumeStorageService } from './resume-storage.service';
 import { ResumeTextService } from './resume-text.service';
 import { ResumeUploadService } from './resume-upload.service';
@@ -47,6 +50,7 @@ import { ResumesController } from './resumes.controller';
     ResumeGenerateController,
     ResumeGenerationsController,
     ResumeExportController,
+    ResumeTemplateController,
   ],
   providers: [
     ResumeService,
@@ -68,6 +72,8 @@ import { ResumesController } from './resumes.controller';
     ResumeGenerateWorkerService,
     ResumeGenerationsService,
     ResumeExportDocxService,
+    ResumeTemplateService,
+    ResumeTemplateWriteService,
   ],
   exports: [
     ResumeService,

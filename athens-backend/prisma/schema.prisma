@@ -28,8 +28,9 @@ model AccountInfo {
   /// AI Mail labeling: { [labelPath: string]: description }
   mailAiLabelDefinitions Json?
 
-  jobStatuses JobStatus[]
-  resumes    Resume[]
+  jobStatuses     JobStatus[]
+  resumes         Resume[]
+  resumeTemplates ResumeTemplate[]
 
   @@index([usernameKey])
   @@map("account_info")
@@ -367,6 +368,33 @@ model Resume {
   @@index([ownerName, uploadedAt(sort: Desc)])
   @@index([generationId])
   @@map("resumes")
+}
+
+/// Uploaded Word resume templates with `{}` placeholders. Binary in Firebase Storage.
+model ResumeTemplate {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  profileId     String   @db.ObjectId
+  ownerName     String
+  name          String
+  fileName      String
+  mimeType      String
+  sizeBytes     Int
+  storagePath   String
+  contentSha256 String
+  slotCount     Int
+  /// ("summary" | "skills" | "experience")[]
+  sectionsFound Json
+  /// Parsed `{}` placeholder slots
+  slots         Json
+  warnings      Json
+  uploadedAt    DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  account AccountInfo @relation(fields: [profileId], references: [id])
+
+  @@index([profileId, uploadedAt(sort: Desc)])
+  @@index([ownerName, uploadedAt(sort: Desc)])
+  @@map("resume_templates")
 }
 
 /// Persistent Resume Generator settings (Profile-scoped). Collection: resume_generator_config.

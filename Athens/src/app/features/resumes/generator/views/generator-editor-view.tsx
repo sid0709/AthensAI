@@ -191,7 +191,9 @@ export function GeneratorEditorView({
               {usingUploadedTemplate ? (
                 <>
                   Preview approximates your uploaded Word layout. Export Word for the exact document.
-                  {generated ? " Generate to fill {} placeholders." : " Generate to fill {} placeholders."}
+                  {generated
+                    ? " Word export fills {summary}, {title1}, {experience1}, and other tokens without changing the rest of the file."
+                    : " Generate to fill {summary}, {experience1}, and other tokens. Name, companies, dates, and education stay as written."}
                 </>
               ) : (
                 <>

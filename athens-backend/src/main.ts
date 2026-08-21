@@ -33,6 +33,34 @@ async function bootstrap() {
         );
       });
     }
+    // #region agent log
+    if (req.url?.includes('resume-template')) {
+      const started = Date.now();
+      res.on('finish', () => {
+        fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Debug-Session-Id': '6aaeec',
+          },
+          body: JSON.stringify({
+            sessionId: '6aaeec',
+            runId: 'pre-fix',
+            hypothesisId: 'A',
+            location: 'main.ts:http',
+            message: 'backend resume-template request finished',
+            data: {
+              method: req.method,
+              url: req.url,
+              status: res.statusCode,
+              elapsedMs: Date.now() - started,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+      });
+    }
+    // #endregion
     next();
   });
   app.useGlobalFilters(new AuthResponseFilter());

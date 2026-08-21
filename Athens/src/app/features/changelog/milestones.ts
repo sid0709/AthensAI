@@ -14,6 +14,21 @@ export type ChangelogMilestone = {
 /** Product milestones — one entry per merge / release. Newest first. Never list Oak. */
 export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
   {
+    id: "resume-upload-word-template",
+    version: "0.26.0",
+    title: "Upload a Word resume template",
+    date: "2026-08-21",
+    merge: "main",
+    summary:
+      "Resume Generator can store a Word .docx and fill only its {placeholder} tokens, leaving the rest of the layout as written.",
+    tags: ["Resumes"],
+    current: true,
+    changes: [
+      "Template → Upload template saves a .docx for the selected applier and lists it with the built-in layouts",
+      "Named tokens such as {summary}, {title1}, and {experience1} are filled on generate and Word export; name, companies, dates, and education stay unchanged",
+    ],
+  },
+  {
     id: "resume-prompt-field-caret",
     version: "0.25.0",
     title: "Resume prompts keep the caret on the text",
@@ -22,7 +37,6 @@ export const CHANGELOG_MILESTONES: ChangelogMilestone[] = [
     summary:
       "Prompt fields in Resume Generator line the caret and selection up with the visible text, and the step chrome uses the same Athens field language as Job Search and Settings.",
     tags: ["Resumes"],
-    current: true,
     changes: [
       "Clicking and selecting in a prompt places the caret on the same characters as the highlighted tokens",
       "Fine-tune / Final, token chips, and prompt focus use Athens field tokens instead of a separate sky-blue editor skin",

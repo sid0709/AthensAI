@@ -343,6 +343,7 @@ export function useGeneratorPage() {
       setExporting("docx");
       try {
         const sections = {
+          headline: generated.experience?.[0]?.title || identity?.careers?.[0]?.title || "",
           summary: { summary: generated.summary },
           skills: { skills: generated.skills },
           experience: { experiences: generated.experience },
@@ -470,16 +471,22 @@ export function useGeneratorPage() {
 
   const uploadTemplateFile = async (file: File) => {
     const applierName = applier?.name;
+    // #region agent log
+    fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'pre-fix',hypothesisId:'D',location:'use-generator-page.ts:uploadTemplateFile',message:'uploadTemplateFile entry',data:{fileName:file.name,fileSize:file.size,isDocx:/\.docx$/i.test(file.name),hasApplier:Boolean(applierName),applierNameLen:applierName?.length??0},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (!applierName) {
       notify({ title: "Select an applier", description: "Choose an applier in the sidebar first.", tone: "warning" });
       return;
     }
     if (!/\.docx$/i.test(file.name)) {
-      notify({ title: "DOCX only", description: "Upload a Word .docx template with {} placeholders.", tone: "warning" });
+      notify({ title: "DOCX only", description: "Upload a Word .docx template with {placeholder} tokens.", tone: "warning" });
       return;
     }
     try {
       const contentBase64 = await fileToBase64(file);
+      // #region agent log
+      fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'pre-fix',hypothesisId:'E',location:'use-generator-page.ts:uploadTemplateFile',message:'calling uploadResumeTemplate',data:{fileName:file.name,base64Len:contentBase64.length,ownerNameLen:applierName.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       const template = await uploadResumeTemplate({
         ownerName: applierName,
         fileName: file.name,
@@ -502,6 +509,9 @@ export function useGeneratorPage() {
         });
       }
     } catch (e) {
+      // #region agent log
+      fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6aaeec'},body:JSON.stringify({sessionId:'6aaeec',runId:'pre-fix',hypothesisId:'C',location:'use-generator-page.ts:uploadTemplateFile',message:'uploadTemplateFile catch',data:{errorName:e instanceof Error?e.name:'non-error',errorMessage:e instanceof Error?e.message:String(e)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       notify({
         title: "Upload failed",
         description: e instanceof Error ? e.message : String(e),
