@@ -29,6 +29,30 @@ export function oakMatchOptionMaxOutputTokens(): number {
   return Number.isFinite(n) && n > 0 ? n : 2500;
 }
 
+/** Batched typing-field rewrite; several short answers plus a few paragraphs. */
+export function oakProseMaxOutputTokens(): number {
+  const n = Number.parseInt(
+    String(process.env.OAK_PROSE_MAX_OUTPUT_TOKENS || '6000'),
+    10,
+  );
+  return Number.isFinite(n) && n > 0 ? n : 6000;
+}
+
+/** Fail open back to planner drafts if the writer exceeds this. */
+export function oakProseTimeoutMs(): number {
+  const n = Number.parseInt(
+    String(process.env.OAK_PROSE_TIMEOUT_MS || '20000'),
+    10,
+  );
+  return Number.isFinite(n) && n > 0 ? n : 20000;
+}
+
+/** Slightly warmer than the planner so typed answers sound less templated. */
+export function oakProseTemperature(): number {
+  const n = Number.parseFloat(String(process.env.OAK_PROSE_TEMPERATURE || '0.4'));
+  return Number.isFinite(n) ? n : 0.4;
+}
+
 export function oakTemperature(): number {
   const n = Number.parseFloat(
     String(process.env.OAK_OPENAI_TEMPERATURE || '0.1'),

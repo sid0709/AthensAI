@@ -74,6 +74,8 @@ export class OakResponsesService {
       format: Record<string, unknown>;
       maxOutputTokens?: number;
       clampReasoningToLow?: boolean;
+      temperature?: number;
+      signal?: AbortSignal;
     },
   ): Promise<{ text: string; model: string; usage: OakUsageSummary }> {
     const body: Record<string, unknown> = {
@@ -94,9 +96,10 @@ export class OakResponsesService {
 
     applySamplingParams(body, auth.model, {
       clampReasoningToLow: input.clampReasoningToLow,
+      temperature: input.temperature,
     });
 
-    const data = await this.postResponses(auth.apiKey, body);
+    const data = await this.postResponses(auth.apiKey, body, input.signal);
     const text = extractOutputText(data);
     if (!text?.trim()) {
       throw new Error('OpenAI returned empty output');
@@ -113,6 +116,7 @@ export class OakResponsesService {
   private async postResponses(
     apiKey: string,
     body: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
     const res = await fetch(OPENAI_RESPONSES_URL, {
       method: 'POST',
@@ -121,6 +125,7 @@ export class OakResponsesService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal,
     });
     const data = (await res.json().catch(() => ({}))) as Record<
       string,
@@ -141,7 +146,7 @@ export class OakResponsesService {
 function applySamplingParams(
   body: Record<string, unknown>,
   model: string,
-  opts?: { clampReasoningToLow?: boolean },
+  opts?: { clampReasoningToLow?: boolean; temperature?: number },
 ): void {
   const effort = oakReasoningEffortForModel(model);
   if (effort) {
@@ -156,7 +161,10 @@ function applySamplingParams(
     return;
   }
   if (!oakModelRejectsTemperature(model)) {
-    body.temperature = oakTemperature();
+    body.temperature =
+      typeof opts?.temperature === 'number'
+        ? opts.temperature
+        : oakTemperature();
   }
 }
 

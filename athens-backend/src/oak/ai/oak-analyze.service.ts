@@ -7,6 +7,7 @@ import { OakFillPolicyService } from '../policy/oak-fill-policy.service';
 import { applyApplicantIdentityToPlan } from './applicant-identity';
 import { buildAnalyzePrompt } from './oak-prompt';
 import { OakProfilePromptService } from './oak-profile-prompt.service';
+import { OakProseService } from './oak-prose.service';
 import { OakResponsesService } from './oak-responses.service';
 import { summarizeUsage } from './oak-pricing';
 import { validatePlanShape } from './oak-schema';
@@ -20,6 +21,7 @@ export class OakAnalyzeService {
     private readonly chat: OpenAiChatService,
     private readonly usage: AiUsageRecorderService,
     private readonly fillPolicy: OakFillPolicyService,
+    private readonly prose: OakProseService,
   ) {}
 
   async analyze(input: {
@@ -78,13 +80,20 @@ export class OakAnalyzeService {
         success: true,
       });
 
-      const plan = this.fillPolicy.applyPlanPolicy(
+      const drafted = this.fillPolicy.applyPlanPolicy(
         applyApplicantIdentityToPlan(result.plan),
         policy.isAdmin,
       );
+      const rewritten = await this.prose.rewriteTypingFills({
+        plan: drafted,
+        auth,
+        applicantProfile,
+        applierName: input.applierName,
+        page: policy.page,
+      });
       return {
         ok: true as const,
-        plan,
+        plan: applyApplicantIdentityToPlan(rewritten),
         model: result.model,
         responseId: result.responseId ?? null,
         usage: result.usage,
