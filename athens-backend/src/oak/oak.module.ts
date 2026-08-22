@@ -10,7 +10,9 @@ import { OakAuthGuard } from './auth/oak-auth.guard';
 import { OakAuthService } from './auth/oak-auth.service';
 import { OakSessionService } from './auth/oak-session.service';
 import { OakAnalyzeService } from './ai/oak-analyze.service';
+import { OakIdentityService } from './ai/oak-identity.service';
 import { OakMatchOptionService } from './ai/oak-match-option.service';
+import { OakProseService } from './ai/oak-prose.service';
 import { OakProfilePromptService } from './ai/oak-profile-prompt.service';
 import { OakResponsesService } from './ai/oak-responses.service';
 import { OakGatewayBootstrap } from './gateway/oak-gateway.bootstrap';
@@ -40,6 +42,8 @@ import { OakFillPolicyService } from './policy/oak-fill-policy.service';
     OakProfilePromptService,
     OakResponsesService,
     OakAnalyzeService,
+    OakProseService,
+    OakIdentityService,
     OakMatchOptionService,
     OakJobsService,
     OakJobsMarkAppliedService,

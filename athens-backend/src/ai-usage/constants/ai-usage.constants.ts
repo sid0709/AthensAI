@@ -63,4 +63,6 @@ export const AI_USAGE_FEATURES = {
   resumeCoverageAnalyze: 'resume-coverage-analysis',
   oakAiAnalyze: 'oak-ai-analyze',
   oakMatchOption: 'oak-match-option',
+  oakAiProse: 'oak-ai-prose',
+  oakAiIdentity: 'oak-ai-identity',
 } as const;

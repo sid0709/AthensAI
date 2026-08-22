@@ -5,8 +5,10 @@ import { AI_USAGE_FEATURES } from '../../ai-usage/constants/ai-usage.constants';
 import { AiUsageRecorderService } from '../../ai-usage/ai-usage-recorder.service';
 import { OakFillPolicyService } from '../policy/oak-fill-policy.service';
 import { applyApplicantIdentityToPlan } from './applicant-identity';
+import { OakIdentityService } from './oak-identity.service';
 import { buildAnalyzePrompt } from './oak-prompt';
 import { OakProfilePromptService } from './oak-profile-prompt.service';
+import { OakProseService } from './oak-prose.service';
 import { OakResponsesService } from './oak-responses.service';
 import { summarizeUsage } from './oak-pricing';
 import { validatePlanShape } from './oak-schema';
@@ -20,6 +22,8 @@ export class OakAnalyzeService {
     private readonly chat: OpenAiChatService,
     private readonly usage: AiUsageRecorderService,
     private readonly fillPolicy: OakFillPolicyService,
+    private readonly prose: OakProseService,
+    private readonly identity: OakIdentityService,
   ) {}
 
   async analyze(input: {
@@ -78,10 +82,64 @@ export class OakAnalyzeService {
         success: true,
       });
 
-      const plan = this.fillPolicy.applyPlanPolicy(
-        applyApplicantIdentityToPlan(result.plan),
+      const applicationAiIndexes =
+        await this.identity.classifyApplicationAiIndexes({
+          plan: result.plan,
+          auth,
+          applierName: input.applierName,
+          page: policy.page,
+        });
+      const drafted = this.fillPolicy.applyPlanPolicy(
+        applyApplicantIdentityToPlan(result.plan, applicationAiIndexes),
         policy.isAdmin,
       );
+      // #region agent log
+      fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Debug-Session-Id': 'fdabab',
+        },
+        body: JSON.stringify({
+          sessionId: 'fdabab',
+          runId: 'pre-fix',
+          hypothesisId: 'A',
+          location: 'oak-analyze.service.ts:drafted',
+          message: 'Planner AI-related fill values before writer',
+          data: { fills: debugAiFills(drafted) },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      const rewritten = await this.prose.rewriteTypingFills({
+        plan: drafted,
+        auth,
+        applicantProfile,
+        applierName: input.applierName,
+        page: policy.page,
+      });
+      const plan = applyApplicantIdentityToPlan(
+        rewritten,
+        applicationAiIndexes,
+      );
+      // #region agent log
+      fetch('http://127.0.0.1:7376/ingest/22f9a3b0-687c-4d12-9d88-2e1dc29aae31', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Debug-Session-Id': 'fdabab',
+        },
+        body: JSON.stringify({
+          sessionId: 'fdabab',
+          runId: 'pre-fix',
+          hypothesisId: 'E',
+          location: 'oak-analyze.service.ts:final',
+          message: 'Final AI-related fill values after writer+identity',
+          data: { fills: debugAiFills(plan) },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       return {
         ok: true as const,
         plan,
@@ -147,4 +205,36 @@ export class OakAnalyzeService {
       ),
     };
   }
+}
+
+function debugAiFills(plan: unknown) {
+  const actions =
+    plan && typeof plan === 'object'
+      ? (plan as { actions?: unknown }).actions
+      : null;
+  if (!Array.isArray(actions)) return [];
+  return actions
+    .filter((action) => {
+      if (!action || typeof action !== 'object') return false;
+      const label = String(
+        (action as { expected_label?: unknown }).expected_label || '',
+      );
+      return /\bai\b|llm|artificial intelligence/i.test(label);
+    })
+    .map((action) => {
+      const row = action as {
+        action?: unknown;
+        expected_role?: unknown;
+        element_index?: unknown;
+        expected_label?: unknown;
+        value?: unknown;
+      };
+      return {
+        action: row.action,
+        role: row.expected_role,
+        index: row.element_index,
+        label: String(row.expected_label || '').slice(0, 90),
+        value: String(row.value || '').slice(0, 160),
+      };
+    });
 }
